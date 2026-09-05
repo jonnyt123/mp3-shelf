@@ -4,6 +4,8 @@ An iPhone-first, installable web app that imports many MP3s in one Files picker 
 
 MP3 Shelf reads ID3 title, artist, album, and embedded cover artwork locally during import. It also includes first-launch onboarding, track renaming, and playlist reordering.
 
+Tap the mini-player to open a full-screen now-playing view with large artwork, elapsed and remaining time, precise scrubbing, and complete playback controls.
+
 ## Run locally
 
 ```bash
