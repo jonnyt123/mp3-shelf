@@ -8,6 +8,8 @@ Tap the mini-player to open a full-screen now-playing view with large artwork, e
 
 Safari users can open the native AirPlay destination picker from the full player. Desktop browsers also get an in-app volume slider; iPhone displays side-button volume guidance because iOS controls media volume at the system level.
 
+Media Session integration supplies title, artist, album artwork, playback state, position, seeking, and previous/next actions to supported Lock Screen and system media controls. In the full player, swipe down across the artwork to close or swipe horizontally to change tracks.
+
 ## Run locally
 
 ```bash

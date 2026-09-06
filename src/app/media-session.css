@@ -1,0 +1,1 @@
+.gesture-zone{display:flex;flex:1;min-height:0;flex-direction:column;touch-action:none;-webkit-user-select:none;user-select:none}.gesture-zone .cover{flex:1}.gesture-zone:active .artwork.large{transform:scale(.985);transition:transform .12s}
