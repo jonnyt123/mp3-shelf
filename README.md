@@ -6,6 +6,8 @@ MP3 Shelf reads ID3 title, artist, album, and embedded cover artwork locally dur
 
 Tap the mini-player to open a full-screen now-playing view with large artwork, elapsed and remaining time, precise scrubbing, and complete playback controls.
 
+Safari users can open the native AirPlay destination picker from the full player. Desktop browsers also get an in-app volume slider; iPhone displays side-button volume guidance because iOS controls media volume at the system level.
+
 ## Run locally
 
 ```bash
