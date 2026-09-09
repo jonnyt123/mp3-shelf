@@ -1,0 +1,42 @@
+.storage-small {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin-left: auto;
+  padding: 0 0 8px;
+  border: 1px solid rgba(231, 205, 147, .16);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(36, 34, 33, .95), rgba(18, 18, 20, .95));
+  color: var(--gold-bright);
+  font-size: 18px;
+  letter-spacing: .08em;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .04), 0 9px 24px rgba(0, 0, 0, .18);
+}
+
+.topbar .add-small { margin-left: 0; }
+
+.storage-sheet { max-height: min(86dvh, 680px); overflow-y: auto; }
+.storage-sheet>header { display: flex; align-items: flex-start; justify-content: space-between; }
+.storage-sheet>header h3 { margin: 5px 0 20px; font-size: 25px; }
+.storage-sheet .sheet-close { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: #201f20; color: var(--muted); font-size: 24px; }
+
+.storage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.storage-grid>div { display: flex; min-width: 0; min-height: 124px; flex-direction: column; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg, rgba(38, 35, 31, .78), rgba(21, 20, 21, .9)); }
+.storage-grid span { color: var(--muted); font-size: 11px; }
+.storage-grid strong { margin: auto 0 3px; color: var(--gold-bright); font-size: clamp(22px, 7vw, 31px); font-weight: 620; letter-spacing: -.045em; }
+.storage-grid small { overflow: hidden; color: #777168; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.storage-note { margin: 14px 3px 20px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+.storage-sheet .backup-actions { display: grid; gap: 9px; }
+.storage-sheet .backup-actions button { align-items: center; padding: 15px 14px; border: 1px solid var(--line); border-radius: 16px; background: rgba(30, 29, 30, .88); }
+.storage-sheet .backup-actions button:disabled { opacity: .55; }
+.backup-actions button>span { display: flex; flex-direction: column; gap: 4px; }
+.backup-actions b { font-size: 14px; font-weight: 650; }
+.backup-actions small { color: var(--muted); font-size: 10px; }
+.backup-actions i { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: rgba(216, 181, 106, .12); color: var(--gold-bright); font-size: 18px; font-style: normal; }
+.backup-status { margin: 13px 3px 0; color: var(--gold-bright); font-size: 12px; line-height: 1.45; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .storage-small:active, .storage-sheet .backup-actions button:active { transform: scale(.98); }
+}

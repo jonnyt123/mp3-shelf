@@ -10,6 +10,8 @@ Safari users can open the native AirPlay destination picker from the full player
 
 Media Session integration supplies title, artist, album artwork, playback state, position, seeking, and previous/next actions to supported Lock Screen and system media controls. In the full player, swipe down across the artwork to close or swipe horizontally to change tracks.
 
+Open **Storage & backup** from the top-right menu to see music usage, total origin storage, and the allowance reported by the browser. Exports use MP3 Shelf's `.mp3shelf` archive format, which preserves MP3 bytes, artwork, metadata, and playlists without base64 expansion. Restore validates the complete archive manifest before atomically adding or updating tracks; it does not delete music already on the device.
+
 ## Run locally
 
 ```bash
