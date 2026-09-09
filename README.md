@@ -19,6 +19,8 @@ npm run dev
 
 On iPhone, deploy over HTTPS, open it in Safari, then use **Share → Add to Home Screen**.
 
+The service worker pre-caches the rendered app shell, including Next.js JavaScript and CSS, then caches same-origin assets as they are requested. Imported MP3 blobs remain in IndexedDB, so the installed app and its library can launch and play without a network connection after one successful online visit.
+
 ## What iOS allows
 
 Safari cannot scan Files automatically. The user must grant access through Apple's picker. MP3 Shelf uses multiple selection so a group can be imported at once, then stores copies in IndexedDB. Clearing Safari website data or iOS storage eviction can remove local tracks.
