@@ -120,6 +120,14 @@ struct MainView: View {
         #endif
     }()
 
+    @State private var showDownloadsQA: Bool = {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("--mp3shelf-snapshot-downloads")
+        #else
+        return false
+        #endif
+    }()
+
     // Debug-only deep-page snapshots for automated design QA. The public
     // release always opens on the Listen tab.
     @State private var selectedTab: Int = {
@@ -152,6 +160,10 @@ struct MainView: View {
         .toolbarBackground(.visible, for: .tabBar)
         .toolbarColorScheme(.dark, for: .tabBar)
         .sheet(isPresented: $showPlayer) { NowPlayingView() }
+        .sheet(isPresented: $showDownloadsQA) {
+            NavigationStack { DownloadManagerView() }
+                .preferredColorScheme(.dark)
+        }
     }
 
     private func tabPage<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
