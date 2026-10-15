@@ -495,11 +495,13 @@ final class MusicLibrary: ObservableObject {
         save()
     }
 
+    func trackSizeBytes(_ track: MusicTrack) -> Int64 {
+        let size = (try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return Int64(max(size, 0))
+    }
+
     var totalStorageBytes: Int64 {
-        tracks.reduce(0) { total, track in
-            let size = (try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            return total + Int64(size)
-        }
+        tracks.reduce(0) { $0 + trackSizeBytes($1) }
     }
 }
 
