@@ -173,10 +173,11 @@ struct ArtworkTile: View {
                     .frame(width: size * 0.43, height: size * 0.43)
                     .offset(x: -size * 0.33, y: size * 0.35)
                 HStack(alignment: .center, spacing: max(2, size * 0.035)) {
-                    ForEach(Array([0.31, 0.67, 0.96, 0.52, 0.82, 0.37].enumerated()), id: \.offset) { _, height in
+                    ForEach(0..<6, id: \.self) { index in
                         Capsule()
                             .fill(.white.opacity(0.9))
-                            .frame(width: max(2, size * 0.052), height: size * 0.43 * height)
+                            .frame(width: max(2, size * 0.052),
+                                   height: size * 0.43 * [0.31, 0.67, 0.96, 0.52, 0.82, 0.37][index])
                     }
                 }
             }
