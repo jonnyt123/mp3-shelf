@@ -91,3 +91,30 @@ availability. Keep the visual branch in draft pending device QA.
   required because a successful compilation does not prove strong layout.
 - Verify UI in compact iPhones and at large Dynamic Type sizes, keeping
   the primary action tappable and source/licensing information readable.
+
+## Second refinement pass — populated library and playback
+
+- With two or more local songs, **Recently added** is a horizontal, artwork-led
+  collection of up to eight tracks. Its play actions pass the visible collection
+  into playback without modifying saved playlists. This shelf is intentionally
+  absent on a new installation.
+- The Now Playing cover has a viewport-aware maximum: on compact phones and
+  accessibility text settings, the art shrinks to preserve room for transport
+  controls. Song color may subtly tint the ambient glow, but the primary play
+  control remains a stable lavender.
+- **Up next** previews up to three songs from the existing playback queue and
+  allows jumping ahead. This is a view of playback state—not a new playlist
+  or a source of truth for music persistence.
+- The compact mini-player uses 44-point transport hit targets and an opaque
+  neutral background when Reduce Transparency is enabled.
+- The download manager has **All / Active / Saved / Issues** filters backed by
+  actual transfer states, distinct status labels and consistent progress semantics.
+  Filters must not mutate the download queue or remove completed files.
+- Debug-only `--mp3shelf-snapshot-player` generates an original sine-wave WAV
+  file inside the iOS Simulator, imports it locally and opens an actual
+  Now Playing screen. It is not a commercial song, not a simulated Spotify
+  download and not available in release builds.
+- The macOS workflow captures a fifth `player.png` screenshot so visual
+  regressions on an active playback screen are visible alongside the four
+  existing tab screenshots. Run physical-iPhone tests for audio session and
+  background behavior before making release claims.
