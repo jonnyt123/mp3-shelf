@@ -115,7 +115,8 @@ final class SpotifyService: NSObject, ObservableObject {
                 guard let track = entry.item ?? entry.track, track.type == "track" else { continue }
                 let artist = track.artists?.map(\.name).joined(separator: ", ") ?? ""
                 wishes.append(PlaylistWish(title: track.name, artist: artist,
-                    album: track.album?.name ?? "", spotifyURL: track.external_urls?.spotify))
+                    album: track.album?.name ?? "", spotifyURL: track.external_urls?.spotify,
+                    durationSeconds: track.duration_ms.map { Double($0) / 1000.0 }))
             }
             next = try Self.safeNext(page.next)
             if wishes.count > 20000 { throw SpotifyError.api("The playlist contains too many tracks.") }
@@ -241,6 +242,7 @@ private struct SpotifyTrack: Decodable {
     let artists: [SpotifyArtist]?
     let album: SpotifyAlbum?
     let external_urls: SpotifyURLContainer?
+    let duration_ms: Int?
 }
 private struct SpotifyArtist: Decodable { let name: String }
 private struct SpotifyAlbum: Decodable { let name: String }
