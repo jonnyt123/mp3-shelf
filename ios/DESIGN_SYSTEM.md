@@ -70,3 +70,24 @@ The GitHub macOS workflow builds the iOS Simulator target, launches the app,
 captures a screenshot, and runs metadata/discovery tests. These checks cannot
 prove physical iPhone lock-screen behavior or real-world licensed-source
 availability. Keep the visual branch in draft pending device QA.
+
+## First-run and visual QA decisions
+
+- A fresh install with zero songs must expose **Import your music**
+  inside the first featured panel, without requiring scrolling on a
+  standard iPhone. Offer **Import a Spotify playlist** immediately below.
+- A playlist library with zero collections must expose a full-size
+  **Create a playlist** button, not just the navigation bar plus icon.
+- When local music exists, switch the Listen screen to its library filters,
+  song cards and artwork-led featured panel; do not show onboarding again.
+- No fake saved songs or placeholder Spotify success states in production.
+- Debug Simulator screenshot flags allow visual QA of actual UI without
+  modifying customer data: `--mp3shelf-snapshot-playlists`,
+  `--mp3shelf-snapshot-add-music`, and `--mp3shelf-snapshot-settings`.
+  These flags exist only under `#if DEBUG`; the release always opens Listen.
+- The `ios-build.yml` workflow captures real Simulator frames for Listen,
+  Playlists, Add Music and Settings and uploads them together as the
+  `mp3shelf-premium-all-tabs` artifact. Manual screenshot review is still
+  required because a successful compilation does not prove strong layout.
+- Verify UI in compact iPhones and at large Dynamic Type sizes, keeping
+  the primary action tappable and source/licensing information readable.
