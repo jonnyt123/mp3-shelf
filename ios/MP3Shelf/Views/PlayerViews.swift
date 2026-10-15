@@ -7,41 +7,61 @@ struct MiniPlayer: View {
 
     var body: some View {
         if let track = library.song(with: playback.currentTrackID) {
-            HStack(spacing: 11) {
-                HStack(spacing: 11) {
-                    ArtworkTile(track: track, size: 44)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(track.title).font(.subheadline.bold()).lineLimit(1)
-                        Text(track.artist).font(.caption).foregroundStyle(ShelfTheme.subdued).lineLimit(1)
+            HStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    ArtworkTile(track: track, size: 48)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(track.title)
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(track.artist)
+                            .font(.caption)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .lineLimit(1)
                     }
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture(perform: open)
                 .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Open Now Playing for \(track.title)")
                 Button { playback.togglePlayback() } label: {
                     Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title3).frame(width: 44, height: 44)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(ShelfTheme.background)
+                        .frame(width: 39, height: 39)
+                        .background(ShelfTheme.accent, in: Circle())
                 }
                 .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
                 Button { playback.next() } label: {
                     Image(systemName: "forward.end.fill")
-                        .font(.headline).frame(width: 35, height: 44)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 42)
                 }
                 .accessibilityLabel("Next song")
             }
-            .padding(9)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+            .buttonStyle(.plain)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+            .overlay(RoundedRectangle(cornerRadius: 22)
+                .strokeBorder(.white.opacity(0.14), lineWidth: 1))
             .overlay(alignment: .bottomLeading) {
                 GeometryReader { geo in
                     Capsule()
-                        .fill(ShelfTheme.accent)
-                        .frame(width: geo.size.width * (playback.duration > 0 ? min(1, playback.currentTime / playback.duration) : 0), height: 2)
-                        .offset(y: geo.size.height - 2)
+                        .fill(LinearGradient(colors: [ShelfTheme.accent, ShelfTheme.mint],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: geo.size.width * (playback.duration > 0
+                            ? max(0, min(1, playback.currentTime / playback.duration)) : 0),
+                               height: 3)
+                        .offset(y: geo.size.height - 3)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .clipShape(RoundedRectangle(cornerRadius: 22))
                 .allowsHitTesting(false)
             }
+            .shadow(color: .black.opacity(0.3), radius: 18, y: 6)
         }
     }
 }
@@ -59,96 +79,185 @@ struct NowPlayingView: View {
                 if let track = library.song(with: playback.currentTrackID) {
                     GeometryReader { proxy in
                         ScrollView {
-                            VStack(spacing: 26) {
-                                Spacer(minLength: 12)
-                                ArtworkTile(track: track, size: min(proxy.size.width - 64, 330))
-                                    .shadow(color: ShelfTheme.accent.opacity(0.2), radius: 26, y: 10)
-                                    .frame(maxWidth: .infinity)
-                                VStack(spacing: 6) {
-                                    Text(track.title).font(.title2.bold()).multilineTextAlignment(.center)
-                                    Text(track.artist).font(.subheadline).foregroundStyle(ShelfTheme.subdued)
-                                    Text(track.album).font(.caption).foregroundStyle(ShelfTheme.subdued).lineLimit(1)
+                            VStack(spacing: 0) {
+                                HStack {
+                                    Spacer()
+                                    VStack(spacing: 5) {
+                                        PremiumEyebrow(title: "NOW PLAYING")
+                                        Text("MP3 Shelf")
+                                            .font(.caption.weight(.medium))
+                                            .foregroundStyle(ShelfTheme.subdued)
+                                    }
+                                    Spacer()
                                 }
-                                .frame(maxWidth: .infinity)
-                                .padding(.horizontal)
+                                .padding(.top, 5)
+                                .padding(.bottom, 25)
+
+                                ArtworkTile(track: track, size: min(proxy.size.width - 74, 340))
+                                    .shadow(color: ShelfTheme.accent.opacity(0.18),
+                                            radius: 45, y: 23)
+                                    .shadow(color: .black.opacity(0.35), radius: 15, y: 12)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.bottom, 29)
+
+                                HStack(alignment: .center, spacing: 18) {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text(track.title)
+                                            .font(.system(.title2, design: .rounded, weight: .bold))
+                                            .foregroundStyle(.white)
+                                            .lineLimit(2)
+                                            .minimumScaleFactor(0.8)
+                                        Text(track.artist)
+                                            .font(.headline.weight(.regular))
+                                            .foregroundStyle(ShelfTheme.subdued)
+                                            .lineLimit(1)
+                                        Text(track.album)
+                                            .font(.caption)
+                                            .foregroundStyle(ShelfTheme.subdued.opacity(0.75))
+                                            .lineLimit(1)
+                                    }
+                                    Spacer(minLength: 0)
+                                    Button { library.toggleFavorite(track.id) } label: {
+                                        Image(systemName: track.isFavorite ? "heart.fill" : "heart")
+                                            .font(.system(size: 21, weight: .medium))
+                                            .foregroundStyle(track.isFavorite ? ShelfTheme.coral : .white)
+                                            .frame(width: 50, height: 50)
+                                            .background(ShelfTheme.elevated, in: Circle())
+                                            .overlay(Circle().strokeBorder(ShelfTheme.border, lineWidth: 1))
+                                    }
+                                    .accessibilityLabel(track.isFavorite ? "Remove favorite" : "Add favorite")
+                                }
+                                .padding(.bottom, 25)
+
                                 VStack(spacing: 7) {
                                     Slider(value: Binding(
                                         get: { draggingTime ?? playback.currentTime },
                                         set: { draggingTime = $0 }
-                                    ), in: 0...max(playback.duration, 1), onEditingChanged: { isEditing in
-                                        if !isEditing, let draggingTime { playback.seek(to: draggingTime); self.draggingTime = nil }
+                                    ), in: 0...max(playback.duration, 1), onEditingChanged: { editing in
+                                        if !editing, let draggingTime {
+                                            playback.seek(to: draggingTime)
+                                            self.draggingTime = nil
+                                        }
                                     })
-                                    .tint(ShelfTheme.accent)
+                                    .tint(ShelfTheme.mint)
                                     HStack {
                                         Text((draggingTime ?? playback.currentTime).shelfClock)
                                         Spacer()
-                                        Text("−" + max(0, playback.duration - (draggingTime ?? playback.currentTime)).shelfClock)
+                                        Text("−" + max(0, playback.duration -
+                                            (draggingTime ?? playback.currentTime)).shelfClock)
                                     }
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(ShelfTheme.subdued)
                                 }
+                                .padding(.bottom, 25)
+
                                 HStack(spacing: 0) {
-                                    Button { playback.isShuffled.toggle() } label: {
-                                        Image(systemName: "shuffle")
-                                            .foregroundStyle(playback.isShuffled ? ShelfTheme.accent : .white)
-                                    }
-                                    .accessibilityLabel("Shuffle")
+                                    playerButton("shuffle", active: playback.isShuffled,
+                                                 action: { playback.isShuffled.toggle() })
+                                        .accessibilityLabel("Shuffle")
                                     Spacer()
-                                    Button { playback.previous() } label: { Image(systemName: "backward.end.fill") }
-                                        .accessibilityLabel("Previous track")
+                                    Button { playback.previous() } label: {
+                                        Image(systemName: "backward.end.fill")
+                                            .font(.system(size: 25, weight: .medium))
+                                            .frame(width: 44, height: 56)
+                                    }
+                                    .accessibilityLabel("Previous track")
                                     Spacer()
                                     Button { playback.togglePlayback() } label: {
                                         Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                                            .font(.system(size: 27, weight: .bold))
-                                            .foregroundStyle(.black)
-                                            .frame(width: 72, height: 72)
-                                            .background(.white, in: Circle())
+                                            .font(.system(size: 29, weight: .bold))
+                                            .foregroundStyle(ShelfTheme.background)
+                                            .frame(width: 76, height: 76)
+                                            .background(ShelfTheme.accent, in: Circle())
+                                            .shadow(color: ShelfTheme.accent.opacity(0.24),
+                                                    radius: 20, y: 8)
                                     }
                                     .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
                                     Spacer()
-                                    Button { playback.next() } label: { Image(systemName: "forward.end.fill") }
-                                        .accessibilityLabel("Next track")
-                                    Spacer()
-                                    Button { playback.cycleRepeat() } label: {
-                                        Image(systemName: playback.repeatMode.systemImage)
-                                            .foregroundStyle(playback.repeatMode == .off ? .white : ShelfTheme.accent)
+                                    Button { playback.next() } label: {
+                                        Image(systemName: "forward.end.fill")
+                                            .font(.system(size: 25, weight: .medium))
+                                            .frame(width: 44, height: 56)
                                     }
-                                    .accessibilityLabel("Repeat: \(playback.repeatMode.rawValue)")
+                                    .accessibilityLabel("Next track")
+                                    Spacer()
+                                    playerButton(playback.repeatMode.systemImage,
+                                                 active: playback.repeatMode != .off,
+                                                 action: { playback.cycleRepeat() })
+                                        .accessibilityLabel("Repeat: \(playback.repeatMode.rawValue)")
                                 }
-                                .font(.system(size: 22))
+                                .foregroundStyle(.white)
                                 .buttonStyle(.plain)
-                                .padding(.vertical, 8)
-                                HStack {
-                                    Button { library.toggleFavorite(track.id) } label: {
-                                        Label(track.isFavorite ? "Favorite" : "Add favorite", systemImage: track.isFavorite ? "heart.fill" : "heart")
-                                    }
-                                    Spacer()
+                                .padding(.bottom, 30)
+
+                                HStack(spacing: 12) {
                                     Button { showLyrics = true } label: {
                                         Label("Lyrics", systemImage: "text.quote")
+                                            .font(.subheadline.weight(.semibold))
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 15)
                                     }
-                                    Spacer()
+                                    .buttonStyle(.plain)
+                                    .premiumCard(radius: 16)
                                     ShareLink(item: library.fileURL(for: track)) {
-                                        Label("Share file", systemImage: "square.and.arrow.up")
+                                        Label("Share song", systemImage: "square.and.arrow.up")
+                                            .font(.subheadline.weight(.semibold))
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 15)
                                     }
+                                    .buttonStyle(.plain)
+                                    .premiumCard(radius: 16)
                                 }
-                                .font(.subheadline)
-                                .tint(ShelfTheme.accent)
+                                .foregroundStyle(.white)
                                 Spacer(minLength: 24)
                             }
-                            .padding(.horizontal, 26)
+                            .padding(.horizontal, 27)
                         }
+                        .scrollIndicators(.hidden)
                     }
                 } else {
-                    EmptyShelfView(title: "Nothing playing", subtitle: "Choose a song in your library to get started.", symbol: "music.note")
+                    EmptyShelfView(title: "Nothing playing",
+                                   subtitle: "Pick something from your library.",
+                                   symbol: "music.note")
+                        .padding(24)
                 }
             }
-            .background(ShelfTheme.background.ignoresSafeArea())
-            .navigationTitle("Now Playing")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+            .background {
+                ZStack {
+                    PremiumBackdrop()
+                    RadialGradient(colors: [ShelfTheme.accent.opacity(0.095), .clear],
+                                   center: .center, startRadius: 40, endRadius: 430)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(ShelfTheme.elevated, in: Circle())
+                    }
+                    .accessibilityLabel("Close player")
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showLyrics) {
                 if let id = playback.currentTrackID { LyricsView(songID: id) }
             }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func playerButton(_ symbol: String, active: Bool,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(active ? ShelfTheme.mint : ShelfTheme.subdued)
+                .frame(width: 40, height: 48)
         }
     }
 }
