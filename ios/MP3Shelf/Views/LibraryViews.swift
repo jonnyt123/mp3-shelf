@@ -360,9 +360,32 @@ struct PlaylistsView: View {
                     PremiumSectionHeading(title: "Your playlists",
                                           detail: "\(library.playlists.count) collections")
                     if library.playlists.isEmpty {
-                        EmptyShelfView(title: "Make something personal",
-                                       subtitle: "Mix the songs you love into playlists for any occasion.",
-                                       symbol: "square.stack")
+                        VStack(alignment: .leading, spacing: 13) {
+                            PremiumIcon(symbol: "square.stack.3d.up",
+                                        color: ShelfTheme.accent, size: 55)
+                            Text("Every great mix starts somewhere.")
+                                .font(.system(.title3, design: .rounded, weight: .bold))
+                                .foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Create a playlist for the songs you'll never get tired of.")
+                                .font(.subheadline)
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                showCreate = true
+                            } label: {
+                                Label("Create a playlist", systemImage: "plus")
+                                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(minHeight: 46)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(ShelfTheme.accent)
+                            .padding(.top, 5)
+                        }
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .premiumCard(radius: 24)
                     } else {
                         LazyVGrid(columns: columns, spacing: 13) {
                             ForEach(library.playlists.indices, id: \.self) { index in
