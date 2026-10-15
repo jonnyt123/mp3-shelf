@@ -80,7 +80,7 @@ struct DownloadView: View {
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
                     }
-                    TextField("https://example.com/your-track.mp3", text: $remoteURL,
+                    TextField("Paste a direct MP3 file URL", text: $remoteURL,
                               axis: .vertical)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -241,8 +241,10 @@ struct SettingsView: View {
                     PremiumIcon(symbol: "internaldrive.fill", color: ShelfTheme.mint, size: 58)
                     VStack(alignment: .leading, spacing: 6) {
                         PremiumEyebrow(title: "STORED LOCALLY")
-                        Text(ByteCountFormatter.string(
-                            fromByteCount: library.totalStorageBytes, countStyle: .file))
+                        Text(library.totalStorageBytes == 0
+                             ? "0 MB"
+                             : ByteCountFormatter.string(
+                                 fromByteCount: library.totalStorageBytes, countStyle: .file))
                             .font(.system(.title2, design: .rounded, weight: .bold))
                         Text("Ready even in airplane mode")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
