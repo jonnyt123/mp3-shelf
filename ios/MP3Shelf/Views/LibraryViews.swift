@@ -402,17 +402,29 @@ struct PlaylistDetailView: View {
         List {
             if let playlist {
                 Section {
-                    HStack(spacing: 12) {
-                        Image(systemName: "music.note.list")
-                            .font(.largeTitle).foregroundStyle(ShelfTheme.accent)
-                            .frame(width: 70, height: 70)
-                            .background(ShelfTheme.surface, in: RoundedRectangle(cornerRadius: 18))
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(playlist.name).font(.title3.bold())
-                            Text("\(playlist.trackIDs.count) downloaded · \(playlist.missingTracks.count) unmatched")
-                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    HStack(spacing: 16) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(LinearGradient(
+                                    colors: ShelfTheme.artworkColors(for: playlist.name),
+                                    startPoint: .topLeading, endPoint: .bottomTrailing))
+                            Image(systemName: "waveform")
+                                .font(.system(size: 34, weight: .light))
+                                .foregroundStyle(.white)
+                        }
+                        .frame(width: 82, height: 82)
+                        VStack(alignment: .leading, spacing: 6) {
+                            PremiumEyebrow(title: "YOUR PLAYLIST", color: ShelfTheme.coral)
+                            Text(playlist.name)
+                                .font(.system(.title2, design: .rounded, weight: .bold))
+                                .foregroundStyle(.white)
+                                .lineLimit(2)
+                            Text("\(playlist.trackIDs.count) offline · \(playlist.missingTracks.count) missing")
+                                .font(.caption)
+                                .foregroundStyle(ShelfTheme.subdued)
                         }
                     }
+                    .padding(.vertical, 12)
                     HStack(spacing: 12) {
                         Button { if let first = library.songs(in: playlist).first { playback.play(first, queue: library.songs(in: playlist)) } } label: {
                             Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
@@ -435,11 +447,11 @@ struct PlaylistDetailView: View {
                         }
                     }
                 }
-                .listRowBackground(ShelfTheme.background)
+                .listRowBackground(ShelfTheme.surface)
                 if !playlist.missingTracks.isEmpty ||
                     library.automaticDownloadProgress?.playlistID == playlistID ||
                     BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
-                    Section("Find & Download MP3s") {
+                    Section("FIND YOUR MUSIC") {
                         Text("Searches Internet Archive and eligible Openverse catalogs for exact artist/title matches, MP3 files, and declared Creative Commons/public-domain licenses. Verified download URLs transfer through iOS even while the screen is locked. Popular commercial songs are unlikely to qualify.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
@@ -505,12 +517,13 @@ struct PlaylistDetailView: View {
                         Text("Catalog licenses are uploader-declared and not independently certified. Songs with no authorized download stay unmatched.")
                             .font(.caption2).foregroundStyle(ShelfTheme.subdued)
                     }
-                    .listRowBackground(ShelfTheme.background)
+                    .listRowBackground(ShelfTheme.surface)
                 }
-                Section("Available Offline") {
+                Section("AVAILABLE OFFLINE") {
                     ForEach(library.songs(in: playlist)) { track in
                         MusicTrackRow(track: track, context: library.songs(in: playlist), renaming: $editing)
-                            .listRowBackground(ShelfTheme.background)
+                            .listRowBackground(.clear)
+                            .listRowSeparator(.hidden)
                             .swipeActions {
                                 Button("Remove", role: .destructive) {
                                     library.removeTrack(track.id, from: playlistID)
@@ -520,7 +533,7 @@ struct PlaylistDetailView: View {
                     .onMove { from, to in library.moveTracks(in: playlistID, from: from, to: to) }
                 }
                 if !playlist.missingTracks.isEmpty {
-                    Section("Not Found in Your Files") {
+                    Section("STILL MISSING") {
                         ForEach(playlist.missingTracks) { wish in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(wish.title).font(.subheadline.bold())
@@ -536,7 +549,8 @@ struct PlaylistDetailView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(ShelfTheme.background)
+        .background(PremiumBackdrop())
+        .tint(ShelfTheme.accent)
         .navigationTitle(playlist?.name ?? "Playlist")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
