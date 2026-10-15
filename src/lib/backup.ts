@@ -1,6 +1,7 @@
 import type {Track} from "./tracks";
+import type {PlaylistWish} from "./playlist-import";
 
-export type BackupPlaylist={id:string;name:string;trackIds:string[]};
+export type BackupPlaylist={id:string;name:string;trackIds:string[];sourceURL?:string;wishes?:PlaylistWish[]};
 export type LibraryBackup={tracks:Track[];playlists:BackupPlaylist[]};
 
 const MAGIC="MP3SHELF1\n";
@@ -55,7 +56,20 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
  });
  const playlists=parsed.playlists.map((value,index)=>{
   if(!isRecord(value)||!Array.isArray(value.trackIds)||!value.trackIds.every(id=>typeof id==="string"))throw new Error(`Invalid playlist ${index+1} in backup.`);
-  return{id:requiredString(value.id,"playlist ID"),name:requiredString(value.name,"playlist name"),trackIds:value.trackIds};
+  const sourceURL = optionalString(value.sourceURL);
+  const wishes = value.wishes;
+  if (wishes !== undefined && (!Array.isArray(wishes) || wishes.length > 5000 ||
+    !wishes.every(wish => isRecord(wish) && typeof wish.title === "string" &&
+      typeof wish.artist === "string" && typeof wish.album === "string" &&
+      (wish.spotifyURL === undefined || typeof wish.spotifyURL === "string"))))
+    throw new Error(`Invalid playlist song list ${index+1} in backup.`);
+  return {
+    id:requiredString(value.id,"playlist ID"),
+    name:requiredString(value.name,"playlist name"),
+    trackIds:value.trackIds,
+    ...(sourceURL ? {sourceURL} : {}),
+    ...(wishes ? {wishes: wishes as PlaylistWish[]} : {})
+  };
  });
  return{tracks,playlists};
 }
