@@ -2,6 +2,14 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct LibraryView: View {
+    private enum SortMode: String, CaseIterable, Identifiable {
+        case title = "Title"
+        case recent = "Recently added"
+        case artist = "Artist"
+
+        var id: String { rawValue }
+    }
+
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var showFilePicker = false
@@ -14,6 +22,7 @@ struct LibraryView: View {
         return ""
     }()
     @State private var favoritesOnly = false
+    @State private var sortMode: SortMode = .title
     @State private var message: String?
     @State private var renaming: MusicTrack?
 
@@ -33,7 +42,36 @@ struct LibraryView: View {
                     $0.localizedCaseInsensitiveContains(query)
                 }))
         }
-        .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        .sorted { lhs, rhs in
+            switch sortMode {
+            case .title:
+                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            case .recent:
+                return lhs.addedAt == rhs.addedAt
+                    ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+                    : lhs.addedAt > rhs.addedAt
+            case .artist:
+                let order = lhs.artist.localizedStandardCompare(rhs.artist)
+                return order == .orderedSame
+                    ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+                    : order == .orderedAscending
+            }
+        }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort songs", selection: $sortMode) {
+                ForEach(SortMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(ShelfTheme.accent)
+        }
+        .accessibilityLabel("Sort songs by \(sortMode.rawValue)")
     }
 
     var body: some View {
@@ -49,9 +87,12 @@ struct LibraryView: View {
                                     .foregroundStyle(.white)
                             }
                             Spacer()
-                            Text("\(displayed.count) found")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(ShelfTheme.subdued)
+                            VStack(alignment: .trailing, spacing: 9) {
+                                Text("\(displayed.count) found")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(ShelfTheme.subdued)
+                                sortMenu
+                            }
                         }
                         HStack(spacing: 10) {
                             filterButton("All music", selected: !favoritesOnly) {
@@ -234,8 +275,11 @@ struct LibraryView: View {
                     .accessibilityElement(children: .contain)
 
                     VStack(alignment: .leading, spacing: 13) {
-                        PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
-                                              detail: "\(displayed.count) songs")
+                        HStack(spacing: 12) {
+                            PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
+                                                  detail: "\(displayed.count) songs")
+                            sortMenu
+                        }
                         if displayed.isEmpty {
                             EmptyShelfView(
                                 title: "No favorites yet",
