@@ -60,3 +60,20 @@
 .direct-audio-actions>button:disabled { opacity: .5; }
 .direct-audio-card .direct-audio-status { color: #b2ecd8!important; overflow-wrap: anywhere; }
 .direct-audio-actions>input:focus-visible,.direct-audio-actions>button:focus-visible { outline: 2px solid #b5efdd; outline-offset: 2px; }
+
+.output-controls .lyrics-show-button { min-height: 42px; padding: 9px 12px; border: 1px solid rgba(189,169,231,.3); border-radius: 12px; background: rgba(52,40,72,.62); color: #d6c0ff; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.lyrics-overlay { position: fixed; z-index: 20; inset: calc(env(safe-area-inset-top) + 76px) 14px calc(env(safe-area-inset-bottom) + 14px); display: flex; flex-direction: column; min-height: 0; padding: 18px; border: 1px solid rgba(204,184,244,.22); border-radius: 22px; background: #14121d; box-shadow: 0 12px 60px rgba(0,0,0,.65); }
+.lyrics-overlay>header { display: flex; justify-content: space-between; align-items: center; text-align: left; }
+.lyrics-overlay>header h3 { margin: 0; font-size: 18px; }
+.lyrics-overlay>header h3 small { display: block; margin-top: 5px; color: #a9a4b5; font-size: 11px; font-weight: 450; }
+.lyrics-overlay>header button { flex: none; min-height: 44px; min-width: 44px; }
+.lyrics-lines { overflow-y: auto; min-height: 0; flex: 1; display: flex; flex-direction: column; justify-content: safe center; gap: 10px; margin-top: 18px; padding: 18px 6px; text-align: center; scrollbar-width: thin; }
+.lyrics-lines p { margin: 0; color: #aaa4b7; font-size: clamp(17px,5vw,23px); font-weight: 560; line-height: 1.4; }
+.lyrics-lines p.active { color: #ddcafa; font-weight: 760; }
+.lyrics-empty { margin: auto; }
+.lyrics-empty h4 { margin: 0 0 12px; font-size: 19px; }
+.lyrics-empty p { color: #b7b4c3; font-size: 13px; }
+.lyrics-actions { display: flex; gap: 8px; margin-top: auto; }
+.lyrics-actions button { flex: 1; min-height: 44px; padding: 10px; border: 1px solid #594976; border-radius: 12px; background: #2e253e; color: #e6d6fd; font-size: 11px; font-weight: 650; }
+.lyrics-notice { margin: 8px 0 0; color: #c6e8d9; font-size: 11px; }
+@media(max-width:380px) { .lyrics-actions { flex-wrap:wrap; } }
