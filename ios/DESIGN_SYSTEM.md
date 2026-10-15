@@ -120,3 +120,21 @@ availability. Keep the visual branch in draft pending device QA.
   `filled-library.png` and `player.png`. Verify captured screenshots
   manually and test the real iPhone for lock-screen audio/session and
   background transport behavior before making release claims.
+
+## Follow-up visual review
+
+The first six-screen Simulator snapshot passed on 2026-10-15. The populated
+library correctly exposes Recent Additions; the Now Playing screen shows a
+working progress slider, three generated local tracks and an Up Next list
+reachable by scrolling. First-run import/navigation and all utility tabs
+rendered with consistent safe areas and spacing.
+
+Remaining refinements:
+- Omit the importer fallback album title "Unknown Album" from Now Playing
+  while preserving real, meaningful embedded album metadata.
+- Offer **Your downloads** as a live-status navigation card directly within
+  **Add Music**, alongside the existing Settings and playlist entry points.
+- Screenshot the Download Manager as a seventh surface using the
+  `--mp3shelf-snapshot-downloads` DEBUG-only launch argument. The screenshot
+  must reflect the actual screen without generating fake transfer records.
+- Keep the source downloads, playback services and data models unchanged.
