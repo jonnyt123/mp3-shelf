@@ -35,69 +35,115 @@ struct LibraryView: View {
                 }
                 .padding(.top, 10)
 
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 6) {
-                            Circle().fill(ShelfTheme.mint).frame(width: 7, height: 7)
-                            Text("ALWAYS OFFLINE")
-                                .font(.system(size: 10, weight: .heavy, design: .rounded))
-                                .tracking(1.6)
-                                .foregroundStyle(ShelfTheme.mint)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(ShelfTheme.mint)
+                                    .frame(width: 7, height: 7)
+                                Text("ALWAYS OFFLINE")
+                                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                    .tracking(1.6)
+                                    .foregroundStyle(ShelfTheme.mint)
+                            }
+                            Text(library.tracks.isEmpty
+                                 ? "Start your\nsoundtrack."
+                                 : "All yours.\nAlways playing.")
+                                .font(.system(size: 26, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(library.tracks.isEmpty
+                                 ? "Your favorite songs, right on your iPhone."
+                                 : "\(library.tracks.count) songs ready wherever life takes you.")
+                                .font(.subheadline)
+                                .foregroundStyle(.white.opacity(0.8))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        Text("All yours.\nAlways playing.")
-                            .font(.system(size: 26, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("\(library.tracks.count) songs ready wherever life takes you.")
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.77))
-                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        ArtworkTile(track: library.tracks.last,
+                                    size: library.tracks.isEmpty ? 92 : 110)
+                            .rotationEffect(.degrees(7))
+                            .shadow(color: .black.opacity(0.3), radius: 12, y: 9)
+                            .accessibilityHidden(true)
                     }
-                    Spacer(minLength: 0)
-                    ArtworkTile(track: library.tracks.last, size: 110)
-                        .rotationEffect(.degrees(7))
-                        .shadow(color: .black.opacity(0.3), radius: 12, y: 9)
-                        .accessibilityHidden(true)
+                    if library.tracks.isEmpty {
+                        Button {
+                            showFilePicker = true
+                        } label: {
+                            HStack(spacing: 9) {
+                                Image(systemName: "plus.circle.fill")
+                                Text("Import your music")
+                                Spacer()
+                                Image(systemName: "arrow.right")
+                            }
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(ShelfTheme.background)
+                            .padding(.horizontal, 17)
+                            .frame(minHeight: 47)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 14))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Choose existing audio files from your iPhone")
+                    }
                 }
-                .padding(22)
-                .frame(maxWidth: .infinity, minHeight: 198, alignment: .leading)
-                .background(ShelfTheme.heroGradient,
-                            in: RoundedRectangle(cornerRadius: 28))
-                .overlay(RoundedRectangle(cornerRadius: 28)
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ShelfTheme.heroGradient, in: RoundedRectangle(cornerRadius: 26))
+                .overlay(RoundedRectangle(cornerRadius: 26)
                     .strokeBorder(.white.opacity(0.14), lineWidth: 1))
 
-                HStack(spacing: 10) {
-                    filterButton("All music", selected: !favoritesOnly) { favoritesOnly = false }
-                    filterButton("Favorites", symbol: "heart.fill", selected: favoritesOnly) { favoritesOnly = true }
-                    Spacer(minLength: 0)
-                }
-                .accessibilityElement(children: .contain)
-
-                VStack(alignment: .leading, spacing: 13) {
-                    PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
-                                          detail: "\(displayed.count) songs")
-                    if displayed.isEmpty {
-                        VStack(spacing: 15) {
-                            EmptyShelfView(
-                                title: favoritesOnly ? "Nothing here just yet" : "Your soundtrack starts here",
-                                subtitle: favoritesOnly ? "Tap the heart on a song you love." :
-                                    "Bring your favorite MP3 files and take your music everywhere.",
-                                symbol: favoritesOnly ? "heart" : "music.note")
-                            if !favoritesOnly {
-                                Button { showFilePicker = true } label: {
-                                    Label("Add your first songs", systemImage: "plus")
-                                        .font(.subheadline.bold())
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
+                if library.tracks.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        PremiumSectionHeading(title: "More ways to listen")
+                        NavigationLink { SpotifyConnectView() } label: {
+                            HStack(spacing: 14) {
+                                PremiumIcon(symbol: "square.stack.3d.up",
+                                            color: ShelfTheme.coral, size: 46)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Import a Spotify playlist")
+                                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                        .foregroundStyle(.white)
+                                    Text("Find eligible MP3s for your song list")
+                                        .font(.caption)
+                                        .foregroundStyle(ShelfTheme.subdued)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(ShelfTheme.accent)
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(ShelfTheme.subdued)
                             }
+                            .padding(14)
+                            .premiumCard(radius: 20)
                         }
-                    } else {
-                        LazyVStack(spacing: 9) {
-                            ForEach(displayed) { track in
-                                MusicTrackRow(track: track, context: displayed, renaming: $renaming)
+                        .buttonStyle(.plain)
+                        Text("Your music stays on your device and plays without a connection.")
+                            .font(.caption)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .padding(.horizontal, 3)
+                    }
+                } else {
+                    HStack(spacing: 10) {
+                        filterButton("All music", selected: !favoritesOnly) { favoritesOnly = false }
+                        filterButton("Favorites", symbol: "heart.fill",
+                                     selected: favoritesOnly) { favoritesOnly = true }
+                        Spacer(minLength: 0)
+                    }
+                    .accessibilityElement(children: .contain)
+
+                    VStack(alignment: .leading, spacing: 13) {
+                        PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
+                                              detail: "\(displayed.count) songs")
+                        if displayed.isEmpty {
+                            EmptyShelfView(
+                                title: "No favorites yet",
+                                subtitle: "Tap the heart on a song to collect it here.",
+                                symbol: "heart")
+                        } else {
+                            LazyVStack(spacing: 9) {
+                                ForEach(displayed) { track in
+                                    MusicTrackRow(track: track, context: displayed,
+                                                  renaming: $renaming)
+                                }
                             }
                         }
                     }
