@@ -173,7 +173,15 @@ extension AudioSourceFinder {
               let download, let downloadURL = URL(string: download),
               let landing, let landingURL = URL(string: landing),
               downloadURL.scheme == "https", landingURL.scheme == "https",
-              downloadURL.host != nil, landingURL.host != nil,
+              let host = downloadURL.host?.lowercased(), landingURL.host != nil,
+              // Only accept direct files on the named publisher's trusted hosts.
+              (
+                  (source.lowercased() == "wikimedia" && host == "upload.wikimedia.org") ||
+                  (source.lowercased() == "fma" && (host == "files.freemusicarchive.org" ||
+                                                    host == "freemusicarchive.org")) ||
+                  (source.lowercased() == "ccmixter" && (host == "ccmixter.org" ||
+                                                         host.hasSuffix(".ccmixter.org")))
+              ),
               downloadURL.pathExtension.lowercased() == "mp3",
               ["mp3", "audio/mpeg", "audio/mp3"].contains((filetype ?? "").lowercased()),
               filesize == nil || (filesize! > 0 && filesize! <= 100 * 1024 * 1024)
