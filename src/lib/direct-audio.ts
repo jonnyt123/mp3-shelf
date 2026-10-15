@@ -36,7 +36,7 @@ export async function downloadAuthorizedMP3(
 
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Your browser could not read the audio response.");
-  const chunks: Uint8Array[] = [];
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
   let bytes = 0;
   try {
     while (true) {
@@ -44,7 +44,7 @@ export async function downloadAuthorizedMP3(
       if (done) break;
       bytes += value.byteLength;
       if (bytes > MAX_MP3_BYTES) throw new Error("Audio files over 100 MB are not supported.");
-      chunks.push(value);
+      chunks.push(new Uint8Array(value));
     }
   } finally {
     reader.releaseLock();
