@@ -26,10 +26,11 @@ struct LibraryView: View {
     }
 
     private var displayed: [MusicTrack] {
-        library.tracks.filter { track in
-            (!favoritesOnly || track.isFavorite) && (searchText.isEmpty ||
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return library.tracks.filter { track in
+            (!favoritesOnly || track.isFavorite) && (query.isEmpty ||
                 [track.title, track.artist, track.album].contains(where: {
-                    $0.localizedCaseInsensitiveContains(searchText)
+                    $0.localizedCaseInsensitiveContains(query)
                 }))
         }
         .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
