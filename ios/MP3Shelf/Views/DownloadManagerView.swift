@@ -49,7 +49,6 @@ struct DownloadManagerView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, 10)
-                LabeledContent("In progress", value: "\(transfers.pendingCount())")
                 LabeledContent("Music stored", value: library.totalStorageBytes == 0
                     ? "0 MB"
                     : ByteCountFormatter.string(
@@ -105,13 +104,15 @@ struct DownloadManagerView: View {
                     }
                 }
             }
-            Section {
-                Button("Clear Finished Download History", role: .destructive) {
-                    confirmClear = true
+            if allTickets.contains(where: { $0.status != .queued }) {
+                Section {
+                    Button("Clear Finished Download History", role: .destructive) {
+                        confirmClear = true
+                    }
+                    .disabled(allTickets.allSatisfy { $0.status == .queued })
+                    Text("Removing history does not delete playable music. Use Manage Music Storage to delete stored MP3 files.")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }
-                .disabled(allTickets.allSatisfy { $0.status == .queued })
-                Text("Removing history does not delete playable music. Use Manage Music Storage to delete stored MP3 files.")
-                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
             }
         }
         .scrollContentBackground(.hidden)
