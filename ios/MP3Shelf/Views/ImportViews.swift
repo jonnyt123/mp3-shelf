@@ -158,8 +158,14 @@ struct SpotifyImportView: View {
         Form {
             Section {
                 VStack(alignment: .leading, spacing: 9) {
-                    Label("Spotify playlist → offline collection", systemImage: "square.stack.3d.up.fill")
-                        .font(.headline)
+                    HStack(spacing: 13) {
+                        PremiumIcon(symbol: "square.stack.3d.up", color: ShelfTheme.mint, size: 49)
+                        VStack(alignment: .leading, spacing: 5) {
+                            PremiumEyebrow(title: "PLAYLIST IMPORT")
+                            Text("A playlist that travels.")
+                                .font(.system(.headline, design: .rounded, weight: .bold))
+                        }
+                    }
                     Text("Import a CSV or TSV list of your playlist's tracks. MP3 Shelf matches your local music, then automatically searches for independently licensed MP3 downloads for missing songs.")
                         .foregroundStyle(ShelfTheme.subdued).font(.subheadline)
                     Text("This does not turn Spotify streams into MP3s. Commercial recordings usually have no qualifying free download source.")
@@ -195,6 +201,9 @@ struct SpotifyImportView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(PremiumBackdrop())
+        .tint(ShelfTheme.accent)
         .navigationTitle("Import Playlist")
         .fileImporter(isPresented: $showDocumentPicker,
                       allowedContentTypes: [.commaSeparatedText, .plainText],
