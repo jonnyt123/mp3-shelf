@@ -13,6 +13,15 @@ describe("MP3 Shelf backups",()=>{
   expect(restored.playlists).toEqual([{id:"mix-1",name:"Favorites",trackIds:["song-1"]}]);
  });
 
+ it("backs up Spotify playlist metadata without saving Spotify audio",async()=>{
+  const playlist={id:"spotify-playlist",name:"Road Mix",trackIds:[],
+    sourceURL:"https://open.spotify.com/playlist/0123456789ABCDEFGHIJKL",
+    wishes:[{title:"Song",artist:"Artist",album:"Record",spotifyURL:"https://open.spotify.com/track/0123456789ABCDEFGHIJKL"}]};
+  const result=await parseLibraryBackup(createLibraryBackup([],[playlist]));
+  expect(result.tracks).toHaveLength(0);
+  expect(result.playlists).toEqual([playlist]);
+ });
+
  it("rejects unrelated and truncated files",async()=>{
   await expect(parseLibraryBackup(new Blob(["not a backup"]))).rejects.toThrow("not an MP3 Shelf backup");
   const valid=createLibraryBackup([],[]);
