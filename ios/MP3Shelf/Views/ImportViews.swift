@@ -124,6 +124,31 @@ struct DownloadView: View {
                 }
                 .padding(19)
                 .premiumCard(radius: 25)
+
+                NavigationLink { DownloadManagerView() } label: {
+                    HStack(spacing: 12) {
+                        PremiumIcon(symbol: "arrow.down.circle",
+                                    color: ShelfTheme.mint, size: 44)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Your downloads")
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                .foregroundStyle(.white)
+                            Text(library.pendingBackgroundDownloads == 0
+                                 ? "See transfer history and saved files"
+                                 : "\(library.pendingBackgroundDownloads) transfers in progress")
+                                .font(.caption)
+                                .foregroundStyle(ShelfTheme.subdued)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.bold())
+                            .foregroundStyle(ShelfTheme.subdued)
+                    }
+                    .padding(15)
+                    .premiumCard(radius: 19)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open Download Manager")
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 30)
