@@ -15,7 +15,20 @@ jobs:
       - name: Build iPhone simulator app without signing
         run: |
           xcodebuild -project ios/MP3Shelf.xcodeproj -scheme MP3Shelf -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Playlist parser regression tests
+        run: |
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/Tests/PlaylistCSVTests.swift -o /tmp/mp3shelf-playlist && /tmp/mp3shelf-playlist
+      - name: Lyrics parser regression tests
+        run: |
+          swiftc ios/MP3Shelf/Services/LyricsParser.swift ios/Tests/LyricsParserTests.swift -o /tmp/mp3shelf-lyrics && /tmp/mp3shelf-lyrics
+      - name: Licensed MP3 source matching regression tests
+        run: |
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/MP3Shelf/Services/AudioSourceFinder.swift ios/Tests/AudioSourceFinderTests.swift -o /tmp/mp3shelf-source-finder && /tmp/mp3shelf-source-finder
+      - name: Persistent discovery resume regression tests
+        run: |
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Models/SourceDiscoveryJob.swift ios/Tests/SourceDiscoveryJobTests.swift -o /tmp/mp3shelf-discovery && /tmp/mp3shelf-discovery
       - name: Install and launch iPhone Simulator app
+        timeout-minutes: 8
         run: |
           set -euo pipefail
           xcrun simctl list -j devices available > /tmp/mp3shelf-simulators.json
@@ -48,15 +61,3 @@ jobs:
           name: mp3shelf-simulator-screenshot
           path: ${{ runner.temp }}/mp3shelf-simulator.png
           if-no-files-found: ignore
-      - name: Playlist parser regression tests
-        run: |
-          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/Tests/PlaylistCSVTests.swift -o /tmp/mp3shelf-playlist && /tmp/mp3shelf-playlist
-      - name: Lyrics parser regression tests
-        run: |
-          swiftc ios/MP3Shelf/Services/LyricsParser.swift ios/Tests/LyricsParserTests.swift -o /tmp/mp3shelf-lyrics && /tmp/mp3shelf-lyrics
-      - name: Licensed MP3 source matching regression tests
-        run: |
-          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/MP3Shelf/Services/AudioSourceFinder.swift ios/Tests/AudioSourceFinderTests.swift -o /tmp/mp3shelf-source-finder && /tmp/mp3shelf-source-finder
-      - name: Persistent discovery resume regression tests
-        run: |
-          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Models/SourceDiscoveryJob.swift ios/Tests/SourceDiscoveryJobTests.swift -o /tmp/mp3shelf-discovery && /tmp/mp3shelf-discovery
