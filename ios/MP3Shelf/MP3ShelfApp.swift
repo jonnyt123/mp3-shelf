@@ -44,7 +44,8 @@ struct MP3ShelfApp: App {
                     let snapshotArguments = ProcessInfo.processInfo.arguments
                     if !didStartVisualFixture &&
                         (snapshotArguments.contains("--mp3shelf-snapshot-player") ||
-                         snapshotArguments.contains("--mp3shelf-snapshot-filled-library")) {
+                         snapshotArguments.contains("--mp3shelf-snapshot-filled-library") ||
+                         snapshotArguments.contains("--mp3shelf-snapshot-search")) {
                         didStartVisualFixture = true
                         Task {
                             await installVisualQAAudio(
