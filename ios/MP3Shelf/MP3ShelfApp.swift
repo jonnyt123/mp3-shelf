@@ -1,7 +1,23 @@
 import SwiftUI
+import UIKit
+
+final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == BackgroundAudioDownloader.identifier else {
+            completionHandler()
+            return
+        }
+        Task { @MainActor in
+            BackgroundAudioDownloader.shared.setBackgroundEventsCompletion(completionHandler)
+        }
+    }
+}
 
 @main
 struct MP3ShelfApp: App {
+    @UIApplicationDelegateAdaptor(MP3ShelfAppDelegate.self) private var appDelegate
     @StateObject private var library = MusicLibrary()
     @StateObject private var playback = PlaybackController()
     @StateObject private var spotify = SpotifyService()
@@ -13,7 +29,10 @@ struct MP3ShelfApp: App {
                 .environmentObject(playback)
                 .environmentObject(spotify)
                 .preferredColorScheme(.dark)
-                .onAppear { playback.connect(to: library) }
+                .onAppear {
+                    playback.connect(to: library)
+                    BackgroundAudioDownloader.shared.attach(to: library)
+                }
         }
     }
 }

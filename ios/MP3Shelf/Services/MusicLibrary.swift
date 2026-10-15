@@ -8,6 +8,7 @@ struct AutomaticDownloadProgress {
     let total: Int
     var processed: Int = 0
     var downloaded: Int = 0
+    var queued: Int = 0
     var unavailable: Int = 0
     var failed: Int = 0
     var currentSong: String = ""
@@ -20,6 +21,7 @@ final class MusicLibrary: ObservableObject {
     @Published private(set) var tracks: [MusicTrack] = []
     @Published private(set) var playlists: [MusicPlaylist] = []
     @Published var isImporting = false
+    @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
 
@@ -184,6 +186,44 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
+    /// Resolved URLs transfer via Apple's background daemon. The UI receives
+    /// results when the app is running or next reactivated by the system.
+    func finishedBackgroundDownload(for playlistID: UUID, succeeded: Bool) {
+        guard var progress = automaticDownloadProgress, progress.playlistID == playlistID else { return }
+        if succeeded { progress.downloaded += 1 }
+        else { progress.failed += 1 }
+        automaticDownloadProgress = progress
+    }
+
+    func stopBackgroundTransfers(for playlistID: UUID) {
+        BackgroundAudioDownloader.shared.stopTransfers(for: playlistID)
+    }
+
+    func importStagedAudio(from fileURL: URL, matching wish: PlaylistWish,
+                           attribution: AudioSourceAttribution) async throws -> Bool {
+        let bytes = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard bytes > 0 && bytes <= 100 * 1024 * 1024 else {
+            throw MusicLibraryError.downloadFailed
+        }
+        let original = "\(wish.artist) - \(wish.title).mp3"
+        let imported = try await addLocalAudio(sourceURL: fileURL,
+                                               originalName: original,
+                                               expectedDuration: wish.durationSeconds)
+        if imported {
+            // Metadata comes from the playlist's exact-match catalog entry, not
+            // from arbitrary downloaded file tags that may be absent.
+            if let last = tracks.indices.last {
+                tracks[last].title = wish.title
+                tracks[last].artist = wish.artist
+                if !wish.album.isEmpty { tracks[last].album = wish.album }
+                tracks[last].sourceAttribution = attribution
+                save()
+            }
+            reconcileMissingSongs()
+        }
+        return imported
+    }
+
     func cancelAutomaticDownloads() {
         automaticDownloadTask?.cancel()
     }
@@ -201,15 +241,13 @@ final class MusicLibrary: ObservableObject {
                 continue
             }
             do {
-                if let source = try await AudioSourceFinder.find(for: wish) {
-                    let attribution = AudioSourceAttribution(
-                        pageURL: source.itemURL.absoluteString,
-                        licenseURL: source.licenseURL.absoluteString,
-                        providerName: source.sourceName)
-                    let result = try await downloadAudio(
-                        from: source.downloadURL, matching: wish, attribution: attribution)
-                    if result.imported > 0 { progress.downloaded += 1 }
-                    else { progress.failed += 1 }
+                if let source = try await AudioSourceFinder.findAcrossCatalogs(for: wish) {
+                    if BackgroundAudioDownloader.shared.enqueue(source: source,
+                               requested: wish, playlistID: playlistID) {
+                        progress.queued += 1
+                    } else {
+                        progress.failed += 1
+                    }
                 } else {
                     progress.unavailable += 1
                 }

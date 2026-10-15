@@ -290,24 +290,25 @@ struct PlaylistDetailView: View {
                 }
                 .listRowBackground(ShelfTheme.background)
                 if !playlist.missingTracks.isEmpty ||
-                    library.automaticDownloadProgress?.playlistID == playlistID {
+                    library.automaticDownloadProgress?.playlistID == playlistID ||
+                    BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
                     Section("Find & Download MP3s") {
-                        Text("Automatically searches independent audio catalogs for an exact artist/title match, an MP3 file, and a declared Creative Commons or public-domain license. No Spotify audio is downloaded. Popular commercial tracks are unlikely to have a qualifying source.")
+                        Text("Searches Internet Archive and eligible Openverse catalogs for exact artist/title matches, MP3 files, and declared Creative Commons/public-domain licenses. Verified download URLs transfer through iOS even while the screen is locked. Popular commercial songs are unlikely to qualify.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         if let progress = library.automaticDownloadProgress,
                            progress.playlistID == playlistID {
-                            Text("\(progress.processed)/\(progress.total) checked • \(progress.downloaded) downloaded • \(progress.unavailable) not found • \(progress.failed) failed")
+                            Text("\(progress.processed)/\(progress.total) checked • \(progress.queued) queued • \(progress.downloaded) downloaded • \(progress.unavailable) not found • \(progress.failed) failed")
                                 .font(.subheadline.monospacedDigit())
                             if progress.isRunning {
                                 ProgressView(value: Double(progress.processed),
                                              total: Double(max(progress.total, 1)))
                                 Text(progress.currentSong)
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                Button("Stop searching", role: .cancel) {
+                                Button("Stop source discovery", role: .cancel) {
                                     library.cancelAutomaticDownloads()
                                 }
                             } else {
-                                Text(progress.wasCancelled ? "Search stopped." : "Source lookup finished.")
+                                Text(progress.wasCancelled ? "Source discovery stopped." : "Source lookup finished. Background downloads may still be running.")
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 if !playlist.missingTracks.isEmpty {
                                     Button("Retry unmatched songs") {
@@ -325,7 +326,16 @@ struct PlaylistDetailView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(library.automaticDownloadProgress?.isRunning == true)
                         }
-                        Text("Licenses on the catalog are uploader-declared, not independently certified. Keep MP3 Shelf open while downloads run. Songs without qualifying sources stay in the unmatched list.")
+                        if BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
+                            Label("\(BackgroundAudioDownloader.shared.pendingCount(for: playlistID)) MP3 downloads active in background", systemImage: "arrow.down.circle.fill")
+                                .font(.subheadline).foregroundStyle(.green)
+                            Button("Cancel background transfers", role: .destructive) {
+                                library.stopBackgroundTransfers(for: playlistID)
+                            }
+                            Text("Downloads can continue after you lock your iPhone. Source discovery resumes only when MP3 Shelf is open.")
+                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        }
+                        Text("Catalog licenses are uploader-declared and not independently certified. Songs with no authorized download stay unmatched.")
                             .font(.caption2).foregroundStyle(ShelfTheme.subdued)
                     }
                     .listRowBackground(ShelfTheme.background)
