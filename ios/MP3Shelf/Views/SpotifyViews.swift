@@ -9,8 +9,16 @@ struct SpotifyConnectView: View {
     var body: some View {
         Form {
             Section {
-                Label("Connect your Spotify account", systemImage: "person.crop.circle.badge.checkmark")
-                    .font(.headline)
+                HStack(spacing: 13) {
+                    PremiumIcon(symbol: "square.stack.3d.up", color: ShelfTheme.coral, size: 54)
+                    VStack(alignment: .leading, spacing: 5) {
+                        PremiumEyebrow(title: "YOUR PLAYLISTS", color: ShelfTheme.coral)
+                        Text("Connect your Spotify")
+                            .font(.system(.headline, design: .rounded, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .padding(.vertical, 6)
                 Text("Browse supported Spotify playlists and build an offline playlist using audio files you already own. Spotify does not allow this app to download its streams as MP3 files.")
                     .font(.subheadline).foregroundStyle(ShelfTheme.subdued)
                 if !spotify.isConnected {
@@ -27,9 +35,10 @@ struct SpotifyConnectView: View {
                     Button("Refresh Spotify Playlists") { Task { await reload() } }
                     Button("Disconnect", role: .destructive) { spotify.disconnect() }
                 }
-            } header: { Text("Spotify Playlist Import") }
+            } header: { Text("ACCOUNT CONNECTION") }
+            .listRowBackground(ShelfTheme.surface)
             if spotify.isConnected {
-                Section("Available Playlists") {
+                Section("YOUR AVAILABLE PLAYLISTS") {
                     if spotify.playlists.isEmpty {
                         Text("No accessible playlists returned. Spotify may restrict playlists you follow but do not own or collaborate on.")
                             .foregroundStyle(ShelfTheme.subdued)
@@ -52,17 +61,20 @@ struct SpotifyConnectView: View {
                     }
                 }
             }
-            Section("Fallback Import") {
+            Section("IMPORT WITHOUT LOGIN") {
                 NavigationLink("Import CSV / TSV Playlist") { SpotifyImportView() }
                 Text("CSV import remains available without Spotify sign-in or API access.")
                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
             }
-            Section("Offline Listening") {
+            Section("HOW IT WORKS") {
                 Text("Spotify authentication and playlist lookup require internet access. MP3 Shelf's previously imported audio and playlists work offline.")
                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
             }
         }
-        .navigationTitle("Spotify")
+        .scrollContentBackground(.hidden)
+        .background(PremiumBackdrop())
+        .tint(ShelfTheme.accent)
+        .navigationTitle("Spotify Playlists")
         .onChange(of: spotify.message) { _, new in
             if let new { notice = new; spotify.message = nil }
         }
