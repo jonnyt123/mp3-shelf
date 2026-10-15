@@ -3,11 +3,25 @@ import Foundation
 import Combine
 import UIKit
 
+struct AutomaticDownloadProgress {
+    let playlistID: UUID
+    let total: Int
+    var processed: Int = 0
+    var downloaded: Int = 0
+    var unavailable: Int = 0
+    var failed: Int = 0
+    var currentSong: String = ""
+    var isRunning: Bool = true
+    var wasCancelled: Bool = false
+}
+
 @MainActor
 final class MusicLibrary: ObservableObject {
     @Published private(set) var tracks: [MusicTrack] = []
     @Published private(set) var playlists: [MusicPlaylist] = []
     @Published var isImporting = false
+    @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
+    private var automaticDownloadTask: Task<Void, Never>?
 
     private let manager = FileManager.default
     private let storageRoot: URL
@@ -151,7 +165,67 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
-    func downloadAudio(from remoteURL: URL) async throws -> ImportReport {
+
+    /// A single tap looks up and downloads eligible files for every missing
+    /// song. Never downloads from Spotify or bypasses access restrictions.
+    /// Keep the app in the foreground: iOS may suspend this task otherwise.
+    func startAutomaticDownloads(for playlistID: UUID) {
+        guard automaticDownloadProgress?.isRunning != true,
+              let playlist = playlists.first(where: { $0.id == playlistID }),
+              !playlist.missingTracks.isEmpty else { return }
+        let wishes = playlist.missingTracks
+        automaticDownloadProgress = AutomaticDownloadProgress(playlistID: playlistID, total: wishes.count)
+        automaticDownloadTask = Task { [weak self] in
+            await self?.runAutomaticDownloads(playlistID: playlistID, wishes: wishes)
+        }
+    }
+
+    func cancelAutomaticDownloads() {
+        automaticDownloadTask?.cancel()
+    }
+
+    private func runAutomaticDownloads(playlistID: UUID, wishes: [PlaylistWish]) async {
+        guard var progress = automaticDownloadProgress else { return }
+        for wish in wishes {
+            if Task.isCancelled { progress.wasCancelled = true; break }
+            progress.currentSong = "\(wish.artist) — \(wish.title)"
+            automaticDownloadProgress = progress
+
+            if MusicMatching.matchingTrack(for: wish, in: tracks) != nil {
+                progress.processed += 1
+                automaticDownloadProgress = progress
+                continue
+            }
+            do {
+                if let source = try await AudioSourceFinder.find(for: wish) {
+                    let attribution = AudioSourceAttribution(
+                        pageURL: source.itemURL.absoluteString,
+                        licenseURL: source.licenseURL.absoluteString,
+                        providerName: source.sourceName)
+                    let result = try await downloadAudio(
+                        from: source.downloadURL, matching: wish, attribution: attribution)
+                    if result.imported > 0 { progress.downloaded += 1 }
+                    else { progress.failed += 1 }
+                } else {
+                    progress.unavailable += 1
+                }
+            } catch is CancellationError {
+                progress.wasCancelled = true
+                break
+            } catch {
+                progress.failed += 1
+            }
+            progress.processed += 1
+            automaticDownloadProgress = progress
+        }
+        progress.isRunning = false
+        progress.currentSong = ""
+        automaticDownloadProgress = progress
+        automaticDownloadTask = nil
+    }
+
+    func downloadAudio(from remoteURL: URL, matching wish: PlaylistWish? = nil,
+                       attribution: AudioSourceAttribution? = nil) async throws -> ImportReport {
         guard remoteURL.scheme?.lowercased() == "https", let host = remoteURL.host?.lowercased(),
               !host.hasSuffix("spotify.com"), !host.hasSuffix("spotifycdn.com"),
               !host.hasSuffix("scdn.co") else { throw MusicLibraryError.invalidDownloadURL }
@@ -164,6 +238,10 @@ final class MusicLibrary: ObservableObject {
         if let finalHost = http.url?.host?.lowercased(),
            ["spotify.com", "spotifycdn.com", "scdn.co"].contains(where: { finalHost == $0 || finalHost.hasSuffix("." + $0) }) {
             throw MusicLibraryError.invalidDownloadURL
+        }
+        let downloadedBytes = (try? manager.attributesOfItem(atPath: temporary.path)[.size] as? NSNumber)?.int64Value ?? 0
+        guard downloadedBytes > 0 && downloadedBytes <= 100 * 1024 * 1024 else {
+            throw MusicLibraryError.downloadFailed
         }
         let ext = remoteURL.pathExtension.lowercased()
         let mime = (http.mimeType ?? "").lowercased()
@@ -179,7 +257,19 @@ final class MusicLibrary: ObservableObject {
         try manager.moveItem(at: temporary, to: staging)
         defer { try? manager.removeItem(at: staging) }
         let imported = try await addLocalAudio(sourceURL: staging, originalName: filename + "." + actualExtension)
-        if imported { reconcileMissingSongs() }
+        if imported {
+            if let wish, let last = tracks.indices.last {
+                // The catalog had to match title/artist (and known duration)
+                // before the file was downloaded. Apply that playlist metadata
+                // so this song immediately occupies its original playlist slot.
+                tracks[last].title = wish.title
+                tracks[last].artist = wish.artist
+                if !wish.album.isEmpty { tracks[last].album = wish.album }
+                tracks[last].sourceAttribution = attribution
+                save()
+            }
+            reconcileMissingSongs()
+        }
         return ImportReport(imported: imported ? 1 : 0, skipped: imported ? 0 : 1)
     }
 
