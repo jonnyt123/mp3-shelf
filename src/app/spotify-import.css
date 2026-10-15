@@ -77,3 +77,7 @@
 .lyrics-actions button { flex: 1; min-height: 44px; padding: 10px; border: 1px solid #594976; border-radius: 12px; background: #2e253e; color: #e6d6fd; font-size: 11px; font-weight: 650; }
 .lyrics-notice { margin: 8px 0 0; color: #c6e8d9; font-size: 11px; }
 @media(max-width:380px) { .lyrics-actions { flex-wrap:wrap; } }
+
+.track-action.favorite { display: grid; flex: none; place-items: center; width: 35px; color: #aba5b6; font-size: 22px; }
+.track-action.favorite.active { color: #fa9b89; }
+.track-action.favorite:focus-visible { outline: 2px solid #e9a8bb; outline-offset: -3px; }
