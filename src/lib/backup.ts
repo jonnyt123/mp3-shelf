@@ -9,7 +9,7 @@ const MAX_MANIFEST_BYTES=4*1024*1024;
 const encoder=new TextEncoder();
 
 type BinaryPart={offset:number;length:number;type:string};
-type BackupTrack={id:string;name:string;originalName?:string;artist?:string;album?:string;importedAt:number;audio:BinaryPart;artwork?:BinaryPart};
+type BackupTrack={id:string;name:string;originalName?:string;artist?:string;album?:string;lyrics?:string;importedAt:number;audio:BinaryPart;artwork?:BinaryPart};
 type Manifest={schema:"mp3-shelf-backup";version:1;createdAt:string;tracks:BackupTrack[];playlists:BackupPlaylist[]};
 
 export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):Blob{
@@ -17,7 +17,7 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
  const archivedTracks=tracks.map(track=>{
   const audio={offset,length:track.blob.size,type:track.type||track.blob.type||"audio/mpeg"};payload.push(track.blob);offset+=track.blob.size;
   let artwork:BinaryPart|undefined;if(track.artwork){artwork={offset,length:track.artwork.size,type:track.artwork.type||"image/jpeg"};payload.push(track.artwork);offset+=track.artwork.size}
-  return{id:track.id,name:track.name,originalName:track.originalName,artist:track.artist,album:track.album,importedAt:track.importedAt,audio,artwork};
+  return{id:track.id,name:track.name,originalName:track.originalName,artist:track.artist,album:track.album,lyrics:track.lyrics,importedAt:track.importedAt,audio,artwork};
  });
  const manifest:Manifest={schema:"mp3-shelf-backup",version:1,createdAt:new Date().toISOString(),tracks:archivedTracks,playlists};
  const manifestBytes=encoder.encode(JSON.stringify(manifest));
@@ -51,8 +51,9 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
  const tracks=parsed.tracks.map((value,index)=>{
   if(!isRecord(value))throw new Error(`Invalid track ${index+1} in backup.`);
   const audio=readPart(value.audio,payloadSize,"audio"),artwork=value.artwork===undefined?undefined:readPart(value.artwork,payloadSize,"artwork");
+  if(typeof value.lyrics==="string"&&new TextEncoder().encode(value.lyrics).length>500*1024)throw new Error("Invalid lyrics size in backup.");
   const blob=file.slice(payloadStart+audio.offset,payloadStart+audio.offset+audio.length,audio.type);
-  return{id:requiredString(value.id,"track ID"),name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName),artist:optionalString(value.artist),album:optionalString(value.album),size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
+  return{id:requiredString(value.id,"track ID"),name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName),artist:optionalString(value.artist),album:optionalString(value.album),lyrics:optionalString(value.lyrics),size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
  });
  const playlists=parsed.playlists.map((value,index)=>{
   if(!isRecord(value)||!Array.isArray(value.trackIds)||!value.trackIds.every(id=>typeof id==="string"))throw new Error(`Invalid playlist ${index+1} in backup.`);
