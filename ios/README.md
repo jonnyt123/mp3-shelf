@@ -36,9 +36,22 @@ Spotify sign-in uses OAuth Authorization Code **with PKCE** and iOS `ASWebAuthen
 2. In Spotify's Development Mode, the app owner currently needs Spotify Premium and the app is limited to up to five allowlisted testers. Add each user in the Spotify dashboard before sign-in.
 3. Open MP3 Shelf → Import → **Connect Spotify Account**. Enter the **Client ID**, sign in, and select a playlist.
 4. Only playlists owned by or collaborative with the signed-in user can expose their items under Spotify's 2026 API rules. Other followed playlists can return HTTP 403; use the CSV fallback for track lists you are permitted to export.
-5. Track metadata is matched against local MP3s. Missing songs require independent, legitimately acquired audio. There is **no automatic Spotify-to-MP3 downloader**.
+5. Track metadata is matched against local MP3s. Missing songs require independent, legitimately acquired audio. There is **no unrestricted Spotify-to-MP3 converter**; only qualifying independent licensed sources can be downloaded.
 
 Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow), [Spotify playlist-items API](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items), [Spotify redirect URIs](https://developer.spotify.com/documentation/web-api/concepts/apps), [Spotify Development Mode](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
+
+## One-tap downloads for imported Spotify playlists
+
+Open **Playlists → Imported Playlist → Find & Automatically Download Available MP3s**. MP3 Shelf checks every missing song against independent audio catalogs, then automatically downloads qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open during an active batch (the current implementation does not support reliable background transfers when iOS suspends the app).
+
+**Current catalog adapter:** Internet Archive. Before importing a result, the app requires:
+- Strict normalized *song title and artist* match; no intentional covers/remixes/other artists.
+- A single MP3 file for the matching archive item, to reject album/concert downloads.
+- A Creative Commons or public-domain license URL declared in the archive item's metadata.
+- When Spotify supplied duration, audio-file duration metadata within four seconds.
+- HTTPS download, decodable local audio, and a maximum 100 MB transfer.
+
+Catalog licenses are declared by uploaders, **not independently verified by MP3 Shelf**. MP3 Shelf stores attribution links for discovered sources. Catalog metadata can be wrong; compare suspect recordings with their source page. Most commercial Spotify recordings do **not** have a legitimate freely downloadable match, and will remain unmatched. The app never bypasses paywalls or DRM, downloads Spotify streams, scrapes arbitrary converter sites, or silently replaces a requested song with a different recording. Spotify developer terms may impose additional restrictions on apps combining Spotify metadata and other audio services; obtain approval before a public production release.
 
 ## Audio enhancements
 
@@ -63,6 +76,7 @@ On macOS or Linux with the Swift toolchain:
 ```sh
 swiftc MP3Shelf/Models/MusicModels.swift MP3Shelf/Services/PlaylistCSV.swift Tests/PlaylistCSVTests.swift -o /tmp/mp3shelf-parser-tests && /tmp/mp3shelf-parser-tests
 swiftc MP3Shelf/Services/LyricsParser.swift Tests/LyricsParserTests.swift -o /tmp/mp3shelf-lyrics-tests && /tmp/mp3shelf-lyrics-tests
+swiftc MP3Shelf/Models/MusicModels.swift MP3Shelf/Services/PlaylistCSV.swift MP3Shelf/Services/AudioSourceFinder.swift Tests/AudioSourceFinderTests.swift -o /tmp/mp3shelf-source-tests && /tmp/mp3shelf-source-tests
 ```
 
 ## Architecture
@@ -72,6 +86,7 @@ swiftc MP3Shelf/Services/LyricsParser.swift Tests/LyricsParserTests.swift -o /tm
 - `Services/PlaybackController.swift`: audio session, queue, playback, remote commands, Now Playing data.
 - `Services/PlaylistCSV.swift`: independently testable CSV/TSV parsing and metadata matching.
 - `Services/SpotifyService.swift`: Spotify PKCE/Keychain and playlist metadata requests.
+- `Services/AudioSourceFinder.swift`: strict independent Archive.org license-declared MP3 matching and lookup.
 - `Services/LyricsParser.swift`: independent LRC / plain-text parsing.
 - `Views/SpotifyViews.swift`, `Views/LyricsView.swift`: playlist importer and offline lyrics.
 - `Views/`: SwiftUI library, playlists, full player, downloads, settings and Spotify playlist import.
