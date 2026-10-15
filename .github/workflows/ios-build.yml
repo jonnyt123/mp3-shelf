@@ -58,9 +58,9 @@ jobs:
           xcrun simctl install "$DEVICE" "$APP"
           mkdir -p "$RUNNER_TEMP/mp3shelf-visual-qa"
           # Each screen opens in a fresh process with DEBUG launch args.
-          # The fifth snapshot uses an original tone generated on-device,
+          # The populated-library and player snapshots use original WAV tones,
           # never a commercial or service-derived audio recording.
-          for tab in listen playlists add-music settings player; do
+          for tab in listen playlists add-music settings filled-library player; do
             if [ "$tab" = "listen" ]; then
               xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf
             else
@@ -68,13 +68,17 @@ jobs:
             fi
             # The player QA fixture generates and imports a real original WAV,
             # then opens Now Playing with functional transport controls.
-            if [ "$tab" = "player" ]; then sleep 7; else sleep 3; fi
+            if [ "$tab" = "player" ] || [ "$tab" = "filled-library" ]; then
+              sleep 7
+            else
+              sleep 3
+            fi
             xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mp3shelf-visual-qa/$tab.png"
             xcrun simctl terminate "$DEVICE" com.jonnyt.mp3shelf
           done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mp3shelf-premium-five-screens
+          name: mp3shelf-premium-six-screens
           path: ${{ runner.temp }}/mp3shelf-visual-qa/*.png
           if-no-files-found: ignore
