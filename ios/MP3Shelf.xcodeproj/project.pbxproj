@@ -1,0 +1,188 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		888888888888888888888888 /* LyricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 777777777777777777777777 /* LyricsView.swift */; };
+		666666666666666666666666 /* LyricsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 555555555555555555555555 /* LyricsParser.swift */; };
+		444444444444444444444444 /* SpotifyViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 333333333333333333333333 /* SpotifyViews.swift */; };
+		222222222222222222222222 /* SpotifyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111111 /* SpotifyService.swift */; };
+		628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D41E86730D9D4E46AD7565B /* MP3ShelfApp.swift */; };
+		58F35F17B0B426557F7C6BFE /* MusicModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */; };
+		23F82C0DAB44C8D8C5F26241 /* MusicLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 556E9F57EB89589680F906AF /* MusicLibrary.swift */; };
+		A400AF7B34CFD773219453FF /* PlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B582D5747D32C08B3D19E5E5 /* PlaybackController.swift */; };
+		899556E67C9A2ED68AADCA8E /* PlaylistCSV.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79182043BBB2F99202EC87D0 /* PlaylistCSV.swift */; };
+		99C401E36FF0BDEE5903FAE2 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13A88BACB079DF001A2CFB03 /* MainView.swift */; };
+		45BDD03CF2227AEBED792CED /* PlayerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA10BC1FA2806F4D64E207CC /* PlayerViews.swift */; };
+		AFBCAD821E0B88FA3FCC9208 /* LibraryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA0F0640481B59038E57A0F /* LibraryViews.swift */; };
+		F53D677CCFFAA563526F33C2 /* ImportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AD92D136E4ED96ECEC7F6FF /* ImportViews.swift */; };
+		DC20160521FD84E15D0C86DE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3D98AD6443220BBB0E7A9295 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		777777777777777777777777 /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsView.swift; sourceTree = "<group>"; };
+		555555555555555555555555 /* LyricsParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsParser.swift; sourceTree = "<group>"; };
+		333333333333333333333333 /* SpotifyViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyViews.swift; sourceTree = "<group>"; };
+		111111111111111111111111 /* SpotifyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyService.swift; sourceTree = "<group>"; };
+		3D41E86730D9D4E46AD7565B /* MP3ShelfApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MP3ShelfApp.swift; sourceTree = "<group>"; };
+		3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicModels.swift; sourceTree = "<group>"; };
+		556E9F57EB89589680F906AF /* MusicLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicLibrary.swift; sourceTree = "<group>"; };
+		B582D5747D32C08B3D19E5E5 /* PlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackController.swift; sourceTree = "<group>"; };
+		79182043BBB2F99202EC87D0 /* PlaylistCSV.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistCSV.swift; sourceTree = "<group>"; };
+		13A88BACB079DF001A2CFB03 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
+		FA10BC1FA2806F4D64E207CC /* PlayerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViews.swift; sourceTree = "<group>"; };
+		EFA0F0640481B59038E57A0F /* LibraryViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViews.swift; sourceTree = "<group>"; };
+		9AD92D136E4ED96ECEC7F6FF /* ImportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportViews.swift; sourceTree = "<group>"; };
+		3D98AD6443220BBB0E7A9295 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C80AF73362F348BD666F5DDB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		638E866708182CE02BFCE157 /* MP3Shelf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MP3Shelf.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F7573E4B8ACF1A7CD256E3D0 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		F649D734EC0812A9975C277B /* Root */ = {isa = PBXGroup; children = (
+				D2B0A806907F095423D4E451 /* MP3Shelf */,
+				470BE65A2412F72452221511 /* Products */,
+			); sourceTree = "<group>"; };
+		470BE65A2412F72452221511 /* Products */ = {isa = PBXGroup; children = (
+				638E866708182CE02BFCE157 /* MP3Shelf.app */,
+			); sourceTree = "<group>"; };
+		D2B0A806907F095423D4E451 /* MP3Shelf */ = {isa = PBXGroup; children = (
+				3D41E86730D9D4E46AD7565B /* MP3ShelfApp.swift */,
+				E9CF4F9355D0A5E1275010D6 /* Models */,
+				F30B052890FF09AC06846E94 /* Services */,
+				4E287F692FC82F49C1B450A3 /* Views */,
+				F358300777CBF3353E807A35 /* Resources */,
+			); path = MP3Shelf; sourceTree = "<group>"; };
+		E9CF4F9355D0A5E1275010D6 /* Models */ = {isa = PBXGroup; children = (
+				3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */,
+			); path = Models; sourceTree = "<group>"; };
+		F30B052890FF09AC06846E94 /* Services */ = {isa = PBXGroup; children = (
+				556E9F57EB89589680F906AF /* MusicLibrary.swift */,
+				B582D5747D32C08B3D19E5E5 /* PlaybackController.swift */,
+				79182043BBB2F99202EC87D0 /* PlaylistCSV.swift */,
+				555555555555555555555555 /* LyricsParser.swift */,
+				111111111111111111111111 /* SpotifyService.swift */,
+			); path = Services; sourceTree = "<group>"; };
+		4E287F692FC82F49C1B450A3 /* Views */ = {isa = PBXGroup; children = (
+				13A88BACB079DF001A2CFB03 /* MainView.swift */,
+				FA10BC1FA2806F4D64E207CC /* PlayerViews.swift */,
+				EFA0F0640481B59038E57A0F /* LibraryViews.swift */,
+				9AD92D136E4ED96ECEC7F6FF /* ImportViews.swift */,
+				777777777777777777777777 /* LyricsView.swift */,
+				333333333333333333333333 /* SpotifyViews.swift */,
+			); path = Views; sourceTree = "<group>"; };
+		F358300777CBF3353E807A35 /* Resources */ = {isa = PBXGroup; children = (
+				3D98AD6443220BBB0E7A9295 /* Assets.xcassets */,
+				C80AF73362F348BD666F5DDB /* Info.plist */,
+			); path = Resources; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F9EC5056513716979962B814 /* MP3Shelf */ = {isa = PBXNativeTarget; buildConfigurationList = F2DF70F068A3EB3BC1C38478 /* Build configuration list for PBXNativeTarget "MP3Shelf" */; buildPhases = (12573461486BCB4FF9F39CD6 /* Sources */, F7573E4B8ACF1A7CD256E3D0 /* Frameworks */, AD47DB6BC4D863C12FECBD2B /* Resources */,); buildRules = (); dependencies = (); name = MP3Shelf; productName = MP3Shelf; productReference = 638E866708182CE02BFCE157 /* MP3Shelf.app */; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0D9744D2873722A5CBFEB5E9 /* Project object */ = {isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1540; TargetAttributes = { F9EC5056513716979962B814 = { CreatedOnToolsVersion = 15.4; }; }; }; buildConfigurationList = 0BA07DF954ED8853E2F29237 /* Build configuration list for PBXProject "MP3Shelf" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = F649D734EC0812A9975C277B; productRefGroup = 470BE65A2412F72452221511 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (F9EC5056513716979962B814 /* MP3Shelf */,); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AD47DB6BC4D863C12FECBD2B /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (DC20160521FD84E15D0C86DE /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		12573461486BCB4FF9F39CD6 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+				628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */,
+				58F35F17B0B426557F7C6BFE /* MusicModels.swift in Sources */,
+				23F82C0DAB44C8D8C5F26241 /* MusicLibrary.swift in Sources */,
+				A400AF7B34CFD773219453FF /* PlaybackController.swift in Sources */,
+				899556E67C9A2ED68AADCA8E /* PlaylistCSV.swift in Sources */,
+				666666666666666666666666 /* LyricsParser.swift in Sources */,
+				222222222222222222222222 /* SpotifyService.swift in Sources */,
+				99C401E36FF0BDEE5903FAE2 /* MainView.swift in Sources */,
+				45BDD03CF2227AEBED792CED /* PlayerViews.swift in Sources */,
+				AFBCAD821E0B88FA3FCC9208 /* LibraryViews.swift in Sources */,
+				F53D677CCFFAA563526F33C2 /* ImportViews.swift in Sources */,
+				888888888888888888888888 /* LyricsView.swift in Sources */,
+				444444444444444444444444 /* SpotifyViews.swift in Sources */,
+			); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		CD0BAC0D4691772CB53C29C3 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			}; name = Debug; };
+		A2EE51AAB05BE1AB1D3643CD /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MP3Shelf/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jonnyt.mp3shelf;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			}; name = Debug; };
+		DC0017D7D076762EF4B82B56 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_TESTABILITY = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = s;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = NO;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			}; name = Release; };
+		59D4407F2309516DFD1E7196 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MP3Shelf/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jonnyt.mp3shelf;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0BA07DF954ED8853E2F29237 /* Build configuration list for PBXProject "MP3Shelf" */ = {isa = XCConfigurationList; buildConfigurations = (CD0BAC0D4691772CB53C29C3 /* Debug */, DC0017D7D076762EF4B82B56 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		F2DF70F068A3EB3BC1C38478 /* Build configuration list for PBXNativeTarget "MP3Shelf" */ = {isa = XCConfigurationList; buildConfigurations = (A2EE51AAB05BE1AB1D3643CD /* Debug */, 59D4407F2309516DFD1E7196 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = 0D9744D2873722A5CBFEB5E9 /* Project object */;
+}
