@@ -5,13 +5,24 @@ struct LibraryView: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var showFilePicker = false
-    @State private var searchText = ""
+    @State private var searchText: String = {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--mp3shelf-snapshot-search") {
+            return "Velvet"
+        }
+        #endif
+        return ""
+    }()
     @State private var favoritesOnly = false
     @State private var message: String?
     @State private var renaming: MusicTrack?
 
     private var recentlyAdded: [MusicTrack] {
         Array(library.tracks.sorted { $0.addedAt > $1.addedAt }.prefix(8))
+    }
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var displayed: [MusicTrack] {
@@ -27,6 +38,57 @@ struct LibraryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
+                if isSearching {
+                    VStack(alignment: .leading, spacing: 15) {
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                PremiumEyebrow(title: "SEARCH YOUR LIBRARY")
+                                Text("Search results")
+                                    .font(.system(.title2, design: .rounded, weight: .bold))
+                                    .foregroundStyle(.white)
+                            }
+                            Spacer()
+                            Text("\(displayed.count) found")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(ShelfTheme.subdued)
+                        }
+                        HStack(spacing: 10) {
+                            filterButton("All music", selected: !favoritesOnly) {
+                                favoritesOnly = false
+                            }
+                            filterButton("Favorites", symbol: "heart.fill",
+                                         selected: favoritesOnly) {
+                                favoritesOnly = true
+                            }
+                            Spacer()
+                        }
+                        if displayed.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                PremiumIcon(symbol: "magnifyingglass", color: ShelfTheme.accent,
+                                            size: 56)
+                                Text("No matching songs")
+                                    .font(.system(.headline, design: .rounded, weight: .bold))
+                                    .foregroundStyle(.white)
+                                Text(favoritesOnly
+                                     ? "Try All music or a different song, artist or album."
+                                     : "Try a different song, artist or album.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(ShelfTheme.subdued)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(22)
+                            .premiumCard()
+                        } else {
+                            LazyVStack(spacing: 9) {
+                                ForEach(displayed) { track in
+                                    MusicTrackRow(track: track, context: displayed,
+                                                  renaming: $renaming)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 10)
+                } else {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         PremiumEyebrow(title: "YOUR COLLECTION")
@@ -187,6 +249,7 @@ struct LibraryView: View {
                             }
                         }
                     }
+                }
                 }
             }
             .padding(.horizontal, 20)
