@@ -131,6 +131,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     func clearFinishedHistory() {
+        let removed = tickets.values.filter { $0.status != .queued }
+        for item in removed {
+            try? fm.removeItem(at: Self.stagingURL(item.id))
+        }
         tickets = tickets.filter { $0.value.status == .queued }
         persist()
         revision += 1
@@ -198,6 +202,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     private func recoverStagedDownloads() async {
+        // A transfer can be cancelled or cleared while its delegate callback is
+        // in flight. Remove files that no longer correspond to queued tickets.
+        for ticket in tickets.values where ticket.status != .queued {
+            let leftover = Self.stagingURL(ticket.id)
+            if fm.fileExists(atPath: leftover.path) { try? fm.removeItem(at: leftover) }
+        }
         guard let library else { return }
         let candidates = tickets.values.filter {
             $0.status == .queued && fm.fileExists(atPath: Self.stagingURL($0.id).path)
