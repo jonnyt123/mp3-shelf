@@ -319,7 +319,8 @@ struct PlaylistsView: View {
                                        symbol: "square.stack")
                     } else {
                         LazyVGrid(columns: columns, spacing: 13) {
-                            ForEach(Array(library.playlists.enumerated()), id: \.element.id) { index, list in
+                            ForEach(library.playlists.indices, id: \.self) { index in
+                                let list = library.playlists[index]
                                 NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
                                     playlistCard(list, index: index)
                                 }
