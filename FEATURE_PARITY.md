@@ -14,11 +14,11 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 | Matching imported track lists against local recordings | Implemented conservatively | PR #5 adds conservative matching + missing-song list | Test real exported playlists and alternate recordings |
 | Licensed MP3 discovery from independent catalogs | Implemented in native stacked drafts | **Not yet implemented on web** | Legal/source verification, API/CORS limits |
 | Background/resumable downloads | Native URLSession background transfer implemented | **Web needs dedicated design**; service worker cannot emulate iOS URLSession guarantees | Browser/PWA capability tests; avoid promising equivalent background survival |
-| Manual authorized HTTPS audio downloads | Implemented natively | **Not yet on web** | Validate response MIME, file limits, redirects, CORS |
-| Lyrics and timed lyric parsing | Native view and parser | **Not yet on web** | UI and lyrics import/display implementation |
+| Manual authorized HTTPS audio downloads | Implemented natively | PR #5 adds consent-based HTTPS MP3 fetching and local import | Test source MIME, redirects, file limits and CORS on iPhone Safari |
+| Lyrics and timed lyric parsing | Native view and parser | PR #5 adds LRC/TXT import, timed highlighting and IndexedDB persistence | Verify playback screen usability on real iPhone |
 | Crossfade | Native player supports crossfade | **Not yet on web** | Test Web Audio routing, iOS Safari restrictions |
 | AirPlay | iOS audio routing | Safari AirPlay picker where available | Hardware device validation |
-| Backups/export/restore | **Not yet native** (separate format/migration required) | Web PWA backup/restore implemented, PR #5 adds playlist metadata | Cross-platform lossless backup format and migration |
+| Backups/export/restore | **Not yet native** (separate format/migration required) | Web PWA backup/restore implemented, PR #5 adds Spotify metadata and lyrics | Cross-platform lossless backup format and migration |
 | Premium lavender/mint/coral design | Draft PR #4 | PR #5 adds corresponding Spotify screens, rest of web retains earlier design | Complete shared design tokens and accessible screens |
 | Install to home screen | Native iPhone app (not in TestFlight yet) | Live PWA with home screen | App Store/TestFlight submission, final native QA |
 | Automated CI | Native Xcode Simulator runs in stacked PRs | PR #5 adds web tests, typecheck and build | Run latest commits and check result |
@@ -39,7 +39,7 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 ## Next development order
 
 1. Ship and verify web playlist metadata import through CI and iPhone Safari.
-2. Implement browser legal-source discovery and manual downloads, with explicit permissions.
-3. Add timed lyrics and native/PWA backup interoperability.
+2. Implement browser **licensed-catalog source discovery**; direct permitted MP3 URL download is present in PR #5 and needs real-browser QA.
+3. Finish native/PWA backup interoperability. Browser timed lyrics are present in PR #5; test on iPhone.
 4. Implement crossfade as supported by the browser without breaking existing audio.
 5. Close visual parity and run physical-device QA for both apps.
