@@ -42,9 +42,9 @@ Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation
 
 ## One-tap downloads for imported Spotify playlists
 
-Open **Playlists → Imported Playlist → Find & Automatically Download Available MP3s**. MP3 Shelf checks every missing song against independent audio catalogs, then automatically downloads qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open during an active batch (the current implementation does not support reliable background transfers when iOS suspends the app).
+Open **Playlists → Imported Playlist → Find & Automatically Download Available MP3s**. MP3 Shelf checks every missing song against independent audio catalogs, then automatically downloads qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
 
-**Current catalog adapter:** Internet Archive. Before importing a result, the app requires:
+**Current catalog adapters:** Internet Archive and Openverse-backed eligible publishers. Before importing a result, the app requires:
 - Strict normalized *song title and artist* match; no intentional covers/remixes/other artists.
 - A single MP3 file for the matching archive item, to reject album/concert downloads.
 - A Creative Commons or public-domain license URL declared in the archive item's metadata.
@@ -52,6 +52,16 @@ Open **Playlists → Imported Playlist → Find & Automatically Download Availab
 - HTTPS download, decodable local audio, and a maximum 100 MB transfer.
 
 Catalog licenses are declared by uploaders, **not independently verified by MP3 Shelf**. MP3 Shelf stores attribution links for discovered sources. Catalog metadata can be wrong; compare suspect recordings with their source page. Most commercial Spotify recordings do **not** have a legitimate freely downloadable match, and will remain unmatched. The app never bypasses paywalls or DRM, downloads Spotify streams, scrapes arbitrary converter sites, or silently replaces a requested song with a different recording. Spotify developer terms may impose additional restrictions on apps combining Spotify metadata and other audio services; obtain approval before a public production release.
+
+## Expanded catalogs and background downloading
+
+Q1 — Source search: The app now looks up missing playlist songs through Internet Archive and Openverse. Openverse indexes eligible recordings from Wikimedia Commons, Free Music Archive and ccMixter. Matches require strict artist/title, original publisher MP3 links on allowed HTTPS domains, acceptable filesize, declared Creative Commons/public-domain licensing and duration validation. Jamendo is excluded due to its restrictions for an offline music caching application. Archive and Openverse licensing metadata is uploader-provided, not a guarantee of ownership or permission. Many major-label recordings will have no qualifying source.
+
+Q2 — Persistent downloads: The native app uses a background URLSession to download selected MP3s after they have been discovered. Transfer tickets are persisted in Application Support and retained across relaunches. The UIApplicationDelegate background-session callback restores the session on system launch; delegates immediately stage completed downloads, validate files, and attach them to the offline library, preserving playlist metadata, source links and original order. Users can cancel active background transfers.
+
+Important limits: Source discovery is NOT a background service. Only already-queued file transfers can continue while locked/suspended. iOS chooses the timing of background transfer execution and relaunch; a user force-quit can prevent relaunch. Foreground source searches will stop when the OS suspends the app and must be resumed by the user. Actual lock-screen, relaunch, cellular/Wi-Fi, permissions and storage scenarios need physical-device tests.
+
+Relevant code: AudioSourceFinder.swift, BackgroundAudioDownloader.swift, MusicLibrary.swift and MP3ShelfApp.swift.
 
 ## Audio enhancements
 
