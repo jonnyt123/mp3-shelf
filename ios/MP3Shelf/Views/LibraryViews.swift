@@ -10,6 +10,10 @@ struct LibraryView: View {
     @State private var message: String?
     @State private var renaming: MusicTrack?
 
+    private var recentlyAdded: [MusicTrack] {
+        Array(library.tracks.sorted { $0.addedAt > $1.addedAt }.prefix(8))
+    }
+
     private var displayed: [MusicTrack] {
         library.tracks.filter { track in
             (!favoritesOnly || track.isFavorite) && (searchText.isEmpty ||
@@ -122,6 +126,42 @@ struct LibraryView: View {
                             .padding(.horizontal, 3)
                     }
                 } else {
+                    if recentlyAdded.count >= 2 {
+                        VStack(alignment: .leading, spacing: 13) {
+                            PremiumSectionHeading(title: "Recently added",
+                                                  detail: "FRESH ON YOUR SHELF")
+                            ScrollView(.horizontal) {
+                                LazyHStack(alignment: .top, spacing: 14) {
+                                    ForEach(recentlyAdded) { track in
+                                        Button {
+                                            playback.play(track, queue: recentlyAdded)
+                                        } label: {
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                ArtworkTile(track: track, size: 122)
+                                                    .shadow(color: .black.opacity(0.18),
+                                                            radius: 10, y: 5)
+                                                Text(track.title)
+                                                    .font(.system(.subheadline,
+                                                                  design: .rounded,
+                                                                  weight: .semibold))
+                                                    .foregroundStyle(.white)
+                                                    .lineLimit(1)
+                                                Text(track.artist)
+                                                    .font(.caption)
+                                                    .foregroundStyle(ShelfTheme.subdued)
+                                                    .lineLimit(1)
+                                            }
+                                            .frame(width: 122, alignment: .leading)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("Play \(track.title) by \(track.artist)")
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .scrollIndicators(.hidden)
+                        }
+                    }
                     HStack(spacing: 10) {
                         filterButton("All music", selected: !favoritesOnly) { favoritesOnly = false }
                         filterButton("Favorites", symbol: "heart.fill",
