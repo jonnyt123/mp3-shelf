@@ -72,12 +72,18 @@ struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draggingTime: Double?
     @State private var showLyrics = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationStack {
             Group {
                 if let track = library.song(with: playback.currentTrackID) {
                     GeometryReader { proxy in
+                        let coverSize = min(proxy.size.width - 64,
+                                            dynamicTypeSize.isAccessibilitySize
+                                                ? max(156, proxy.size.height * 0.26)
+                                                : max(190, proxy.size.height * 0.39),
+                                            330)
                         ScrollView {
                             VStack(spacing: 0) {
                                 HStack {
@@ -91,14 +97,14 @@ struct NowPlayingView: View {
                                     Spacer()
                                 }
                                 .padding(.top, 5)
-                                .padding(.bottom, 25)
+                                .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 15 : 25)
 
-                                ArtworkTile(track: track, size: min(proxy.size.width - 74, 340))
-                                    .shadow(color: ShelfTheme.accent.opacity(0.18),
-                                            radius: 45, y: 23)
-                                    .shadow(color: .black.opacity(0.35), radius: 15, y: 12)
+                                ArtworkTile(track: track, size: coverSize)
+                                    .shadow(color: ShelfTheme.artworkColors(for: track.title)[0].opacity(0.16),
+                                            radius: 38, y: 17)
+                                    .shadow(color: .black.opacity(0.3), radius: 14, y: 10)
                                     .frame(maxWidth: .infinity)
-                                    .padding(.bottom, 29)
+                                    .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 17 : 29)
 
                                 HStack(alignment: .center, spacing: 18) {
                                     VStack(alignment: .leading, spacing: 5) {
@@ -127,7 +133,7 @@ struct NowPlayingView: View {
                                     }
                                     .accessibilityLabel(track.isFavorite ? "Remove favorite" : "Add favorite")
                                 }
-                                .padding(.bottom, 25)
+                                .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 15 : 25)
 
                                 VStack(spacing: 7) {
                                     Slider(value: Binding(
@@ -140,6 +146,8 @@ struct NowPlayingView: View {
                                         }
                                     })
                                     .tint(ShelfTheme.mint)
+                                    .accessibilityLabel("Track progress")
+                                    .accessibilityValue("\((draggingTime ?? playback.currentTime).shelfClock) of \(playback.duration.shelfClock)")
                                     HStack {
                                         Text((draggingTime ?? playback.currentTime).shelfClock)
                                         Spacer()
@@ -149,12 +157,13 @@ struct NowPlayingView: View {
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(ShelfTheme.subdued)
                                 }
-                                .padding(.bottom, 25)
+                                .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 15 : 25)
 
                                 HStack(spacing: 0) {
                                     playerButton("shuffle", active: playback.isShuffled,
                                                  action: { playback.isShuffled.toggle() })
                                         .accessibilityLabel("Shuffle")
+                                        .accessibilityValue(playback.isShuffled ? "On" : "Off")
                                     Spacer()
                                     Button { playback.previous() } label: {
                                         Image(systemName: "backward.end.fill")
@@ -184,11 +193,12 @@ struct NowPlayingView: View {
                                     playerButton(playback.repeatMode.systemImage,
                                                  active: playback.repeatMode != .off,
                                                  action: { playback.cycleRepeat() })
-                                        .accessibilityLabel("Repeat: \(playback.repeatMode.rawValue)")
+                                        .accessibilityLabel("Repeat")
+                                        .accessibilityValue(playback.repeatMode.rawValue)
                                 }
                                 .foregroundStyle(.white)
                                 .buttonStyle(.plain)
-                                .padding(.bottom, 30)
+                                .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 18 : 30)
 
                                 HStack(spacing: 12) {
                                     Button { showLyrics = true } label: {
@@ -209,6 +219,15 @@ struct NowPlayingView: View {
                                     .premiumCard(radius: 16)
                                 }
                                 .foregroundStyle(.white)
+                                HStack(spacing: 7) {
+                                    Image(systemName: "iphone.gen3")
+                                        .font(.caption)
+                                    Text("SAVED ON THIS IPHONE")
+                                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                        .tracking(1.4)
+                                }
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .padding(.top, 21)
                                 Spacer(minLength: 24)
                             }
                             .padding(.horizontal, 27)
@@ -225,7 +244,11 @@ struct NowPlayingView: View {
             .background {
                 ZStack {
                     PremiumBackdrop()
-                    RadialGradient(colors: [ShelfTheme.accent.opacity(0.095), .clear],
+                    RadialGradient(colors: [
+                                       ShelfTheme.artworkColors(
+                                         for: library.song(with: playback.currentTrackID)?.title ?? "MP3 Shelf"
+                                       )[0].opacity(0.12), .clear
+                                   ],
                                    center: .center, startRadius: 40, endRadius: 430)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
