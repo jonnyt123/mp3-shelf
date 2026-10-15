@@ -52,3 +52,9 @@ Tap **Import a Spotify playlist** below **Choose MP3s**.
 ## Feature parity
 
 Native SwiftUI code and the installable web PWA live in this repository. See [FEATURE_PARITY.md](FEATURE_PARITY.md) for implemented features, verification and remaining differences.
+
+## Additional web features under parity development
+
+- **Authorized direct MP3 URL:** Paste a direct HTTPS MP3 URL under the main import controls and tap **Save MP3**. Browser CORS permissions must allow the transfer. Streaming links (including Spotify) are blocked. Downloads are limited to 100 MB and saved to local IndexedDB; this is not native background downloading.
+- **Lyrics:** While a song plays, open the full-screen player and choose **Lyrics**. Import a `.lrc` timed lyric file or plain `.txt` file under 500 KB. Lyrics are stored with the song, synchronized against the player's elapsed time if timestamps exist, and included in `.mp3shelf` backups.
+- **Feature gaps:** The browser still lacks native-style licensed-source catalog searches, native background URLSession downloads, native audio crossfade, and cross-platform backup compatibility. The full status is maintained in [FEATURE_PARITY.md](FEATURE_PARITY.md).
