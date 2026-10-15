@@ -152,3 +152,11 @@ Remaining refinements:
 - DEBUG launch argument `--mp3shelf-snapshot-search` imports the original
   three-tone QA fixture and searches for "Velvet"; GitHub CI captures
   `search.png` as an eighth screen.
+
+## Library sorting
+
+- The song list supports a compact menu for sorting by Title (the original
+  default), Recently added, or Artist. Sorting is view-local and must not
+  rearrange playlist records or mutate imported files.
+- Sorting is available in both the full library and active search results;
+  the play queue follows the visible ordering selected by the user.
