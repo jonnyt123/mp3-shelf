@@ -8,6 +8,20 @@ struct DownloadManagerView: View {
     var body: some View {
         List {
             Section {
+                HStack(spacing: 17) {
+                    PremiumIcon(symbol: "arrow.down.to.line.compact",
+                                color: ShelfTheme.mint, size: 62)
+                    VStack(alignment: .leading, spacing: 4) {
+                        PremiumEyebrow(title: "YOUR TRANSFERS")
+                        Text("\(transfers.pendingCount()) active downloads")
+                            .font(.system(.title3, design: .rounded, weight: .bold))
+                            .foregroundStyle(.white)
+                        Text("Keep your soundtrack with you.")
+                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 10)
                 LabeledContent("In progress", value: "\(transfers.pendingCount())")
                 LabeledContent("Music stored", value: ByteCountFormatter.string(
                     fromByteCount: library.totalStorageBytes, countStyle: .file))
@@ -16,9 +30,10 @@ struct DownloadManagerView: View {
                 } label: {
                     Label("Manage Music Storage", systemImage: "externaldrive")
                 }
-            } header: { Text("Overview") }
+            } header: { Text("OVERVIEW") }
+            .listRowBackground(ShelfTheme.surface)
 
-            Section("Individual Downloads") {
+            Section("YOUR DOWNLOADS") {
                 let items = transfers.ticketsForPlaylist()
                 if items.isEmpty {
                     ContentUnavailableView("No transfers yet",
@@ -27,6 +42,7 @@ struct DownloadManagerView: View {
                 } else {
                     ForEach(items) { item in
                         DownloadTicketRow(ticket: item)
+                            .listRowBackground(ShelfTheme.surface)
                     }
                 }
             }
@@ -40,8 +56,9 @@ struct DownloadManagerView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(ShelfTheme.background)
-        .navigationTitle("Download Manager")
+        .background(PremiumBackdrop())
+        .tint(ShelfTheme.accent)
+        .navigationTitle("Downloads")
         .confirmationDialog("Clear completed, cancelled and failed history?",
                             isPresented: $confirmClear) {
             Button("Clear History", role: .destructive) { transfers.clearFinishedHistory() }
@@ -109,7 +126,7 @@ private struct DownloadTicketRow: View {
             }
             .font(.caption)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 12)
     }
 }
 
@@ -125,16 +142,24 @@ struct MusicStorageView: View {
     var body: some View {
         List {
             Section("Storage Used by Audio Files") {
-                Text(ByteCountFormatter.string(fromByteCount: library.totalStorageBytes,
-                                               countStyle: .file))
-                    .font(.title2.bold())
+                HStack(spacing: 13) {
+                    PremiumIcon(symbol: "externaldrive.fill", color: ShelfTheme.coral, size: 57)
+                    VStack(alignment: .leading, spacing: 4) {
+                        PremiumEyebrow(title: "ON THIS IPHONE", color: ShelfTheme.coral)
+                        Text(ByteCountFormatter.string(fromByteCount: library.totalStorageBytes,
+                                                       countStyle: .file))
+                            .font(.system(.title2, design: .rounded, weight: .bold))
+                    }
+                }
+                .padding(.vertical, 8)
                 LabeledContent("Saved songs", value: "\(library.tracks.count)")
                 Text("Files are stored locally and remain available offline. Deleting a song removes its copy and artwork/lyrics, and restores a missing entry in imported playlists.")
                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
             }
-            Section("Largest Files First") {
+            Section("LARGEST FILES FIRST") {
                 ForEach(sortedTracks) { track in
                     HStack(spacing: 12) {
+                        PremiumIcon(symbol: "music.note", color: ShelfTheme.accent, size: 39)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(track.title).lineLimit(1)
                             Text(track.artist).font(.caption)
@@ -156,7 +181,8 @@ struct MusicStorageView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(ShelfTheme.background)
+        .background(PremiumBackdrop())
+        .tint(ShelfTheme.accent)
         .navigationTitle("Music Storage")
         .confirmationDialog("Delete local audio file?", isPresented: Binding(
             get: { toDelete != nil },
