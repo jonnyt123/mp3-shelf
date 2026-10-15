@@ -137,3 +137,82 @@ enum AudioSourceFinder {
         return nil
     }
 }
+
+
+// Openverse indexes openly-licensed audio from multiple original publishers.
+// Only accept links to a single MP3 supplied by an explicitly supported source;
+// never attempt Jamendo's download endpoint because its API terms prohibit
+// building an offline-music caching application.
+extension AudioSourceFinder {
+    private struct OpenverseResponse: Decodable {
+        let results: [OpenverseResult]
+    }
+    private struct OpenverseResult: Decodable {
+        let title: String?
+        let creator: String?
+        let url: String?
+        let foreign_landing_url: String?
+        let license_url: String?
+        let filetype: String?
+        let duration: Double?
+        let source: String?
+        let filesize: Int?
+    }
+
+    static func openverseCandidate(
+        title: String?, creator: String?, download: String?, landing: String?,
+        license: String?, filetype: String?, duration: Double?, source: String?,
+        filesize: Int?, wish: PlaylistWish
+    ) -> AudioCatalogMatch? {
+        guard let title, let creator, let source,
+              ["wikimedia", "ccmixter", "fma"].contains(source.lowercased()),
+              exactMetadataMatch(title: title.replacingOccurrences(of: "File:", with: "")
+                                                  .replacingOccurrences(of: ".mp3", with: ""),
+                                 creator: creator, wish: wish),
+              let licenseURL = licensedURL(license),
+              let download, let downloadURL = URL(string: download),
+              let landing, let landingURL = URL(string: landing),
+              downloadURL.scheme == "https", landingURL.scheme == "https",
+              downloadURL.host != nil, landingURL.host != nil,
+              downloadURL.pathExtension.lowercased() == "mp3",
+              ["mp3", "audio/mpeg", "audio/mp3"].contains((filetype ?? "").lowercased()),
+              filesize == nil || (filesize! > 0 && filesize! <= 100 * 1024 * 1024)
+        else { return nil }
+
+        if let expected = wish.durationSeconds, let duration {
+            let measured = duration > 10_000 ? duration / 1000.0 : duration
+            guard abs(measured - expected) <= 4.0 else { return nil }
+        }
+        // Openverse supplies the creator, link and license but does not itself
+        // certify that a publisher actually owns the recording.
+        return AudioCatalogMatch(downloadURL: downloadURL, itemURL: landingURL,
+                                 licenseURL: licenseURL, sourceName: "Openverse: \(source)")
+    }
+
+    static func findOpenverse(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+        guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
+        var components = URLComponents(string: "https://api.openverse.org/v1/audio/")!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: "\"\(wish.title)\" \"\(wish.artist)\""),
+            URLQueryItem(name: "extension", value: "mp3"),
+            URLQueryItem(name: "page_size", value: "20")
+        ]
+        let result: OpenverseResponse = try await requestJSON(components.url!)
+        let matches = result.results.compactMap {
+            openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
+                               landing: $0.foreign_landing_url, license: $0.license_url,
+                               filetype: $0.filetype, duration: $0.duration,
+                               source: $0.source, filesize: $0.filesize, wish: wish)
+        }
+        // Multiple qualifying recordings can still be distinct performances.
+        // Do not arbitrarily pick the first one.
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    static func findAcrossCatalogs(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+        try Task.checkCancellation()
+        if let archive = try? await find(for: wish) { return archive }
+        try Task.checkCancellation()
+        return try await findOpenverse(for: wish)
+    }
+}
