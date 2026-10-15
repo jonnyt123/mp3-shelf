@@ -61,16 +61,10 @@ final class BackgroundAudioDownloader: NSObject, URLSessionDownloadDelegate {
         activate()
         updatePending()
         Task { await recoverStagedDownloads() }
-        session.getAllTasks { [weak self] tasks in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let active = Set(tasks.compactMap { UUID(uuidString: $0.taskDescription ?? "") })
-                for (id, ticket) in self.tickets where ticket.status == .queued
-                    && !active.contains(id) && !self.fm.fileExists(atPath: Self.stagingURL(id).path) {
-                    self.setFailed(id)
-                }
-            }
-        }
+        // Do not classify jobs as orphaned here: a completed transfer can
+        // disappear from getAllTasks before its completion delegate is delivered.
+        // The download delegate (or later explicit user cancellation) owns
+        // terminal transitions, preserving valid files across cold relaunches.
     }
 
     @discardableResult
