@@ -110,11 +110,13 @@ availability. Keep the visual branch in draft pending device QA.
 - The download manager has **All / Active / Saved / Issues** filters backed by
   actual transfer states, distinct status labels and consistent progress semantics.
   Filters must not mutate the download queue or remove completed files.
-- Debug-only `--mp3shelf-snapshot-player` generates an original sine-wave WAV
-  file inside the iOS Simulator, imports it locally and opens an actual
-  Now Playing screen. It is not a commercial song, not a simulated Spotify
-  download and not available in release builds.
-- The macOS workflow captures a fifth `player.png` screenshot so visual
-  regressions on an active playback screen are visible alongside the four
-  existing tab screenshots. Run physical-iPhone tests for audio session and
-  background behavior before making release claims.
+- Debug-only `--mp3shelf-snapshot-filled-library` and
+  `--mp3shelf-snapshot-player` generate three original sine-wave WAV
+  files inside the Simulator. They let visual QA exercise populated
+  artwork, Recently Added, working transport controls and Up Next.
+  No copyrighted audio, Spotify streams or fabricated download states
+  enter the app; neither flag adds sample recordings to a release build.
+- The macOS workflow captures six screens: four main tabs plus
+  `filled-library.png` and `player.png`. Verify captured screenshots
+  manually and test the real iPhone for lock-screen audio/session and
+  background transport behavior before making release claims.
