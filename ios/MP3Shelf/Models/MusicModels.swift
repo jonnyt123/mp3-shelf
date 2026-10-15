@@ -23,6 +23,8 @@ struct MusicTrack: Identifiable, Codable, Hashable {
     var duration: TimeInterval
     var addedAt: Date
     var isFavorite: Bool
+    // Set only for files obtained from a catalog with uploader-declared license metadata.
+    var sourceAttribution: AudioSourceAttribution? = nil
 
     init(id: UUID = UUID(), title: String, artist: String, album: String,
          fileName: String, originalFileName: String, artworkFileName: String? = nil, lyricsFileName: String? = nil,
@@ -47,6 +49,14 @@ struct PlaylistWish: Identifiable, Codable, Hashable {
     var artist: String
     var album: String
     var spotifyURL: String?
+    // Used to reject alternate recordings when matching independent downloads.
+    var durationSeconds: Double? = nil
+}
+
+struct AudioSourceAttribution: Codable, Hashable {
+    var pageURL: String
+    var licenseURL: String
+    var providerName: String
 }
 
 struct MusicPlaylist: Identifiable, Codable, Hashable {
