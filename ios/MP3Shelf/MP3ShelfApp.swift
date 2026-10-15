@@ -41,10 +41,15 @@ struct MP3ShelfApp: App {
                     BackgroundAudioDownloader.shared.attach(to: library)
                     library.resumePendingDiscovery()
                     #if DEBUG
+                    let snapshotArguments = ProcessInfo.processInfo.arguments
                     if !didStartVisualFixture &&
-                        ProcessInfo.processInfo.arguments.contains("--mp3shelf-snapshot-player") {
+                        (snapshotArguments.contains("--mp3shelf-snapshot-player") ||
+                         snapshotArguments.contains("--mp3shelf-snapshot-filled-library")) {
                         didStartVisualFixture = true
-                        Task { await installVisualQAPlayback() }
+                        Task {
+                            await installVisualQAAudio(
+                                playing: snapshotArguments.contains("--mp3shelf-snapshot-player"))
+                        }
                     }
                     #endif
                 }
@@ -58,42 +63,52 @@ struct MP3ShelfApp: App {
     }
 
     #if DEBUG
-    /// Explicitly invoked by CI for a real Now Playing screenshot.
-    /// Creates our own short sine-wave WAV; no commercial sound recordings,
-    /// service credentials or mock download successes are introduced.
+    /// CI-only synthetic recordings for visual QA of a populated library
+    /// and working Now Playing controls. None are present in release builds.
+    /// The generated WAVs are original audio with no third-party rights.
     @MainActor
-    private func installVisualQAPlayback() async {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MP3Shelf Visual QA.wav")
-        do {
-            if !FileManager.default.fileExists(atPath: url.path) {
-                let sampleRate = 22_050.0
-                let frameCount = AVAudioFrameCount(sampleRate * 32)
-                guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                                 sampleRate: sampleRate,
-                                                 channels: 1, interleaved: false),
-                      let buffer = AVAudioPCMBuffer(pcmFormat: format,
-                                                     frameCapacity: frameCount),
-                      let channel = buffer.floatChannelData?[0] else { return }
-                buffer.frameLength = frameCount
-                for sample in 0..<Int(frameCount) {
-                    let fade = min(1.0, Double(sample) / sampleRate)
-                    channel[sample] = Float(sin(2 * .pi * 220 * Double(sample) / sampleRate)
-                                            * 0.045 * fade)
+    private func installVisualQAAudio(playing: Bool) async {
+        let examples: [(title: String, frequency: Double)] = [
+            ("Velvet Echo", 220),
+            ("Coastline", 293.66),
+            ("After Hours", 329.63)
+        ]
+        var playable: [MusicTrack] = []
+        for (index, example) in examples.enumerated() {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MP3Shelf Visual QA \(index).wav")
+            do {
+                if !FileManager.default.fileExists(atPath: url.path) {
+                    let sampleRate = 22_050.0
+                    let frameCount = AVAudioFrameCount(sampleRate * 32)
+                    guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                                     sampleRate: sampleRate,
+                                                     channels: 1, interleaved: false),
+                          let buffer = AVAudioPCMBuffer(pcmFormat: format,
+                                                         frameCapacity: frameCount),
+                          let channel = buffer.floatChannelData?[0] else { return }
+                    buffer.frameLength = frameCount
+                    for sample in 0..<Int(frameCount) {
+                        let fade = min(1.0, Double(sample) / sampleRate)
+                        channel[sample] = Float(
+                            sin(2 * Double.pi * example.frequency * Double(sample) / sampleRate)
+                            * 0.045 * fade)
+                    }
+                    let file = try AVAudioFile(forWriting: url, settings: format.settings)
+                    try file.write(from: buffer)
                 }
-                let file = try AVAudioFile(forWriting: url, settings: format.settings)
-                try file.write(from: buffer)
+                _ = await library.importAudio(urls: [url])
+                guard let imported = library.tracks.first(where: {
+                    $0.originalFileName == url.lastPathComponent
+                }) else { continue }
+                library.rename(imported, title: example.title, artist: "MP3 Shelf Studio")
+                if let updated = library.song(with: imported.id) { playable.append(updated) }
+            } catch {
+                print("Visual QA audio creation failed: \(error)")
             }
-            _ = await library.importAudio(urls: [url])
-            guard let imported = library.tracks.first(where: {
-                $0.originalFileName == url.lastPathComponent
-            }) else { return }
-            library.rename(imported, title: "Velvet Echo", artist: "MP3 Shelf Studio")
-            if let track = library.song(with: imported.id) {
-                playback.play(track, queue: [track])
-            }
-        } catch {
-            print("Visual QA fixture generation failed: \(error)")
+        }
+        if playing, let first = playable.first {
+            playback.play(first, queue: playable)
         }
     }
     #endif
