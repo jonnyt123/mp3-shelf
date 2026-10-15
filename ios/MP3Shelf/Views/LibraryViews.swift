@@ -123,6 +123,18 @@ struct MusicTrackRow: View {
                 }
                 Button("Edit Details", systemImage: "pencil") { renaming = track }
                 ShareLink(item: library.fileURL(for: track)) { Label("Share Audio File", systemImage: "square.and.arrow.up") }
+                if let attribution = track.sourceAttribution {
+                    if let sourceURL = URL(string: attribution.pageURL) {
+                        Link(destination: sourceURL) {
+                            Label("View Audio Source", systemImage: "link")
+                        }
+                    }
+                    if let licenseURL = URL(string: attribution.licenseURL) {
+                        Link(destination: licenseURL) {
+                            Label("View Source License", systemImage: "doc.text")
+                        }
+                    }
+                }
                 Divider()
                 Button("Delete Download", systemImage: "trash", role: .destructive) { confirmDelete = true }
             } label: {
@@ -277,6 +289,47 @@ struct PlaylistDetailView: View {
                     }
                 }
                 .listRowBackground(ShelfTheme.background)
+                if !playlist.missingTracks.isEmpty ||
+                    library.automaticDownloadProgress?.playlistID == playlistID {
+                    Section("Find & Download MP3s") {
+                        Text("Automatically searches independent audio catalogs for an exact artist/title match, an MP3 file, and a declared Creative Commons or public-domain license. No Spotify audio is downloaded. Popular commercial tracks are unlikely to have a qualifying source.")
+                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        if let progress = library.automaticDownloadProgress,
+                           progress.playlistID == playlistID {
+                            Text("\(progress.processed)/\(progress.total) checked • \(progress.downloaded) downloaded • \(progress.unavailable) not found • \(progress.failed) failed")
+                                .font(.subheadline.monospacedDigit())
+                            if progress.isRunning {
+                                ProgressView(value: Double(progress.processed),
+                                             total: Double(max(progress.total, 1)))
+                                Text(progress.currentSong)
+                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                Button("Stop searching", role: .cancel) {
+                                    library.cancelAutomaticDownloads()
+                                }
+                            } else {
+                                Text(progress.wasCancelled ? "Search stopped." : "Source lookup finished.")
+                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                if !playlist.missingTracks.isEmpty {
+                                    Button("Retry unmatched songs") {
+                                        library.startAutomaticDownloads(for: playlistID)
+                                    }
+                                }
+                            }
+                        } else {
+                            Button {
+                                library.startAutomaticDownloads(for: playlistID)
+                            } label: {
+                                Label("Find & Automatically Download Available MP3s",
+                                      systemImage: "arrow.down.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(library.automaticDownloadProgress?.isRunning == true)
+                        }
+                        Text("Licenses on the catalog are uploader-declared, not independently certified. Keep MP3 Shelf open while downloads run. Songs without qualifying sources stay in the unmatched list.")
+                            .font(.caption2).foregroundStyle(ShelfTheme.subdued)
+                    }
+                    .listRowBackground(ShelfTheme.background)
+                }
                 Section("Available Offline") {
                     ForEach(library.songs(in: playlist)) { track in
                         MusicTrackRow(track: track, context: library.songs(in: playlist), renaming: $editing)
