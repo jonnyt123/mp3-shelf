@@ -110,18 +110,22 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     func retry(_ id: UUID) {
-        guard var ticket = tickets[id], ticket.status == .failed || ticket.status == .cancelled,
-              Self.allowedDownloadURL(ticket.downloadURL) else { return }
-        ticket.status = .queued
-        ticket.failureReason = nil
-        ticket.bytesReceived = nil
-        ticket.totalBytes = nil
+        guard let previous = tickets[id],
+              previous.status == .failed || previous.status == .cancelled,
+              Self.allowedDownloadURL(previous.downloadURL),
+              !isQueued(previous.requested, for: previous.playlistID) else { return }
+        // Use a new identifier. A late didComplete callback from the old
+        // cancelled task must never change the state of the new transfer.
+        let newID = UUID()
+        var ticket = BackgroundAudioTicket(
+            id: newID, playlistID: previous.playlistID, requested: previous.requested,
+            downloadURL: previous.downloadURL, sourcePage: previous.sourcePage,
+            licensePage: previous.licensePage, provider: previous.provider)
         ticket.startedAt = .now
-        tickets[id] = ticket
+        tickets[newID] = ticket
         persist()
-        revision += 1
         let task = session.downloadTask(with: ticket.downloadURL)
-        task.taskDescription = id.uuidString
+        task.taskDescription = newID.uuidString
         task.resume()
         updatePending()
     }
