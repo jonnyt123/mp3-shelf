@@ -3,6 +3,7 @@ import SwiftUI
 struct MiniPlayer: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let open: () -> Void
 
     var body: some View {
@@ -30,7 +31,7 @@ struct MiniPlayer: View {
                     Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(ShelfTheme.background)
-                        .frame(width: 39, height: 39)
+                        .frame(width: 44, height: 44)
                         .background(ShelfTheme.accent, in: Circle())
                 }
                 .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
@@ -38,14 +39,23 @@ struct MiniPlayer: View {
                     Image(systemName: "forward.end.fill")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
-                        .frame(width: 34, height: 42)
+                        .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel("Next song")
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 11)
             .padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+            .background {
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(ShelfTheme.elevated)
+                    .overlay {
+                        if !reduceTransparency {
+                            RoundedRectangle(cornerRadius: 22)
+                                .fill(.ultraThinMaterial)
+                        }
+                    }
+            }
             .overlay(RoundedRectangle(cornerRadius: 22)
                 .strokeBorder(.white.opacity(0.14), lineWidth: 1))
             .overlay(alignment: .bottomLeading) {
@@ -280,7 +290,7 @@ struct NowPlayingView: View {
             Image(systemName: symbol)
                 .font(.system(size: 19, weight: .medium))
                 .foregroundStyle(active ? ShelfTheme.mint : ShelfTheme.subdued)
-                .frame(width: 40, height: 48)
+                .frame(width: 44, height: 48)
         }
     }
 }
