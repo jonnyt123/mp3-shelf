@@ -117,7 +117,8 @@ final class MusicLibrary: ObservableObject {
         return report
     }
 
-    private func addLocalAudio(sourceURL: URL, originalName: String) async throws -> Bool {
+    private func addLocalAudio(sourceURL: URL, originalName: String,
+                               expectedDuration: TimeInterval? = nil) async throws -> Bool {
         let extensionName = sourceURL.pathExtension.lowercased()
         let allowed = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
         guard allowed.contains(extensionName) else { throw MusicLibraryError.unsupportedFormat }
@@ -137,6 +138,9 @@ final class MusicLibrary: ObservableObject {
             // Fail immediately for renamed HTML, corrupt files or codecs that AVAudioPlayer cannot decode.
             let playbackProbe = try AVAudioPlayer(contentsOf: destination)
             let duration = playbackProbe.duration
+            if let expectedDuration, abs(duration - expectedDuration) > 4 {
+                throw MusicLibraryError.recordingDurationMismatch
+            }
             let metadata = asset.commonMetadata
             func metadataString(_ key: AVMetadataKey) -> String? {
                 AVMetadataItem.metadataItems(from: metadata, withKey: key, keySpace: .common)
@@ -256,7 +260,9 @@ final class MusicLibrary: ObservableObject {
         let staging = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + actualExtension)
         try manager.moveItem(at: temporary, to: staging)
         defer { try? manager.removeItem(at: staging) }
-        let imported = try await addLocalAudio(sourceURL: staging, originalName: filename + "." + actualExtension)
+        let imported = try await addLocalAudio(sourceURL: staging,
+                                               originalName: filename + "." + actualExtension,
+                                               expectedDuration: wish?.durationSeconds)
         if imported {
             if let wish, let last = tracks.indices.last {
                 // The catalog had to match title/artist (and known duration)
@@ -397,13 +403,14 @@ final class MusicLibrary: ObservableObject {
 }
 
 enum MusicLibraryError: LocalizedError {
-    case unsupportedFormat, invalidDownloadURL, downloadFailed
+    case unsupportedFormat, invalidDownloadURL, downloadFailed, recordingDurationMismatch
 
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat: return "Only supported audio files (MP3, M4A, AAC, WAV, AIFF) can be imported."
         case .invalidDownloadURL: return "Enter a direct HTTPS audio URL. Spotify streaming links cannot be downloaded."
         case .downloadFailed: return "The audio download did not complete successfully."
+        case .recordingDurationMismatch: return "The downloaded MP3 duration did not match the requested recording."
         }
     }
 }
