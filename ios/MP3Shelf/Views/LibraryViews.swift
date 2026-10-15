@@ -523,7 +523,7 @@ struct PlaylistDetailView: View {
                 Section("AVAILABLE OFFLINE") {
                     ForEach(library.songs(in: playlist)) { track in
                         MusicTrackRow(track: track, context: library.songs(in: playlist), renaming: $editing)
-                            .listRowBackground(.clear)
+                            .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             .swipeActions {
                                 Button("Remove", role: .destructive) {
