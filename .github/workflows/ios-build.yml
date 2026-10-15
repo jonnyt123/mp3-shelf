@@ -5,6 +5,11 @@ on:
       - 'ios/**'
       - '.github/workflows/ios-build.yml'
   workflow_dispatch:
+# A new UI revision supersedes older screenshot runs for this PR.
+# Prevent multiple macOS Simulator boots competing for runner resources.
+concurrency:
+  group: ios-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 jobs:
   xcode-build:
     runs-on: macos-15
