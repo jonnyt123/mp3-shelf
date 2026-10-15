@@ -50,3 +50,13 @@
 .spotify-wish small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #aaa9b6; font-size: 11px; }
 .spotify-wish>a { display: grid; place-items: center; flex: none; width: 40px; height: 40px; color: #c4aff4; text-decoration: none; }
 @media(prefers-reduced-motion:no-preference) { .spotify-entry:active { transform: scale(.992); } }
+
+.direct-audio-card { margin-top: 15px; padding: 16px; border: 1px solid rgba(139,204,183,.24); border-radius: 18px; background: linear-gradient(110deg,rgba(32,57,57,.57),rgba(26,27,35,.83)); }
+.direct-audio-card>label { display: block; font-size: 13px; font-weight: 720; color: #d7f6e7; }
+.direct-audio-card>p { margin: 8px 0 13px!important; color: #b8c8c8!important; font-size: 11px!important; line-height: 1.5!important; }
+.direct-audio-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.direct-audio-actions>input { flex: 1 1 180px; min-width: 0; min-height: 44px; padding: 10px 11px; border: 1px solid #536569; border-radius: 12px; color: #effaf8; background: #151e27; font-size: 12px; }
+.direct-audio-actions>button { flex: 0 0 auto; min-height: 44px; padding: 10px 16px; border: 0; border-radius: 12px; background: #8de1cb; color: #132b29; font-weight: 750; font-size: 12px; }
+.direct-audio-actions>button:disabled { opacity: .5; }
+.direct-audio-card .direct-audio-status { color: #b2ecd8!important; overflow-wrap: anywhere; }
+.direct-audio-actions>input:focus-visible,.direct-audio-actions>button:focus-visible { outline: 2px solid #b5efdd; outline-offset: 2px; }
