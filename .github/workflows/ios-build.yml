@@ -60,7 +60,7 @@ jobs:
           # Each screen opens in a fresh process with DEBUG launch args.
           # The populated-library and player snapshots use original WAV tones,
           # never a commercial or service-derived audio recording.
-          for tab in listen playlists add-music settings downloads filled-library player; do
+          for tab in listen playlists add-music settings downloads filled-library search player; do
             if [ "$tab" = "listen" ]; then
               xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf
             else
@@ -68,7 +68,7 @@ jobs:
             fi
             # The player QA fixture generates and imports a real original WAV,
             # then opens Now Playing with functional transport controls.
-            if [ "$tab" = "player" ] || [ "$tab" = "filled-library" ]; then
+            if [ "$tab" = "player" ] || [ "$tab" = "filled-library" ] || [ "$tab" = "search" ]; then
               sleep 7
             else
               sleep 3
@@ -79,6 +79,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mp3shelf-premium-seven-screens
+          name: mp3shelf-premium-eight-screens
           path: ${{ runner.temp }}/mp3shelf-visual-qa/*.png
           if-no-files-found: ignore
