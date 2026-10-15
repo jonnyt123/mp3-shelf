@@ -229,6 +229,42 @@ struct NowPlayingView: View {
                                     .premiumCard(radius: 16)
                                 }
                                 .foregroundStyle(.white)
+
+                                if !playback.upcomingTracks.isEmpty {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        PremiumSectionHeading(title: "Up next",
+                                                              detail: "YOUR QUEUE")
+                                        ForEach(playback.upcomingTracks) { next in
+                                            Button {
+                                                playback.play(next)
+                                            } label: {
+                                                HStack(spacing: 12) {
+                                                    ArtworkTile(track: next, size: 46)
+                                                    VStack(alignment: .leading, spacing: 3) {
+                                                        Text(next.title)
+                                                            .font(.subheadline.weight(.semibold))
+                                                            .foregroundStyle(.white)
+                                                            .lineLimit(1)
+                                                        Text(next.artist)
+                                                            .font(.caption)
+                                                            .foregroundStyle(ShelfTheme.subdued)
+                                                            .lineLimit(1)
+                                                    }
+                                                    Spacer(minLength: 0)
+                                                    Image(systemName: "play.fill")
+                                                        .font(.caption)
+                                                        .foregroundStyle(ShelfTheme.accent)
+                                                }
+                                                .padding(10)
+                                                .premiumCard(radius: 17)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityLabel("Play next: \(next.title) by \(next.artist)")
+                                        }
+                                    }
+                                    .padding(.top, 24)
+                                }
+
                                 HStack(spacing: 7) {
                                     Image(systemName: "iphone.gen3")
                                         .font(.caption)
