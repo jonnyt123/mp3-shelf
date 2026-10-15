@@ -312,7 +312,7 @@ struct SettingsView: View {
                         .foregroundStyle(ShelfTheme.subdued)
                     Spacer()
                 }
-                .listRowBackground(.clear)
+                .listRowBackground(Color.clear)
             }
         }
         .scrollContentBackground(.hidden)
