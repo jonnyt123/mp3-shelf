@@ -244,6 +244,7 @@ struct PlaylistsView: View {
 }
 
 struct PlaylistDetailView: View {
+    @ObservedObject private var transfers = BackgroundAudioDownloader.shared
     let playlistID: UUID
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
@@ -295,6 +296,26 @@ struct PlaylistDetailView: View {
                     Section("Find & Download MP3s") {
                         Text("Searches Internet Archive and eligible Openverse catalogs for exact artist/title matches, MP3 files, and declared Creative Commons/public-domain licenses. Verified download URLs transfer through iOS even while the screen is locked. Popular commercial songs are unlikely to qualify.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        if let job = library.discoveryJob(for: playlistID), !job.isComplete {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Catalog search: \(job.nextIndex)/\(job.wishes.count) processed")
+                                    .font(.caption.monospacedDigit())
+                                if let issue = job.lastError {
+                                    Label("Paused by network error: \(issue)", systemImage: "wifi.exclamationmark")
+                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                }
+                                if job.isPaused {
+                                    Button("Resume Source Discovery") {
+                                        library.resumeSourceDiscovery(for: playlistID)
+                                    }
+                                } else if library.automaticDownloadProgress?.playlistID != playlistID ||
+                                            library.automaticDownloadProgress?.isRunning != true {
+                                    Button("Resume Search") {
+                                        library.resumeSourceDiscovery(for: playlistID)
+                                    }
+                                }
+                            }
+                        }
                         if let progress = library.automaticDownloadProgress,
                            progress.playlistID == playlistID {
                             Text("\(progress.processed)/\(progress.total) checked • \(progress.queued) queued • \(progress.downloaded) downloaded • \(progress.unavailable) not found • \(progress.failed) failed")
@@ -304,8 +325,8 @@ struct PlaylistDetailView: View {
                                              total: Double(max(progress.total, 1)))
                                 Text(progress.currentSong)
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                Button("Stop source discovery", role: .cancel) {
-                                    library.cancelAutomaticDownloads()
+                                Button("Pause Source Discovery", role: .cancel) {
+                                    library.pauseSourceDiscovery(for: playlistID)
                                 }
                             } else {
                                 Text(progress.wasCancelled ? "Source discovery stopped." : "Source lookup finished. Background downloads may still be running.")
@@ -372,7 +393,14 @@ struct PlaylistDetailView: View {
         .background(ShelfTheme.background)
         .navigationTitle(playlist?.name ?? "Playlist")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { EditButton() }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink { DownloadManagerView() } label: {
+                    Image(systemName: "arrow.down.circle")
+                }
+                EditButton()
+            }
+        }
         .sheet(item: $editing) { track in RenameTrackView(track: track) }
     }
 }

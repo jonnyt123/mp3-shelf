@@ -24,6 +24,7 @@ final class MusicLibrary: ObservableObject {
     @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
+    @Published private(set) var discoveryJobs: [SourceDiscoveryJob] = []
 
     private let manager = FileManager.default
     private let storageRoot: URL
@@ -31,6 +32,7 @@ final class MusicLibrary: ObservableObject {
     private let artworkDirectory: URL
     private let lyricsDirectory: URL
     private let databaseURL: URL
+    private let discoveryURL: URL
 
     init() {
         let documents = manager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -40,6 +42,7 @@ final class MusicLibrary: ObservableObject {
         artworkDirectory = storageRoot.appendingPathComponent("Artwork", isDirectory: true)
         lyricsDirectory = storageRoot.appendingPathComponent("Lyrics", isDirectory: true)
         databaseURL = storageRoot.appendingPathComponent("library.json")
+        discoveryURL = storageRoot.appendingPathComponent("source-discovery.json")
         do {
             try manager.createDirectory(at: storageRoot, withIntermediateDirectories: true)
             try manager.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
@@ -49,6 +52,10 @@ final class MusicLibrary: ObservableObject {
                 let saved = try JSONDecoder().decode(PersistedLibrary.self, from: data)
                 tracks = saved.tracks.filter { manager.fileExists(atPath: musicDirectory.appendingPathComponent($0.fileName).path) }
                 playlists = saved.playlists
+            }
+            if let saved = try? Data(contentsOf: discoveryURL),
+               let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
+                discoveryJobs = decoded.filter { job in playlists.contains { $0.id == job.playlistID } }
             }
         } catch {
             print("MP3 Shelf could not initialize local storage: \(error)")
@@ -172,17 +179,57 @@ final class MusicLibrary: ObservableObject {
     }
 
 
-    /// A single tap looks up and downloads eligible files for every missing
-    /// song. Never downloads from Spotify or bypasses access restrictions.
-    /// Keep the app in the foreground: iOS may suspend this task otherwise.
+    /// Persist each search cursor so interrupted foreground discovery resumes.
     func startAutomaticDownloads(for playlistID: UUID) {
-        guard automaticDownloadProgress?.isRunning != true,
-              let playlist = playlists.first(where: { $0.id == playlistID }),
+        guard let playlist = playlists.first(where: { $0.id == playlistID }),
               !playlist.missingTracks.isEmpty else { return }
-        let wishes = playlist.missingTracks
-        automaticDownloadProgress = AutomaticDownloadProgress(playlistID: playlistID, total: wishes.count)
+        if let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID && !$0.isComplete }) {
+            discoveryJobs[index].isPaused = false
+            discoveryJobs[index].lastError = nil
+        } else {
+            discoveryJobs.removeAll { $0.playlistID == playlistID }
+            discoveryJobs.append(SourceDiscoveryJob(playlistID: playlistID, wishes: playlist.missingTracks))
+        }
+        persistDiscovery()
+        resumePendingDiscovery()
+    }
+
+    func discoveryJob(for playlistID: UUID) -> SourceDiscoveryJob? {
+        discoveryJobs.first(where: { $0.playlistID == playlistID })
+    }
+
+    func pauseSourceDiscovery(for playlistID: UUID) {
+        guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) else { return }
+        discoveryJobs[index].isPaused = true
+        persistDiscovery()
+        if automaticDownloadProgress?.playlistID == playlistID { automaticDownloadTask?.cancel() }
+    }
+
+    func resumeSourceDiscovery(for playlistID: UUID) {
+        guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) else { return }
+        discoveryJobs[index].isPaused = false
+        discoveryJobs[index].lastError = nil
+        persistDiscovery()
+        resumePendingDiscovery()
+    }
+
+    func resumePendingDiscovery() {
+        guard automaticDownloadTask == nil,
+              let job = discoveryJobs.first(where: { !$0.isPaused && !$0.isComplete }) else { return }
+        var progress = AutomaticDownloadProgress(playlistID: job.playlistID, total: job.wishes.count)
+        progress.processed = job.nextIndex
+        progress.queued = job.queued
+        progress.failed = job.failed
+        progress.unavailable = job.unavailable
+        automaticDownloadProgress = progress
         automaticDownloadTask = Task { [weak self] in
-            await self?.runAutomaticDownloads(playlistID: playlistID, wishes: wishes)
+            await self?.runAutomaticDownloads(playlistID: job.playlistID)
+        }
+    }
+
+    private func persistDiscovery() {
+        if let data = try? JSONEncoder().encode(discoveryJobs) {
+            try? data.write(to: discoveryURL, options: .atomic)
         }
     }
 
@@ -225,45 +272,59 @@ final class MusicLibrary: ObservableObject {
     }
 
     func cancelAutomaticDownloads() {
-        automaticDownloadTask?.cancel()
+        if let playlistID = automaticDownloadProgress?.playlistID {
+            pauseSourceDiscovery(for: playlistID)
+        }
     }
 
-    private func runAutomaticDownloads(playlistID: UUID, wishes: [PlaylistWish]) async {
-        guard var progress = automaticDownloadProgress else { return }
-        for wish in wishes {
-            if Task.isCancelled { progress.wasCancelled = true; break }
-            progress.currentSong = "\(wish.artist) — \(wish.title)"
-            automaticDownloadProgress = progress
-
-            if MusicMatching.matchingTrack(for: wish, in: tracks) != nil {
-                progress.processed += 1
+    private func runAutomaticDownloads(playlistID: UUID) async {
+        var blockedByNetwork = false
+        while let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) {
+            var job = discoveryJobs[index]
+            if Task.isCancelled || job.isPaused || job.isComplete { break }
+            guard let wish = job.currentWish else { break }
+            if var progress = automaticDownloadProgress {
+                progress.currentSong = "\(wish.artist) — \(wish.title)"
                 automaticDownloadProgress = progress
-                continue
             }
-            do {
-                if let source = try await AudioSourceFinder.findAcrossCatalogs(for: wish) {
-                    if BackgroundAudioDownloader.shared.enqueue(source: source,
-                               requested: wish, playlistID: playlistID) {
-                        progress.queued += 1
-                    } else {
-                        progress.failed += 1
-                    }
-                } else {
-                    progress.unavailable += 1
+            if MusicMatching.matchingTrack(for: wish, in: tracks) != nil ||
+                BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
+                job.record(.alreadyPresent)
+            } else {
+                do {
+                    let source = try await AudioSourceFinder.findAcrossCatalogs(for: wish)
+                    if Task.isCancelled { break }
+                    if let source {
+                        if BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID) {
+                            job.record(.queued)
+                        } else { job.record(.failed) }
+                    } else { job.record(.unavailable) }
+                } catch is CancellationError {
+                    break
+                } catch {
+                    job.lastError = error.localizedDescription
+                    blockedByNetwork = true
                 }
-            } catch is CancellationError {
-                progress.wasCancelled = true
-                break
-            } catch {
-                progress.failed += 1
             }
-            progress.processed += 1
+            discoveryJobs[index] = job
+            persistDiscovery()
+            if var progress = automaticDownloadProgress {
+                progress.processed = job.nextIndex
+                progress.queued = job.queued
+                progress.unavailable = job.unavailable
+                progress.failed = job.failed
+                automaticDownloadProgress = progress
+            }
+            if blockedByNetwork { break }
+        }
+        if var progress = automaticDownloadProgress {
+            progress.isRunning = false
+            progress.wasCancelled = Task.isCancelled
+            progress.currentSong = ""
             automaticDownloadProgress = progress
         }
-        progress.isRunning = false
-        progress.currentSong = ""
-        automaticDownloadProgress = progress
         automaticDownloadTask = nil
+        if !blockedByNetwork { resumePendingDiscovery() }
     }
 
     func downloadAudio(from remoteURL: URL, matching wish: PlaylistWish? = nil,
@@ -343,7 +404,7 @@ final class MusicLibrary: ObservableObject {
         }
         tracks.removeAll { $0.id == id }
         for index in playlists.indices { playlists[index].trackIDs.removeAll { $0 == id } }
-        save()
+        reconcileMissingSongs()
     }
 
     func createPlaylist(_ name: String) {
@@ -355,6 +416,8 @@ final class MusicLibrary: ObservableObject {
 
     func deletePlaylist(_ id: UUID) {
         playlists.removeAll { $0.id == id }
+        discoveryJobs.removeAll { $0.playlistID == id }
+        persistDiscovery()
         save()
     }
 
@@ -432,11 +495,13 @@ final class MusicLibrary: ObservableObject {
         save()
     }
 
+    func trackSizeBytes(_ track: MusicTrack) -> Int64 {
+        let size = (try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return Int64(max(size, 0))
+    }
+
     var totalStorageBytes: Int64 {
-        tracks.reduce(0) { total, track in
-            let size = (try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            return total + Int64(size)
-        }
+        tracks.reduce(0) { $0 + trackSizeBytes($1) }
     }
 }
 

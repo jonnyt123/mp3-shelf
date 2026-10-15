@@ -12,6 +12,8 @@
 		222222222222222222222222 /* SpotifyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111111 /* SpotifyService.swift */; };
 		ABCA09110000000000000001 /* AudioSourceFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA09110000000000000002 /* AudioSourceFinder.swift */; };
 		ABCA09110000000000000003 /* BackgroundAudioDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA09110000000000000004 /* BackgroundAudioDownloader.swift */; };
+		ABCA09110000000000000005 /* SourceDiscoveryJob.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA09110000000000000006 /* SourceDiscoveryJob.swift */; };
+		ABCA09110000000000000007 /* DownloadManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA09110000000000000008 /* DownloadManagerView.swift */; };
 		628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D41E86730D9D4E46AD7565B /* MP3ShelfApp.swift */; };
 		58F35F17B0B426557F7C6BFE /* MusicModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */; };
 		23F82C0DAB44C8D8C5F26241 /* MusicLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 556E9F57EB89589680F906AF /* MusicLibrary.swift */; };
@@ -31,6 +33,8 @@
 		111111111111111111111111 /* SpotifyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyService.swift; sourceTree = "<group>"; };
 		ABCA09110000000000000002 /* AudioSourceFinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSourceFinder.swift; sourceTree = "<group>"; };
 		ABCA09110000000000000004 /* BackgroundAudioDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundAudioDownloader.swift; sourceTree = "<group>"; };
+		ABCA09110000000000000006 /* SourceDiscoveryJob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceDiscoveryJob.swift; sourceTree = "<group>"; };
+		ABCA09110000000000000008 /* DownloadManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManagerView.swift; sourceTree = "<group>"; };
 		3D41E86730D9D4E46AD7565B /* MP3ShelfApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MP3ShelfApp.swift; sourceTree = "<group>"; };
 		3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicModels.swift; sourceTree = "<group>"; };
 		556E9F57EB89589680F906AF /* MusicLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicLibrary.swift; sourceTree = "<group>"; };
@@ -66,6 +70,7 @@
 			); path = MP3Shelf; sourceTree = "<group>"; };
 		E9CF4F9355D0A5E1275010D6 /* Models */ = {isa = PBXGroup; children = (
 				3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */,
+				ABCA09110000000000000006 /* SourceDiscoveryJob.swift */,
 			); path = Models; sourceTree = "<group>"; };
 		F30B052890FF09AC06846E94 /* Services */ = {isa = PBXGroup; children = (
 				556E9F57EB89589680F906AF /* MusicLibrary.swift */,
@@ -83,6 +88,7 @@
 				9AD92D136E4ED96ECEC7F6FF /* ImportViews.swift */,
 				777777777777777777777777 /* LyricsView.swift */,
 				333333333333333333333333 /* SpotifyViews.swift */,
+				ABCA09110000000000000008 /* DownloadManagerView.swift */,
 			); path = Views; sourceTree = "<group>"; };
 		F358300777CBF3353E807A35 /* Resources */ = {isa = PBXGroup; children = (
 				3D98AD6443220BBB0E7A9295 /* Assets.xcassets */,
@@ -113,6 +119,8 @@
 				222222222222222222222222 /* SpotifyService.swift in Sources */,
 				ABCA09110000000000000001 /* AudioSourceFinder.swift in Sources */,
 				ABCA09110000000000000003 /* BackgroundAudioDownloader.swift in Sources */,
+				ABCA09110000000000000005 /* SourceDiscoveryJob.swift in Sources */,
+				ABCA09110000000000000007 /* DownloadManagerView.swift in Sources */,
 				99C401E36FF0BDEE5903FAE2 /* MainView.swift in Sources */,
 				45BDD03CF2227AEBED792CED /* PlayerViews.swift in Sources */,
 				AFBCAD821E0B88FA3FCC9208 /* LibraryViews.swift in Sources */,
