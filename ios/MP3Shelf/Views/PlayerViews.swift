@@ -127,10 +127,13 @@ struct NowPlayingView: View {
                                             .font(.headline.weight(.regular))
                                             .foregroundStyle(ShelfTheme.subdued)
                                             .lineLimit(1)
-                                        Text(track.album)
-                                            .font(.caption)
-                                            .foregroundStyle(ShelfTheme.subdued.opacity(0.75))
-                                            .lineLimit(1)
+                                        if !track.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                                            track.album.localizedCaseInsensitiveCompare("Unknown Album") != .orderedSame {
+                                            Text(track.album)
+                                                .font(.caption)
+                                                .foregroundStyle(ShelfTheme.subdued.opacity(0.75))
+                                                .lineLimit(1)
+                                        }
                                     }
                                     Spacer(minLength: 0)
                                     Button { library.toggleFavorite(track.id) } label: {
