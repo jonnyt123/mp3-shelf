@@ -109,7 +109,6 @@ struct DownloadManagerView: View {
                     Button("Clear Finished Download History", role: .destructive) {
                         confirmClear = true
                     }
-                    .disabled(allTickets.allSatisfy { $0.status == .queued })
                     Text("Removing history does not delete playable music. Use Manage Music Storage to delete stored MP3 files.")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }
