@@ -21,3 +21,6 @@ jobs:
       - name: Lyrics parser regression tests
         run: |
           swiftc ios/MP3Shelf/Services/LyricsParser.swift ios/Tests/LyricsParserTests.swift -o /tmp/mp3shelf-lyrics && /tmp/mp3shelf-lyrics
+      - name: Licensed MP3 source matching regression tests
+        run: |
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/MP3Shelf/Services/AudioSourceFinder.swift ios/Tests/AudioSourceFinderTests.swift -o /tmp/mp3shelf-source-finder && /tmp/mp3shelf-source-finder
