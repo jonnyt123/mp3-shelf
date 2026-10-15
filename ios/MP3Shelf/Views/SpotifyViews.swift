@@ -83,7 +83,10 @@ struct SpotifyConnectView: View {
             let wishes = try await spotify.getTrackList(for: list)
             let report = library.importPlaylist(wishes: wishes, name: list.name,
                 sourceURL: list.external_urls?.spotify)
-            notice = "\(report.playlistName): \(report.matched) songs ready offline, \(report.missing) missing local audio files."
+            if report.missing > 0, let imported = library.playlists.last {
+                library.startAutomaticDownloads(for: imported.id)
+            }
+            notice = "\(report.playlistName): \(report.matched) ready now, \(report.missing) queued for automatic licensed-source lookup. Open the imported playlist to view progress."
         } catch { notice = error.localizedDescription }
     }
 }
