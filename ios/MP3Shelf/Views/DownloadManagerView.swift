@@ -23,8 +23,10 @@ struct DownloadManagerView: View {
                 }
                 .padding(.vertical, 10)
                 LabeledContent("In progress", value: "\(transfers.pendingCount())")
-                LabeledContent("Music stored", value: ByteCountFormatter.string(
-                    fromByteCount: library.totalStorageBytes, countStyle: .file))
+                LabeledContent("Music stored", value: library.totalStorageBytes == 0
+                    ? "0 MB"
+                    : ByteCountFormatter.string(
+                        fromByteCount: library.totalStorageBytes, countStyle: .file))
                 NavigationLink {
                     MusicStorageView()
                 } label: {
@@ -146,8 +148,10 @@ struct MusicStorageView: View {
                     PremiumIcon(symbol: "externaldrive.fill", color: ShelfTheme.coral, size: 57)
                     VStack(alignment: .leading, spacing: 4) {
                         PremiumEyebrow(title: "ON THIS IPHONE", color: ShelfTheme.coral)
-                        Text(ByteCountFormatter.string(fromByteCount: library.totalStorageBytes,
-                                                       countStyle: .file))
+                        Text(library.totalStorageBytes == 0
+                             ? "0 MB"
+                             : ByteCountFormatter.string(fromByteCount: library.totalStorageBytes,
+                                                        countStyle: .file))
                             .font(.system(.title2, design: .rounded, weight: .bold))
                     }
                 }
