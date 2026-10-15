@@ -138,3 +138,17 @@ Remaining refinements:
   `--mp3shelf-snapshot-downloads` DEBUG-only launch argument. The screenshot
   must reflect the actual screen without generating fake transfer records.
 - Keep the source downloads, playback services and data models unchanged.
+
+## Search-first library QA
+
+- When the user enters non-whitespace search text, the featured hero and
+  Recently Added rail disappear, and the matching song rows display immediately.
+  All/Favorites filtering remains explicitly visible while searching.
+- Song title, artist and album searches are case-insensitive and tolerate
+  leading or trailing whitespace. If there are no matches, show a useful
+  empty-result state rather than a misleading empty library onboarding card.
+- Clearing the search restores the original premium library without mutating
+  playback or stored files.
+- DEBUG launch argument `--mp3shelf-snapshot-search` imports the original
+  three-tone QA fixture and searches for "Velvet"; GitHub CI captures
+  `search.png` as an eighth screen.
