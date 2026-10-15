@@ -114,16 +114,32 @@ struct MainView: View {
     @EnvironmentObject private var playback: PlaybackController
     @State private var showPlayer = false
 
+    // Debug-only deep-page snapshots for automated design QA. The public
+    // release always opens on the Listen tab.
+    @State private var selectedTab: Int = {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--mp3shelf-snapshot-playlists") { return 1 }
+        if args.contains("--mp3shelf-snapshot-add-music") { return 2 }
+        if args.contains("--mp3shelf-snapshot-settings") { return 3 }
+        #endif
+        return 0
+    }()
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             tabPage { LibraryView() }
                 .tabItem { Label("Listen", systemImage: "music.note.house.fill") }
+                .tag(0)
             tabPage { PlaylistsView() }
                 .tabItem { Label("Playlists", systemImage: "square.stack.fill") }
+                .tag(1)
             tabPage { DownloadView() }
                 .tabItem { Label("Add Music", systemImage: "plus.circle.fill") }
+                .tag(2)
             tabPage { SettingsView() }
                 .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                .tag(3)
         }
         .tint(ShelfTheme.accent)
         .toolbarBackground(ShelfTheme.surface, for: .tabBar)
