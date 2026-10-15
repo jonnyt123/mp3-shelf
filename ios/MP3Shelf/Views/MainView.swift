@@ -112,7 +112,13 @@ extension View {
 
 struct MainView: View {
     @EnvironmentObject private var playback: PlaybackController
-    @State private var showPlayer = false
+    @State private var showPlayer: Bool = {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("--mp3shelf-snapshot-player")
+        #else
+        return false
+        #endif
+    }()
 
     // Debug-only deep-page snapshots for automated design QA. The public
     // release always opens on the Listen tab.
