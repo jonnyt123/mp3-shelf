@@ -38,3 +38,17 @@ npm test
 npm run typecheck
 npm run build
 ```
+
+## Spotify playlist import in the web app
+
+Tap **Import a Spotify playlist** below **Choose MP3s**.
+
+**Without Spotify configuration:** Choose a CSV or TSV export containing `Track Name`, `Artist Name`, `Album Name`, and optionally `Track URI`. MP3 Shelf creates a local playlist, matches already-imported recordings conservatively, and shows songs still needing legal audio files. Importing more owned MP3 files later updates the matches.
+
+**Direct Spotify account connection:** Register a Spotify developer app with exact redirect URI `https://mp3-shelf.vercel.app/` and set the public `NEXT_PUBLIC_SPOTIFY_CLIENT_ID` in the deployment environment, then deploy that configuration. Browser sign-in uses OAuth Authorization Code + PKCE without a client secret; access tokens are held in memory. The 2026 Spotify development-mode API supports track listing for playlists the account owns or collaborates on, and developer accounts have additional limits. Use CSV/TSV for other playlists. Verify Spotify accepts the redirect URI before enabling connection.
+
+**Spotify streams cannot be converted, downloaded or ripped.** A playlist import stores track metadata only and matches independent audio files already present on your device. Spotify URLs link back to the original source. Backup archives preserve playlist metadata but never store Spotify access tokens.
+
+## Feature parity
+
+Native SwiftUI code and the installable web PWA live in this repository. See [FEATURE_PARITY.md](FEATURE_PARITY.md) for implemented features, verification and remaining differences.
