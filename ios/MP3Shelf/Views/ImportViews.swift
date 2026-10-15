@@ -88,9 +88,9 @@ struct SpotifyImportView: View {
                 VStack(alignment: .leading, spacing: 9) {
                     Label("Spotify playlist → offline collection", systemImage: "square.stack.3d.up.fill")
                         .font(.headline)
-                    Text("Import a CSV or TSV list of your playlist's tracks. MP3 Shelf matches each song to audio already stored on your iPhone and builds a playable offline playlist.")
+                    Text("Import a CSV or TSV list of your playlist's tracks. MP3 Shelf matches your local music, then automatically searches for independently licensed MP3 downloads for missing songs.")
                         .foregroundStyle(ShelfTheme.subdued).font(.subheadline)
-                    Text("This does not turn Spotify streams into MP3s. You must supply your own legitimately obtained audio files.")
+                    Text("This does not turn Spotify streams into MP3s. Commercial recordings usually have no qualifying free download source.")
                         .font(.caption).foregroundStyle(.orange)
                 }
                 .padding(.vertical, 8)
@@ -116,9 +116,9 @@ struct SpotifyImportView: View {
                     Label(latest.playlistName, systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                     Text("\(latest.matched) songs are ready to play offline.")
-                    Text("\(latest.missing) songs still need matching audio files.")
+                    Text("\(latest.missing) songs queued for automatic license-declared source lookup.")
                         .foregroundStyle(ShelfTheme.subdued)
-                    Text("When you import additional MP3s, MP3 Shelf automatically checks whether they match an unmatched song.")
+                    Text("Open the imported playlist for download progress, results, and retry controls.")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }
             }
@@ -136,6 +136,9 @@ struct SpotifyImportView: View {
                     let data = try Data(contentsOf: url)
                     let baseName = url.deletingPathExtension().lastPathComponent
                     latest = try library.importPlaylistCSV(data: data, name: baseName, spotifyURL: optionalSpotifyURL)
+                    if let latest, latest.missing > 0, let imported = library.playlists.last {
+                        library.startAutomaticDownloads(for: imported.id)
+                    }
                 } catch { notice = error.localizedDescription }
             case .failure(let error): notice = error.localizedDescription
             }
