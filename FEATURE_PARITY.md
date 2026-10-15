@@ -9,6 +9,7 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 | --- | --- | --- | --- |
 | Local audio import and offline playback | Implemented; Simulator tested | Live and implemented | Physical iPhone Safari + native testing |
 | Playlists, search, shuffle, repeat, artwork, scrubbing | Implemented | Live and implemented | Cross-device navigation checks |
+| Favorite songs | Implemented | PR #5 adds Favorite hearts and filter with IndexedDB and backup preservation | iPhone Safari usability checks |
 | Spotify metadata playlist import | PKCE/CSV importer implemented | PR #5 adds PKCE/CSV import; metadata-only | Configure Spotify client ID and allowed redirect; confirm account eligibility |
 | Spotify owned/collaborative playlist access | Native integration in draft | PR #5 uses 2026 `/items` endpoint | Spotify permission/restriction live tests |
 | Matching imported track lists against local recordings | Implemented conservatively | PR #5 adds conservative matching + missing-song list | Test real exported playlists and alternate recordings |
