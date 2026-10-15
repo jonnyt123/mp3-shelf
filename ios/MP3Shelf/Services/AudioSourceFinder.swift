@@ -122,9 +122,9 @@ enum AudioSourceFinder {
             guard files.count == 1, let file = files.first else { continue }
             // If both have duration metadata, reject alternate takes and edits.
             if let expected = wish.durationSeconds {
-                guard let lengthString = file.length,
-                      let measured = Double(lengthString),
-                      abs(measured - expected) <= 4.0 else { continue }
+                if let lengthString = file.length, let measured = Double(lengthString),
+                   abs(measured - expected) > 4.0 { continue }
+                // Missing catalog durations are verified from the decoded MP3.
             }
             let itemURL = URL(string: "https://archive.org/details/")!
                 .appendingPathComponent(result.identifier)
