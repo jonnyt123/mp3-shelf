@@ -22,7 +22,7 @@ struct LyricsView: View {
                                 ForEach(lines) { line in
                                     Text(line.text)
                                         .font(.title3.weight(isActive(line, in: lines) ? .bold : .regular))
-                                        .foregroundStyle(isActive(line, in: lines) ? .white : ShelfTheme.subdued)
+                                        .foregroundStyle(isActive(line, in: lines) ? ShelfTheme.mint : ShelfTheme.subdued)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .id(line.id)
                                         .onTapGesture { if let time = line.time { playback.seek(to: time) } }
@@ -39,7 +39,8 @@ struct LyricsView: View {
                 }
             }
         }
-        .background(ShelfTheme.background.ignoresSafeArea())
+        .background(PremiumBackdrop())
+        .tint(ShelfTheme.accent)
         .navigationTitle("Lyrics")
         .toolbar { ToolbarItem(placement: .topBarTrailing) {
             Button("Import LRC") { showPicker = true }
