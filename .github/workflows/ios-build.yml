@@ -51,13 +51,22 @@ jobs:
           APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" -path '*/Build/Products/Debug-iphonesimulator/MP3Shelf.app' -type d -print -quit)
           test -n "$APP"
           xcrun simctl install "$DEVICE" "$APP"
-          xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf
-          sleep 3
-          xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mp3shelf-simulator.png"
-          xcrun simctl terminate "$DEVICE" com.jonnyt.mp3shelf
+          mkdir -p "$RUNNER_TEMP/mp3shelf-visual-qa"
+          # Each tab is opened in a fresh process using debug-only launch
+          # arguments. This does not introduce demo content into releases.
+          for tab in listen playlists add-music settings; do
+            if [ "$tab" = "listen" ]; then
+              xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf
+            else
+              xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf --mp3shelf-snapshot-"$tab"
+            fi
+            sleep 3
+            xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mp3shelf-visual-qa/$tab.png"
+            xcrun simctl terminate "$DEVICE" com.jonnyt.mp3shelf
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mp3shelf-simulator-screenshot
-          path: ${{ runner.temp }}/mp3shelf-simulator.png
+          name: mp3shelf-premium-all-tabs
+          path: ${{ runner.temp }}/mp3shelf-visual-qa/*.png
           if-no-files-found: ignore
