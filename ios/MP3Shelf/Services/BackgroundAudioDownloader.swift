@@ -1,10 +1,11 @@
 import Foundation
+import Combine
 import UIKit
 
 /// A persisted download ticket is independent of Spotify's OAuth session.
 /// Only the authorized, direct audio file URL is transferred by iOS.
 struct BackgroundAudioTicket: Codable, Identifiable {
-    enum Status: String, Codable { case queued, imported, failed }
+    enum Status: String, Codable { case queued, imported, failed, cancelled }
     let id: UUID
     let playlistID: UUID
     let requested: PlaylistWish
@@ -13,13 +14,18 @@ struct BackgroundAudioTicket: Codable, Identifiable {
     let licensePage: URL
     let provider: String
     var status: Status = .queued
+    var bytesReceived: Int64? = nil
+    var totalBytes: Int64? = nil
+    var failureReason: String? = nil
+    var startedAt: Date? = nil
 }
 
 /// URLSession's background transfer daemon survives ordinary app suspension
 /// and OS-initiated process termination. Discovery still runs in foreground.
 /// Staged media survives the delegate's short-lived temporary file callback.
 @MainActor
-final class BackgroundAudioDownloader: NSObject, URLSessionDownloadDelegate {
+final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDownloadDelegate {
+    @Published private(set) var revision: Int = 0
     static let shared = BackgroundAudioDownloader()
     static let identifier = "com.jonnyt.mp3shelf.licensed-audio-v1"
 
@@ -75,12 +81,14 @@ final class BackgroundAudioDownloader: NSObject, URLSessionDownloadDelegate {
             MusicMatching.key($0.requested.title) == MusicMatching.key(requested.title) &&
             MusicMatching.key($0.requested.artist) == MusicMatching.key(requested.artist)
         }) { return false }
-        let ticket = BackgroundAudioTicket(
+        var ticket = BackgroundAudioTicket(
             id: UUID(), playlistID: playlistID, requested: requested,
             downloadURL: source.downloadURL, sourcePage: source.itemURL,
             licensePage: source.licenseURL, provider: source.sourceName)
+        ticket.startedAt = .now
         tickets[ticket.id] = ticket
         persist()
+        revision += 1
         let task = session.downloadTask(with: source.downloadURL)
         task.taskDescription = ticket.id.uuidString
         task.resume()
@@ -88,21 +96,65 @@ final class BackgroundAudioDownloader: NSObject, URLSessionDownloadDelegate {
         return true
     }
 
+    func ticketsForPlaylist(_ playlistID: UUID? = nil) -> [BackgroundAudioTicket] {
+        tickets.values.filter { playlistID == nil || $0.playlistID == playlistID }
+            .sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
+    }
+
+    func isQueued(_ wish: PlaylistWish, for playlistID: UUID) -> Bool {
+        tickets.values.contains {
+            $0.status == .queued && $0.playlistID == playlistID &&
+            MusicMatching.key($0.requested.title) == MusicMatching.key(wish.title) &&
+            MusicMatching.key($0.requested.artist) == MusicMatching.key(wish.artist)
+        }
+    }
+
+    func retry(_ id: UUID) {
+        guard var ticket = tickets[id], ticket.status == .failed || ticket.status == .cancelled,
+              Self.allowedDownloadURL(ticket.downloadURL) else { return }
+        ticket.status = .queued
+        ticket.failureReason = nil
+        ticket.bytesReceived = nil
+        ticket.totalBytes = nil
+        ticket.startedAt = .now
+        tickets[id] = ticket
+        persist()
+        revision += 1
+        let task = session.downloadTask(with: ticket.downloadURL)
+        task.taskDescription = id.uuidString
+        task.resume()
+        updatePending()
+    }
+
+    func clearFinishedHistory() {
+        tickets = tickets.filter { $0.value.status == .queued }
+        persist()
+        revision += 1
+    }
+
+    func cancelTransfer(_ id: UUID) {
+        guard var ticket = tickets[id], ticket.status == .queued else { return }
+        ticket.status = .cancelled
+        ticket.failureReason = "Cancelled"
+        tickets[id] = ticket
+        persist()
+        revision += 1
+        library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
+        updatePending()
+        session.getAllTasks { tasks in
+            for task in tasks where task.taskDescription == id.uuidString {
+                task.cancel()
+            }
+        }
+    }
+
     func pendingCount(for playlistID: UUID? = nil) -> Int {
         tickets.values.filter { $0.status == .queued && (playlistID == nil || $0.playlistID == playlistID) }.count
     }
 
     func stopTransfers(for playlistID: UUID) {
-        let ids = Set(tickets.values.filter { $0.playlistID == playlistID && $0.status == .queued }.map(\.id))
-        session.getAllTasks { [weak self] tasks in
-            for task in tasks where ids.contains(UUID(uuidString: task.taskDescription ?? "") ?? UUID()) {
-                task.cancel()
-            }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                for id in ids { self.setFailed(id) }
-            }
-        }
+        let ids = tickets.values.filter { $0.playlistID == playlistID && $0.status == .queued }.map(\.id)
+        for id in ids { cancelTransfer(id) }
     }
 
     func setBackgroundEventsCompletion(_ completion: @escaping () -> Void) {
@@ -118,15 +170,27 @@ final class BackgroundAudioDownloader: NSObject, URLSessionDownloadDelegate {
 
     private func updatePending() {
         library?.pendingBackgroundDownloads = pendingCount()
+        revision += 1
     }
 
-    private func setFailed(_ id: UUID) {
+    private func setFailed(_ id: UUID, reason: String = "Download or validation failed") {
         guard var ticket = tickets[id], ticket.status == .queued else { return }
         ticket.status = .failed
+        ticket.failureReason = reason
         tickets[id] = ticket
         persist()
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         updatePending()
+    }
+
+    private func updateProgress(_ id: UUID, received: Int64, total: Int64) {
+        guard var ticket = tickets[id], ticket.status == .queued else { return }
+        ticket.bytesReceived = received
+        ticket.totalBytes = total > 0 ? total : nil
+        tickets[id] = ticket
+        revision += 1
+        // Byte-level progress is intentionally not flushed to disk for each callback;
+        // the OS restores actual task progress after process reattachment.
     }
 
     private func recoverStagedDownloads() async {
@@ -149,6 +213,7 @@ final class BackgroundAudioDownloader: NSObject, URLSessionDownloadDelegate {
                     current.status = imported ? .imported : .failed
                     tickets[ticket.id] = current
                     persist()
+                    revision += 1
                     library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: imported)
                 }
                 try? fm.removeItem(at: stagedURL)
@@ -218,10 +283,19 @@ final class BackgroundAudioDownloader: NSObject, URLSessionDownloadDelegate {
         }
     }
 
+    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                                didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                                totalBytesExpectedToWrite: Int64) {
+        guard let id = UUID(uuidString: downloadTask.taskDescription ?? "") else { return }
+        Task { @MainActor in
+            self.updateProgress(id, received: totalBytesWritten, total: totalBytesExpectedToWrite)
+        }
+    }
+
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask,
                                 didCompleteWithError error: Error?) {
         guard error != nil, let id = UUID(uuidString: task.taskDescription ?? "") else { return }
-        Task { @MainActor in self.setFailed(id) }
+        Task { @MainActor in self.setFailed(id, reason: error?.localizedDescription ?? "Transfer error") }
     }
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
