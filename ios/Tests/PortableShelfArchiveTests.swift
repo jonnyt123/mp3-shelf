@@ -1,0 +1,56 @@
+import Foundation
+
+@main
+struct PortableShelfArchiveTests {
+    static func main() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mp3shelf-archive-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let audio = folder.appendingPathComponent("my-song.mp3")
+        let originalBytes = Data([0x49, 0x44, 0x33, 0, 1, 2, 3, 4, 5, 6, 7])
+        try originalBytes.write(to: audio)
+        let song = MusicTrack(
+            id: UUID(), title: "Test song", artist: "Local artist",
+            album: "Album", fileName: "my-song.mp3",
+            originalFileName: "my-song.mp3", duration: 55, isFavorite: true)
+        var list = MusicPlaylist(name: "Portable playlist")
+        list.trackIDs = [song.id]
+        list.sourceURL = "https://open.spotify.com/playlist/0123456789ABCDEFGHIJKL"
+        list.sourceOrder = [
+            PlaylistWish(title: "Test song", artist: "Local artist", album: "Album")
+        ]
+        let archiveURL = folder.appendingPathComponent("test.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: song, audioURL: audio,
+                  artwork: Data([0xFF, 0xD8, 0xFF, 0xD9]),
+                  lyrics: "[00:05.00]Original lyrics")
+        ], playlists: [list], to: archiveURL)
+        let archive = try PortableShelfArchive.open(archiveURL)
+        assert(archive.manifest.schema == "mp3-shelf-backup")
+        assert(archive.manifest.version == 1)
+        assert(archive.manifest.tracks.count == 1)
+        assert(archive.manifest.tracks[0].isFavorite == true)
+        assert(archive.manifest.tracks[0].lyrics == "[00:05.00]Original lyrics")
+        assert(archive.manifest.playlists[0].trackIds == [song.id.uuidString])
+        assert(archive.manifest.playlists[0].wishes?.first?.title == "Test song")
+        let extracted = try PortableShelfArchive.extract(
+            archive.manifest.tracks[0].audio, from: archive, extensionName: "mp3")
+        defer { try? FileManager.default.removeItem(at: extracted) }
+        assert(try Data(contentsOf: extracted) == originalBytes)
+        let restoredArt = try PortableShelfArchive.readBytes(
+            archive.manifest.tracks[0].artwork!, from: archive)
+        assert(restoredArt == Data([0xFF, 0xD8, 0xFF, 0xD9]))
+
+        let invalidURL = folder.appendingPathComponent("invalid.mp3shelf")
+        try Data("invalid archive".utf8).write(to: invalidURL)
+        do {
+            _ = try PortableShelfArchive.open(invalidURL)
+            fatalError("Accepted invalid archive")
+        } catch PortableShelfArchive.ArchiveError.invalidFile {
+            // Expected.
+        }
+        print("Portable MP3 Shelf v1 archive round-trip and validation passed.")
+    }
+}
