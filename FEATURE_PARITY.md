@@ -19,7 +19,7 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 | Lyrics and timed lyric parsing | Native view and parser | PR #5 adds LRC/TXT import, timed highlighting and IndexedDB persistence | Verify playback screen usability on real iPhone |
 | Crossfade | Native player supports crossfade | **Not yet on web** | Test Web Audio routing, iOS Safari restrictions |
 | AirPlay | iOS audio routing | Safari AirPlay picker where available | Hardware device validation |
-| Backups/export/restore | **Not yet native** (separate format/migration required) | Web PWA backup/restore implemented, PR #5 adds Spotify metadata and lyrics | Cross-platform lossless backup format and migration |
+| Backups/export/restore | Native draft PR #4 now implements compatible `.mp3shelf` v1 export and additive restore; codec round-trip tests passed | Web PWA backup/restore implemented, PR #5 preserves Spotify metadata, lyrics, favorites and source credits | Cross-platform real-archive exchange on physical iPhone + large-library QA |
 | Premium lavender/mint/coral design | Draft PR #4 | PR #5 adds corresponding Spotify screens, rest of web retains earlier design | Complete shared design tokens and accessible screens |
 | Install to home screen | Native iPhone app (not in TestFlight yet) | Live PWA with home screen | App Store/TestFlight submission, final native QA |
 | Automated CI | Native Xcode Simulator runs in stacked PRs | PR #5 adds web tests, typecheck and build | Run latest commits and check result |
@@ -41,6 +41,6 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 
 1. Ship and verify web playlist metadata import through CI and iPhone Safari.
 2. Verify web licensed-catalog Openverse search and downloaded MP3s on real iPhone Safari; discovery is present in PR #5 but rate limits and CORS require live tests.
-3. Finish native/PWA backup interoperability. Browser timed lyrics are present in PR #5; test on iPhone.
+3. Verify the native/PWA `.mp3shelf` archive exchange on physical iPhone; both codecs now exist in draft PRs. Browser timed lyrics also need iPhone testing.
 4. Implement crossfade as supported by the browser without breaking existing audio.
 5. Close visual parity and run physical-device QA for both apps.
