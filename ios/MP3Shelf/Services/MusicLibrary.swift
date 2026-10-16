@@ -106,9 +106,20 @@ final class MusicLibrary: ObservableObject {
                 if imported { report.imported += 1 }
                 else { report.skipped += 1 }
 
-                // Existing duplicate audio remains intact; don't overwrite its
-                // favorite, title, artwork, lyrics or license information.
-                guard imported, let index = tracks.indices.last else { continue }
+                // Preserve references to already-present recordings so
+                // repeated restores still recreate the proper playlist order.
+                if !imported {
+                    if let existing = tracks.first(where: { candidate in
+                        candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame &&
+                        ((try? fileURL(for: candidate)
+                            .resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) ==
+                            archived.audio.length
+                    }) {
+                        restoredIDs[archived.id] = existing.id
+                    }
+                    continue
+                }
+                guard let index = tracks.indices.last else { continue }
                 restoredIDs[archived.id] = tracks[index].id
                 tracks[index].title = archived.name
                 if let artist = archived.artist { tracks[index].artist = artist }
