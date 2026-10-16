@@ -160,10 +160,15 @@ final class MusicLibrary: ObservableObject {
             if let temporary { try? manager.removeItem(at: temporary) }
         }
         for item in archive.manifest.playlists {
+            // Web backups use string playlist IDs, not necessarily UUIDs.
+            // Keep their source ID so restoring the same archive again (or
+            // after an app restart) does not create another copy.
+            if playlists.contains(where: { $0.matchesPortableBackupID(item.id) }) {
+                continue
+            }
             let id = UUID(uuidString: item.id) ?? UUID()
-            // A repeated restore must not duplicate the same native playlist ID.
-            if playlists.contains(where: { $0.id == id }) { continue }
             var playlist = MusicPlaylist(id: id, name: item.name)
+            playlist.portableBackupID = item.id
             playlist.sourceURL = item.sourceURL
             playlist.trackIDs = item.trackIds.compactMap { restoredIDs[$0] }
             playlist.sourceOrder = (item.wishes ?? []).map {
