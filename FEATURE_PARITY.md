@@ -24,6 +24,21 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 | Install to home screen | Native iPhone app (not in TestFlight yet) | Live PWA with home screen | App Store/TestFlight submission, final native QA |
 | Automated CI | Native Xcode Simulator runs in stacked PRs | PR #5 adds web tests, typecheck and build | Run latest commits and check result |
 
+
+## October 16 — Library safety and browsing
+
+- Web portable restore uses a single IndexedDB transaction to add missing
+  tracks. Existing song bytes, renamed titles, favorites, lyrics and imported
+  license credits are preserved. Existing playlists are not overwritten by
+  an older archive. Restoring the same backup repeatedly is non-destructive.
+- Manual skip-to-next now ignores Repeat One (which still applies when audio
+  finishes automatically), and manual Previous matches native rewind behavior.
+- The web library has a Recently Added artwork rail and sort choices for
+  Recently added, Title and Artist. A playlist's explicit song order is
+  preserved regardless of the selected library sort.
+- Browser features have automated regression coverage; actual Safari
+  interaction and accessible layout remain release gates.
+
 ## Safety and product constraints
 
 - A Spotify playlist contains **metadata and links**, not downloadable Spotify audio.
