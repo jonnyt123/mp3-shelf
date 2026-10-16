@@ -138,3 +138,20 @@
 .attribution-actions { display: flex; gap: 9px; flex-wrap: wrap; margin: 15px 0; }
 .attribution-actions a { flex: 1; min-width: 110px; padding: 12px; border: 1px solid #476a67; border-radius: 12px; color: #b4e9da; font-size: 12px; text-align: center; text-decoration: none; }
 .attribution-note { color: #abb8b7!important; font-size: 11px!important; }
+
+/* Native-inspired browsing: recent releases and compact sorting controls. */
+.library-sort-row { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin:10px 0 16px; }
+.library-sort-row label { color:#b5b7c1; font-size:12px; font-weight:600; }
+.library-sort-row select { min-height:44px; max-width:180px; padding:9px 29px 9px 12px; border:1px solid #59546e; border-radius:12px; background:#242332; color:#f4effe; font-size:12px; font-weight:650; }
+.library-sort-row select:focus-visible { outline:2px solid #c2a8ff; outline-offset:2px; }
+.recent-rail { min-width:0; margin:15px 0 22px; padding:16px 0; }
+.recent-rail>.section-heading { display:flex; align-items:baseline; justify-content:space-between; margin:0 3px 12px; }
+.recent-rail>.section-heading h3 { margin:0; font-size:17px; }
+.recent-rail>.section-heading>span { color:#a9adbb; font-size:11px; }
+.recent-rail-scroller { display:flex; align-items:stretch; gap:13px; padding:2px 2px 13px; overflow-x:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-width:thin; }
+.recent-rail-item { display:flex; flex:0 0 128px; min-width:0; flex-direction:column; align-items:stretch; gap:6px; padding:8px; border:1px solid rgba(191,169,229,.13); border-radius:17px; background:#252432; text-align:left; color:#f5f0fd; scroll-snap-align:start; }
+.recent-rail-item .artwork.large { width:100%; height:auto; aspect-ratio:1; border-radius:12px; font-size:40px; box-shadow:none; }
+.recent-rail-item strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; line-height:1.35; }
+.recent-rail-item small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:#aab0be; }
+.recent-rail-item:focus-visible { outline:2px solid #bda8ef; outline-offset:2px; }
+@media(max-width:380px) { .recent-rail-item { flex-basis:113px; } }
