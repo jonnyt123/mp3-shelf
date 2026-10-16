@@ -121,3 +121,9 @@
   outline: 2px solid #adecd9; outline-offset: 2px;
 }
 @media(max-width:380px) { .open-audio-search { flex-wrap: wrap; } .open-audio-search button { width: 100%; } }
+
+.direct-audio-transfer { display: grid; grid-template-columns: 1fr auto; gap: 7px 10px; align-items: center; margin-top: 14px; }
+.direct-audio-transfer progress { grid-column: 1/-1; width: 100%; height: 8px; accent-color: #8de1cb; }
+.direct-audio-transfer span { color: #c1d9d7; font-size: 11px; font-variant-numeric: tabular-nums; }
+.direct-audio-transfer button { padding: 8px 10px; border: 1px solid #657079; border-radius: 10px; background: #26343b; color: #f0d4d4; font-size: 11px; }
+.direct-audio-transfer button:focus-visible { outline: 2px solid #d9c1c1; outline-offset: 2px; }
