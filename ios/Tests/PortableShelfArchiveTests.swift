@@ -81,6 +81,47 @@ struct PortableShelfArchiveTests {
         let browserAudio = try Data(contentsOf: browserExtract)
         assert(browserAudio == originalBytes)
 
+        // Reject duplicate/blank archive identifiers before touching the
+        // on-device music library. Otherwise playlist references are ambiguous.
+        let webObject = try JSONSerialization.jsonObject(with: webManifest)
+            as! [String: Any]
+        var repeatedTrack = webObject
+        let webTracks = webObject["tracks"] as! [[String: Any]]
+        repeatedTrack["tracks"] = [webTracks[0], webTracks[0]]
+        var repeatedPlaylist = webObject
+        let webPlaylists = webObject["playlists"] as! [[String: Any]]
+        repeatedPlaylist["playlists"] = [webPlaylists[0], webPlaylists[0]]
+        var emptyPlaylistID = webObject
+        var blankPlaylists = webPlaylists
+        blankPlaylists[0]["id"] = ""
+        emptyPlaylistID["playlists"] = blankPlaylists
+
+        for (name, malformed) in [
+            ("duplicate-track-ids", repeatedTrack),
+            ("duplicate-playlist-ids", repeatedPlaylist),
+            ("blank-playlist-id", emptyPlaylistID)
+        ] {
+            let json = try JSONSerialization.data(withJSONObject: malformed)
+            let length = UInt32(json.count)
+            var bytes = PortableShelfArchive.magic
+            bytes.append(contentsOf: [
+                UInt8(length & 0xFF),
+                UInt8((length >> 8) & 0xFF),
+                UInt8((length >> 16) & 0xFF),
+                UInt8((length >> 24) & 0xFF)
+            ])
+            bytes.append(json)
+            bytes.append(originalBytes)
+            let malformedURL = folder.appendingPathComponent(name + ".mp3shelf")
+            try bytes.write(to: malformedURL)
+            do {
+                _ = try PortableShelfArchive.open(malformedURL)
+                fatalError("Accepted malformed archive: \\(name)")
+            } catch PortableShelfArchive.ArchiveError.invalidManifest {
+                // Expected: validation stops corrupt IDs before restore.
+            }
+        }
+
         let invalidURL = folder.appendingPathComponent("invalid.mp3shelf")
         try Data("invalid archive".utf8).write(to: invalidURL)
         do {
