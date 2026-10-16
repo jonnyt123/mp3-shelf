@@ -6,6 +6,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		DBA001A001A001A001A001A1 /* PortableShelfArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */; };
 		888888888888888888888888 /* LyricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 777777777777777777777777 /* LyricsView.swift */; };
 		666666666666666666666666 /* LyricsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 555555555555555555555555 /* LyricsParser.swift */; };
 		444444444444444444444444 /* SpotifyViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 333333333333333333333333 /* SpotifyViews.swift */; };
@@ -27,6 +28,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortableShelfArchive.swift; sourceTree = "<group>"; };
 		777777777777777777777777 /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsView.swift; sourceTree = "<group>"; };
 		555555555555555555555555 /* LyricsParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsParser.swift; sourceTree = "<group>"; };
 		333333333333333333333333 /* SpotifyViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyViews.swift; sourceTree = "<group>"; };
@@ -74,6 +76,7 @@
 			); path = Models; sourceTree = "<group>"; };
 		F30B052890FF09AC06846E94 /* Services */ = {isa = PBXGroup; children = (
 				556E9F57EB89589680F906AF /* MusicLibrary.swift */,
+				DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */,
 				B582D5747D32C08B3D19E5E5 /* PlaybackController.swift */,
 				79182043BBB2F99202EC87D0 /* PlaylistCSV.swift */,
 				555555555555555555555555 /* LyricsParser.swift */,
@@ -113,6 +116,7 @@
 				628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */,
 				58F35F17B0B426557F7C6BFE /* MusicModels.swift in Sources */,
 				23F82C0DAB44C8D8C5F26241 /* MusicLibrary.swift in Sources */,
+				DBA001A001A001A001A1 /* PortableShelfArchive.swift in Sources */,
 				A400AF7B34CFD773219453FF /* PlaybackController.swift in Sources */,
 				899556E67C9A2ED68AADCA8E /* PlaylistCSV.swift in Sources */,
 				666666666666666666666666 /* LyricsParser.swift in Sources */,
