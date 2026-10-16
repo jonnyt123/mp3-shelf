@@ -167,6 +167,7 @@ export function MusicLibrary(){
   if(fadingTimer.current){clearTimeout(fadingTimer.current);fadingTimer.current=null}
   const old=deckIndex.current===0?mediaB.current:mediaA.current;
   if(old)retireDeck(1-deckIndex.current);
+  if(audio.current)mixer.current?.reset(audio.current);
  }
  function play(track:Track,crossfade=false){
   const previous=audio.current;
@@ -181,6 +182,8 @@ export function MusicLibrary(){
   incoming.src=newURL;
   incoming.load();
   if(supportsVolume)incoming.volume=volume;
+  const previousTrack=current;
+  const previousURL=deckURLs.current[oldIndex];
   let blended=false;
   if(crossfade&&previous&&!previous.paused&&crossfadeSeconds>0){
    try{
@@ -206,10 +209,23 @@ export function MusicLibrary(){
   setAudioUrl(newURL);
   setElapsed(0);setDuration(0);setPlayerNotice("");
   void incoming.play().catch(()=>{
-   if(audio.current===incoming){
+   if(audio.current!==incoming)return;
+   // Automatic starts can be blocked on Safari. Restore the previous deck
+   // rather than fading the audible song into silence.
+   if(blended&&previous&&previousTrack){
+    if(fadingTimer.current)clearTimeout(fadingTimer.current);
+    fadingTimer.current=null;
+    mixer.current?.reset(previous);
+    retireDeck(nextIndex);
+    audio.current=previous;
+    deckIndex.current=oldIndex;
+    setCurrent(previousTrack);setAudioUrl(previousURL);
+    setElapsed(previous.currentTime);setDuration(previous.duration);
+    setPlaying(!previous.paused);
+   }else{
     setPlaying(false);
-    setPlayerNotice("Playback was blocked by the browser. Tap Play to continue.");
    }
+   setPlayerNotice("Browser autoplay blocked the next track. Tap Play to continue.");
   });
   if(blended){
    fadingTimer.current=setTimeout(()=>{
