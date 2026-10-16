@@ -258,6 +258,10 @@ struct SpotifyImportView: View {
 struct SettingsView: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
+    @State private var portableBackupURL: URL?
+    @State private var showPortableImporter = false
+    @State private var portableStatus: String?
+    @State private var portableBusy = false
 
     var body: some View {
         Form {
@@ -310,6 +314,49 @@ struct SettingsView: View {
             .listRowBackground(ShelfTheme.surface)
 
             Section {
+                Button {
+                    portableBusy = true
+                    portableStatus = nil
+                    do {
+                        portableBackupURL = try library.exportPortableBackup()
+                        portableStatus = "Backup prepared. Use Share Backup to save it in Files."
+                    } catch {
+                        portableStatus = error.localizedDescription
+                    }
+                    portableBusy = false
+                } label: {
+                    Label("Prepare portable backup", systemImage: "archivebox")
+                }
+                .disabled(portableBusy)
+
+                if let url = portableBackupURL {
+                    ShareLink(item: url) {
+                        Label("Share Backup to Files or another device",
+                              systemImage: "square.and.arrow.up")
+                    }
+                }
+                Button {
+                    showPortableImporter = true
+                } label: {
+                    Label("Restore .mp3shelf backup", systemImage: "square.and.arrow.down")
+                }
+                .disabled(portableBusy)
+                if portableBusy {
+                    ProgressView("Importing songs and playlists…")
+                        .tint(ShelfTheme.mint)
+                }
+                if let portableStatus {
+                    Text(portableStatus)
+                        .font(.caption)
+                        .foregroundStyle(ShelfTheme.subdued)
+                }
+                Text("Works with web MP3 Shelf archives. Restore adds missing music and playlists without deleting existing songs.")
+                    .font(.caption)
+                    .foregroundStyle(ShelfTheme.subdued)
+            } header: { Text("PORTABLE BACKUP & RESTORE") }
+            .listRowBackground(ShelfTheme.surface)
+
+            Section {
                 VStack(alignment: .leading, spacing: 9) {
                     HStack {
                         Label("Song crossfade", systemImage: "waveform.path")
@@ -356,5 +403,26 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .tint(ShelfTheme.accent)
+        .fileImporter(isPresented: $showPortableImporter,
+                      allowedContentTypes: [.data],
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                portableBusy = true
+                portableStatus = nil
+                Task {
+                    do {
+                        let report = try await library.importPortableBackup(from: url)
+                        portableStatus = report.description
+                    } catch {
+                        portableStatus = error.localizedDescription
+                    }
+                    portableBusy = false
+                }
+            case .failure(let error):
+                portableStatus = error.localizedDescription
+            }
+        }
     }
 }
