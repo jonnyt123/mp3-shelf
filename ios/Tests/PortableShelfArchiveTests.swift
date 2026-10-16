@@ -89,6 +89,33 @@ struct PortableShelfArchiveTests {
         } catch PortableShelfArchive.ArchiveError.invalidFile {
             // Expected.
         }
+        // Browser playlists use arbitrary string IDs. Repeat restores must
+        // match the same persisted playlist rather than generate a new UUID.
+        var browserPlaylist = MusicPlaylist(name: "Imported browser playlist")
+        browserPlaylist.portableBackupID = "web-list-1"
+        assert(browserPlaylist.matchesPortableBackupID("web-list-1"))
+        assert(!browserPlaylist.matchesPortableBackupID("different-web-list"))
+        let nativePlaylist = MusicPlaylist(name: "Native playlist")
+        assert(nativePlaylist.matchesPortableBackupID(nativePlaylist.id.uuidString))
+
+        // New identity field must survive app relaunch while legacy native
+        // libraries (which lack this field) still decode successfully.
+        let savedPlaylist = try JSONEncoder().encode(browserPlaylist)
+        let restoredPlaylist = try JSONDecoder().decode(MusicPlaylist.self, from: savedPlaylist)
+        assert(restoredPlaylist.matchesPortableBackupID("web-list-1"))
+        var legacyObject = try JSONSerialization.jsonObject(with: savedPlaylist)
+            as! [String: Any]
+        legacyObject.removeValue(forKey: "portableBackupID")
+        let legacyBytes = try JSONSerialization.data(withJSONObject: legacyObject)
+        let legacyPlaylist = try JSONDecoder().decode(MusicPlaylist.self, from: legacyBytes)
+        assert(legacyPlaylist.portableBackupID == nil)
+        assert(legacyPlaylist.matchesPortableBackupID(legacyPlaylist.id.uuidString))
+
+        let reexportURL = folder.appendingPathComponent("reexported-web-playlist.mp3shelf")
+        try PortableShelfArchive.export([], playlists: [browserPlaylist], to: reexportURL)
+        let reexport = try PortableShelfArchive.open(reexportURL)
+        assert(reexport.manifest.playlists.first?.id == "web-list-1")
+
         print("Portable MP3 Shelf v1 archive round-trip and validation passed.")
     }
 }
