@@ -155,3 +155,19 @@
 .recent-rail-item small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:#aab0be; }
 .recent-rail-item:focus-visible { outline:2px solid #bda8ef; outline-offset:2px; }
 @media(max-width:380px) { .recent-rail-item { flex-basis:113px; } }
+
+/* Native-parity song transitions: an optional Web Audio crossfade.
+   Both media decks remain mounted to avoid resetting playback on rerenders. */
+.media-decks { position:absolute; width:1px; height:1px; overflow:hidden; pointer-events:none; opacity:0; }
+.transport .mini-play { flex:0 0 auto; width:55px; min-height:44px; padding:8px;
+  border:1px solid rgba(168,218,201,.36); border-radius:12px; background:#2b433f;
+  color:#c7f8e7; font-size:17px; font-weight:750; }
+.output-controls .crossfade-control { display:inline-flex; flex:none; align-items:center; gap:8px;
+  min-height:44px; color:#cdc7de; font-size:11px; font-weight:670; }
+.output-controls .crossfade-control select { min-height:42px; max-width:94px; padding:7px;
+  border:1px solid #5c526f; border-radius:11px; background:#2a2636; color:#e7def5; font-size:11px; }
+.output-controls .crossfade-control select:focus-visible, .transport .mini-play:focus-visible {
+  outline:2px solid #bca9f3; outline-offset:3px;
+}
+.playback-notice { padding:10px; border:1px solid rgba(232,192,168,.28); border-radius:10px;
+  color:#f0cfaf; background:#30282b; font-size:12px; line-height:1.5; }
