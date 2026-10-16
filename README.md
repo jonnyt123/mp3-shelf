@@ -58,3 +58,27 @@ Native SwiftUI code and the installable web PWA live in this repository. See [FE
 - **Authorized direct MP3 URL:** Paste a direct HTTPS MP3 URL under the main import controls and tap **Save MP3**. Browser CORS permissions must allow the transfer. Streaming links (including Spotify) are blocked. Downloads are limited to 100 MB and saved to local IndexedDB; this is not native background downloading.
 - **Lyrics:** While a song plays, open the full-screen player and choose **Lyrics**. Import a `.lrc` timed lyric file or plain `.txt` file under 500 KB. Lyrics are stored with the song, synchronized against the player's elapsed time if timestamps exist, and included in `.mp3shelf` backups.
 - **Feature gaps:** The browser still lacks native-style licensed-source catalog searches, native background URLSession downloads, native audio crossfade, and cross-platform backup compatibility. The full status is maintained in [FEATURE_PARITY.md](FEATURE_PARITY.md).
+
+## Discover openly licensed music (web preview)
+
+The **Discover open music** section searches Openverse's public audio catalog for
+work described with CC0, PDM, CC BY or CC BY-SA licensing. Results have links
+to the **original source** and **license terms**, which listeners should verify
+before reusing or saving recordings. Results that contain a likely direct MP3
+link offer **Save MP3**; other entries link to their source page.
+
+Direct MP3 imports are foreground browser transfers, show byte progress,
+can be cancelled, and have a 100 MB size cap. Browser CORS restrictions
+still apply; this does not copy protected streaming audio or guarantee that
+every catalog result is downloadable. A download that does succeed is stored
+locally for offline use.
+
+For imported catalog recordings, the web library preserves **creator,
+provider, source page, and declared license** in IndexedDB and backup
+exports. Tap the information icon on a saved track to review its credits.
+Re-importing the same file no longer overwrites its existing favorite,
+custom title, saved lyrics or source credits.
+
+Openverse is an independently maintained index; MP3 Shelf does not
+independently authenticate every original uploader's rights or verify every
+license claim. Cite and respect the original source's license obligations.
