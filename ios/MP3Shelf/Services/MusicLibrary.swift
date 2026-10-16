@@ -62,6 +62,111 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
+    /// Creates the same v1 .mp3shelf archive used by the browser PWA.
+    /// No Spotify tokens, account secrets or discovery queue internals are exported.
+    func exportPortableBackup() throws -> URL {
+        let items = tracks.map { track in
+            let lyrics = track.lyricsFileName.flatMap {
+                try? String(contentsOf: lyricsDirectory.appendingPathComponent($0), encoding: .utf8)
+            }
+            return PortableShelfArchive.MediaInput(
+                track: track, audioURL: fileURL(for: track),
+                artwork: artwork(for: track)?.jpegData(compressionQuality: 0.9),
+                lyrics: lyrics
+            )
+        }
+        let destination = manager.temporaryDirectory
+            .appendingPathComponent("MP3Shelf-\(UUID().uuidString).mp3shelf")
+        try PortableShelfArchive.export(items, playlists: playlists, to: destination)
+        return destination
+    }
+
+    /// Adds valid files from a browser or native backup without deleting
+    /// anything already on this iPhone. Archive metadata is validated first.
+    func importPortableBackup(from url: URL) async throws -> ImportReport {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        let archive = try PortableShelfArchive.open(url)
+        var report = ImportReport()
+        var restoredIDs: [String: UUID] = [:]
+        for archived in archive.manifest.tracks {
+            var temporary: URL?
+            do {
+                let ext = try PortableShelfArchive.audioExtension(for: archived)
+                let file = try PortableShelfArchive.extract(
+                    archived.audio, from: archive, extensionName: ext)
+                temporary = file
+                defer { try? manager.removeItem(at: file) }
+                let initialName = archived.originalName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let rawName = initialName.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? archived.name + "." + ext
+                let original = URL(fileURLWithPath: rawName).lastPathComponent
+                let imported = try await addLocalAudio(
+                    sourceURL: file, originalName: original)
+                if imported { report.imported += 1 }
+                else { report.skipped += 1 }
+
+                // Existing duplicate audio remains intact; don't overwrite its
+                // favorite, title, artwork, lyrics or license information.
+                guard imported, let index = tracks.indices.last else { continue }
+                restoredIDs[archived.id] = tracks[index].id
+                tracks[index].title = archived.name
+                if let artist = archived.artist { tracks[index].artist = artist }
+                if let album = archived.album { tracks[index].album = album }
+                tracks[index].isFavorite = archived.isFavorite ?? false
+                let epoch = archived.importedAt / 1000
+                if epoch.isFinite && epoch > 0 {
+                    tracks[index].addedAt = Date(timeIntervalSince1970: epoch)
+                }
+                if let attribution = archived.attribution,
+                   attribution.sourceURL.hasPrefix("https://"),
+                   attribution.licenseURL.hasPrefix("https://") {
+                    tracks[index].sourceAttribution = AudioSourceAttribution(
+                        pageURL: attribution.sourceURL,
+                        licenseURL: attribution.licenseURL,
+                        providerName: attribution.provider
+                    )
+                }
+                if let artwork = archived.artwork {
+                    let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
+                    if UIImage(data: bytes) != nil {
+                        let filename = tracks[index].id.uuidString + ".img"
+                        try bytes.write(to: artworkDirectory.appendingPathComponent(filename),
+                                        options: .atomic)
+                        tracks[index].artworkFileName = filename
+                    }
+                }
+                if let lyrics = archived.lyrics, !lyrics.isEmpty {
+                    let filename = tracks[index].id.uuidString + ".lrc"
+                    try Data(lyrics.utf8).write(
+                        to: lyricsDirectory.appendingPathComponent(filename), options: .atomic)
+                    tracks[index].lyricsFileName = filename
+                }
+                save()
+            } catch {
+                report.errors.append("\(archived.name): \(error.localizedDescription)")
+            }
+            if let temporary { try? manager.removeItem(at: temporary) }
+        }
+        for item in archive.manifest.playlists {
+            let id = UUID(uuidString: item.id) ?? UUID()
+            // A repeated restore must not duplicate the same native playlist ID.
+            if playlists.contains(where: { $0.id == id }) { continue }
+            var playlist = MusicPlaylist(id: id, name: item.name)
+            playlist.sourceURL = item.sourceURL
+            playlist.trackIDs = item.trackIds.compactMap { restoredIDs[$0] }
+            playlist.sourceOrder = (item.wishes ?? []).map {
+                PlaylistWish(title: $0.title, artist: $0.artist,
+                             album: $0.album, spotifyURL: $0.spotifyURL)
+            }
+            playlist.missingTracks = playlist.sourceOrder
+            playlists.append(playlist)
+        }
+        reconcileMissingSongs()
+        save()
+        return report
+    }
+
     func fileURL(for track: MusicTrack) -> URL { musicDirectory.appendingPathComponent(track.fileName) }
 
     func artwork(for track: MusicTrack) -> UIImage? {
