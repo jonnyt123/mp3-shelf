@@ -404,7 +404,7 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .tint(ShelfTheme.accent)
         .fileImporter(isPresented: $showPortableImporter,
-                      allowedContentTypes: [.data],
+                      allowedContentTypes: [UTType(filenameExtension: "mp3shelf", conformingTo: .data) ?? .data],
                       allowsMultipleSelection: false) { result in
             switch result {
             case .success(let urls):
