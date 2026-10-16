@@ -125,7 +125,7 @@ enum PortableShelfArchive {
         let lists = playlists.map { list in
             let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
             return Playlist(
-                id: list.id.uuidString, name: list.name,
+                id: list.portableBackupID ?? list.id.uuidString, name: list.name,
                 trackIds: list.trackIDs.map(\.uuidString),
                 sourceURL: list.sourceURL,
                 wishes: wishes.isEmpty ? nil : wishes.map {
