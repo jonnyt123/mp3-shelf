@@ -18,13 +18,23 @@ export function allowedAudioURL(input: string): URL {
   return url;
 }
 
+export type AudioDownloadOptions = {
+  signal?: AbortSignal;
+  onProgress?: (bytesReceived: number, totalBytes?: number) => void;
+};
+
 export async function downloadAuthorizedMP3(
-  input: string, request: typeof fetch = fetch
+  input: string, request: typeof fetch = fetch, options: AudioDownloadOptions = {}
 ): Promise<File> {
   const url = allowedAudioURL(input);
   let response: Response;
-  try { response = await request(url.toString(), { redirect: "follow", cache: "no-store" }); }
-  catch { throw new Error("Could not download this file. The source may block browser CORS requests."); }
+  try { response = await request(url.toString(), {
+    redirect: "follow", cache: "no-store", signal: options.signal
+  }); }
+  catch (error) {
+    if (options.signal?.aborted) throw new Error("Download cancelled.");
+    throw new Error("Could not download this file. The source may block browser CORS requests.");
+  }
   if (!response.ok) throw new Error(`The download failed (HTTP ${response.status}).`);
   allowedAudioURL(response.url || url.toString());
   const mime = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() ?? "";
@@ -40,12 +50,19 @@ export async function downloadAuthorizedMP3(
   let bytes = 0;
   try {
     while (true) {
+      if (options.signal?.aborted) throw new Error("Download cancelled.");
       const {done, value} = await reader.read();
       if (done) break;
       bytes += value.byteLength;
       if (bytes > MAX_MP3_BYTES) throw new Error("Audio files over 100 MB are not supported.");
       chunks.push(new Uint8Array(value));
+      options.onProgress?.(bytes, length > 0 ? length : undefined);
     }
+    if (options.signal?.aborted) throw new Error("Download cancelled.");
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    if (options.signal?.aborted) throw new Error("Download cancelled.");
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -56,8 +73,9 @@ export async function downloadAuthorizedMP3(
   const frame = first.length >= 2 && first[0] === 0xff && (first[1] & 0xe0) === 0xe0;
   if (!id3 && !frame) throw new Error("The downloaded file does not appear to be MP3 audio.");
 
-  const name = decodeURIComponent(url.pathname.split("/").at(-1) || "downloaded-audio.mp3")
-    .replace(/[^a-zA-Z0-9.()_ -]/g, "_").slice(0, 120);
+  let name = url.pathname.split("/").at(-1) || "downloaded-audio.mp3";
+  try { name = decodeURIComponent(name); } catch { /* Keep safe escaped name. */ }
+  name = name.replace(/[^a-zA-Z0-9.()_ -]/g, "_").slice(0, 120);
   const fileName = /\.mp3$/i.test(name) ? name : name.replace(/\.[^.]+$/, "") + ".mp3";
   return new File(chunks, fileName, { type: "audio/mpeg", lastModified: Date.now() });
 }
