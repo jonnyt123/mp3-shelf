@@ -160,3 +160,24 @@ Remaining refinements:
   rearrange playlist records or mutate imported files.
 - Sorting is available in both the full library and active search results;
   the play queue follows the visible ordering selected by the user.
+
+## Portable backups — native/web interoperability
+
+- Settings now offers **Prepare portable backup** and **Restore .mp3shelf backup**
+  using the existing browser PWA's `MP3SHELF1\n` v1 container format:
+  magic header, little-endian 32-bit JSON manifest length, UTF-8 JSON,
+  then raw media and artwork payload slices.
+- Native exports preserve locally stored audio bytes, artwork, lyrics,
+  favorites, track names/artists/albums, playlist order, available playlist
+  wishes, and available source/declared-license metadata. No Spotify tokens,
+  developer credentials, network state or active transfer jobs are exported.
+- Native restores validate the v1 manifest, dimensions, ranges, maximum
+  per-file size and extension before reading media. Restores are additive:
+  pre-existing tracks are never replaced or deleted, and restored playlist
+  references resolve to existing matching audio when a duplicate is skipped.
+- Archive transfers run via the iOS Files importer and ShareLink. The
+  portable document type is explicitly registered in Info.plist.
+- Validate with a real browser-generated `.mp3shelf` archive on an actual
+  iPhone before making a release claim. Large archives need performance and
+  insufficient-storage testing. Web and iOS may display slightly different
+  catalog attribution labels because their internal source models differ.
