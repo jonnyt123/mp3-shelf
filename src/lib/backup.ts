@@ -1,4 +1,4 @@
-import type {Track} from "./tracks";
+import type {Track,AudioAttribution} from "./tracks";
 import type {PlaylistWish} from "./playlist-import";
 
 export type BackupPlaylist={id:string;name:string;trackIds:string[];sourceURL?:string;wishes?:PlaylistWish[]};
@@ -9,7 +9,7 @@ const MAX_MANIFEST_BYTES=4*1024*1024;
 const encoder=new TextEncoder();
 
 type BinaryPart={offset:number;length:number;type:string};
-type BackupTrack={id:string;name:string;originalName?:string;artist?:string;album?:string;lyrics?:string;isFavorite?:boolean;importedAt:number;audio:BinaryPart;artwork?:BinaryPart};
+type BackupTrack={id:string;name:string;originalName?:string;artist?:string;album?:string;lyrics?:string;isFavorite?:boolean;attribution?:AudioAttribution;importedAt:number;audio:BinaryPart;artwork?:BinaryPart};
 type Manifest={schema:"mp3-shelf-backup";version:1;createdAt:string;tracks:BackupTrack[];playlists:BackupPlaylist[]};
 
 export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):Blob{
@@ -17,7 +17,7 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
  const archivedTracks=tracks.map(track=>{
   const audio={offset,length:track.blob.size,type:track.type||track.blob.type||"audio/mpeg"};payload.push(track.blob);offset+=track.blob.size;
   let artwork:BinaryPart|undefined;if(track.artwork){artwork={offset,length:track.artwork.size,type:track.artwork.type||"image/jpeg"};payload.push(track.artwork);offset+=track.artwork.size}
-  return{id:track.id,name:track.name,originalName:track.originalName,artist:track.artist,album:track.album,lyrics:track.lyrics,isFavorite:track.isFavorite,importedAt:track.importedAt,audio,artwork};
+  return{id:track.id,name:track.name,originalName:track.originalName,artist:track.artist,album:track.album,lyrics:track.lyrics,isFavorite:track.isFavorite,attribution:track.attribution,importedAt:track.importedAt,audio,artwork};
  });
  const manifest:Manifest={schema:"mp3-shelf-backup",version:1,createdAt:new Date().toISOString(),tracks:archivedTracks,playlists};
  const manifestBytes=encoder.encode(JSON.stringify(manifest));
@@ -52,8 +52,22 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
   if(!isRecord(value))throw new Error(`Invalid track ${index+1} in backup.`);
   const audio=readPart(value.audio,payloadSize,"audio"),artwork=value.artwork===undefined?undefined:readPart(value.artwork,payloadSize,"artwork");
   if(typeof value.lyrics==="string"&&new TextEncoder().encode(value.lyrics).length>500*1024)throw new Error("Invalid lyrics size in backup.");
+  let attribution:AudioAttribution|undefined;
+  if(value.attribution!==undefined) {
+   if(!isRecord(value.attribution) || !["sourceURL","licenseURL","creator","license","provider"]
+    .every(key => typeof (value.attribution as Record<string,unknown>)[key] === "string"))
+    throw new Error("Invalid audio source attribution in backup.");
+   const data=value.attribution as Record<string,string>;
+   for(const key of ["sourceURL","licenseURL"]) {
+    const url=new URL(data[key]);
+    if(url.protocol!=="https:"||url.username||url.password)
+     throw new Error("Invalid attribution URL in backup.");
+   }
+   attribution={sourceURL:data.sourceURL,licenseURL:data.licenseURL,
+    creator:data.creator,license:data.license,provider:data.provider};
+  }
   const blob=file.slice(payloadStart+audio.offset,payloadStart+audio.offset+audio.length,audio.type);
-  return{id:requiredString(value.id,"track ID"),name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName),artist:optionalString(value.artist),album:optionalString(value.album),lyrics:optionalString(value.lyrics),isFavorite:value.isFavorite===true,size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
+  return{id:requiredString(value.id,"track ID"),name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName),artist:optionalString(value.artist),album:optionalString(value.album),lyrics:optionalString(value.lyrics),isFavorite:value.isFavorite===true,attribution,size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
  });
  const playlists=parsed.playlists.map((value,index)=>{
   if(!isRecord(value)||!Array.isArray(value.trackIds)||!value.trackIds.every(id=>typeof id==="string"))throw new Error(`Invalid playlist ${index+1} in backup.`);
