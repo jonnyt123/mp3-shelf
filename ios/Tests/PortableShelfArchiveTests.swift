@@ -44,6 +44,43 @@ struct PortableShelfArchiveTests {
             archive.manifest.tracks[0].artwork!, from: archive)
         assert(restoredArt == Data([0xFF, 0xD8, 0xFF, 0xD9]))
 
+        // Independently assembled web archive: this deliberately bypasses
+        // native export to catch incompatible JSON field names or byte framing.
+        let webJSON = """
+        {"schema":"mp3-shelf-backup","version":1,"createdAt":"2026-10-16T00:00:00Z",
+         "tracks":[{"id":"web-song-1","name":"Web recording","originalName":"web.mp3",
+          "artist":"Browser artist","album":"Browser album","importedAt":1792108800000,
+          "isFavorite":true,"lyrics":"[00:02.00] From the browser",
+          "audio":{"offset":0,"length":11,"type":"audio/mpeg"}}],
+         "playlists":[{"id":"web-list-1","name":"Browser list",
+          "trackIds":["web-song-1"],
+          "wishes":[{"title":"Web recording","artist":"Browser artist",
+                     "album":"Browser album"}]}]}
+        """
+        let webManifest = Data(webJSON.utf8)
+        let manifestSize = UInt32(webManifest.count)
+        var webBytes = PortableShelfArchive.magic
+        webBytes.append(contentsOf: [
+            UInt8(manifestSize & 0xFF),
+            UInt8((manifestSize >> 8) & 0xFF),
+            UInt8((manifestSize >> 16) & 0xFF),
+            UInt8((manifestSize >> 24) & 0xFF)
+        ])
+        webBytes.append(webManifest)
+        webBytes.append(originalBytes)
+        let browserURL = folder.appendingPathComponent("browser-made.mp3shelf")
+        try webBytes.write(to: browserURL)
+        let browserArchive = try PortableShelfArchive.open(browserURL)
+        assert(browserArchive.manifest.tracks.first?.id == "web-song-1")
+        assert(browserArchive.manifest.tracks.first?.isFavorite == true)
+        assert(browserArchive.manifest.playlists.first?.trackIds == ["web-song-1"])
+        let browserExtract = try PortableShelfArchive.extract(
+            browserArchive.manifest.tracks[0].audio,
+            from: browserArchive, extensionName: "mp3")
+        defer { try? FileManager.default.removeItem(at: browserExtract) }
+        let browserAudio = try Data(contentsOf: browserExtract)
+        assert(browserAudio == originalBytes)
+
         let invalidURL = folder.appendingPathComponent("invalid.mp3shelf")
         try Data("invalid archive".utf8).write(to: invalidURL)
         do {
