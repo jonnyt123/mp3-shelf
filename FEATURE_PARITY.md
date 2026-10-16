@@ -17,7 +17,7 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 | Background/resumable downloads | Native URLSession background transfer implemented | **Web needs dedicated design**; service worker cannot emulate iOS URLSession guarantees | Browser/PWA capability tests; avoid promising equivalent background survival |
 | Manual authorized HTTPS audio downloads | Implemented natively | PR #5 adds foreground HTTPS MP3 fetching, byte progress, cancellation and local import | Test source MIME, redirects, file limits and CORS on iPhone Safari |
 | Lyrics and timed lyric parsing | Native view and parser | PR #5 adds LRC/TXT import, timed highlighting and IndexedDB persistence | Verify playback screen usability on real iPhone |
-| Crossfade | Native player supports crossfade | **Not yet on web** | Test Web Audio routing, iOS Safari restrictions |
+| Crossfade | Native player supports crossfade | PR #5 implements optional dual-deck equal-power Web Audio crossfade (Off / 2 / 4 / 6 / 8 seconds) with ordinary playback fallback | Physical iPhone Safari/lock-screen/AirPlay testing; browser autoplay restrictions |
 | AirPlay | iOS audio routing | Safari AirPlay picker where available | Hardware device validation |
 | Backups/export/restore | Native draft PR #4 now implements compatible `.mp3shelf` v1 export and additive restore; codec round-trip tests passed | Web PWA backup/restore implemented, PR #5 preserves Spotify metadata, lyrics, favorites and source credits | Cross-platform real-archive exchange on physical iPhone + large-library QA |
 | Premium lavender/mint/coral design | Draft PR #4 | PR #5 adds corresponding Spotify screens, rest of web retains earlier design | Complete shared design tokens and accessible screens |
@@ -39,6 +39,24 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 - Browser features have automated regression coverage; actual Safari
   interaction and accessible layout remain release gates.
 
+
+## October 16 — Web Audio crossfade
+
+- Browser Now Playing now offers optional Off / 2 / 4 / 6 / 8 second
+  crossfade settings, saved locally. Default is Off.
+- The web player now maintains two HTML audio decks and, when an unlocked
+  AudioContext is available, mixes them with equal-power GainNode curves.
+  Manual Next / Previous, pause and seek cancel any overlap and restore
+  gain levels to prevent lingering or inaudible decks.
+- If the browser blocks starting the next track during crossfade, the
+  previous deck is restored and a visible playback warning appears.
+- Media Session, normal playback, shuffle/repeat and recorded blob storage
+  remain independent from crossfade. The native version already has its own
+  crossfade implementation.
+- Web Audio is subject to browser autoplay, audio-session and background
+  restrictions. Real iPhone Safari, Bluetooth, AirPlay and lock-screen
+  behavior is **not verified** and the feature is not release-ready.
+
 ## Safety and product constraints
 
 - A Spotify playlist contains **metadata and links**, not downloadable Spotify audio.
@@ -57,5 +75,5 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 1. Ship and verify web playlist metadata import through CI and iPhone Safari.
 2. Verify web licensed-catalog Openverse search and downloaded MP3s on real iPhone Safari; discovery is present in PR #5 but rate limits and CORS require live tests.
 3. Verify the native/PWA `.mp3shelf` archive exchange on physical iPhone; both codecs now exist in draft PRs. Browser timed lyrics also need iPhone testing.
-4. Implement crossfade as supported by the browser without breaking existing audio.
+4. Complete crossfade hardware QA on Safari, AirPlay and lock screen; opt-in Web Audio scheduling is present in PR #5.
 5. Close visual parity and run physical-device QA for both apps.
