@@ -111,7 +111,7 @@ final class MusicLibrary: ObservableObject {
                 if !imported {
                     if let existing = tracks.first(where: { candidate in
                         candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame &&
-                        ((try? fileURL(for: candidate)
+                        Int64((try? fileURL(for: candidate)
                             .resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) ==
                             archived.audio.length
                     }) {
