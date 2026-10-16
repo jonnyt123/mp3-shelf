@@ -32,6 +32,9 @@ jobs:
       - name: Persistent discovery resume regression tests
         run: |
           swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Models/SourceDiscoveryJob.swift ios/Tests/SourceDiscoveryJobTests.swift -o /tmp/mp3shelf-discovery && /tmp/mp3shelf-discovery
+      - name: Cross-platform archive round-trip regression tests
+        run: |
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PortableShelfArchive.swift ios/Tests/PortableShelfArchiveTests.swift -o /tmp/mp3shelf-archive && /tmp/mp3shelf-archive
       - name: Install and launch iPhone Simulator app
         timeout-minutes: 18
         run: |
