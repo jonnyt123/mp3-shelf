@@ -175,6 +175,10 @@ Remaining refinements:
   per-file size and extension before reading media. Restores are additive:
   pre-existing tracks are never replaced or deleted, and restored playlist
   references resolve to existing matching audio when a duplicate is skipped.
+- Preserve original web playlist IDs even when they are not UUIDs. Save the
+  external ID in native playlist metadata and reuse it in future archives,
+  so restoring the same web backup twice does not create duplicate playlists.
+  Older on-device library files must continue decoding without this field.
 - Archive transfers run via the iOS Files importer and ShareLink. The
   portable document type is explicitly registered in Info.plist.
 - Validate with a real browser-generated `.mp3shelf` archive on an actual
