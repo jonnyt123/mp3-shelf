@@ -22,6 +22,15 @@ describe("MP3 Shelf backups",()=>{
   expect(result.playlists).toEqual([playlist]);
  });
 
+ it("round-trips independent audio attribution without altering audio bytes",async()=>{
+  const attribution={sourceURL:"https://example.org/source",licenseURL:"https://creativecommons.org/licenses/by/4.0/",
+    creator:"Original musician",license:"BY",provider:"Openverse"};
+  const track:Track={id:"licensed",name:"Licensed track",size:3,type:"audio/mpeg",
+    importedAt:10,blob:new Blob([new Uint8Array([73,68,51])]),attribution};
+  const restored=await parseLibraryBackup(createLibraryBackup([track],[]));
+  expect(restored.tracks[0].attribution).toEqual(attribution);
+  expect([...new Uint8Array(await restored.tracks[0].blob.arrayBuffer())]).toEqual([73,68,51]);
+ });
  it("rejects unrelated and truncated files",async()=>{
   await expect(parseLibraryBackup(new Blob(["not a backup"]))).rejects.toThrow("not an MP3 Shelf backup");
   const valid=createLibraryBackup([],[]);
