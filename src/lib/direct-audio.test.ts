@@ -15,6 +15,28 @@ describe("authorized audio download validation",()=>{
     expect(file.name).toBe("track.mp3");
     expect(file.size).toBe(200);
   });
+  it("reports real transfer bytes without assuming a known content length",async()=>{
+    const bytes=new Uint8Array(300);bytes.set([0x49,0x44,0x33]);
+    const progress: Array<[number,number|undefined]>=[];
+    const request=async()=>new Response(new ReadableStream<Uint8Array>({
+      start(controller){
+        controller.enqueue(bytes.slice(0,200));
+        controller.enqueue(bytes.slice(200));
+        controller.close();
+      }
+    }),{status:200,headers:{"content-type":"audio/mpeg"}});
+    const file=await downloadAuthorizedMP3("https://example.org/free.mp3",request as typeof fetch,{
+      onProgress:(received,total)=>progress.push([received,total])
+    });
+    expect(file.size).toBe(300);
+    expect(progress).toEqual([[200,undefined],[300,undefined]]);
+  });
+  it("supports user cancellation before requesting audio",async()=>{
+    const controller=new AbortController();controller.abort();
+    const request=async()=>{throw new DOMException("Aborted","AbortError")};
+    await expect(downloadAuthorizedMP3("https://example.org/free.mp3",request as typeof fetch,
+      {signal:controller.signal})).rejects.toThrow("cancelled");
+  });
   it("rejects non-audio content and zero-byte downloads",async()=>{
     await expect(downloadAuthorizedMP3("https://example.org/x.mp3",
       (async()=>new Response("<html/>",{headers:{"content-type":"text/html"}})) as typeof fetch))
