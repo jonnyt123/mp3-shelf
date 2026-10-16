@@ -116,7 +116,7 @@ struct PortableShelfArchiveTests {
             try bytes.write(to: malformedURL)
             do {
                 _ = try PortableShelfArchive.open(malformedURL)
-                fatalError("Accepted malformed archive: \\(name)")
+                fatalError("Accepted malformed archive: \(name)")
             } catch PortableShelfArchive.ArchiveError.invalidManifest {
                 // Expected: validation stops corrupt IDs before restore.
             }
