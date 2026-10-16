@@ -13,9 +13,9 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 | Spotify metadata playlist import | PKCE/CSV importer implemented | PR #5 adds PKCE/CSV import; metadata-only | Configure Spotify client ID and allowed redirect; confirm account eligibility |
 | Spotify owned/collaborative playlist access | Native integration in draft | PR #5 uses 2026 `/items` endpoint | Spotify permission/restriction live tests |
 | Matching imported track lists against local recordings | Implemented conservatively | PR #5 adds conservative matching + missing-song list | Test real exported playlists and alternate recordings |
-| Licensed MP3 discovery from independent catalogs | Implemented in native stacked drafts | **Not yet implemented on web** | Legal/source verification, API/CORS limits |
+| Licensed MP3 discovery from independent catalogs | Implemented in native stacked drafts | PR #5 now includes metadata discovery through Openverse with source/license review and optional direct MP3 import | Live API rate limits, license checks, CORS and iPhone Safari QA |
 | Background/resumable downloads | Native URLSession background transfer implemented | **Web needs dedicated design**; service worker cannot emulate iOS URLSession guarantees | Browser/PWA capability tests; avoid promising equivalent background survival |
-| Manual authorized HTTPS audio downloads | Implemented natively | PR #5 adds consent-based HTTPS MP3 fetching and local import | Test source MIME, redirects, file limits and CORS on iPhone Safari |
+| Manual authorized HTTPS audio downloads | Implemented natively | PR #5 adds foreground HTTPS MP3 fetching, byte progress, cancellation and local import | Test source MIME, redirects, file limits and CORS on iPhone Safari |
 | Lyrics and timed lyric parsing | Native view and parser | PR #5 adds LRC/TXT import, timed highlighting and IndexedDB persistence | Verify playback screen usability on real iPhone |
 | Crossfade | Native player supports crossfade | **Not yet on web** | Test Web Audio routing, iOS Safari restrictions |
 | AirPlay | iOS audio routing | Safari AirPlay picker where available | Hardware device validation |
@@ -40,7 +40,7 @@ iOS PRs #1–#4. All implementation statuses are branch-specific until merged.
 ## Next development order
 
 1. Ship and verify web playlist metadata import through CI and iPhone Safari.
-2. Implement browser **licensed-catalog source discovery**; direct permitted MP3 URL download is present in PR #5 and needs real-browser QA.
+2. Verify web licensed-catalog Openverse search and downloaded MP3s on real iPhone Safari; discovery is present in PR #5 but rate limits and CORS require live tests.
 3. Finish native/PWA backup interoperability. Browser timed lyrics are present in PR #5; test on iPhone.
 4. Implement crossfade as supported by the browser without breaking existing audio.
 5. Close visual parity and run physical-device QA for both apps.
