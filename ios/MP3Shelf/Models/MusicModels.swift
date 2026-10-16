@@ -71,6 +71,10 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
     // app relaunches and repeat restores; not a Spotify account credential.
     var portableBackupID: String? = nil
     var createdAt: Date = .now
+
+    func matchesPortableBackupID(_ backupID: String) -> Bool {
+        portableBackupID == backupID || UUID(uuidString: backupID) == id
+    }
 }
 
 struct PersistedLibrary: Codable {
