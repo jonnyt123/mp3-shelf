@@ -3,32 +3,247 @@ import{ChangeEvent,useEffect,useMemo,useRef,useState}from"react";
 import{nextTrackId,previousTrackId,RepeatMode}from"@/lib/queue";
 import{playerGesture}from"@/lib/gestures";
 import{createLibraryBackup,parseLibraryBackup}from"@/lib/backup";
-import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,Track}from"@/lib/tracks";
-type Playlist={id:string;name:string;trackIds:string[]};
+import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,updateTrackLyrics,toggleTrackFavorite,Track,type AudioAttribution}from"@/lib/tracks";
+import{parsePlaylistText,resolvePlaylist,spotifyPlaylistLink,type ShelfPlaylist,type PlaylistWish}from"@/lib/playlist-import";
+import{beginSpotifyAuthorization,finishSpotifyAuthorization,importSpotifyPlaylist,listSpotifyPlaylists,spotifyClientID,type SpotifyPlaylistSummary}from"@/lib/spotify-api";
+import{downloadAuthorizedMP3}from"@/lib/direct-audio";
+import{parseLyrics,currentLyricIndex}from"@/lib/lyrics";
+import{type OpenAudioResult}from"@/lib/open-audio";
+import{sortLibraryTracks,type TrackSort}from"@/lib/sort-tracks";
+import{BrowserCrossfadeMixer,safeCrossfadeSeconds,shouldBeginCrossfade}from"@/lib/crossfade";
+type Playlist=ShelfPlaylist;
 type StorageStats={usage:number;quota:number;persisted:boolean|null};
 type AirPlayAudio=HTMLAudioElement&{webkitShowPlaybackTargetPicker?:()=>void;webkitCurrentPlaybackTargetIsWireless?:boolean};
 function Artwork({track,size="small"}:{track:Track;size?:"small"|"large"}){const[url,setUrl]=useState<string>();useEffect(()=>{if(!track.artwork)return;const next=URL.createObjectURL(track.artwork);setUrl(next);return()=>URL.revokeObjectURL(next)},[track.artwork]);return <span className={`artwork ${size}`}>{url?<img src={url} alt=""/>:<span>♫</span>}</span>}
 const slides=[{icon:"♫",title:"Your music, finally organized",copy:"Import a whole group of MP3s once. MP3 Shelf keeps them together so you can stop hunting through Files."},{icon:"⌕",title:"Find any track fast",copy:"Search titles and artists, build playlists, rename tracks and keep everything available offline."},{icon:"↻",title:"Built for listening",copy:"Use shuffle, repeat and automatic next-track playback from an app made to feel at home on iPhone."}];
 function formatTime(seconds:number){if(!Number.isFinite(seconds))return"0:00";const minutes=Math.floor(seconds/60),rest=Math.floor(seconds%60);return `${minutes}:${String(rest).padStart(2,"0")}`}
 export function MusicLibrary(){
- const[tracks,setTracks]=useState<Track[]>([]),[query,setQuery]=useState(""),[current,setCurrent]=useState<Track|null>(null),[audioUrl,setAudioUrl]=useState<string>(),[busy,setBusy]=useState(true),[shuffle,setShuffle]=useState(false),[repeat,setRepeat]=useState<RepeatMode>("off"),[playlists,setPlaylists]=useState<Playlist[]>([]),[activePlaylist,setActivePlaylist]=useState("all"),[addingTrack,setAddingTrack]=useState<Track|null>(null),[onboarding,setOnboarding]=useState(false),[slide,setSlide]=useState(0),[fullPlayer,setFullPlayer]=useState(false),[elapsed,setElapsed]=useState(0),[duration,setDuration]=useState(0),[playing,setPlaying]=useState(false),[volume,setVolume]=useState(1),[supportsVolume,setSupportsVolume]=useState(true),[airPlayAvailable,setAirPlayAvailable]=useState(false),[airPlayActive,setAirPlayActive]=useState(false),[storageOpen,setStorageOpen]=useState(false),[storageStats,setStorageStats]=useState<StorageStats|null>(null),[transferBusy,setTransferBusy]=useState(false),[backupStatus,setBackupStatus]=useState("");const input=useRef<HTMLInputElement>(null),restoreInput=useRef<HTMLInputElement>(null),audio=useRef<HTMLAudioElement>(null),gestureStart=useRef<{x:number;y:number}|null>(null);
+ const[tracks,setTracks]=useState<Track[]>([]),[query,setQuery]=useState(""),[sortMode,setSortMode]=useState<TrackSort>("recent"),[crossfadeSeconds,setCrossfadeSeconds]=useState(0),[playerNotice,setPlayerNotice]=useState(""),[current,setCurrent]=useState<Track|null>(null),[audioUrl,setAudioUrl]=useState<string>(),[busy,setBusy]=useState(true),[shuffle,setShuffle]=useState(false),[repeat,setRepeat]=useState<RepeatMode>("off"),[playlists,setPlaylists]=useState<Playlist[]>([]),[activePlaylist,setActivePlaylist]=useState("all"),[addingTrack,setAddingTrack]=useState<Track|null>(null),[onboarding,setOnboarding]=useState(false),[slide,setSlide]=useState(0),[fullPlayer,setFullPlayer]=useState(false),[elapsed,setElapsed]=useState(0),[duration,setDuration]=useState(0),[playing,setPlaying]=useState(false),[volume,setVolume]=useState(1),[supportsVolume,setSupportsVolume]=useState(true),[airPlayAvailable,setAirPlayAvailable]=useState(false),[airPlayActive,setAirPlayActive]=useState(false),[storageOpen,setStorageOpen]=useState(false),[storageStats,setStorageStats]=useState<StorageStats|null>(null),[transferBusy,setTransferBusy]=useState(false),[backupStatus,setBackupStatus]=useState("");const[attributionTrack,setAttributionTrack]=useState<Track|null>(null),[discoveryQuery,setDiscoveryQuery]=useState(""),[discoveryResults,setDiscoveryResults]=useState<OpenAudioResult[]>([]),[discoveryBusy,setDiscoveryBusy]=useState(false),[discoveryStatus,setDiscoveryStatus]=useState(""),[lyricsOpen,setLyricsOpen]=useState(false),[lyricsNotice,setLyricsNotice]=useState(""),[directURL,setDirectURL]=useState(""),[directStatus,setDirectStatus]=useState(""),[directBusy,setDirectBusy]=useState(false),[directProgress,setDirectProgress]=useState<{received:number;total?:number}|null>(null),[spotifyOpen,setSpotifyOpen]=useState(false),[spotifySource,setSpotifySource]=useState(""),[spotifyStatus,setSpotifyStatus]=useState(""),[spotifyBusy,setSpotifyBusy]=useState(false),[spotifyToken,setSpotifyToken]=useState<string>(),[spotifyLists,setSpotifyLists]=useState<SpotifyPlaylistSummary[]>([]);
+ const transferAbort=useRef<AbortController|null>(null);
+ const mediaA=useRef<HTMLAudioElement>(null),mediaB=useRef<HTMLAudioElement>(null);
+ const deckIndex=useRef(0),deckURLs=useRef<(string|undefined)[]>([undefined,undefined]);
+ const audio=useRef<HTMLAudioElement|null>(null);
+ const mixer=useRef<BrowserCrossfadeMixer|null>(null);
+ const fadingTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
+ const input=useRef<HTMLInputElement>(null),restoreInput=useRef<HTMLInputElement>(null),spotifyFile=useRef<HTMLInputElement>(null),lyricsFile=useRef<HTMLInputElement>(null),gestureStart=useRef<{x:number;y:number}|null>(null);
  const refresh=async()=>setTracks(await listTracks());
  const refreshStorage=async()=>{try{const estimate=await navigator.storage?.estimate?.(),persisted=typeof navigator.storage?.persisted==="function"?await navigator.storage.persisted():null;setStorageStats({usage:estimate?.usage??0,quota:estimate?.quota??0,persisted})}catch{setStorageStats({usage:0,quota:0,persisted:null})}};
  useEffect(()=>{refresh().finally(()=>setBusy(false));try{setPlaylists(JSON.parse(localStorage.getItem("mp3-shelf-playlists")??"[]"));setOnboarding(!localStorage.getItem("mp3-shelf-onboarded"))}catch{}},[]);
  useEffect(()=>{localStorage.setItem("mp3-shelf-playlists",JSON.stringify(playlists))},[playlists]);
- useEffect(()=>()=>{if(audioUrl)URL.revokeObjectURL(audioUrl)},[audioUrl]);
+ useEffect(()=>{
+  let mounted=true;
+  void finishSpotifyAuthorization().then(async token=>{
+   if(!token||!mounted)return;
+   setSpotifyToken(token);setSpotifyOpen(true);setSpotifyBusy(true);
+   try{const lists=await listSpotifyPlaylists(token);if(mounted)setSpotifyLists(lists);}
+   catch(error){if(mounted)setSpotifyStatus(error instanceof Error?error.message:"Spotify playlists could not be loaded.");}
+   finally{if(mounted)setSpotifyBusy(false);}
+  }).catch(error=>{if(mounted){setSpotifyOpen(true);setSpotifyStatus(error instanceof Error?error.message:"Spotify sign-in failed.");}});
+  return()=>{mounted=false};
+ },[]);
+
+ useEffect(()=>{
+  try{setCrossfadeSeconds(safeCrossfadeSeconds(localStorage.getItem("mp3-shelf-crossfade")??0))}catch{}
+  return()=>{
+   if(fadingTimer.current)clearTimeout(fadingTimer.current);
+   for(const deck of [mediaA.current,mediaB.current])deck?.pause();
+   for(const url of deckURLs.current)if(url)URL.revokeObjectURL(url);
+   mixer.current?.close();
+  };
+ },[]);
  useEffect(()=>{const element=audio.current as AirPlayAudio|null;if(!element)return;element.setAttribute("x-webkit-airplay","allow");const isiOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);setSupportsVolume(!isiOS);setAirPlayAvailable(typeof element.webkitShowPlaybackTargetPicker==="function");const update=()=>setAirPlayActive(Boolean(element.webkitCurrentPlaybackTargetIsWireless));element.addEventListener("webkitcurrentplaybacktargetiswirelesschanged",update);return()=>element.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged",update)},[audioUrl]);
- const playlist=playlists.find(item=>item.id===activePlaylist),queue=useMemo(()=>playlist?tracks.filter(track=>playlist.trackIds.includes(track.id)):tracks,[playlist,tracks]),visible=useMemo(()=>queue.filter(track=>`${track.name} ${track.artist??""}`.toLowerCase().includes(query.toLowerCase().trim())),[queue,query]);
+ const playlist=playlists.find(item=>item.id===activePlaylist);
+ const resolvedPlaylist=useMemo(()=>playlist?resolvePlaylist(playlist,tracks):null,[playlist,tracks]);
+ const queue=useMemo(()=>activePlaylist==="favorites"?tracks.filter(track=>track.isFavorite):resolvedPlaylist?resolvedPlaylist.trackIds.map(id=>tracks.find(track=>track.id===id)).filter((track):track is Track=>Boolean(track)):tracks,[activePlaylist,resolvedPlaylist,tracks]);
+ const sortedQueue=useMemo(()=>playlist?queue:sortLibraryTracks(queue,sortMode),[playlist,queue,sortMode]);
+ const recentTracks=useMemo(()=>sortLibraryTracks(tracks,"recent").slice(0,8),[tracks]);
+ const lyricLines=useMemo(()=>parseLyrics(current?.lyrics??""),[current?.lyrics]);
+ const activeLyric=currentLyricIndex(lyricLines,elapsed);
+ const visible=useMemo(()=>sortedQueue.filter(track=>`${track.name} ${track.artist??""} ${track.album??""}`.toLowerCase().includes(query.toLowerCase().trim())),[sortedQueue,query]);
  useEffect(()=>{if(!current||!("mediaSession"in navigator))return;const artworkUrl=current.artwork?URL.createObjectURL(current.artwork):new URL("/icon-512.png",location.href).href;navigator.mediaSession.metadata=new MediaMetadata({title:current.name,artist:current.artist||"MP3 Shelf",album:current.album||"",artwork:[{src:artworkUrl,sizes:"512x512",type:current.artwork?.type||"image/png"}]});const set=(action:MediaSessionAction,handler:MediaSessionActionHandler)=>{try{navigator.mediaSession.setActionHandler(action,handler)}catch{}};set("play",()=>audio.current?.play());set("pause",()=>audio.current?.pause());set("previoustrack",()=>move("previous"));set("nexttrack",()=>move("next"));set("seekbackward",details=>seek(Math.max(0,(audio.current?.currentTime||0)-(details.seekOffset||10))));set("seekforward",details=>seek(Math.min(audio.current?.duration||0,(audio.current?.currentTime||0)+(details.seekOffset||10))));set("seekto",details=>{if(details.seekTime!=null)seek(details.seekTime)});return()=>{for(const action of["play","pause","previoustrack","nexttrack","seekbackward","seekforward","seekto"]as MediaSessionAction[])try{navigator.mediaSession.setActionHandler(action,null)}catch{}if(current.artwork)URL.revokeObjectURL(artworkUrl)}},[current,audioUrl,queue,shuffle,repeat]);
  useEffect(()=>{if("mediaSession"in navigator)navigator.mediaSession.playbackState=playing?"playing":"paused"},[playing]);
  useEffect(()=>{if(!("mediaSession"in navigator)||!duration||!Number.isFinite(duration))return;try{navigator.mediaSession.setPositionState({duration,playbackRate:audio.current?.playbackRate||1,position:Math.min(elapsed,duration)})}catch{}},[elapsed,duration]);
+ async function importAuthorizedURL(url=directURL,attribution?:AudioAttribution){
+  if(directBusy||!url.trim())return;
+  const controller=new AbortController();
+  transferAbort.current=controller;
+  setDirectProgress(null);setDirectBusy(true);setDirectStatus("Connecting to audio source…");
+  try{
+   const file=await downloadAuthorizedMP3(url,fetch,{
+    signal:controller.signal,
+    onProgress:(received,total)=>setDirectProgress({received,total})
+   });
+   const count=await importTracks([file],attribution);
+   await refresh();
+   if(count!==1)throw new Error("The file format was not supported.");
+   setDirectStatus(`Saved ${file.name} for offline playback.`);
+   if(directURL===url)setDirectURL("");
+  }catch(error){
+   setDirectStatus(error instanceof Error?error.message:"This download could not be saved.");
+  }finally{transferAbort.current=null;setDirectBusy(false)}
+ }
+ async function searchLicensedAudio(event?:React.FormEvent<HTMLFormElement>){
+  event?.preventDefault();
+  const query=discoveryQuery.replace(/\s+/g," ").trim();
+  if(discoveryBusy)return;
+  if(query.length<2||query.length>100){
+   setDiscoveryStatus("Enter between 2 and 100 characters.");
+   setDiscoveryResults([]);
+   return;
+  }
+  setDiscoveryBusy(true);setDiscoveryStatus("");setDiscoveryResults([]);
+  try{
+   const response=await fetch(`/api/audio-discovery?q=${encodeURIComponent(query)}`,{cache:"no-store"});
+   const payload: {error?:string;results?:OpenAudioResult[]} = await response.json();
+   if(!response.ok)throw new Error(payload.error||"Could not search the open music catalog.");
+   setDiscoveryResults(payload.results??[]);
+   if(!payload.results?.length)setDiscoveryStatus("No openly licensed audio found. Try another title or artist.");
+  }catch(error){
+   setDiscoveryStatus(error instanceof Error?error.message:"Open music search unavailable.");
+  }finally{setDiscoveryBusy(false)}
+ }
  async function onImport(event:ChangeEvent<HTMLInputElement>){const files=Array.from(event.target.files??[]);if(!files.length)return;setBusy(true);try{await importTracks(files);await refresh()}finally{setBusy(false);event.target.value=""}}
  function openStorage(){setStorageOpen(true);setBackupStatus("");void refreshStorage()}
  function exportBackup(){setTransferBusy(true);setBackupStatus("");try{const backup=createLibraryBackup(tracks,playlists),url=URL.createObjectURL(backup),link=document.createElement("a");link.href=url;link.download=`mp3-shelf-${new Date().toISOString().slice(0,10)}.mp3shelf`;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);setBackupStatus(`Backup ready · ${formatBytes(backup.size)}`)}catch(error){setBackupStatus(error instanceof Error?error.message:"Could not create the backup.")}finally{setTransferBusy(false)}}
- async function restoreBackup(event:ChangeEvent<HTMLInputElement>){const file=event.target.files?.[0];if(!file)return;setTransferBusy(true);setBackupStatus("Checking backup…");try{const backup=await parseLibraryBackup(file);await restoreTracks(backup.tracks);setPlaylists(existing=>{const merged=new Map(existing.map(item=>[item.id,item]));for(const item of backup.playlists)merged.set(item.id,item);return[...merged.values()]});await refresh();await refreshStorage();setBackupStatus(`Restored ${backup.tracks.length} ${backup.tracks.length===1?"track":"tracks"} and ${backup.playlists.length} ${backup.playlists.length===1?"playlist":"playlists"}.`)}catch(error){setBackupStatus(error instanceof Error?error.message:"Could not restore this backup.")}finally{setTransferBusy(false);event.target.value=""}}
- function play(track:Track){if(audioUrl)URL.revokeObjectURL(audioUrl);setElapsed(0);setDuration(0);setCurrent(track);setAudioUrl(URL.createObjectURL(track.blob))}
- function move(direction:"next"|"previous"){if(!current)return;const ids=queue.map(track=>track.id),id=direction==="next"?nextTrackId(ids,current.id,{shuffle,repeat}):previousTrackId(ids,current.id),target=tracks.find(track=>track.id===id);if(target)play(target)}
- async function remove(track:Track){await removeTrack(track.id);setPlaylists(items=>items.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==track.id)})));if(current?.id===track.id){setCurrent(null);setAudioUrl(undefined)}await refresh()}
+ async function restoreBackup(event:ChangeEvent<HTMLInputElement>){const file=event.target.files?.[0];if(!file)return;setTransferBusy(true);setBackupStatus("Checking backup…");try{const backup=await parseLibraryBackup(file);const added=await restoreTracks(backup.tracks);setPlaylists(existing=>{const merged=new Map(existing.map(item=>[item.id,item]));for(const item of backup.playlists){if(!merged.has(item.id))merged.set(item.id,item)}return[...merged.values()]});await refresh();await refreshStorage();setBackupStatus(`Added ${added} ${added===1?"track":"tracks"} from backup. Existing songs and playlists were kept; missing playlists were imported.`)}catch(error){setBackupStatus(error instanceof Error?error.message:"Could not restore this backup.")}finally{setTransferBusy(false);event.target.value=""}}
+ function storeImportedSpotifyList(wishes:PlaylistWish[],name:string,sourceURL?:string){
+  const item:Playlist={id:crypto.randomUUID(),name,trackIds:[],sourceURL,wishes};
+  const result=resolvePlaylist(item,tracks);
+  setPlaylists(existing=>[...existing,item]);
+  setActivePlaylist(item.id);
+  setSpotifyStatus(`Imported ${wishes.length} song titles: ${result.trackIds.length} matched on this device, ${result.missing.length} still need audio.`);
+  setSpotifyOpen(false);
+ }
+ async function importSpotifyExport(event:ChangeEvent<HTMLInputElement>){
+  const file=event.target.files?.[0];if(!file)return;
+  setSpotifyBusy(true);setSpotifyStatus("");
+  try{
+   if(file.size>2*1024*1024)throw new Error("Playlist exports must be smaller than 2 MB.");
+   const wishes=parsePlaylistText(await file.text());
+   if(spotifySource.trim()&&!spotifyPlaylistLink(spotifySource))throw new Error("Use a valid open.spotify.com playlist link, or leave the link empty.");
+   const name=file.name.replace(/\\.(csv|tsv|txt)$/i,"").trim()||"Imported Spotify playlist";
+   storeImportedSpotifyList(wishes,name,spotifyPlaylistLink(spotifySource));
+  }catch(error){setSpotifyStatus(error instanceof Error?error.message:"Could not read this Spotify playlist export.")}
+  finally{setSpotifyBusy(false);event.target.value="";}
+ }
+ async function importSpotifyFromAPI(id:string,name:string){
+  if(!spotifyToken)return;
+  setSpotifyBusy(true);setSpotifyStatus("");
+  try{
+   const wishes=await importSpotifyPlaylist(spotifyToken,id);
+   storeImportedSpotifyList(wishes,name,`https://open.spotify.com/playlist/${id}`);
+  }catch(error){setSpotifyStatus(error instanceof Error?error.message:"Spotify playlist import failed.");}
+  finally{setSpotifyBusy(false);}
+ }
+ async function importSpotifyLinkFromAPI(){
+  const link=spotifyPlaylistLink(spotifySource);
+  if(!link){setSpotifyStatus("Paste a valid Spotify playlist link.");return;}
+  const id=link.split("/").at(-1)!;
+  const match=spotifyLists.find(item=>item.id===id);
+  await importSpotifyFromAPI(id,match?.name??"Spotify playlist");
+ }
+ async function importLyrics(event:ChangeEvent<HTMLInputElement>){
+  const file=event.target.files?.[0],track=current;if(!file||!track)return;
+  setLyricsNotice("");
+  try{
+   if(file.size>500*1024||!/^.+\\.(lrc|txt)$/i.test(file.name))throw new Error("Choose a .lrc or .txt lyric file under 500 KB.");
+   const content=await file.text();
+   if(!parseLyrics(content).length)throw new Error("No usable lyric lines were found.");
+   await updateTrackLyrics(track.id,content);
+   setCurrent(existing=>existing?.id===track.id?{...existing,lyrics:content}:existing);
+   await refresh();
+   setLyricsNotice("Lyrics saved to this song and included in your backups.");
+  }catch(error){setLyricsNotice(error instanceof Error?error.message:"Could not import lyrics.");}
+  finally{event.target.value="";}
+ }
+ function retireDeck(index:number){
+  const element=index===0?mediaA.current:mediaB.current;
+  if(element){element.pause();element.removeAttribute("src");element.load();}
+  const url=deckURLs.current[index];
+  if(url){URL.revokeObjectURL(url);deckURLs.current[index]=undefined}
+  if(element)mixer.current?.reset(element);
+ }
+ function stopOverlapping(){
+  if(fadingTimer.current){clearTimeout(fadingTimer.current);fadingTimer.current=null}
+  const old=deckIndex.current===0?mediaB.current:mediaA.current;
+  if(old)retireDeck(1-deckIndex.current);
+  if(audio.current)mixer.current?.reset(audio.current);
+ }
+ function play(track:Track,crossfade=false){
+  const previous=audio.current;
+  const oldIndex=deckIndex.current;
+  const nextIndex=previous?1-oldIndex:0;
+  const incoming=nextIndex===0?mediaA.current:mediaB.current;
+  if(!incoming)return;
+  stopOverlapping();
+  retireDeck(nextIndex);
+  const newURL=URL.createObjectURL(track.blob);
+  deckURLs.current[nextIndex]=newURL;
+  incoming.src=newURL;
+  incoming.load();
+  if(supportsVolume)incoming.volume=volume;
+  const previousTrack=current;
+  const previousURL=deckURLs.current[oldIndex];
+  let blended=false;
+  if(crossfade&&previous&&!previous.paused&&crossfadeSeconds>0){
+   try{
+    if(mixer.current?.context.state==="running"){
+     blended=mixer.current.fade(previous,incoming,crossfadeSeconds);
+    }
+   }catch{blended=false}
+  }
+  if(!blended){
+   if(previous)retireDeck(oldIndex);
+   if(mixer.current)mixer.current.enable(incoming);
+  }
+  if(crossfadeSeconds>0&&!mixer.current){
+   try{
+    mixer.current=new BrowserCrossfadeMixer(new AudioContext());
+    mixer.current.enable(incoming);
+    void mixer.current.context.resume().catch(()=>{});
+   }catch{mixer.current=null}
+  }
+  audio.current=incoming;
+  deckIndex.current=nextIndex;
+  setCurrent(track);
+  setAudioUrl(newURL);
+  setElapsed(0);setDuration(0);setPlayerNotice("");
+  void incoming.play().catch(()=>{
+   if(audio.current!==incoming)return;
+   // Automatic starts can be blocked on Safari. Restore the previous deck
+   // rather than fading the audible song into silence.
+   if(blended&&previous&&previousTrack){
+    if(fadingTimer.current)clearTimeout(fadingTimer.current);
+    fadingTimer.current=null;
+    mixer.current?.reset(previous);
+    retireDeck(nextIndex);
+    audio.current=previous;
+    deckIndex.current=oldIndex;
+    setCurrent(previousTrack);setAudioUrl(previousURL);
+    setElapsed(previous.currentTime);setDuration(previous.duration);
+    setPlaying(!previous.paused);
+   }else{
+    setPlaying(false);
+   }
+   setPlayerNotice("Browser autoplay blocked the next track. Tap Play to continue.");
+  });
+  if(blended){
+   fadingTimer.current=setTimeout(()=>{
+    if(audio.current===incoming)retireDeck(oldIndex);
+    fadingTimer.current=null;
+   },crossfadeSeconds*1000+100);
+  }
+ }
+
+ function move(direction:"next"|"previous",automatic=false,crossfade=false){if(!current)return;if(!automatic&&direction==="previous"&&elapsed>3){seek(0);return}const ids=sortedQueue.map(track=>track.id),id=direction==="next"?nextTrackId(ids,current.id,{shuffle,repeat,automatic}):previousTrackId(ids,current.id,{repeat}),target=tracks.find(track=>track.id===id);if(target)play(target,crossfade)}
+ async function favorite(track:Track){
+  try{
+   const chosen=await toggleTrackFavorite(track.id);
+   setCurrent(current=>current?.id===track.id?{...current,isFavorite:chosen}:current);
+   await refresh();
+  }catch(error){setDirectStatus(error instanceof Error?error.message:"Could not change favorite.");}
+ }
+ async function remove(track:Track){await removeTrack(track.id);setPlaylists(items=>items.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==track.id)})));if(current?.id===track.id){stopOverlapping();retireDeck(deckIndex.current);audio.current=null;setCurrent(null);setAudioUrl(undefined);setPlaying(false)}await refresh()}
  async function rename(track:Track){const name=window.prompt("Track name",track.name)?.trim();if(!name||name===track.name)return;await renameTrack(track.id,name);if(current?.id===track.id)setCurrent({...current,name});await refresh()}
  function createPlaylist(){const name=window.prompt("Playlist name")?.trim();if(!name)return;const id=crypto.randomUUID();setPlaylists(items=>[...items,{id,name,trackIds:[]}]);setActivePlaylist(id)}
  function addToPlaylist(playlistId:string,trackId:string){setPlaylists(items=>items.map(item=>item.id===playlistId&&!item.trackIds.includes(trackId)?{...item,trackIds:[...item.trackIds,trackId]}:item));setAddingTrack(null)}
@@ -36,21 +251,53 @@ export function MusicLibrary(){
  function reorderPlaylist(direction:-1|1){const index=playlists.findIndex(item=>item.id===activePlaylist),target=index+direction;if(index<0||target<0||target>=playlists.length)return;setPlaylists(items=>{const next=[...items];[next[index],next[target]]=[next[target],next[index]];return next})}
  function cycleRepeat(){setRepeat(mode=>mode==="off"?"all":mode==="all"?"one":"off")}
  function finishOnboarding(){localStorage.setItem("mp3-shelf-onboarded","true");setOnboarding(false)}
- function togglePlayback(){if(!audio.current)return;if(audio.current.paused)audio.current.play();else audio.current.pause()}
- function seek(value:number){if(!audio.current)return;audio.current.currentTime=value;setElapsed(value)}
- function changeVolume(value:number){if(!audio.current)return;audio.current.volume=value;setVolume(value)}
+ function togglePlayback(){if(!audio.current)return;if(audio.current.paused){if(mixer.current?.context.state==="suspended")void mixer.current.context.resume().catch(()=>{});void audio.current.play().catch(()=>setPlayerNotice("Tap Play to allow audio."))}else{stopOverlapping();audio.current.pause()}}
+ function seek(value:number){if(!audio.current)return;stopOverlapping();audio.current.currentTime=value;setElapsed(value)}
+ function changeVolume(value:number){if(!audio.current)return;if(supportsVolume)audio.current.volume=value;setVolume(value)}
+ function onDeckTime(event:React.SyntheticEvent<HTMLAudioElement>){
+  const element=event.currentTarget;
+  if(element!==audio.current)return;
+  const seconds=element.currentTime;
+  setElapsed(seconds);
+  if(fadingTimer.current||repeat==="one")return;
+  const ids=sortedQueue.map(song=>song.id),index=current?ids.indexOf(current.id):-1;
+  const hasNext=index>=0&&(shuffle?ids.length>1:index<ids.length-1||(repeat==="all"&&ids.length>1));
+  if(shouldBeginCrossfade(seconds,element.duration,crossfadeSeconds,hasNext))
+   move("next",true,true);
+ }
+ function changeCrossfade(seconds:number){
+  const next=safeCrossfadeSeconds(seconds);
+  setCrossfadeSeconds(next);
+  try{localStorage.setItem("mp3-shelf-crossfade",String(next))}catch{}
+  if(next>0&&audio.current&&!mixer.current){
+   try{
+    mixer.current=new BrowserCrossfadeMixer(new AudioContext());
+    mixer.current.enable(audio.current);
+    void mixer.current.context.resume().catch(()=>{});
+   }catch{mixer.current=null}
+  }
+  if(next===0)stopOverlapping();
+ }
  function showAirPlay(){(audio.current as AirPlayAudio|null)?.webkitShowPlaybackTargetPicker?.()}
  function startGesture(event:React.PointerEvent){gestureStart.current={x:event.clientX,y:event.clientY}}
  function endGesture(event:React.PointerEvent){if(!gestureStart.current)return;const action=playerGesture(event.clientX-gestureStart.current.x,event.clientY-gestureStart.current.y);gestureStart.current=null;if(action==="close")setFullPlayer(false);else if(action==="next")move("next");else if(action==="previous")move("previous")}
  return <main className="shell"><header className="topbar"><div className="brand-mark">♫</div><div><p className="eyebrow">YOUR OFFLINE LIBRARY</p><h1>MP3 Shelf</h1></div><button className="storage-small" onClick={openStorage} aria-label="Storage and backups">•••</button><button className="add-small" onClick={()=>input.current?.click()} aria-label="Import MP3 files">＋</button></header>
- <section className="hero"><p className="eyebrow accent">FILES, WITHOUT THE HUNT</p><h2>Pick them once.<br/>Play them anytime.</h2><p>Choose a whole group of MP3s from Files, then search, organize and play them here.</p><button className="import-button" onClick={()=>input.current?.click()} disabled={busy}>{busy?"Loading…":"Choose MP3s"}<span>＋</span></button><input ref={input} className="hidden-input" type="file" accept="audio/mpeg,.mp3" multiple onChange={onImport}/></section>
- <section className="library"><div className="section-heading"><h3>Library</h3><button className="text-button" onClick={createPlaylist}>＋ New playlist</button></div><div className="playlist-tabs"><button className={activePlaylist==="all"?"selected":""} onClick={()=>setActivePlaylist("all")}>All tracks</button>{playlists.map(item=><button className={activePlaylist===item.id?"selected":""} onClick={()=>setActivePlaylist(item.id)} key={item.id}>{item.name}<small>{item.trackIds.length}</small></button>)}</div>
- {activePlaylist!=="all"&&<div className="playlist-meta"><div><button onClick={()=>reorderPlaylist(-1)} aria-label="Move playlist left">←</button><button onClick={()=>reorderPlaylist(1)} aria-label="Move playlist right">→</button><span>{queue.length} {queue.length===1?"track":"tracks"}</span></div><button onClick={deleteActivePlaylist}>Delete playlist</button></div>}{tracks.length>0&&<label className="search"><span>⌕</span><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search titles or artists"/></label>}
- {!busy&&tracks.length===0?<div className="empty"><div>♫</div><h3>No MP3s yet</h3><p>Tap “Choose MP3s” and select as many files as you want.</p></div>:queue.length===0?<div className="empty compact"><h3>This playlist is empty</h3><p>Open All tracks and tap ＋ beside a song.</p></div>:<div className="track-list">{visible.map((track,index)=><article className={`track ${current?.id===track.id?"active":""}`} key={track.id}><button className="track-main has-art" onClick={()=>play(track)}><Artwork track={track}/><span className="track-copy"><strong>{track.name}</strong><small>{track.artist?[track.artist,track.album].filter(Boolean).join(" · "):`${formatBytes(track.size)} · MP3`}</small></span><span className="play">▶</span></button><button className="track-action rename" onClick={()=>rename(track)} aria-label={`Rename ${track.name}`}>✎</button>{playlists.length>0&&<button className="track-action" onClick={()=>setAddingTrack(track)} aria-label={`Add ${track.name} to playlist`}>＋</button>}<button className="delete" onClick={()=>remove(track)} aria-label={`Remove ${track.name}`}>×</button></article>)}</div>}</section>
- {storageOpen&&<div className="sheet-backdrop" onClick={()=>setStorageOpen(false)}><section className="sheet storage-sheet" onClick={event=>event.stopPropagation()}><div className="sheet-handle"/><header><div><p className="eyebrow">LOCAL LIBRARY</p><h3>Storage & backup</h3></div><button className="sheet-close" onClick={()=>setStorageOpen(false)} aria-label="Close storage panel">×</button></header><div className="storage-grid"><div><span>Music stored</span><strong>{formatBytes(tracks.reduce((total,track)=>total+track.size+(track.artwork?.size??0),0))}</strong><small>{tracks.length} {tracks.length===1?"track":"tracks"}</small></div><div><span>Total app data</span><strong>{storageStats?formatBytes(storageStats.usage):"Calculating…"}</strong><small>{storageStats?.quota?`${formatBytes(storageStats.quota)} allowance`:"Managed by iOS"}</small></div></div><p className="storage-note">{storageStats?.persisted?"iOS reports this library as persistent storage.":"Backups protect your library if iOS clears website data or the app is removed."}</p><div className="backup-actions"><button onClick={exportBackup} disabled={transferBusy}><span><b>Export backup</b><small>Music, artwork, metadata and playlists</small></span><i>↓</i></button><button onClick={()=>restoreInput.current?.click()} disabled={transferBusy}><span><b>Restore backup</b><small>Add or update without deleting current tracks</small></span><i>↑</i></button></div><input ref={restoreInput} className="hidden-input" type="file" accept=".mp3shelf,application/vnd.mp3-shelf.backup,application/octet-stream" onChange={restoreBackup}/>{backupStatus&&<p className="backup-status" role="status">{backupStatus}</p>}</section></div>}
+ <section className="hero"><p className="eyebrow accent">FILES, WITHOUT THE HUNT</p><h2>Pick them once.<br/>Play them anytime.</h2><p>Choose a whole group of MP3s from Files, then search, organize and play them here.</p><button className="import-button" onClick={()=>input.current?.click()} disabled={busy}>{busy?"Loading…":"Choose MP3s"}<span>＋</span></button><button className="spotify-entry" onClick={()=>{setSpotifyStatus("");setSpotifyOpen(true)}}><span className="spotify-glyph" aria-hidden="true">♫</span><span><strong>Import a Spotify playlist</strong><small>Bring in your song list and match offline files</small></span><b aria-hidden="true">→</b></button><div className="direct-audio-card"><label htmlFor="direct-audio-url">Have a direct MP3 download link?</label><p>Save audio you have permission to download. Only direct HTTPS MP3 files are accepted; streaming links won't work.</p><div className="direct-audio-actions"><input id="direct-audio-url" type="url" inputMode="url" placeholder="https://example.org/audio.mp3" value={directURL} onChange={event=>setDirectURL(event.target.value)} autoComplete="off" aria-label="Authorized direct MP3 URL"/><button disabled={!directURL.trim()||directBusy||busy} onClick={()=>void importAuthorizedURL()}>{directBusy?"Downloading…":"Save MP3"}</button></div>{directBusy&&<div className="direct-audio-transfer"><progress value={directProgress?.received??0} max={directProgress?.total||undefined} aria-label="MP3 download progress"/><span>{directProgress?`${formatBytes(directProgress.received)}${directProgress.total?` of ${formatBytes(directProgress.total)}`:""} transferred`:"Preparing transfer"}</span><button onClick={()=>transferAbort.current?.abort()}>Cancel download</button></div>}{directStatus&&<p className="direct-audio-status" role="status">{directStatus}</p>}</div><input ref={input} className="hidden-input" type="file" accept="audio/mpeg,.mp3" multiple onChange={onImport}/></section>
+ <section className="open-audio-discovery" aria-labelledby="open-audio-heading"><div className="section-heading"><div><p className="eyebrow">INDEPENDENT RECORDINGS</p><h3 id="open-audio-heading">Discover open music</h3></div><span className="open-audio-tag">Openverse</span></div><p>Search openly licensed recordings from independent creators. Check the source and license before downloading. Spotify tracks are not downloadable here.</p><form onSubmit={event=>void searchLicensedAudio(event)} className="open-audio-search"><input value={discoveryQuery} maxLength={100} onChange={event=>setDiscoveryQuery(event.target.value)} aria-label="Search openly licensed music" placeholder="Song, artist, genre…" /><button type="submit" disabled={discoveryBusy}>{discoveryBusy?"Searching…":"Find music"}</button></form>{discoveryStatus&&<p className="open-audio-notice" role="status">{discoveryStatus}</p>}{discoveryResults.length>0&&<div className="open-audio-results" aria-label="Licensed music results">{discoveryResults.map(result=><article key={result.id} className="open-audio-result"><div><strong>{result.title}</strong><span>{result.artist}</span><small>{result.provider} · {result.license} license</small></div><div className="open-audio-links"><a href={result.sourceURL} target="_blank" rel="noopener noreferrer">Source ↗</a><a href={result.licenseURL} target="_blank" rel="noopener noreferrer">License ↗</a>{result.downloadURL&&<button disabled={directBusy} onClick={()=>void importAuthorizedURL(result.downloadURL,{sourceURL:result.sourceURL,licenseURL:result.licenseURL,creator:result.artist,license:result.license,provider:result.provider})}>Save MP3</button>}</div>{!result.downloadURL&&<small>Open the source to check available formats; no direct MP3 was identified.</small>}</article>)}</div>}<p className="open-audio-footnote">Some hosts block browser downloads. Media must be an authorized MP3 that permits cross-origin access; MP3 Shelf does not bypass website restrictions.</p></section>
+ <section className="library"><div className="section-heading"><h3>Library</h3><button className="text-button" onClick={createPlaylist}>＋ New playlist</button></div><div className="playlist-tabs"><button className={activePlaylist==="all"?"selected":""} onClick={()=>setActivePlaylist("all")}>All tracks</button><button className={activePlaylist==="favorites"?"selected":""} onClick={()=>setActivePlaylist("favorites")}>♥ Favorites<small>{tracks.filter(track=>track.isFavorite).length}</small></button>{playlists.map(item=><button className={activePlaylist===item.id?"selected":""} onClick={()=>setActivePlaylist(item.id)} key={item.id}>{item.name}<small>{item.trackIds.length}</small></button>)}</div>
+ {activePlaylist!=="all"&&activePlaylist!=="favorites"&&<div className="playlist-meta"><div><button onClick={()=>reorderPlaylist(-1)} aria-label="Move playlist left">←</button><button onClick={()=>reorderPlaylist(1)} aria-label="Move playlist right">→</button><span>{queue.length} of {playlist?.wishes?.length||queue.length} {queue.length===1?"track":"tracks"} ready offline</span></div><button onClick={deleteActivePlaylist}>Delete playlist</button></div>}{!playlist&&<div className="library-sort-row"><label htmlFor="library-song-sort">Sort songs</label><select id="library-song-sort" value={sortMode} onChange={event=>setSortMode(event.target.value as TrackSort)}><option value="recent">Recently added</option><option value="title">Title</option><option value="artist">Artist</option></select></div>}{spotifyStatus&&!spotifyOpen&&<p className="playlist-import-status" role="status">{spotifyStatus}</p>}{tracks.length>0&&<label className="search"><span>⌕</span><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search titles, artists or albums" aria-label="Search your music library"/></label>}
+ {activePlaylist==="all"&&!query.trim()&&!busy&&recentTracks.length>=2&&<section className="recent-rail" aria-labelledby="recently-added-title"><div className="section-heading"><h3 id="recently-added-title">Recently added</h3><span>Latest imports</span></div><div className="recent-rail-scroller">{recentTracks.map(track=><button key={track.id} className="recent-rail-item" onClick={()=>play(track)}><Artwork track={track} size="large"/><strong>{track.name}</strong><small>{track.artist||"Local recording"}</small></button>)}</div></section>}
+ {!busy&&tracks.length===0?<div className="empty"><div>♫</div><h3>No MP3s yet</h3><p>Tap “Choose MP3s” and select as many files as you want.</p></div>:queue.length===0?<div className="empty compact"><h3>{activePlaylist==="favorites"?"No favorites yet":playlist?.wishes?.length?"Your songs aren’t on this device yet":"This playlist is empty"}</h3><p>{activePlaylist==="favorites"?"Tap the heart next to a song to save it here.":playlist?.wishes?.length?"Import your own matching audio files; Spotify streams cannot be saved as MP3s here.":"Open All tracks and tap ＋ beside a song."}</p></div>:visible.length===0?<div className="empty compact"><h3>No matching songs</h3><p>Try another title, artist, or album search.</p></div>:<div className="track-list">{visible.map((track,index)=><article className={`track ${current?.id===track.id?"active":""}`} key={track.id}><button className="track-main has-art" onClick={()=>play(track)}><Artwork track={track}/><span className="track-copy"><strong>{track.name}</strong><small>{track.artist?[track.artist,track.album].filter(Boolean).join(" · "):`${formatBytes(track.size)} · MP3`}</small></span><span className="play">▶</span></button>{track.attribution&&<button className="track-action attribution" onClick={()=>setAttributionTrack(track)} aria-label={`Source and license for ${track.name}`}>ⓘ</button>}<button className={`track-action favorite ${track.isFavorite?"active":""}`} onClick={()=>void favorite(track)} aria-label={`${track.isFavorite?"Remove from":"Add to"} favorites: ${track.name}`} aria-pressed={Boolean(track.isFavorite)}>{track.isFavorite?"♥":"♡"}</button><button className="track-action rename" onClick={()=>rename(track)} aria-label={`Rename ${track.name}`}>✎</button>{playlists.length>0&&<button className="track-action" onClick={()=>setAddingTrack(track)} aria-label={`Add ${track.name} to playlist`}>＋</button>}<button className="delete" onClick={()=>remove(track)} aria-label={`Remove ${track.name}`}>×</button></article>)}</div>}{playlist&&Boolean(playlist.wishes?.length)&&<section className="spotify-wishlist"><div className="section-heading"><h3>Playlist song list</h3><span>{resolvedPlaylist?.missing.length??0} need audio</span></div><p>Song titles imported from Spotify are metadata only. Matched local recordings appear above; missing songs stay here until you import authorized audio files.</p>{playlist.sourceURL&&<a href={playlist.sourceURL} target="_blank" rel="noopener noreferrer">Open original Spotify playlist ↗</a>}{(resolvedPlaylist?.missing??[]).slice(0,100).map((wish,index)=><div className="spotify-wish" key={index}><span><strong>{wish.title}</strong><small>{wish.artist||"Unknown artist"}{wish.album?` · ${wish.album}`:""}</small></span>{wish.spotifyURL&&<a href={wish.spotifyURL} target="_blank" rel="noopener noreferrer" aria-label={`View ${wish.title} on Spotify`}>↗</a>}</div>)}{(resolvedPlaylist?.missing.length??0)>100&&<p>Showing the first 100 missing songs.</p>}</section>}</section>
+ {spotifyOpen&&<div className="sheet-backdrop" onClick={()=>setSpotifyOpen(false)}><section className="sheet spotify-import-sheet" role="dialog" aria-modal="true" aria-labelledby="spotify-import-heading" onClick={event=>event.stopPropagation()}><div className="sheet-handle"/><header><div><p className="eyebrow">PLAYLIST IMPORT</p><h3 id="spotify-import-heading">Your Spotify playlists</h3></div><button className="sheet-close" onClick={()=>setSpotifyOpen(false)} aria-label="Close Spotify importer">×</button></header><p>Import a CSV or TSV export of your Spotify playlist. We'll create a local playlist and match songs already on your phone by title and artist.</p><label className="spotify-import-label" htmlFor="spotify-source-link">Spotify playlist link <small>(optional reference)</small></label><input id="spotify-source-link" className="spotify-link-input" type="url" placeholder="https://open.spotify.com/playlist/…" value={spotifySource} onChange={event=>setSpotifySource(event.target.value)} autoComplete="off"/><p className="spotify-hint">Connect Spotify to import a playlist you own or collaborate on, or upload a CSV/TSV playlist export below. Spotify audio remains protected.</p>
+ {spotifyClientID?<div className="spotify-connect"><button onClick={()=>void beginSpotifyAuthorization().catch(error=>setSpotifyStatus(error instanceof Error?error.message:"Could not connect Spotify."))} disabled={spotifyBusy}>{spotifyToken?"Reconnect Spotify":"Connect Spotify securely"}</button>{spotifyToken&&<p className="spotify-hint">Signed in for this session. Select one of your accessible playlists or paste its link.</p>}</div>:<p className="spotify-hint">Direct Spotify sign-in will be available once the site's Spotify client ID and redirect URL are configured. CSV/TSV import works now.</p>}
+ {spotifyToken&&<div className="spotify-account-playlists"><h4>Import from Spotify</h4>{spotifyLists.length===0?<p className="spotify-hint">No accessible playlists were returned. Try a playlist you own or collaborate on.</p>:spotifyLists.map(item=><button key={item.id} disabled={spotifyBusy} onClick={()=>void importSpotifyFromAPI(item.id,item.name)}><span>{item.name}</span><span>Import →</span></button>)}<button className="spotify-import-link-action" disabled={spotifyBusy||!spotifySource.trim()} onClick={()=>void importSpotifyLinkFromAPI()}>Import from pasted Spotify link →</button></div>}
+ <button className="spotify-import-action" onClick={()=>spotifyFile.current?.click()} disabled={spotifyBusy}>{spotifyBusy?"Reading playlist…":"Choose CSV / TSV track list"} <span>→</span></button><input ref={spotifyFile} className="hidden-input" type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" onChange={importSpotifyExport}/><p className="spotify-hint">Expected columns: Track Name, Artist Name, Album Name, and optional Track URI. Importing metadata never downloads protected Spotify audio.</p>{spotifyStatus&&<p className="playlist-import-status" role="status">{spotifyStatus}</p>}</section></div>}
+ {attributionTrack?.attribution&&<div className="sheet-backdrop" onClick={()=>setAttributionTrack(null)}><section className="sheet attribution-sheet" role="dialog" aria-modal="true" aria-label={`Audio source for ${attributionTrack.name}`} onClick={event=>event.stopPropagation()}><div className="sheet-handle"/><header><div><p className="eyebrow">RECORDING CREDITS</p><h3>{attributionTrack.name}</h3></div><button className="sheet-close" onClick={()=>setAttributionTrack(null)} aria-label="Close credits">×</button></header><p><strong>Creator</strong> {attributionTrack.attribution.creator}</p><p><strong>Provider</strong> {attributionTrack.attribution.provider}</p><p><strong>License</strong> {attributionTrack.attribution.license}</p><div className="attribution-actions"><a href={attributionTrack.attribution.sourceURL} target="_blank" rel="noopener noreferrer">Original source ↗</a><a href={attributionTrack.attribution.licenseURL} target="_blank" rel="noopener noreferrer">License terms ↗</a></div><p className="attribution-note">This information came from the independent audio catalog at import time. Always verify permissions at the original source.</p></section></div>}
+ {storageOpen&&<div className="sheet-backdrop" onClick={()=>setStorageOpen(false)}><section className="sheet storage-sheet" onClick={event=>event.stopPropagation()}><div className="sheet-handle"/><header><div><p className="eyebrow">LOCAL LIBRARY</p><h3>Storage & backup</h3></div><button className="sheet-close" onClick={()=>setStorageOpen(false)} aria-label="Close storage panel">×</button></header><div className="storage-grid"><div><span>Music stored</span><strong>{formatBytes(tracks.reduce((total,track)=>total+track.size+(track.artwork?.size??0),0))}</strong><small>{tracks.length} {tracks.length===1?"track":"tracks"}</small></div><div><span>Total app data</span><strong>{storageStats?formatBytes(storageStats.usage):"Calculating…"}</strong><small>{storageStats?.quota?`${formatBytes(storageStats.quota)} allowance`:"Managed by iOS"}</small></div></div><p className="storage-note">{storageStats?.persisted?"iOS reports this library as persistent storage.":"Backups protect your library if iOS clears website data or the app is removed."}</p><div className="backup-actions"><button onClick={exportBackup} disabled={transferBusy}><span><b>Export backup</b><small>Music, artwork, metadata and playlists</small></span><i>↓</i></button><button onClick={()=>restoreInput.current?.click()} disabled={transferBusy}><span><b>Restore backup</b><small>Add missing tracks without replacing existing edits</small></span><i>↑</i></button></div><input ref={restoreInput} className="hidden-input" type="file" accept=".mp3shelf,application/vnd.mp3-shelf.backup,application/octet-stream" onChange={restoreBackup}/>{backupStatus&&<p className="backup-status" role="status">{backupStatus}</p>}</section></div>}
  {addingTrack&&<div className="sheet-backdrop" onClick={()=>setAddingTrack(null)}><section className="sheet" onClick={event=>event.stopPropagation()}><div className="sheet-handle"/><p className="eyebrow">ADD TO PLAYLIST</p><h3>{addingTrack.name}</h3>{playlists.map(item=><button onClick={()=>addToPlaylist(item.id,addingTrack.id)} key={item.id}><span>{item.name}</span><span>{item.trackIds.includes(addingTrack.id)?"✓":"＋"}</span></button>)}</section></div>}
- {current&&audioUrl&&<footer className="player"><button className="now-playing" onClick={()=>setFullPlayer(true)}><Artwork track={current}/><span><small>NOW PLAYING</small><strong>{current.name}</strong></span><b>⌃</b></button><div className="transport"><button onClick={()=>setShuffle(value=>!value)} className={shuffle?"enabled":""} aria-label="Shuffle">⇄</button><button onClick={()=>move("previous")} aria-label="Previous track">◀</button><audio ref={audio} key={audioUrl} src={audioUrl} controls autoPlay onLoadedMetadata={event=>setDuration(event.currentTarget.duration)} onTimeUpdate={event=>setElapsed(event.currentTarget.currentTime)} onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)} onEnded={()=>move("next")}/><button onClick={()=>move("next")} aria-label="Next track">▶</button><button onClick={cycleRepeat} className={repeat!=="off"?"enabled":""} aria-label={`Repeat ${repeat}`}>{repeat==="one"?"↻¹":"↻"}</button></div></footer>}
- {fullPlayer&&current&&<section className="full-player"><header><button onClick={()=>setFullPlayer(false)} aria-label="Close full-screen player">⌄</button><span>NOW PLAYING</span><i/></header><div className="gesture-zone" onPointerDown={startGesture} onPointerUp={endGesture}><div className="cover"><Artwork track={current} size="large"/></div><div className="full-track"><h2>{current.name}</h2><p>{[current.artist,current.album].filter(Boolean).join(" · ")||"MP3 Shelf"}</p></div></div><div className="scrubber"><input type="range" min="0" max={duration||0} step="0.1" value={Math.min(elapsed,duration||0)} onChange={event=>seek(Number(event.target.value))} style={{"--progress":`${duration?elapsed/duration*100:0}%`} as React.CSSProperties}/><div><span>{formatTime(elapsed)}</span><span>-{formatTime(Math.max(0,duration-elapsed))}</span></div></div><div className="full-controls"><button onClick={()=>setShuffle(value=>!value)} className={shuffle?"enabled":""} aria-label="Shuffle">⇄</button><button onClick={()=>move("previous")} aria-label="Previous track">◀</button><button className="main-play" onClick={togglePlayback} aria-label={playing?"Pause":"Play"}>{playing?"Ⅱ":"▶"}</button><button onClick={()=>move("next")} aria-label="Next track">▶</button><button onClick={cycleRepeat} className={repeat!=="off"?"enabled":""} aria-label={`Repeat ${repeat}`}>{repeat==="one"?"↻¹":"↻"}</button></div><div className="output-controls">{supportsVolume?<label className="volume"><span>{volume===0?"⌁":"◖"}</span><input type="range" min="0" max="1" step="0.01" value={volume} onChange={event=>changeVolume(Number(event.target.value))} aria-label="Volume"/><span>◗</span></label>:<span className="ios-volume">Use the iPhone side buttons for volume</span>}{airPlayAvailable&&<button className={airPlayActive?"airplay active":"airplay"} onClick={showAirPlay} aria-label="Choose AirPlay device"><span>▱</span>{airPlayActive?"Playing with AirPlay":"AirPlay"}</button>}</div></section>}
+ {current&&audioUrl&&<footer className="player"><button className="now-playing" onClick={()=>setFullPlayer(true)}><Artwork track={current}/><span><small>NOW PLAYING</small><strong>{current.name}</strong></span><b>⌃</b></button><div className="transport"><button onClick={()=>setShuffle(value=>!value)} className={shuffle?"enabled":""} aria-label="Shuffle">⇄</button><button onClick={()=>move("previous")} aria-label="Previous track">◀</button><button className="mini-play" onClick={togglePlayback} aria-label={playing?"Pause":"Play"}>{playing?"Ⅱ":"▶"}</button><button onClick={()=>move("next")} aria-label="Next track">▶</button><button onClick={cycleRepeat} className={repeat!=="off"?"enabled":""} aria-label={`Repeat ${repeat}`}>{repeat==="one"?"↻¹":"↻"}</button></div></footer>}
+ {fullPlayer&&current&&<section className="full-player"><header><button onClick={()=>setFullPlayer(false)} aria-label="Close full-screen player">⌄</button><span>NOW PLAYING</span><i/></header><div className="gesture-zone" onPointerDown={startGesture} onPointerUp={endGesture}><div className="cover"><Artwork track={current} size="large"/></div><div className="full-track"><h2>{current.name}</h2><p>{[current.artist,current.album].filter(Boolean).join(" · ")||"MP3 Shelf"}</p></div></div><div className="scrubber"><input type="range" min="0" max={duration||0} step="0.1" value={Math.min(elapsed,duration||0)} onChange={event=>seek(Number(event.target.value))} style={{"--progress":`${duration?elapsed/duration*100:0}%`} as React.CSSProperties}/><div><span>{formatTime(elapsed)}</span><span>-{formatTime(Math.max(0,duration-elapsed))}</span></div></div><div className="full-controls"><button onClick={()=>setShuffle(value=>!value)} className={shuffle?"enabled":""} aria-label="Shuffle">⇄</button><button onClick={()=>move("previous")} aria-label="Previous track">◀</button><button className="main-play" onClick={togglePlayback} aria-label={playing?"Pause":"Play"}>{playing?"Ⅱ":"▶"}</button><button onClick={()=>move("next")} aria-label="Next track">▶</button><button onClick={cycleRepeat} className={repeat!=="off"?"enabled":""} aria-label={`Repeat ${repeat}`}>{repeat==="one"?"↻¹":"↻"}</button></div>{playerNotice&&<p className="playback-notice" role="status">{playerNotice}</p>}<div className="output-controls"><label className="crossfade-control">Crossfade <select aria-label="Crossfade duration" value={crossfadeSeconds} onChange={event=>changeCrossfade(Number(event.target.value))}><option value="0">Off</option><option value="2">2 sec</option><option value="4">4 sec</option><option value="6">6 sec</option><option value="8">8 sec</option></select></label><button className="lyrics-show-button" onClick={()=>{setLyricsNotice("");setLyricsOpen(true)}} aria-label="Show lyrics">♪ Lyrics</button>{supportsVolume?<label className="volume"><span>{volume===0?"⌁":"◖"}</span><input type="range" min="0" max="1" step="0.01" value={volume} onChange={event=>changeVolume(Number(event.target.value))} aria-label="Volume"/><span>◗</span></label>:<span className="ios-volume">Use the iPhone side buttons for volume</span>}{airPlayAvailable&&<button className={airPlayActive?"airplay active":"airplay"} onClick={showAirPlay} aria-label="Choose AirPlay device"><span>▱</span>{airPlayActive?"Playing with AirPlay":"AirPlay"}</button>}</div>{lyricsOpen&&<div className="lyrics-overlay" role="dialog" aria-modal="true" aria-label={`Lyrics for ${current.name}`}><header><h3>Lyrics <small>{current.name}</small></h3><button aria-label="Close lyrics" onClick={()=>setLyricsOpen(false)}>×</button></header><div className="lyrics-lines">{lyricLines.length?lyricLines.map(line=><p key={line.id} className={line.id===activeLyric?"active":""}>{line.text}</p>):<div className="lyrics-empty"><h4>Add lyrics to this song</h4><p>Import an .lrc file for timed lyrics or a .txt file for plain lyrics. Everything stays on your device.</p></div>}</div><div className="lyrics-actions"><button onClick={()=>lyricsFile.current?.click()}>Choose .lrc / .txt file</button>{Boolean(current.lyrics)&&<button onClick={()=>{void updateTrackLyrics(current.id,"").then(()=>{setCurrent(existing=>existing?.id===current.id?{...existing,lyrics:""}:existing);return refresh()}).catch(error=>setLyricsNotice(error instanceof Error?error.message:"Could not remove lyrics."))}}>Remove lyrics</button>}</div><input className="hidden-input" ref={lyricsFile} type="file" accept=".lrc,.txt,text/plain" onChange={importLyrics}/>{lyricsNotice&&<p role="status" className="lyrics-notice">{lyricsNotice}</p>}</div>}</section>}
+ <div className="media-decks" aria-hidden="true"><audio ref={mediaA} preload="metadata" onLoadedMetadata={event=>{if(event.currentTarget===audio.current)setDuration(event.currentTarget.duration)}} onTimeUpdate={onDeckTime} onPlay={event=>{if(event.currentTarget===audio.current)setPlaying(true)}} onPause={event=>{if(event.currentTarget===audio.current)setPlaying(false)}} onEnded={event=>{if(event.currentTarget===audio.current)move("next",true)}}/><audio ref={mediaB} preload="metadata" onLoadedMetadata={event=>{if(event.currentTarget===audio.current)setDuration(event.currentTarget.duration)}} onTimeUpdate={onDeckTime} onPlay={event=>{if(event.currentTarget===audio.current)setPlaying(true)}} onPause={event=>{if(event.currentTarget===audio.current)setPlaying(false)}} onEnded={event=>{if(event.currentTarget===audio.current)move("next",true)}}/></div>
  {onboarding&&<div className="onboarding"><button className="skip" onClick={finishOnboarding}>Skip</button><div className="onboard-mark">{slides[slide].icon}</div><p className="eyebrow accent">WELCOME TO MP3 SHELF</p><h2>{slides[slide].title}</h2><p>{slides[slide].copy}</p><div className="dots">{slides.map((_,index)=><span className={index===slide?"active":""} key={index}/>)}</div><button className="import-button" onClick={()=>slide<slides.length-1?setSlide(slide+1):finishOnboarding()}>{slide<slides.length-1?"Continue":"Start importing"}<span>→</span></button></div>}
  </main>
 }

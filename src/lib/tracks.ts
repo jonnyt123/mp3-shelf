@@ -1,11 +1,98 @@
 import{readAudioMetadata}from"./id3";
-export type Track={id:string;name:string;originalName?:string;artist?:string;album?:string;artwork?:Blob;size:number;type:string;importedAt:number;blob:Blob};
+export type AudioAttribution={sourceURL:string;licenseURL:string;creator:string;license:string;provider:string};
+export type Track={id:string;name:string;originalName?:string;artist?:string;album?:string;artwork?:Blob;size:number;type:string;importedAt:number;blob:Blob;lyrics?:string;isFavorite?:boolean;attribution?:AudioAttribution};
 const DATABASE="mp3-shelf", STORE="tracks";
 function openDatabase():Promise<IDBDatabase>{return new Promise((resolve,reject)=>{const request=indexedDB.open(DATABASE,1);request.onupgradeneeded=()=>{const db=request.result;if(!db.objectStoreNames.contains(STORE))db.createObjectStore(STORE,{keyPath:"id"})};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
 function finish(transaction:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error)})}
 export async function listTracks():Promise<Track[]>{const db=await openDatabase();const transaction=db.transaction(STORE,"readonly");const request=transaction.objectStore(STORE).getAll();const tracks=await new Promise<Track[]>((resolve,reject)=>{request.onsuccess=()=>resolve(request.result as Track[]);request.onerror=()=>reject(request.error)});db.close();return tracks.sort((a,b)=>b.importedAt-a.importedAt)}
-export async function importTracks(files:File[]):Promise<number>{const audio=files.filter(file=>file.type.startsWith("audio/")||/\.mp3$/i.test(file.name));if(!audio.length)return 0;const prepared=await Promise.all(audio.map(async file=>({file,metadata:await readAudioMetadata(file)})));const db=await openDatabase();const transaction=db.transaction(STORE,"readwrite");const store=transaction.objectStore(STORE);for(const{file,metadata}of prepared){const id=`${file.name}:${file.size}:${file.lastModified}`;store.put({id,name:metadata.title||file.name.replace(/\.mp3$/i,""),originalName:file.name,artist:metadata.artist,album:metadata.album,artwork:metadata.artwork,size:file.size,type:file.type||"audio/mpeg",importedAt:Date.now(),blob:file} satisfies Track)}await finish(transaction);db.close();return audio.length}
+export async function importTracks(files:File[],attribution?:AudioAttribution):Promise<number>{
+ const audio=files.filter(file=>file.type.startsWith("audio/")||/\.mp3$/i.test(file.name));
+ if(!audio.length)return 0;
+ const prepared=await Promise.all(audio.map(async file=>({file,metadata:await readAudioMetadata(file)})));
+ const db=await openDatabase();
+ const transaction=db.transaction(STORE,"readwrite");
+ const store=transaction.objectStore(STORE);
+ for(const {file,metadata} of prepared){
+  const id=`${file.name}:${file.size}:${file.lastModified}`;
+  // Re-importing the same recording must not erase the listener's name,
+  // favorite, lyrics, existing provenance, or original imported-at date.
+  const previous=store.get(id);
+  previous.onsuccess=()=>{
+   const current=previous.result as Track|undefined;
+   const next:Track={
+    id,name:current?.name??metadata.title??file.name.replace(/\.mp3$/i,""),
+    originalName:file.name,
+    artist:metadata.artist??current?.artist,
+    album:metadata.album??current?.album,
+    artwork:metadata.artwork??current?.artwork,
+    size:file.size,type:file.type||"audio/mpeg",
+    importedAt:current?.importedAt??Date.now(),blob:file,
+    lyrics:current?.lyrics,isFavorite:current?.isFavorite,
+    attribution:attribution??current?.attribution
+   };
+   store.put(next);
+  };
+ }
+ try{await finish(transaction);}finally{db.close();}
+ return audio.length;
+}
 export async function removeTrack(id:string):Promise<void>{const db=await openDatabase();const transaction=db.transaction(STORE,"readwrite");transaction.objectStore(STORE).delete(id);await finish(transaction);db.close()}
 export async function renameTrack(id:string,name:string):Promise<void>{const db=await openDatabase();const transaction=db.transaction(STORE,"readwrite");const store=transaction.objectStore(STORE);const request=store.get(id);const track=await new Promise<Track|undefined>((resolve,reject)=>{request.onsuccess=()=>resolve(request.result as Track|undefined);request.onerror=()=>reject(request.error)});if(track)store.put({...track,name});await finish(transaction);db.close()}
-export async function restoreTracks(tracks:Track[]):Promise<number>{if(!tracks.length)return 0;const db=await openDatabase();const transaction=db.transaction(STORE,"readwrite");const store=transaction.objectStore(STORE);for(const track of tracks)store.put(track);await finish(transaction);db.close();return tracks.length}
+export async function toggleTrackFavorite(id:string):Promise<boolean>{
+ const db=await openDatabase();
+ const transaction=db.transaction(STORE,"readwrite");
+ const store=transaction.objectStore(STORE);
+ const request=store.get(id);
+ const track=await new Promise<Track|undefined>((resolve,reject)=>{
+  request.onsuccess=()=>resolve(request.result as Track|undefined);
+  request.onerror=()=>reject(request.error);
+ });
+ if(!track){db.close();throw new Error("Song not found.");}
+ const isFavorite=!track.isFavorite;
+ store.put({...track,isFavorite});
+ await finish(transaction);
+ db.close();
+ return isFavorite;
+}
+export async function updateTrackLyrics(id:string,lyrics:string):Promise<void>{
+ if(new TextEncoder().encode(lyrics).length>500*1024)throw new Error("Lyrics files must be under 500 KB.");
+ const db=await openDatabase();
+ const transaction=db.transaction(STORE,"readwrite");
+ const store=transaction.objectStore(STORE);
+ const request=store.get(id);
+ const track=await new Promise<Track|undefined>((resolve,reject)=>{
+  request.onsuccess=()=>resolve(request.result as Track|undefined);
+  request.onerror=()=>reject(request.error);
+ });
+ if(!track){db.close();throw new Error("This song is no longer in your library.");}
+ store.put({...track,lyrics});
+ await finish(transaction);
+ db.close();
+}
+/** Import a portable backup additively, preserving existing edits and files.
+ * A single IndexedDB transaction makes this operation all-or-nothing.
+ */
+export async function restoreTracks(tracks:Track[]):Promise<number>{
+ if(!tracks.length)return 0;
+ const db=await openDatabase();
+ const transaction=db.transaction(STORE,"readwrite");
+ const store=transaction.objectStore(STORE);
+ const seen=new Set<string>();
+ let added=0;
+ for(const track of tracks){
+  if(seen.has(track.id))continue;
+  seen.add(track.id);
+  const request=store.get(track.id);
+  request.onsuccess=()=>{
+   if(request.result===undefined){
+    store.add(track);
+    added++;
+   }
+  };
+ }
+ try{
+  await finish(transaction);
+  return added;
+ }finally{db.close();}
+}
 export function formatBytes(bytes:number):string{if(bytes<=0)return "0 KB";if(bytes<1024*1024)return `${Math.max(1,Math.round(bytes/1024))} KB`;if(bytes<1024*1024*1024)return `${(bytes/1024/1024).toFixed(1)} MB`;return `${(bytes/1024/1024/1024).toFixed(1)} GB`}
