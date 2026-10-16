@@ -175,7 +175,7 @@ enum PortableShelfArchive {
         let length = tail.enumerated().reduce(UInt32(0)) { value, entry in
             value | (UInt32(entry.element) << (UInt32(entry.offset) * 8))
         }
-        guard length > 0, length <= maxManifestBytes,
+        guard length > 0, Int(length) <= maxManifestBytes,
               let bytes = try handle.read(upToCount: Int(length)),
               bytes.count == Int(length) else { throw ArchiveError.invalidManifest }
         let manifest = try JSONDecoder().decode(Manifest.self, from: bytes)
