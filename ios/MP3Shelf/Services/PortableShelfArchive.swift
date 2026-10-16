@@ -188,8 +188,13 @@ enum PortableShelfArchive {
         let payloadOffset = UInt64(headerSize) + UInt64(length)
         guard size >= payloadOffset else { throw ArchiveError.invalidManifest }
         let payloadSize = Int64(size - payloadOffset)
+        // A malformed backup must not silently alias two song IDs, discard
+        // playlist links, or create unpredictable duplicate collections.
+        var trackIDs = Set<String>()
         for track in manifest.tracks {
-            guard !track.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            guard !track.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  trackIDs.insert(track.id).inserted,
+                  !track.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   track.audio.length > 0, track.audio.length <= maxTrackBytes,
                   track.importedAt.isFinite else { throw ArchiveError.invalidManifest }
             try validate(track.audio, payloadSize: payloadSize)
@@ -199,6 +204,14 @@ enum PortableShelfArchive {
             }
             if let lyrics = track.lyrics, Data(lyrics.utf8).count > 500 * 1024 {
                 throw ArchiveError.oversized
+            }
+        }
+        var playlistIDs = Set<String>()
+        for playlist in manifest.playlists {
+            guard !playlist.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !playlist.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  playlistIDs.insert(playlist.id).inserted else {
+                throw ArchiveError.invalidManifest
             }
         }
         return Opened(manifest: manifest, url: url, payloadOffset: payloadOffset)
