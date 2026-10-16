@@ -5,6 +5,11 @@ on:
       - 'ios/**'
       - '.github/workflows/ios-build.yml'
   workflow_dispatch:
+# A new UI revision supersedes older screenshot runs for this PR.
+# Prevent multiple macOS Simulator boots competing for runner resources.
+concurrency:
+  group: ios-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 jobs:
   xcode-build:
     runs-on: macos-15
@@ -27,8 +32,11 @@ jobs:
       - name: Persistent discovery resume regression tests
         run: |
           swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Models/SourceDiscoveryJob.swift ios/Tests/SourceDiscoveryJobTests.swift -o /tmp/mp3shelf-discovery && /tmp/mp3shelf-discovery
+      - name: Cross-platform archive round-trip regression tests
+        run: |
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PortableShelfArchive.swift ios/Tests/PortableShelfArchiveTests.swift -o /tmp/mp3shelf-archive && /tmp/mp3shelf-archive
       - name: Install and launch iPhone Simulator app
-        timeout-minutes: 8
+        timeout-minutes: 18
         run: |
           set -euo pipefail
           xcrun simctl list -j devices available > /tmp/mp3shelf-simulators.json
@@ -51,13 +59,32 @@ jobs:
           APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" -path '*/Build/Products/Debug-iphonesimulator/MP3Shelf.app' -type d -print -quit)
           test -n "$APP"
           xcrun simctl install "$DEVICE" "$APP"
-          xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf
-          sleep 3
-          xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mp3shelf-simulator.png"
-          xcrun simctl terminate "$DEVICE" com.jonnyt.mp3shelf
+          mkdir -p "$RUNNER_TEMP/mp3shelf-visual-qa"
+          # Each screen opens in a fresh process with DEBUG launch args.
+          # The populated-library and player snapshots use original WAV tones,
+          # never a commercial or service-derived audio recording.
+          for tab in listen playlists add-music settings downloads filled-library search player; do
+            echo "::group::Capture $tab"
+            date -u '+Simulator QA started: %Y-%m-%dT%H:%M:%SZ'
+            if [ "$tab" = "listen" ]; then
+              xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf
+            else
+              xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf --mp3shelf-snapshot-"$tab"
+            fi
+            # The player QA fixture generates and imports a real original WAV,
+            # then opens Now Playing with functional transport controls.
+            if [ "$tab" = "player" ] || [ "$tab" = "filled-library" ] || [ "$tab" = "search" ]; then
+              sleep 7
+            else
+              sleep 3
+            fi
+            xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mp3shelf-visual-qa/$tab.png"
+            xcrun simctl terminate "$DEVICE" com.jonnyt.mp3shelf
+            echo "::endgroup::"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mp3shelf-simulator-screenshot
-          path: ${{ runner.temp }}/mp3shelf-simulator.png
+          name: mp3shelf-premium-eight-screens
+          path: ${{ runner.temp }}/mp3shelf-visual-qa/*.png
           if-no-files-found: ignore

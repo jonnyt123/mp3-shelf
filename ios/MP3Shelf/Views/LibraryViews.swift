@@ -2,75 +2,322 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct LibraryView: View {
+    private enum SortMode: String, CaseIterable, Identifiable {
+        case title = "Title"
+        case recent = "Recently added"
+        case artist = "Artist"
+
+        var id: String { rawValue }
+    }
+
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var showFilePicker = false
-    @State private var searchText = ""
+    @State private var searchText: String = {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--mp3shelf-snapshot-search") {
+            return "Velvet"
+        }
+        #endif
+        return ""
+    }()
     @State private var favoritesOnly = false
+    @State private var sortMode: SortMode = .title
     @State private var message: String?
     @State private var renaming: MusicTrack?
 
+    private var recentlyAdded: [MusicTrack] {
+        Array(library.tracks.sorted { $0.addedAt > $1.addedAt }.prefix(8))
+    }
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var displayed: [MusicTrack] {
-        library.tracks.filter { track in
-            (!favoritesOnly || track.isFavorite) && (searchText.isEmpty ||
-                [track.title, track.artist, track.album].contains(where: { $0.localizedCaseInsensitiveContains(searchText) }))
-        }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return library.tracks.filter { track in
+            (!favoritesOnly || track.isFavorite) && (query.isEmpty ||
+                [track.title, track.artist, track.album].contains(where: {
+                    $0.localizedCaseInsensitiveContains(query)
+                }))
+        }
+        .sorted { lhs, rhs in
+            switch sortMode {
+            case .title:
+                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            case .recent:
+                return lhs.addedAt == rhs.addedAt
+                    ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+                    : lhs.addedAt > rhs.addedAt
+            case .artist:
+                let order = lhs.artist.localizedStandardCompare(rhs.artist)
+                return order == .orderedSame
+                    ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+                    : order == .orderedAscending
+            }
+        }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort songs", selection: $sortMode) {
+                ForEach(SortMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(ShelfTheme.accent)
+        }
+        .accessibilityLabel("Sort songs by \(sortMode.rawValue)")
     }
 
     var body: some View {
-        List {
-            Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 26) {
+                if isSearching {
+                    VStack(alignment: .leading, spacing: 15) {
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                PremiumEyebrow(title: "SEARCH YOUR LIBRARY")
+                                Text("Search results")
+                                    .font(.system(.title2, design: .rounded, weight: .bold))
+                                    .foregroundStyle(.white)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 9) {
+                                Text("\(displayed.count) found")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(ShelfTheme.subdued)
+                                sortMenu
+                            }
+                        }
+                        HStack(spacing: 10) {
+                            filterButton("All music", selected: !favoritesOnly) {
+                                favoritesOnly = false
+                            }
+                            filterButton("Favorites", symbol: "heart.fill",
+                                         selected: favoritesOnly) {
+                                favoritesOnly = true
+                            }
+                            Spacer()
+                        }
+                        if displayed.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                PremiumIcon(symbol: "magnifyingglass", color: ShelfTheme.accent,
+                                            size: 56)
+                                Text("No matching songs")
+                                    .font(.system(.headline, design: .rounded, weight: .bold))
+                                    .foregroundStyle(.white)
+                                Text(favoritesOnly
+                                     ? "Try All music or a different song, artist or album."
+                                     : "Try a different song, artist or album.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(ShelfTheme.subdued)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(22)
+                            .premiumCard()
+                        } else {
+                            LazyVStack(spacing: 9) {
+                                ForEach(displayed) { track in
+                                    MusicTrackRow(track: track, context: displayed,
+                                                  renaming: $renaming)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 10)
+                } else {
                 HStack {
-                    Image(systemName: "iphone")
-                        .font(.title2)
-                        .foregroundStyle(ShelfTheme.accent)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Your music, on your iPhone").font(.headline)
-                        Text("\(library.tracks.count) offline songs · No connection required")
-                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        PremiumEyebrow(title: "YOUR COLLECTION")
+                        Text("Good music. Anywhere.")
+                            .font(.system(.title2, design: .rounded, weight: .bold))
+                            .foregroundStyle(.white)
                     }
                     Spacer()
+                    PremiumIcon(symbol: "waveform", color: ShelfTheme.coral, size: 48)
                 }
-                .padding(.vertical, 10)
-                .listRowBackground(ShelfTheme.surface)
-            }
-            Section {
-                Picker("Library view", selection: $favoritesOnly) {
-                    Text("All Songs").tag(false)
-                    Text("Favorites").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .listRowBackground(ShelfTheme.background)
-            }
-            if displayed.isEmpty {
-                EmptyShelfView(title: favoritesOnly ? "No favorites yet" : "Your library is ready",
-                               subtitle: favoritesOnly ? "Tap the heart on a song to save it here." :
-                                "Import MP3s or other supported audio files from Files to listen offline.",
-                               symbol: "music.note.list")
-                    .listRowBackground(ShelfTheme.background)
-            } else {
-                Section("Songs") {
-                    ForEach(displayed) { track in
-                        MusicTrackRow(track: track, context: displayed, renaming: $renaming)
-                            .listRowBackground(ShelfTheme.background)
+                .padding(.top, 10)
+
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(ShelfTheme.mint)
+                                    .frame(width: 7, height: 7)
+                                Text("ALWAYS OFFLINE")
+                                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                    .tracking(1.6)
+                                    .foregroundStyle(ShelfTheme.mint)
+                            }
+                            Text(library.tracks.isEmpty
+                                 ? "Start your\nsoundtrack."
+                                 : "All yours.\nAlways playing.")
+                                .font(.system(size: 26, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(library.tracks.isEmpty
+                                 ? "Your favorite songs, right on your iPhone."
+                                 : "\(library.tracks.count) songs ready wherever life takes you.")
+                                .font(.subheadline)
+                                .foregroundStyle(.white.opacity(0.8))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                        ArtworkTile(track: library.tracks.last,
+                                    size: library.tracks.isEmpty ? 92 : 110)
+                            .rotationEffect(.degrees(7))
+                            .shadow(color: .black.opacity(0.3), radius: 12, y: 9)
+                            .accessibilityHidden(true)
+                    }
+                    if library.tracks.isEmpty {
+                        Button {
+                            showFilePicker = true
+                        } label: {
+                            HStack(spacing: 9) {
+                                Image(systemName: "plus.circle.fill")
+                                Text("Import your music")
+                                Spacer()
+                                Image(systemName: "arrow.right")
+                            }
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(ShelfTheme.background)
+                            .padding(.horizontal, 17)
+                            .frame(minHeight: 47)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 14))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Choose existing audio files from your iPhone")
                     }
                 }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ShelfTheme.heroGradient, in: RoundedRectangle(cornerRadius: 26))
+                .overlay(RoundedRectangle(cornerRadius: 26)
+                    .strokeBorder(.white.opacity(0.14), lineWidth: 1))
+
+                if library.tracks.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        PremiumSectionHeading(title: "More ways to listen")
+                        NavigationLink { SpotifyConnectView() } label: {
+                            HStack(spacing: 14) {
+                                PremiumIcon(symbol: "square.stack.3d.up",
+                                            color: ShelfTheme.coral, size: 46)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Import a Spotify playlist")
+                                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                        .foregroundStyle(.white)
+                                    Text("Find eligible MP3s for your song list")
+                                        .font(.caption)
+                                        .foregroundStyle(ShelfTheme.subdued)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(ShelfTheme.subdued)
+                            }
+                            .padding(14)
+                            .premiumCard(radius: 20)
+                        }
+                        .buttonStyle(.plain)
+                        Text("Your music stays on your device and plays without a connection.")
+                            .font(.caption)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .padding(.horizontal, 3)
+                    }
+                } else {
+                    if recentlyAdded.count >= 2 {
+                        VStack(alignment: .leading, spacing: 13) {
+                            PremiumSectionHeading(title: "Recently added",
+                                                  detail: "FRESH ON YOUR SHELF")
+                            ScrollView(.horizontal) {
+                                LazyHStack(alignment: .top, spacing: 14) {
+                                    ForEach(recentlyAdded) { track in
+                                        Button {
+                                            playback.play(track, queue: recentlyAdded)
+                                        } label: {
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                ArtworkTile(track: track, size: 122)
+                                                    .shadow(color: .black.opacity(0.18),
+                                                            radius: 10, y: 5)
+                                                Text(track.title)
+                                                    .font(.system(.subheadline,
+                                                                  design: .rounded,
+                                                                  weight: .semibold))
+                                                    .foregroundStyle(.white)
+                                                    .lineLimit(1)
+                                                Text(track.artist)
+                                                    .font(.caption)
+                                                    .foregroundStyle(ShelfTheme.subdued)
+                                                    .lineLimit(1)
+                                            }
+                                            .frame(width: 122, alignment: .leading)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("Play \(track.title) by \(track.artist)")
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .scrollIndicators(.hidden)
+                        }
+                    }
+                    HStack(spacing: 10) {
+                        filterButton("All music", selected: !favoritesOnly) { favoritesOnly = false }
+                        filterButton("Favorites", symbol: "heart.fill",
+                                     selected: favoritesOnly) { favoritesOnly = true }
+                        Spacer(minLength: 0)
+                    }
+                    .accessibilityElement(children: .contain)
+
+                    VStack(alignment: .leading, spacing: 13) {
+                        HStack(spacing: 12) {
+                            PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
+                                                  detail: "\(displayed.count) songs")
+                            sortMenu
+                        }
+                        if displayed.isEmpty {
+                            EmptyShelfView(
+                                title: "No favorites yet",
+                                subtitle: "Tap the heart on a song to collect it here.",
+                                symbol: "heart")
+                        } else {
+                            LazyVStack(spacing: 9) {
+                                ForEach(displayed) { track in
+                                    MusicTrackRow(track: track, context: displayed,
+                                                  renaming: $renaming)
+                                }
+                            }
+                        }
+                    }
+                }
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
         }
-        .scrollContentBackground(.hidden)
-        .background(ShelfTheme.background)
+        .scrollIndicators(.hidden)
+        .background(PremiumBackdrop())
         .navigationTitle("MP3 Shelf")
-        .searchable(text: $searchText, prompt: "Song, artist or album")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, prompt: "Search songs, artists or albums")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showFilePicker = true } label: {
-                    Image(systemName: "plus.circle.fill").font(.title3)
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(ShelfTheme.accent)
                 }
                 .accessibilityLabel("Import audio files")
                 .disabled(library.isImporting)
             }
         }
-        .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.audio], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.audio],
+                      allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls):
                 Task { message = await library.importAudio(urls: urls).description }
@@ -78,10 +325,31 @@ struct LibraryView: View {
                 message = error.localizedDescription
             }
         }
-        .alert("Import Result", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+        .alert("Import Result", isPresented: Binding(
+            get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("OK", role: .cancel) { message = nil }
         } message: { Text(message ?? "") }
         .sheet(item: $renaming) { track in RenameTrackView(track: track) }
+    }
+
+    private func filterButton(_ label: String, symbol: String? = nil,
+                              selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if let symbol { Image(systemName: symbol) }
+                Text(label)
+            }
+            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+            .foregroundStyle(selected ? ShelfTheme.background : .white.opacity(0.82))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 11)
+            .background(selected ? ShelfTheme.accent : ShelfTheme.elevated,
+                        in: Capsule())
+            .overlay(Capsule().strokeBorder(
+                selected ? ShelfTheme.accent : ShelfTheme.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -103,8 +371,16 @@ struct MusicTrackRow: View {
                         Text(track.artist).font(.caption).foregroundStyle(ShelfTheme.subdued).lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    Text(track.duration.shelfClock)
-                        .font(.caption.monospacedDigit()).foregroundStyle(ShelfTheme.subdued)
+                    if track.id == playback.currentTrackID {
+                        Image(systemName: "waveform")
+                            .font(.caption.bold())
+                            .foregroundStyle(ShelfTheme.mint)
+                            .accessibilityLabel("Now playing")
+                    } else {
+                        Text(track.duration.shelfClock)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(ShelfTheme.subdued)
+                    }
                 }
             }
             .buttonStyle(.plain)
@@ -144,7 +420,14 @@ struct MusicTrackRow: View {
                     .contentShape(Rectangle())
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(track.id == playback.currentTrackID
+                    ? ShelfTheme.accent.opacity(0.13) : ShelfTheme.surface,
+                    in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18)
+            .strokeBorder(track.id == playback.currentTrackID
+                          ? ShelfTheme.accent.opacity(0.34) : ShelfTheme.border, lineWidth: 1))
         .confirmationDialog("Delete downloaded song?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Song", role: .destructive) {
                 if playback.currentTrackID == track.id { playback.stop() }
@@ -186,53 +469,103 @@ struct PlaylistsView: View {
     @EnvironmentObject private var library: MusicLibrary
     @State private var showCreate = false
     @State private var newName = ""
-    @State private var showSpotifyImport = false
+
+    private let columns = [GridItem(.flexible(), spacing: 13), GridItem(.flexible(), spacing: 13)]
 
     var body: some View {
-        List {
-            Section {
-                NavigationLink { SpotifyConnectView() } label: {
-                    Label("Connect Spotify / Import Playlists", systemImage: "square.and.arrow.down.on.square")
-                        .foregroundStyle(ShelfTheme.accent)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 5) {
+                    PremiumEyebrow(title: "CURATED BY YOU", color: ShelfTheme.coral)
+                    Text("Made for every mood.")
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                        .foregroundStyle(.white)
+                    Text("Your music, exactly how you like it.")
+                        .font(.subheadline).foregroundStyle(ShelfTheme.subdued)
                 }
-                .listRowBackground(ShelfTheme.surface)
-            }
-            if library.playlists.isEmpty {
-                EmptyShelfView(title: "Make it yours",
-                               subtitle: "Create playlists or import a Spotify playlist track list to match your offline files.",
-                               symbol: "square.stack")
-                    .listRowBackground(ShelfTheme.background)
-            } else {
-                Section("Your Playlists") {
-                    ForEach(library.playlists) { list in
-                        NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "music.note.list")
-                                    .font(.title2).foregroundStyle(ShelfTheme.accent)
-                                    .frame(width: 46, height: 46)
-                                    .background(ShelfTheme.surface, in: RoundedRectangle(cornerRadius: 12))
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(list.name).font(.headline)
-                                    Text("\(list.trackIDs.count) ready · \(list.missingTracks.count) unmatched")
-                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                .padding(.top, 10)
+
+                NavigationLink { SpotifyConnectView() } label: {
+                    HStack(spacing: 14) {
+                        PremiumIcon(symbol: "arrow.down.to.line.compact", color: ShelfTheme.mint, size: 50)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Bring your playlists")
+                                .font(.headline).foregroundStyle(.white)
+                            Text("Import track lists & match offline audio")
+                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(ShelfTheme.mint)
+                    }
+                    .padding(16)
+                    .premiumCard()
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    PremiumSectionHeading(title: "Your playlists",
+                                          detail: "\(library.playlists.count) collections")
+                    if library.playlists.isEmpty {
+                        VStack(alignment: .leading, spacing: 13) {
+                            PremiumIcon(symbol: "square.stack.3d.up",
+                                        color: ShelfTheme.accent, size: 55)
+                            Text("Every great mix starts somewhere.")
+                                .font(.system(.title3, design: .rounded, weight: .bold))
+                                .foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Create a playlist for the songs you'll never get tired of.")
+                                .font(.subheadline)
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                showCreate = true
+                            } label: {
+                                Label("Create a playlist", systemImage: "plus")
+                                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(minHeight: 46)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(ShelfTheme.accent)
+                            .padding(.top, 5)
+                        }
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .premiumCard(radius: 24)
+                    } else {
+                        LazyVGrid(columns: columns, spacing: 13) {
+                            ForEach(library.playlists.indices, id: \.self) { index in
+                                let list = library.playlists[index]
+                                NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
+                                    playlistCard(list, index: index)
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        library.deletePlaylist(list.id)
+                                    } label: { Label("Delete Playlist", systemImage: "trash") }
                                 }
                             }
-                            .padding(.vertical, 6)
                         }
-                        .listRowBackground(ShelfTheme.background)
-                    }
-                    .onDelete { offsets in
-                        let ids = offsets.map { library.playlists[$0].id }
-                        ids.forEach(library.deletePlaylist)
                     }
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 28)
         }
-        .scrollContentBackground(.hidden)
+        .scrollIndicators(.hidden)
+        .background(PremiumBackdrop())
         .navigationTitle("Playlists")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { showCreate = true } label: { Image(systemName: "plus.circle.fill") }
+                Button { showCreate = true } label: {
+                    Image(systemName: "plus").foregroundStyle(ShelfTheme.accent)
+                        .font(.system(size: 16, weight: .bold))
+                }
+                .accessibilityLabel("Create a playlist")
             }
         }
         .alert("New Playlist", isPresented: $showCreate) {
@@ -240,6 +573,37 @@ struct PlaylistsView: View {
             Button("Create") { library.createPlaylist(newName); newName = "" }
             Button("Cancel", role: .cancel) { newName = "" }
         } message: { Text("Songs stay on your device.") }
+    }
+
+    private func playlistCard(_ list: MusicPlaylist, index: Int) -> some View {
+        let palette = ShelfTheme.artworkColors(for: list.name)
+        return VStack(alignment: .leading, spacing: 11) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 17)
+                    .fill(LinearGradient(colors: palette,
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                Circle().strokeBorder(.white.opacity(0.2), lineWidth: 1)
+                    .frame(width: 108, height: 108)
+                    .offset(x: 57, y: -33)
+                Image(systemName: ["waveform", "music.mic", "headphones", "record.circle"][index % 4])
+                    .font(.system(size: 39, weight: .ultraLight))
+                    .foregroundStyle(.white.opacity(0.95))
+            }
+            .frame(height: 125)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 17))
+            Text(list.name)
+                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+            Text("\(list.trackIDs.count) offline · \(list.missingTracks.count) missing")
+                .font(.caption2)
+                .foregroundStyle(ShelfTheme.subdued)
+                .lineLimit(1)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .premiumCard(radius: 23)
     }
 }
 
@@ -256,17 +620,29 @@ struct PlaylistDetailView: View {
         List {
             if let playlist {
                 Section {
-                    HStack(spacing: 12) {
-                        Image(systemName: "music.note.list")
-                            .font(.largeTitle).foregroundStyle(ShelfTheme.accent)
-                            .frame(width: 70, height: 70)
-                            .background(ShelfTheme.surface, in: RoundedRectangle(cornerRadius: 18))
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(playlist.name).font(.title3.bold())
-                            Text("\(playlist.trackIDs.count) downloaded · \(playlist.missingTracks.count) unmatched")
-                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    HStack(spacing: 16) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(LinearGradient(
+                                    colors: ShelfTheme.artworkColors(for: playlist.name),
+                                    startPoint: .topLeading, endPoint: .bottomTrailing))
+                            Image(systemName: "waveform")
+                                .font(.system(size: 34, weight: .light))
+                                .foregroundStyle(.white)
+                        }
+                        .frame(width: 82, height: 82)
+                        VStack(alignment: .leading, spacing: 6) {
+                            PremiumEyebrow(title: "YOUR PLAYLIST", color: ShelfTheme.coral)
+                            Text(playlist.name)
+                                .font(.system(.title2, design: .rounded, weight: .bold))
+                                .foregroundStyle(.white)
+                                .lineLimit(2)
+                            Text("\(playlist.trackIDs.count) offline · \(playlist.missingTracks.count) missing")
+                                .font(.caption)
+                                .foregroundStyle(ShelfTheme.subdued)
                         }
                     }
+                    .padding(.vertical, 12)
                     HStack(spacing: 12) {
                         Button { if let first = library.songs(in: playlist).first { playback.play(first, queue: library.songs(in: playlist)) } } label: {
                             Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
@@ -289,11 +665,11 @@ struct PlaylistDetailView: View {
                         }
                     }
                 }
-                .listRowBackground(ShelfTheme.background)
+                .listRowBackground(ShelfTheme.surface)
                 if !playlist.missingTracks.isEmpty ||
                     library.automaticDownloadProgress?.playlistID == playlistID ||
                     BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
-                    Section("Find & Download MP3s") {
+                    Section("FIND YOUR MUSIC") {
                         Text("Searches Internet Archive and eligible Openverse catalogs for exact artist/title matches, MP3 files, and declared Creative Commons/public-domain licenses. Verified download URLs transfer through iOS even while the screen is locked. Popular commercial songs are unlikely to qualify.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
@@ -359,12 +735,13 @@ struct PlaylistDetailView: View {
                         Text("Catalog licenses are uploader-declared and not independently certified. Songs with no authorized download stay unmatched.")
                             .font(.caption2).foregroundStyle(ShelfTheme.subdued)
                     }
-                    .listRowBackground(ShelfTheme.background)
+                    .listRowBackground(ShelfTheme.surface)
                 }
-                Section("Available Offline") {
+                Section("AVAILABLE OFFLINE") {
                     ForEach(library.songs(in: playlist)) { track in
                         MusicTrackRow(track: track, context: library.songs(in: playlist), renaming: $editing)
-                            .listRowBackground(ShelfTheme.background)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                             .swipeActions {
                                 Button("Remove", role: .destructive) {
                                     library.removeTrack(track.id, from: playlistID)
@@ -374,7 +751,7 @@ struct PlaylistDetailView: View {
                     .onMove { from, to in library.moveTracks(in: playlistID, from: from, to: to) }
                 }
                 if !playlist.missingTracks.isEmpty {
-                    Section("Not Found in Your Files") {
+                    Section("STILL MISSING") {
                         ForEach(playlist.missingTracks) { wish in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(wish.title).font(.subheadline.bold())
@@ -390,7 +767,8 @@ struct PlaylistDetailView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(ShelfTheme.background)
+        .background(PremiumBackdrop())
+        .tint(ShelfTheme.accent)
         .navigationTitle(playlist?.name ?? "Playlist")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

@@ -67,7 +67,14 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
     // Keeps the original CSV order when missing songs become available later.
     var sourceOrder: [PlaylistWish] = []
     var sourceURL: String? = nil
+    // Preserve non-UUID playlist IDs from web .mp3shelf archives across
+    // app relaunches and repeat restores; not a Spotify account credential.
+    var portableBackupID: String? = nil
     var createdAt: Date = .now
+
+    func matchesPortableBackupID(_ backupID: String) -> Bool {
+        portableBackupID == backupID || UUID(uuidString: backupID) == id
+    }
 }
 
 struct PersistedLibrary: Codable {
