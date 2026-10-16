@@ -38,7 +38,8 @@ struct PortableShelfArchiveTests {
         let extracted = try PortableShelfArchive.extract(
             archive.manifest.tracks[0].audio, from: archive, extensionName: "mp3")
         defer { try? FileManager.default.removeItem(at: extracted) }
-        assert(try Data(contentsOf: extracted) == originalBytes)
+        let extractedBytes = try Data(contentsOf: extracted)
+        assert(extractedBytes == originalBytes)
         let restoredArt = try PortableShelfArchive.readBytes(
             archive.manifest.tracks[0].artwork!, from: archive)
         assert(restoredArt == Data([0xFF, 0xD8, 0xFF, 0xD9]))
