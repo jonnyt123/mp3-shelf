@@ -15,4 +15,21 @@ describe("track library",()=>{it("imports MP3s, ignores other files, and removes
  expect(song).toMatchObject({name:"My version",isFavorite:true,
   lyrics:"[00:01.2] Hello",attribution});
  await removeTrack(id);
+});it("restores backups without overwriting a user's newer lyrics, edits or favorites",async()=>{
+ const id="backup-preserve";
+ const base:Track={id,name:"Old title",size:3,type:"audio/mpeg",importedAt:10,
+  blob:new Blob([new Uint8Array([73,68,51])])};
+ expect(await restoreTracks([base])).toBe(1);
+ await renameTrack(id,"My edited name");
+ await toggleTrackFavorite(id);
+ await updateTrackLyrics(id,"[00:04] My lyrics");
+ const oldBackup:Track={...base,name:"Old archived title",
+  blob:new Blob([new Uint8Array([1,2,3])]),lyrics:"Older lyrics",isFavorite:false};
+ expect(await restoreTracks([oldBackup,oldBackup])).toBe(0);
+ const saved=(await listTracks()).find(item=>item.id===id)!;
+ expect(saved.name).toBe("My edited name");
+ expect(saved.lyrics).toBe("[00:04] My lyrics");
+ expect(saved.isFavorite).toBe(true);
+ expect([...new Uint8Array(await saved.blob.arrayBuffer())]).toEqual([73,68,51]);
+ await removeTrack(id);
 });it("formats file sizes",()=>{expect(formatBytes(0)).toBe("0 KB");expect(formatBytes(1048576)).toBe("1.0 MB");expect(formatBytes(1073741824)).toBe("1.0 GB")})});
