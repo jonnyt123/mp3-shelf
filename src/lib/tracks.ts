@@ -69,5 +69,30 @@ export async function updateTrackLyrics(id:string,lyrics:string):Promise<void>{
  await finish(transaction);
  db.close();
 }
-export async function restoreTracks(tracks:Track[]):Promise<number>{if(!tracks.length)return 0;const db=await openDatabase();const transaction=db.transaction(STORE,"readwrite");const store=transaction.objectStore(STORE);for(const track of tracks)store.put(track);await finish(transaction);db.close();return tracks.length}
+/** Import a portable backup additively, preserving existing edits and files.
+ * A single IndexedDB transaction makes this operation all-or-nothing.
+ */
+export async function restoreTracks(tracks:Track[]):Promise<number>{
+ if(!tracks.length)return 0;
+ const db=await openDatabase();
+ const transaction=db.transaction(STORE,"readwrite");
+ const store=transaction.objectStore(STORE);
+ const seen=new Set<string>();
+ let added=0;
+ for(const track of tracks){
+  if(seen.has(track.id))continue;
+  seen.add(track.id);
+  const request=store.get(track.id);
+  request.onsuccess=()=>{
+   if(request.result===undefined){
+    store.add(track);
+    added++;
+   }
+  };
+ }
+ try{
+  await finish(transaction);
+  return added;
+ }finally{db.close();}
+}
 export function formatBytes(bytes:number):string{if(bytes<=0)return "0 KB";if(bytes<1024*1024)return `${Math.max(1,Math.round(bytes/1024))} KB`;if(bytes<1024*1024*1024)return `${(bytes/1024/1024).toFixed(1)} MB`;return `${(bytes/1024/1024/1024).toFixed(1)} GB`}
