@@ -81,3 +81,43 @@
 .track-action.favorite { display: grid; flex: none; place-items: center; width: 35px; color: #aba5b6; font-size: 22px; }
 .track-action.favorite.active { color: #fa9b89; }
 .track-action.favorite:focus-visible { outline: 2px solid #e9a8bb; outline-offset: -3px; }
+
+/* Openverse: licensed-catalog discovery, with provenance at the point of download. */
+.open-audio-discovery {
+  margin: -19px 4px 42px; padding: 20px;
+  border: 1px solid rgba(139,205,185,.22); border-radius: 21px;
+  background: linear-gradient(145deg,rgba(24,48,51,.72),rgba(19,22,30,.88));
+}
+.open-audio-discovery .section-heading { align-items: center; gap: 10px; }
+.open-audio-discovery .section-heading h3 { font-size: 20px; }
+.open-audio-tag { flex: none; padding: 7px 10px; border: 1px solid rgba(139,225,199,.26);
+  border-radius: 99px; color: #a9d9cb; font-size: 10px; font-weight: 710; }
+.open-audio-discovery>p { color: #b4c4c3; font-size: 12px; line-height: 1.6; }
+.open-audio-search { display: flex; gap: 8px; margin-top: 13px; }
+.open-audio-search input { min-width: 0; flex: 1; min-height: 46px; padding: 11px 13px;
+  border: 1px solid #4e6b67; border-radius: 13px; background: #111d26; color: #eefbf6; font-size: 13px; }
+.open-audio-search button { flex: none; min-height: 46px; padding: 10px 14px;
+  border: 0; border-radius: 13px; background: #a2e8d4; color: #102b29; font-weight: 760; font-size: 12px; }
+.open-audio-search button:disabled { opacity: .5; }
+.open-audio-discovery .open-audio-notice { margin: 10px 0; padding: 10px;
+  border-radius: 10px; background: rgba(42,56,67,.7); color: #d1ebdf; }
+.open-audio-results { display: grid; gap: 9px; margin: 16px 0; }
+.open-audio-result { min-width: 0; padding: 13px 14px; border: 1px solid rgba(159,187,189,.18);
+  border-radius: 16px; background: rgba(15,24,33,.8); }
+.open-audio-result>div:first-child { display: flex; flex-direction: column; gap: 5px; }
+.open-audio-result strong { color: #f2fafa; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.open-audio-result span { color: #c3c4cb; font-size: 12px; }
+.open-audio-result small { color: #93bcb4; font-size: 11px; line-height: 1.5; }
+.open-audio-links { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0 0; }
+.open-audio-links a, .open-audio-links button { display: inline-flex; justify-content: center;
+  align-items: center; min-height: 39px; padding: 9px 12px; border: 1px solid #435d5c;
+  border-radius: 11px; background: #26323a; color: #c3dce0; font-size: 11px; font-weight: 650; text-decoration: none; }
+.open-audio-links button { background: #a1ead4; color: #102d29; border-color: transparent; }
+.open-audio-links button:disabled { opacity: .5; }
+.open-audio-result>small { display: block; margin-top: 9px; }
+.open-audio-discovery .open-audio-footnote { margin: 18px 0 0; font-size: 11px; color: #a4b1b3; }
+.open-audio-search input:focus-visible, .open-audio-search button:focus-visible,
+.open-audio-links a:focus-visible, .open-audio-links button:focus-visible {
+  outline: 2px solid #adecd9; outline-offset: 2px;
+}
+@media(max-width:380px) { .open-audio-search { flex-wrap: wrap; } .open-audio-search button { width: 100%; } }
