@@ -144,6 +144,54 @@ struct PortableShelfArchiveTests {
             }
         }
 
+        // A damaged playlist reference must be rejected before any songs
+        // are imported, rather than silently producing an incomplete list.
+        var brokenReference = webObject
+        var linkedPlaylists = webPlaylists
+        linkedPlaylists[0]["trackIds"] = ["unknown-song"]
+        brokenReference["playlists"] = linkedPlaylists
+        let brokenJSON = try JSONSerialization.data(withJSONObject: brokenReference)
+        let brokenLength = UInt32(brokenJSON.count)
+        var brokenData = PortableShelfArchive.magic
+        brokenData.append(contentsOf: [
+            UInt8(brokenLength & 0xFF), UInt8((brokenLength >> 8) & 0xFF),
+            UInt8((brokenLength >> 16) & 0xFF), UInt8((brokenLength >> 24) & 0xFF)
+        ])
+        brokenData.append(brokenJSON)
+        brokenData.append(originalBytes)
+        let brokenURL = folder.appendingPathComponent("broken-reference.mp3shelf")
+        try brokenData.write(to: brokenURL)
+        do {
+            _ = try PortableShelfArchive.open(brokenURL)
+            fatalError("Accepted unknown song in playlist")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+
+        // Native playback UUIDs must not erase IDs from imported browser
+        // libraries: re-exported playlists must refer to their original IDs.
+        var portableSong = song
+        portableSong.portableBackupID = "web-song-1"
+        var portableList = MusicPlaylist(name: "Retained web IDs")
+        portableList.portableBackupID = "web-list-1"
+        portableList.trackIDs = [song.id]
+        let portableURL = folder.appendingPathComponent("portable-identities.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: portableSong, audioURL: audio, artwork: nil, lyrics: nil)
+        ], playlists: [portableList], to: portableURL)
+        let portableArchive = try PortableShelfArchive.open(portableURL)
+        assert(portableArchive.manifest.tracks.first?.id == "web-song-1")
+        assert(portableArchive.manifest.playlists.first?.trackIds == ["web-song-1"])
+
+        // Legacy on-device song data without the new ID decodes normally.
+        let persistedTrack = try JSONEncoder().encode(portableSong)
+        var legacyTrack = try JSONSerialization.jsonObject(with: persistedTrack)
+            as! [String: Any]
+        legacyTrack.removeValue(forKey: "portableBackupID")
+        let legacyTrackBytes = try JSONSerialization.data(withJSONObject: legacyTrack)
+        let migratedTrack = try JSONDecoder().decode(MusicTrack.self, from: legacyTrackBytes)
+        assert(migratedTrack.portableBackupID == nil)
+
         let invalidURL = folder.appendingPathComponent("invalid.mp3shelf")
         try Data("invalid archive".utf8).write(to: invalidURL)
         do {
