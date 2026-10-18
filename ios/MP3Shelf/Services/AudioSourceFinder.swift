@@ -89,6 +89,30 @@ enum AudioSourceFinder {
         var errorDescription: String? { "Audio-source catalog unavailable." }
     }
 
+    /// Internet Archive's file.length field is a byte count, not song
+    /// duration. Check size here and check audible duration after download.
+    /// Albums are allowed only when exactly one original file has a filename
+    /// explicitly matching the requested song and the item credits its artist.
+    static func archiveFileCandidate(name: String, source: String?, lengthBytes: String?,
+                                      itemTitle: String, itemCreator: String,
+                                      audioFileCount: Int, wish: PlaylistWish) -> Bool {
+        guard safeMP3File(name), MusicMatching.key(itemCreator) == MusicMatching.key(wish.artist),
+              !MusicMatching.key(wish.artist).isEmpty else { return false }
+        if let lengthBytes {
+            guard let bytes = Int64(lengthBytes), bytes > 0,
+                  bytes <= 100 * 1024 * 1024 else { return false }
+        }
+        if audioFileCount == 1 {
+            return exactMetadataMatch(title: itemTitle, creator: itemCreator, wish: wish)
+        }
+        guard source == "original" else { return false }
+        let title = MusicMatching.key(wish.title)
+        let stem = (name as NSString).deletingPathExtension.replacingOccurrences(of: "_", with: " ")
+        let key = MusicMatching.key(stem)
+        return !title.isEmpty &&
+            (key == title || key == MusicMatching.key("\(wish.artist) - \(wish.title)"))
+    }
+
     static func find(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
         guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
         func escaped(_ value: String) -> String {
@@ -110,22 +134,22 @@ enum AudioSourceFinder {
                 .appendingPathComponent(result.identifier)
             guard let item: ArchiveItem = try? await requestJSON(metadataURL),
                   let metadata = item.metadata,
-                  let license = licensedURL(metadata.licenseurl?.value),
-                  exactMetadataMatch(title: metadata.title?.value ?? "",
-                                     creator: metadata.creator?.value ?? "",
-                                     wish: wish) else { continue }
+                  let license = licensedURL(metadata.licenseurl?.value) else { continue }
 
-            let candidates = (item.files ?? []).filter { safeMP3File($0.name) }
-            let original = candidates.filter { $0.source == "original" }
-            let files = original.isEmpty ? candidates : original
-            // One file only: don't mistake an album or concert for a single track.
-            guard files.count == 1, let file = files.first else { continue }
-            // If both have duration metadata, reject alternate takes and edits.
-            if let expected = wish.durationSeconds {
-                if let lengthString = file.length, let measured = Double(lengthString),
-                   abs(measured - expected) > 4.0 { continue }
-                // Missing catalog durations are verified from the decoded MP3.
+            let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
+            // Some Archive items represent an album of individually downloadable
+            // original MP3 files. Select only a uniquely named recording, never
+            // an arbitrary album, concert mix, or generated derivative.
+            let matches = audioFiles.filter { file in
+                archiveFileCandidate(name: file.name, source: file.source,
+                                     lengthBytes: file.length,
+                                     itemTitle: metadata.title?.value ?? "",
+                                     itemCreator: metadata.creator?.value ?? "",
+                                     audioFileCount: audioFiles.count, wish: wish)
             }
+            guard matches.count == 1, let file = matches.first else { continue }
+            // Archive lengths are bytes, never time. The downloaded recording
+            // is decoded and measured against Spotify's duration before saving.
             let itemURL = URL(string: "https://archive.org/details/")!
                 .appendingPathComponent(result.identifier)
             let downloadURL = URL(string: "https://archive.org/download/")!
@@ -188,7 +212,9 @@ extension AudioSourceFinder {
         else { return nil }
 
         if let expected = wish.durationSeconds, let duration {
-            let measured = duration > 10_000 ? duration / 1000.0 : duration
+            // Openverse API documents duration in milliseconds, including
+            // short tracks. Never guess units based on an arbitrary threshold.
+            let measured = duration / 1000.0
             guard abs(measured - expected) <= 4.0 else { return nil }
         }
         // Openverse supplies the creator, link and license but does not itself
@@ -199,28 +225,54 @@ extension AudioSourceFinder {
 
     static func findOpenverse(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
-        var components = URLComponents(string: "https://api.openverse.org/v1/audio/")!
-        components.queryItems = [
-            URLQueryItem(name: "q", value: "\"\(wish.title)\" \"\(wish.artist)\""),
-            URLQueryItem(name: "extension", value: "mp3"),
-            URLQueryItem(name: "page_size", value: "20")
-        ]
-        let result: OpenverseResponse = try await requestJSON(components.url!)
-        let matches = result.results.compactMap {
-            openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
-                               landing: $0.foreign_landing_url, license: $0.license_url,
-                               filetype: $0.filetype, duration: $0.duration,
-                               source: $0.source, filesize: $0.filesize, wish: wish)
+        // Openverse supports field-based search. Try title+creator first so
+        // independent recordings don't get buried beneath general relevance
+        // matches; use the broader query only if no unique eligible result.
+        for fieldSearch in [true, false] {
+            try Task.checkCancellation()
+            var components = URLComponents(string: "https://api.openverse.org/v1/audio/")!
+            components.queryItems = [
+                URLQueryItem(name: fieldSearch ? "title" : "q",
+                             value: fieldSearch ? wish.title : "\"\(wish.title)\" \"\(wish.artist)\""),
+                URLQueryItem(name: "extension", value: "mp3"),
+                URLQueryItem(name: "page_size", value: "50")
+            ]
+            if fieldSearch {
+                components.queryItems?.append(URLQueryItem(name: "creator", value: wish.artist))
+            }
+            let result: OpenverseResponse = try await requestJSON(components.url!)
+            let matches = result.results.compactMap {
+                openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
+                                   landing: $0.foreign_landing_url, license: $0.license_url,
+                                   filetype: $0.filetype, duration: $0.duration,
+                                   source: $0.source, filesize: $0.filesize, wish: wish)
+            }
+            // Distinct candidate URLs may represent alternate performances.
+            // Never choose one arbitrarily.
+            let unique = Dictionary(grouping: matches, by: { $0.downloadURL.absoluteString })
+            if unique.count == 1 { return unique.values.first?.first }
+            if unique.count > 1 { return nil }
         }
-        // Multiple qualifying recordings can still be distinct performances.
-        // Do not arbitrarily pick the first one.
-        return matches.count == 1 ? matches[0] : nil
+        return nil
     }
 
     static func findAcrossCatalogs(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
         try Task.checkCancellation()
-        if let archive = try? await find(for: wish) { return archive }
+        var archiveError: Error?
+        do {
+            if let archive = try await find(for: wish) { return archive }
+        } catch {
+            if error is CancellationError { throw error }
+            archiveError = error
+        }
         try Task.checkCancellation()
-        return try await findOpenverse(for: wish)
+        do {
+            if let openverse = try await findOpenverse(for: wish) { return openverse }
+        } catch {
+            throw error
+        }
+        // One catalog being offline is not evidence that a song is unavailable.
+        if let archiveError { throw archiveError }
+        return nil
     }
 }
