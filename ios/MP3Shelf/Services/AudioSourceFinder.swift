@@ -121,13 +121,13 @@ enum AudioSourceFinder {
         }
         var query = URLComponents(string: "https://archive.org/advancedsearch.php")!
         query.queryItems = [
-            URLQueryItem(name: "q", value: "mediatype:audio AND title:(\"\(escaped(wish.title))\") AND creator:(\"\(escaped(wish.artist))\")"),
+            URLQueryItem(name: "q", value: "mediatype:audio AND (title:(\"\(escaped(wish.title))\") OR description:(\"\(escaped(wish.title))\")) AND creator:(\"\(escaped(wish.artist))\")"),
             URLQueryItem(name: "fl[]", value: "identifier"),
-            URLQueryItem(name: "rows", value: "8"),
+            URLQueryItem(name: "rows", value: "20"),
             URLQueryItem(name: "output", value: "json")
         ]
         let search: SearchResponse = try await requestJSON(query.url!)
-        for result in search.response.docs.prefix(8) {
+        for result in search.response.docs.prefix(20) {
             try Task.checkCancellation()
             guard safeIdentifier(result.identifier) else { continue }
             let metadataURL = URL(string: "https://archive.org/metadata/")!
