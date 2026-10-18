@@ -137,7 +137,8 @@ struct SpotifyConnectView: View {
         do {
             let wishes = try await spotify.getTrackList(for: list)
             let report = library.importPlaylist(wishes: wishes, name: list.name,
-                sourceURL: list.external_urls?.spotify)
+                sourceURL: list.external_urls?.spotify ??
+                    "https://open.spotify.com/playlist/\(list.id)")
             if report.missing > 0 {
                 library.startAutomaticDownloads(for: report.playlistID)
             }
