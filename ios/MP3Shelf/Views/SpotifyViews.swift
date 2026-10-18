@@ -5,6 +5,8 @@ struct SpotifyConnectView: View {
     @EnvironmentObject private var library: MusicLibrary
     @State private var importingID: String?
     @State private var notice: String?
+    @State private var playlistLink = ""
+    @State private var resolvingLink = false
 
     var body: some View {
         Form {
@@ -41,6 +43,25 @@ struct SpotifyConnectView: View {
             } header: { Text("ACCOUNT CONNECTION") }
             .listRowBackground(ShelfTheme.surface)
             if spotify.isConnected {
+                Section("PASTE A SPOTIFY PLAYLIST LINK") {
+                    TextField("https://open.spotify.com/playlist/…", text: $playlistLink)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .accessibilityLabel("Spotify playlist share link")
+                    Button {
+                        Task { await importFromLink() }
+                    } label: {
+                        Label(resolvingLink ? "Loading playlist…" : "Find & Save Its MP3s",
+                              systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(resolvingLink || importingID != nil ||
+                        SpotifyPlaylistLinks.playlistID(from: playlistLink) == nil)
+                    Text("Uses your Spotify permissions to read this playlist, then searches independent authorized download sources. Only playlists you own or collaborate on are readable in current Spotify Development Mode.")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                }
+                .listRowBackground(ShelfTheme.surface)
                 Section("YOUR AVAILABLE PLAYLISTS") {
                     if spotify.playlists.isEmpty {
                         Text("No accessible playlists returned. Spotify may restrict playlists you follow but do not own or collaborate on.")
@@ -84,6 +105,18 @@ struct SpotifyConnectView: View {
         .alert("Spotify Import", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
             Button("OK", role: .cancel) { notice = nil }
         } message: { Text(notice ?? "") }
+    }
+
+    private func importFromLink() async {
+        guard !resolvingLink && importingID == nil else { return }
+        resolvingLink = true
+        defer { resolvingLink = false }
+        do {
+            let selected = try await spotify.playlistFromLink(playlistLink)
+            await importPlaylist(selected)
+        } catch {
+            notice = error.localizedDescription
+        }
     }
 
     private func reload() async {
