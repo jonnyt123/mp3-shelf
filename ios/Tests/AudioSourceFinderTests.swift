@@ -56,6 +56,52 @@ enum AudioSourceFinderTests {
             license: nil, filetype: "mp3", duration: 212000,
             source: "wikimedia", filesize: nil, wish: wish) == nil,
             "missing license rejected")
+        verify(AudioSourceFinder.archiveFileCandidate(
+            name: "The Song.mp3", source: "original", lengthBytes: "5421879",
+            itemTitle: "The Album", itemCreator: "The Artist",
+            audioFileCount: 8, wish: wish),
+            "exact individual MP3 is eligible inside a licensed album")
+        verify(!AudioSourceFinder.archiveFileCandidate(
+            name: "The Song (Live).mp3", source: "original", lengthBytes: "5421879",
+            itemTitle: "The Album", itemCreator: "The Artist",
+            audioFileCount: 8, wish: wish),
+            "do not substitute album live takes")
+        verify(!AudioSourceFinder.archiveFileCandidate(
+            name: "The Song.mp3", source: "derivative", lengthBytes: "5421879",
+            itemTitle: "The Album", itemCreator: "The Artist",
+            audioFileCount: 8, wish: wish),
+            "generated derivatives never qualify in multiple-audio archives")
+        verify(AudioSourceFinder.archiveFileCandidate(
+            name: "unrelated-file.mp3", source: "original", lengthBytes: "5421879",
+            itemTitle: "The Song", itemCreator: "The Artist",
+            audioFileCount: 1, wish: wish),
+            "single-song item uses its exact title and creator metadata")
+        verify(!AudioSourceFinder.archiveFileCandidate(
+            name: "The Song.mp3", source: "original", lengthBytes: "105000000",
+            itemTitle: "The Song", itemCreator: "The Artist",
+            audioFileCount: 1, wish: wish),
+            "archive length interpreted as bytes and oversized media rejected")
+        verify(!AudioSourceFinder.archiveFileCandidate(
+            name: "The Song.mp3", source: "original", lengthBytes: "5400000",
+            itemTitle: "The Album", itemCreator: "Wrong Artist",
+            audioFileCount: 4, wish: wish),
+            "album file with wrong credited artist never qualifies")
+        verify(AudioSourceFinder.openverseCandidate(
+            title: "The Song", creator: "The Artist",
+            download: "https://upload.wikimedia.org/file.mp3",
+            landing: "https://commons.wikimedia.org/wiki/File:test",
+            license: "https://creativecommons.org/licenses/by/4.0/",
+            filetype: "mp3", duration: 212000,
+            source: "wikimedia", filesize: nil, wish: wish) != nil,
+            "Openverse milliseconds decoded correctly for valid recording")
+        verify(AudioSourceFinder.openverseCandidate(
+            title: "The Song", creator: "The Artist",
+            download: "https://upload.wikimedia.org/file.mp3",
+            landing: "https://commons.wikimedia.org/wiki/File:test",
+            license: "https://creativecommons.org/licenses/by/4.0/",
+            filetype: "mp3", duration: 212,
+            source: "wikimedia", filesize: nil, wish: wish) == nil,
+            "do not mistake Openverse milliseconds for seconds")
         print("Audio source discovery validation tests passed")
     }
 }
