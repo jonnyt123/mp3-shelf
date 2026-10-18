@@ -621,11 +621,22 @@ final class MusicLibrary: ObservableObject {
 
     func importPlaylist(wishes: [PlaylistWish], name: String, sourceURL: String? = nil) -> PlaylistImportReport {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        var playlist = MusicPlaylist(name: trimmed.isEmpty ? "Imported Playlist" : trimmed)
-        if let sourceURL, let parsed = URL(string: sourceURL),
-           parsed.scheme == "https", parsed.host == "open.spotify.com", parsed.path.hasPrefix("/playlist/") {
-            playlist.sourceURL = sourceURL
+        let displayName = trimmed.isEmpty ? "Imported Playlist" : trimmed
+        let spotifyID = sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:))
+        // Importing the same Spotify link twice must not duplicate its library,
+        // reset a running discovery cursor or invalidate pending transfer IDs.
+        if let spotifyID,
+           let index = playlists.firstIndex(where: {
+               $0.sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:)) == spotifyID
+           }) {
+            reconcileMissingSongs()
+            return PlaylistImportReport(playlistID: playlists[index].id,
+                                        playlistName: playlists[index].name,
+                                        matched: playlists[index].trackIDs.count,
+                                        missing: playlists[index].missingTracks.count)
         }
+        var playlist = MusicPlaylist(name: displayName)
+        if spotifyID != nil { playlist.sourceURL = sourceURL }
         playlist.sourceOrder = wishes
         for wish in wishes {
             if let track = MusicMatching.matchingTrack(for: wish, in: tracks) {
@@ -636,7 +647,8 @@ final class MusicLibrary: ObservableObject {
         }
         playlists.append(playlist)
         save()
-        return PlaylistImportReport(playlistName: playlist.name, matched: playlist.trackIDs.count,
+        return PlaylistImportReport(playlistID: playlist.id, playlistName: playlist.name,
+                                    matched: playlist.trackIDs.count,
                                     missing: playlist.missingTracks.count)
     }
 
