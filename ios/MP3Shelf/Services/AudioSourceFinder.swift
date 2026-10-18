@@ -137,15 +137,17 @@ enum AudioSourceFinder {
                   let license = licensedURL(metadata.licenseurl?.value) else { continue }
 
             let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
+            let originalFiles = audioFiles.filter { $0.source == "original" }
+            let eligibleFiles = originalFiles.isEmpty ? audioFiles : originalFiles
             // Some Archive items represent an album of individually downloadable
             // original MP3 files. Select only a uniquely named recording, never
             // an arbitrary album, concert mix, or generated derivative.
-            let matches = audioFiles.filter { file in
+            let matches = eligibleFiles.filter { file in
                 archiveFileCandidate(name: file.name, source: file.source,
                                      lengthBytes: file.length,
                                      itemTitle: metadata.title?.value ?? "",
                                      itemCreator: metadata.creator?.value ?? "",
-                                     audioFileCount: audioFiles.count, wish: wish)
+                                     audioFileCount: eligibleFiles.count, wish: wish)
             }
             guard matches.count == 1, let file = matches.first else { continue }
             // Archive lengths are bytes, never time. The downloaded recording
