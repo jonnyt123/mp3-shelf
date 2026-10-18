@@ -107,6 +107,45 @@ simulator build is a separate, useful check and does not replace these tests.
 - Only merge stacked PRs in dependency order after checks have passed and
   unresolved release-critical regressions are addressed.
 
+## Spotify → individual MP3 end-to-end acceptance (current candidate)
+
+Record the exact tested PR #4 commit and real iPhone model before starting.
+Use only independent recordings that actually authorize downloading; never use
+Spotify audio streams, search-engine scraping, or a different artist's recording.
+
+1. Connect an eligible Spotify test account and paste its permitted 22-character
+   playlist share link. Confirm the app automatically imports the song metadata,
+   starts MP3 source discovery and **opens the song-by-song dashboard** without a
+   second action.
+2. Re-import the same link while discovery or downloads are running; confirm
+   that it reuses the **same playlist ID** and does not reset a valid transfer.
+3. Use a playlist with a deliberately available, explicitly licensed exact-match
+   recording in Internet Archive, Openverse or Wikimedia Commons. Verify the
+   matching source page, creator, CC/CC0 license, MP3 format and track duration.
+4. Confirm a uniquely named .mp3 file appears under Files → On My iPhone →
+   MP3 Shelf → Music. Inspect its extension and playable duration, switch on
+   Airplane Mode, play offline, and confirm the dashboard says saved.
+5. Include an unavailable commercial song and a plausible cover/live recording.
+   Confirm neither gets quietly substituted. Check **No qualifying MP3 source**
+   for the unavailable track and its playlist position preserved.
+6. Lock the phone during an eligible download, reopen, and check Download Manager
+   byte-level progress and completed import. Retry a failed transfer and ensure
+   that the newer ticket supersedes the failed ticket.
+7. Test cellular/Wi-Fi interruption, catalog timeout, 404 or HTML masquerading
+   as MP3, near-full storage, and app relaunch. Network problems must remain
+   retryable, not be misreported as a definitive "not found".
+8. Verify original native .mp3 files remain unmodified. Re-import a playlist
+   after some MP3s are present and make sure recordings and playlist rows are
+   not duplicated.
+9. Capture non-sensitive evidence (selected source URL/license, song match
+   status, device/iOS version, Files directory listing, and redacted logs)
+   in issue #6. Mark each step PASS/FAIL/NOT RUN without guessing.
+
+Automated unsigned `iphoneos` compilation is useful architecture coverage
+but **cannot** validate Apple signing, install, live Spotify OAuth/provider
+network access, actual system background scheduling or offline playback on
+physical hardware. These remain external release blockers until run on device.
+
 ## Test record (fill out during real device run)
 
 - Date / iPhone model / iOS version:
