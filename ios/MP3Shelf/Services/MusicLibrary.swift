@@ -64,7 +64,7 @@ final class MusicLibrary: ObservableObject {
 
     /// Creates the same v1 .mp3shelf archive used by the browser PWA.
     /// No Spotify tokens, account secrets or discovery queue internals are exported.
-    func exportPortableBackup() throws -> URL {
+    func exportPortableBackup() async throws -> URL {
         let items = tracks.map { track in
             let lyrics = track.lyricsFileName.flatMap {
                 try? String(contentsOf: lyricsDirectory.appendingPathComponent($0), encoding: .utf8)
@@ -77,8 +77,13 @@ final class MusicLibrary: ObservableObject {
         }
         let destination = manager.temporaryDirectory
             .appendingPathComponent("MP3Shelf-\(UUID().uuidString).mp3shelf")
-        try PortableShelfArchive.export(items, playlists: playlists, to: destination)
-        return destination
+        // Gather UI-dependent artwork before leaving the main actor, then
+        // stream potentially gigabytes of audio to disk off the UI thread.
+        let playlistSnapshot = playlists
+        return try await Task.detached(priority: .userInitiated) {
+            try PortableShelfArchive.export(items, playlists: playlistSnapshot, to: destination)
+            return destination
+        }.value
     }
 
     /// Adds valid files from a browser or native backup without deleting
