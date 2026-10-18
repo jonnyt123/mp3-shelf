@@ -9,6 +9,18 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
 enum SourceDiscoveryJobTests {
     static func main() throws {
         let id = UUID()
+        let named = LocalAudioFileNaming.storageName(
+            originalName: "The Artist - The Song.mp3", id: id, fileExtension: "MP3")
+        verifyDiscovery(named.hasPrefix("The Artist - The Song [") && named.hasSuffix("].mp3"),
+                        "Spotify-matched MP3s have readable names")
+        let unsafe = LocalAudioFileNaming.storageName(
+            originalName: "bad:name?.mp3", id: id, fileExtension: "mp3")
+        verifyDiscovery(!unsafe.contains(":") && !unsafe.contains("?"),
+                        "download filenames remove unsafe characters")
+        let otherID = UUID()
+        verifyDiscovery(named != LocalAudioFileNaming.storageName(
+            originalName: "The Artist - The Song.mp3", id: otherID, fileExtension: "mp3"),
+                        "distinct recordings do not overwrite each other")
         let wishes = [
             PlaylistWish(title: "First", artist: "Artist", album: "", spotifyURL: nil),
             PlaylistWish(title: "Second", artist: "Artist", album: "", spotifyURL: nil),
