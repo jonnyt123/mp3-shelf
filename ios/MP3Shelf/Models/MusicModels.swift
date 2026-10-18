@@ -141,6 +141,7 @@ struct ImportReport {
 }
 
 struct PlaylistImportReport {
+    var playlistID: UUID
     var playlistName: String
     var matched: Int
     var missing: Int
