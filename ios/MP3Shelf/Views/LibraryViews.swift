@@ -658,6 +658,48 @@ struct PlaylistDetailView: View {
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
 
+    /// Report the real, persisted outcome for each song in the imported
+    /// Spotify playlist. Downloading is not the same as already saved offline.
+    private func mp3Status(for wish: PlaylistWish) -> (text: String, symbol: String) {
+        if let ticket = transfers.ticketsForPlaylist(playlistID).first(where: {
+            $0.requested.id == wish.id
+        }) {
+            switch ticket.status {
+            case .queued:
+                return ticket.bytesReceived ?? 0 > 0
+                    ? ("Downloading MP3…", "arrow.down.circle.fill")
+                    : ("MP3 download queued", "clock.arrow.circlepath")
+            case .imported:
+                return ("MP3 saved offline", "checkmark.circle.fill")
+            case .failed:
+                return ("MP3 download failed — retry in Downloads", "exclamationmark.triangle")
+            case .cancelled:
+                return ("MP3 download cancelled", "xmark.circle")
+            }
+        }
+        if let job = library.discoveryJob(for: playlistID) {
+            if let index = job.wishes.firstIndex(where: { $0.id == wish.id }),
+               index == job.nextIndex && !job.isPaused && !job.isComplete {
+                return ("Searching for a downloadable MP3…", "magnifyingglass")
+            }
+            switch job.outcome(for: wish) {
+            case .unavailable:
+                return ("No qualifying MP3 source found", "questionmark.circle")
+            case .failed:
+                return ("Source lookup failed", "exclamationmark.triangle")
+            case .queued:
+                return ("Previously queued — check Downloads", "arrow.down.circle")
+            case .alreadyPresent:
+                return ("Matched an existing recording", "checkmark.circle")
+            case .previous:
+                return ("Previously checked — try search again", "clock.arrow.circlepath")
+            case nil:
+                break
+            }
+        }
+        return ("Awaiting MP3 source search", "magnifyingglass")
+    }
+
     var body: some View {
         List {
             if let playlist {
@@ -774,7 +816,7 @@ struct PlaylistDetailView: View {
                             Text("Downloads can continue after you lock your iPhone. Source discovery resumes only when MP3 Shelf is open.")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
-                        Text("Catalog licenses are uploader-declared and not independently certified. Songs with no authorized download stay unmatched.")
+                        Text("Every successful match downloads an actual .mp3 to this iPhone (Files → On My iPhone → MP3 Shelf → Music). If a recording has no qualifying source, it stays missing instead of being replaced with a different version. Source licenses are uploader-declared.")
                             .font(.caption2).foregroundStyle(ShelfTheme.subdued)
                     }
                     .listRowBackground(ShelfTheme.surface)
@@ -798,6 +840,12 @@ struct PlaylistDetailView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(wish.title).font(.subheadline.bold())
                                 Text(wish.artist).font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                let status = mp3Status(for: wish)
+                                Label(status.text, systemImage: status.symbol)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(status.text.contains("failed") || status.text.contains("No qualifying")
+                                        ? ShelfTheme.coral : ShelfTheme.mint)
+                                    .accessibilityLabel("\(wish.title): \(status.text)")
                                 if let url = wish.spotifyURL, let link = URL(string: url) {
                                     Link("View on Spotify", destination: link).font(.caption)
                                 }
