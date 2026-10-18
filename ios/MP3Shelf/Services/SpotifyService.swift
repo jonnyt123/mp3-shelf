@@ -103,6 +103,18 @@ final class SpotifyService: NSObject, ObservableObject {
         playlists = found
     }
 
+    /// Resolve a pasted Spotify share link using the user's authenticated
+    /// playlist permissions, then the regular one-tap source-discovery flow.
+    func playlistFromLink(_ value: String) async throws -> SpotifyPlaylist {
+        guard token != nil else { throw SpotifyError.notConnected }
+        guard let identifier = SpotifyPlaylistLinks.playlistID(from: value),
+              let url = URL(string: "https://api.spotify.com/v1/playlists/\(identifier)")
+        else {
+            throw SpotifyError.api("Enter a valid open.spotify.com/playlist/… share link.")
+        }
+        return try await request(url)
+    }
+
     func getTrackList(for playlist: SpotifyPlaylist) async throws -> [PlaylistWish] {
         guard let encodedID = playlist.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
             throw SpotifyError.badCallback
