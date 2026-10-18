@@ -25,6 +25,9 @@ struct MusicTrack: Identifiable, Codable, Hashable {
     var isFavorite: Bool
     // Set only for files obtained from a catalog with uploader-declared license metadata.
     var sourceAttribution: AudioSourceAttribution? = nil
+    // Keeps stable IDs from browser backups so repeat restores are idempotent
+    // even if the user renames the local file or edits the song metadata.
+    var portableBackupID: String? = nil
 
     init(id: UUID = UUID(), title: String, artist: String, album: String,
          fileName: String, originalFileName: String, artworkFileName: String? = nil, lyricsFileName: String? = nil,
