@@ -10,7 +10,14 @@ simulator build is a separate, useful check and does not replace these tests.
    enable Automatically Manage Signing, and select your Apple development team.
 3. Connect an iPhone with iOS 17+, unlock/trust the Mac, enable Developer Mode
    if prompted, and select the actual iPhone as the Xcode run destination.
-4. Press **Run (⌘R)**. Record the device, iOS version, and Xcode build output.
+4. Press **Run (⌘R)**, or execute the signed-install helper documented
+   in [README.md](README.md):
+   `MP3SHELF_TEAM_ID=YOUR10CHARTEAMID bash ios/scripts/run-on-iphone.sh DEVICE_UDID`.
+   The helper verifies a development provisioning profile and signature,
+   installs and launches the app, and writes
+   `ios/build/iphone-device/QA_RECORD.md` locally (Git-ignored). It does not
+   perform the end-to-end Spotify/audio acceptance tests below. Record the
+   physical device, iOS version, tested commit and installation result.
 5. Import a legally obtained MP3 and verify offline playback using Airplane Mode.
    Check lock-screen play/pause, seek, skip, Bluetooth/headphones, foreground and
    background audio, shuffle and repeat.
@@ -151,7 +158,7 @@ physical hardware. These remain external release blockers until run on device.
 - Date / iPhone model / iOS version:
 - Xcode version / signing team:
 - Simulator smoke check:
-- Physical install: NOT YET VERIFIED
+- Physical install: NOT YET VERIFIED (signed Xcode/devicectl run on a real iPhone required; unsigned CI does not count)
 - Offline playback / lock screen: NOT YET VERIFIED
 - Interrupt/resume search: NOT YET VERIFIED
 - Locked transfer: NOT YET VERIFIED
