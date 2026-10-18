@@ -251,6 +251,26 @@ enum PortableShelfArchive {
         return data
     }
 
+    /// Compare recordings byte-for-byte without loading either audio file into memory.
+    /// Filename and size alone are not reliable duplicate identifiers: different
+    /// recordings can have identical names and byte counts.
+    static func audioFilesIdentical(_ firstURL: URL, _ secondURL: URL) -> Bool {
+        guard let first = try? FileHandle(forReadingFrom: firstURL) else { return false }
+        defer { try? first.close() }
+        guard let second = try? FileHandle(forReadingFrom: secondURL) else { return false }
+        defer { try? second.close() }
+        do {
+            while true {
+                let firstChunk = try first.read(upToCount: 64 * 1024) ?? Data()
+                let secondChunk = try second.read(upToCount: 64 * 1024) ?? Data()
+                guard firstChunk == secondChunk else { return false }
+                if firstChunk.isEmpty { return true }
+            }
+        } catch {
+            return false
+        }
+    }
+
     static func audioExtension(for track: Track) throws -> String {
         let ext = URL(fileURLWithPath: track.originalName ?? "").pathExtension.lowercased()
         if ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(ext) { return ext }
