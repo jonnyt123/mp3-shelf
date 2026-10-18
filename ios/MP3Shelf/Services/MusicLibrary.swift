@@ -196,9 +196,12 @@ final class MusicLibrary: ObservableObject {
             if let index = playlists.firstIndex(where: { $0.matchesPortableBackupID(item.id) }) {
                 // A previous restore might have imported only some recordings.
                 // Complete missing links on retry, preserving user-customized order.
+                var addedLinks = 0
                 for id in resolvedTrackIDs where !playlists[index].trackIDs.contains(id) {
                     playlists[index].trackIDs.append(id)
+                    addedLinks += 1
                 }
+                if addedLinks > 0 { report.playlistsUpdated += 1 }
                 continue
             }
             let id = UUID(uuidString: item.id) ?? UUID()
@@ -212,6 +215,7 @@ final class MusicLibrary: ObservableObject {
             }
             playlist.missingTracks = playlist.sourceOrder
             playlists.append(playlist)
+            report.playlistsAdded += 1
         }
         reconcileMissingSongs()
         save()
