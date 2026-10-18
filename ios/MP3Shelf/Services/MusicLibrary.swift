@@ -254,9 +254,11 @@ final class MusicLibrary: ObservableObject {
         guard allowed.contains(extensionName) else { throw MusicLibraryError.unsupportedFormat }
         let fileSize = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
         // Avoid importing the same file more than once, without treating all tracks with the same title as duplicates.
-        if tracks.contains(where: { track in
-            track.originalFileName.caseInsensitiveCompare(originalName) == .orderedSame &&
-            ((try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -2) == fileSize
+        if fileSize >= 0 && tracks.contains(where: { track in
+            let existingURL = fileURL(for: track)
+            return track.originalFileName.caseInsensitiveCompare(originalName) == .orderedSame &&
+                ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -2) == fileSize &&
+                PortableShelfArchive.audioFilesIdentical(sourceURL, existingURL)
         }) { return false }
 
         let id = UUID()
