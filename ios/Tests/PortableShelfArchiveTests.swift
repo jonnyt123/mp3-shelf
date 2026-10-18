@@ -40,6 +40,28 @@ struct PortableShelfArchiveTests {
         defer { try? FileManager.default.removeItem(at: extracted) }
         let extractedBytes = try Data(contentsOf: extracted)
         assert(extractedBytes == originalBytes)
+        // Two files with the same name and size are not necessarily the same
+        // recording. Check matching data, a same-size collision and a mismatch
+        // beyond the 64-KiB streaming comparison boundary.
+        let identicalAudio = folder.appendingPathComponent("identical.mp3")
+        try originalBytes.write(to: identicalAudio)
+        assert(PortableShelfArchive.audioFilesIdentical(audio, identicalAudio))
+        let collision = folder.appendingPathComponent("collision.mp3")
+        var alteredBytes = originalBytes
+        alteredBytes[alteredBytes.count - 1] ^= 1
+        try alteredBytes.write(to: collision)
+        assert(!PortableShelfArchive.audioFilesIdentical(audio, collision))
+        assert(!PortableShelfArchive.audioFilesIdentical(audio, folder.appendingPathComponent("missing.mp3")))
+        let largeData = Data(repeating: 0xAB, count: 128 * 1024 + 31)
+        let largeA = folder.appendingPathComponent("large-a.mp3")
+        let largeB = folder.appendingPathComponent("large-b.mp3")
+        try largeData.write(to: largeA)
+        try largeData.write(to: largeB)
+        assert(PortableShelfArchive.audioFilesIdentical(largeA, largeB))
+        var differentEnd = largeData
+        differentEnd[differentEnd.count - 1] = 0xAC
+        try differentEnd.write(to: largeB)
+        assert(!PortableShelfArchive.audioFilesIdentical(largeA, largeB))
         let restoredArt = try PortableShelfArchive.readBytes(
             archive.manifest.tracks[0].artwork!, from: archive)
         assert(restoredArt == Data([0xFF, 0xD8, 0xFF, 0xD9]))
