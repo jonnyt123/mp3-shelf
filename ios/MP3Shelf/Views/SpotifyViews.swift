@@ -19,8 +19,11 @@ struct SpotifyConnectView: View {
                     }
                 }
                 .padding(.vertical, 6)
-                Text("Browse supported Spotify playlists and build an offline playlist using audio files you already own. Spotify does not allow this app to download its streams as MP3 files.")
+                Text("Build an offline MP3 playlist from your Spotify song list. MP3 Shelf automatically finds and saves qualifying independent recordings to your iPhone. Songs without an authorized download remain unavailable.")
                     .font(.subheadline).foregroundStyle(ShelfTheme.subdued)
+                Label("Real MP3 files • No Spotify stream ripping", systemImage: "arrow.down.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(ShelfTheme.mint)
                 if !spotify.isConnected {
                     TextField("Spotify Developer Client ID", text: $spotify.clientID)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -47,7 +50,7 @@ struct SpotifyConnectView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(playlist.name).font(.headline)
                             HStack {
-                                Button(importingID == playlist.id ? "Importing…" : "Import Track List") {
+                                Button(importingID == playlist.id ? "Finding music…" : "Find & Save Offline MP3s") {
                                     Task { await importPlaylist(playlist) }
                                 }
                                 .buttonStyle(.borderedProminent).tint(ShelfTheme.accent)
@@ -98,7 +101,7 @@ struct SpotifyConnectView: View {
             if report.missing > 0, let imported = library.playlists.last {
                 library.startAutomaticDownloads(for: imported.id)
             }
-            notice = "\(report.playlistName): \(report.matched) ready now, \(report.missing) queued for automatic licensed-source lookup. Open the imported playlist to view progress."
+            notice = "\(report.playlistName): \(report.matched) existing files matched. \(report.missing) songs added to automatic MP3 discovery. Matching MP3s will be stored individually on this iPhone; unavailable songs stay listed for later. Open the playlist to see results."
         } catch { notice = error.localizedDescription }
     }
 }
