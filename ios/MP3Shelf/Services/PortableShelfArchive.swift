@@ -114,7 +114,7 @@ enum PortableShelfArchive {
                             provider: $0.providerName)
             }
             tracks.append(Track(
-                id: item.track.id.uuidString, name: item.track.title,
+                id: item.track.portableBackupID ?? item.track.id.uuidString, name: item.track.title,
                 originalName: item.track.originalFileName, artist: item.track.artist,
                 album: item.track.album, lyrics: item.lyrics,
                 isFavorite: item.track.isFavorite, attribution: attribution,
@@ -122,11 +122,15 @@ enum PortableShelfArchive {
                 audio: audio, artwork: artwork
             ))
         }
+        let portableIDs = Dictionary(uniqueKeysWithValues: inputs.map {
+            ($0.track.id, $0.track.portableBackupID ?? $0.track.id.uuidString)
+        })
         let lists = playlists.map { list in
             let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
             return Playlist(
                 id: list.portableBackupID ?? list.id.uuidString, name: list.name,
-                trackIds: list.trackIDs.map(\.uuidString),
+                // Never serialize dangling links to missing recordings.
+                trackIds: list.trackIDs.compactMap { portableIDs[$0] },
                 sourceURL: list.sourceURL,
                 wishes: wishes.isEmpty ? nil : wishes.map {
                     Wish(title: $0.title, artist: $0.artist, album: $0.album,
@@ -210,7 +214,8 @@ enum PortableShelfArchive {
         for playlist in manifest.playlists {
             guard !playlist.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !playlist.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  playlistIDs.insert(playlist.id).inserted else {
+                  playlistIDs.insert(playlist.id).inserted,
+                  playlist.trackIds.allSatisfy({ trackIDs.contains($0) }) else {
                 throw ArchiveError.invalidManifest
             }
         }
