@@ -3,6 +3,9 @@ on:
   pull_request:
     paths:
       - 'ios/**'
+      - 'src/lib/backup.ts'
+      - 'src/lib/backup.test.ts'
+      - 'src/lib/tracks.ts'
       - '.github/workflows/ios-build.yml'
   workflow_dispatch:
 # A new UI revision supersedes older screenshot runs for this PR.
@@ -40,6 +43,15 @@ jobs:
       - name: Cross-platform archive round-trip regression tests
         run: |
           swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PortableShelfArchive.swift ios/Tests/PortableShelfArchiveTests.swift -o /tmp/mp3shelf-archive && /tmp/mp3shelf-archive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Browser portable-backup interoperability and TypeScript checks
+        run: |
+          npm ci
+          npm run test -- src/lib/backup.test.ts
+          npm run typecheck
       - name: Install and launch iPhone Simulator app
         timeout-minutes: 18
         run: |
