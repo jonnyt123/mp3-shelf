@@ -2,6 +2,24 @@ import Foundation
 
 /// Independent downloadable recordings remain individual, recognizable files
 /// in Files → On My iPhone → MP3 Shelf → Music, without filename collisions.
+/// Accept a normal Spotify playlist share link without following redirects or
+/// accidentally allowing unrelated hosts into authenticated API requests.
+enum SpotifyPlaylistLinks {
+    static func playlistID(from value: String) -> String? {
+        guard let url = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "open.spotify.com",
+              url.user == nil, url.password == nil else { return nil }
+        let segments = url.path.split(separator: "/")
+        guard segments.count == 2, segments[0] == "playlist" else { return nil }
+        let identifier = String(segments[1])
+        guard identifier.count == 22, identifier.allSatisfy({ $0.isASCII && $0.isLetter || $0.isASCII && $0.isNumber }) else {
+            return nil
+        }
+        return identifier
+    }
+}
+
 enum LocalAudioFileNaming {
     static func storageName(originalName: String, id: UUID, fileExtension: String) -> String {
         let name = URL(fileURLWithPath: originalName)
