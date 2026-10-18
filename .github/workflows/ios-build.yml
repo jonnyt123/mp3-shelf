@@ -20,6 +20,11 @@ jobs:
       - name: Build iPhone simulator app without signing
         run: |
           xcodebuild -project ios/MP3Shelf.xcodeproj -scheme MP3Shelf -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Build Release iPhone simulator app without signing
+        run: |
+          # Release configuration must also compile; DEBUG fixture imports and
+          # screenshot launch flags must never be required by production code.
+          xcodebuild -project ios/MP3Shelf.xcodeproj -scheme MP3Shelf -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
       - name: Playlist parser regression tests
         run: |
           swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/Tests/PlaylistCSVTests.swift -o /tmp/mp3shelf-playlist && /tmp/mp3shelf-playlist
