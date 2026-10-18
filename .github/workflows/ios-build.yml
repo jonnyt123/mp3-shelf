@@ -28,6 +28,11 @@ jobs:
           # Release configuration must also compile; DEBUG fixture imports and
           # screenshot launch flags must never be required by production code.
           xcodebuild -project ios/MP3Shelf.xcodeproj -scheme MP3Shelf -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Build unsigned physical iPhone architecture
+        run: |
+          # Compiles the real iphoneos/arm64 product, but this is deliberately
+          # NOT a signed app, TestFlight binary, or physical-device QA result.
+          xcodebuild -project ios/MP3Shelf.xcodeproj -scheme MP3Shelf -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
       - name: Playlist parser regression tests
         run: |
           swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/Tests/PlaylistCSVTests.swift -o /tmp/mp3shelf-playlist && /tmp/mp3shelf-playlist
