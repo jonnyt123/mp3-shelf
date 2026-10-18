@@ -314,16 +314,32 @@ struct SettingsView: View {
             .listRowBackground(ShelfTheme.surface)
 
             Section {
+                HStack(spacing: 12) {
+                    PremiumIcon(symbol: "externaldrive.badge.icloud", color: ShelfTheme.mint, size: 48)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Your music, wherever you go")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                        Text("Save songs, artwork, lyrics and playlists in one portable file.")
+                            .font(.caption)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 7)
                 Button {
                     portableBusy = true
                     portableStatus = nil
-                    do {
-                        portableBackupURL = try library.exportPortableBackup()
-                        portableStatus = "Backup prepared. Use Share Backup to save it in Files."
-                    } catch {
-                        portableStatus = error.localizedDescription
+                    portableBackupURL = nil
+                    Task {
+                        do {
+                            portableBackupURL = try await library.exportPortableBackup()
+                            portableStatus = "Your backup is ready. Share it to Files or another device to keep a copy."
+                        } catch {
+                            portableStatus = error.localizedDescription
+                        }
+                        portableBusy = false
                     }
-                    portableBusy = false
                 } label: {
                     Label("Prepare portable backup", systemImage: "archivebox")
                 }
@@ -342,8 +358,9 @@ struct SettingsView: View {
                 }
                 .disabled(portableBusy)
                 if portableBusy {
-                    ProgressView("Importing songs and playlists…")
+                    ProgressView("Working with your music library…")
                         .tint(ShelfTheme.mint)
+                        .accessibilityLabel("Processing portable backup")
                 }
                 if let portableStatus {
                     Text(portableStatus)
