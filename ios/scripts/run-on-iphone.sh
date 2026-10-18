@@ -28,7 +28,7 @@ if [[ "$#" -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
 fi
 
 DEVICE_ID="$1"
-TEAM_ID="$MP3SHELF_TEAM_ID"
+TEAM_ID="$(printenv MP3SHELF_TEAM_ID 2>/dev/null || true)"
 if [[ -z "$DEVICE_ID" || ! "$TEAM_ID" =~ ^[A-Za-z0-9]{10}$ ]]; then
   echo "ERROR: Provide your physical device UDID and valid 10-character Apple team ID." >&2
   exit 2
@@ -48,7 +48,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT="$ROOT/ios/build/iphone-device"
 DERIVED="$OUTPUT/DerivedData"
 APP="$DERIVED/Build/Products/Debug-iphoneos/MP3Shelf.app"
-BUNDLE_ID="com.jonnyt.mp3shelf"
+BUNDLE_ID="$(printenv MP3SHELF_BUNDLE_ID 2>/dev/null || echo com.jonnyt.mp3shelf)"
 mkdir -p "$OUTPUT"
 
 echo "Checking iPhone connection: $DEVICE_ID"
@@ -69,6 +69,7 @@ xcodebuild \
   -allowProvisioningUpdates \
   CODE_SIGN_STYLE=Automatic \
   DEVELOPMENT_TEAM="$TEAM_ID" \
+  PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
   build 2>&1 | tee "$OUTPUT/build.log"
 
 if [[ ! -d "$APP" || ! -f "$APP/embedded.mobileprovision" ]]; then
