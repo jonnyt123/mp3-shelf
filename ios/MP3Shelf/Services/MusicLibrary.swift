@@ -133,7 +133,8 @@ final class MusicLibrary: ObservableObject {
                     }) {
                         restoredIDs[archived.id] = tracks[index].id
                         if !tracks.contains(where: {
-                            $0.id != tracks[index].id && $0.portableBackupID == archived.id
+                            $0.id != tracks[index].id &&
+                            ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
                         }) {
                             tracks[index].portableBackupID = archived.id
                             save()
@@ -146,7 +147,8 @@ final class MusicLibrary: ObservableObject {
                 // If the archived identifier belongs to a different local
                 // recording, keep this song's new UUID as its export identity.
                 if !tracks.contains(where: {
-                    $0.id != tracks[index].id && $0.portableBackupID == archived.id
+                    $0.id != tracks[index].id &&
+                            ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
                 }) {
                     tracks[index].portableBackupID = archived.id
                 }
