@@ -7,6 +7,8 @@ struct SpotifyConnectView: View {
     @State private var notice: String?
     @State private var playlistLink = ""
     @State private var resolvingLink = false
+    @State private var selectedPlaylistID: UUID?
+    @State private var showDownloadDashboard = false
 
     var body: some View {
         Form {
@@ -99,6 +101,11 @@ struct SpotifyConnectView: View {
         .background(PremiumBackdrop())
         .tint(ShelfTheme.accent)
         .navigationTitle("Spotify Playlists")
+        .navigationDestination(isPresented: $showDownloadDashboard) {
+            if let selectedPlaylistID {
+                PlaylistDetailView(playlistID: selectedPlaylistID)
+            }
+        }
         .onChange(of: spotify.message) { _, new in
             if let new { notice = new; spotify.message = nil }
         }
@@ -131,10 +138,13 @@ struct SpotifyConnectView: View {
             let wishes = try await spotify.getTrackList(for: list)
             let report = library.importPlaylist(wishes: wishes, name: list.name,
                 sourceURL: list.external_urls?.spotify)
-            if report.missing > 0, let imported = library.playlists.last {
-                library.startAutomaticDownloads(for: imported.id)
+            if report.missing > 0 {
+                library.startAutomaticDownloads(for: report.playlistID)
             }
-            notice = "\(report.playlistName): \(report.matched) existing files matched. \(report.missing) songs added to automatic MP3 discovery. Matching MP3s will be stored individually on this iPhone; unavailable songs stay listed for later. Open the playlist to see results."
+            selectedPlaylistID = report.playlistID
+            // A successful import immediately opens the actual song-by-song
+            // view. No second tap or dismissing a success alert is required.
+            showDownloadDashboard = true
         } catch { notice = error.localizedDescription }
     }
 }
