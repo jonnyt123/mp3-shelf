@@ -4,7 +4,7 @@ A standalone **SwiftUI** iOS application that can be opened directly in Xcode an
 
 ## Requirements
 
-- Mac with Xcode 15.4 or later (iOS 17 deployment target)
+- Mac with Xcode 16.4 or later (recommended for the current signing and QA workflow; iOS 17 deployment target)
 - iPhone running iOS 17 or later
 - Apple ID added in Xcode → Settings → Accounts; free Personal Team signing is sufficient for device testing, subject to Apple's provisioning limitations
 
@@ -15,6 +15,34 @@ A standalone **SwiftUI** iOS application that can be opened directly in Xcode an
 3. Enable **Automatically manage signing**, select your own **Team** (Personal Team works), and change **Bundle Identifier** if Xcode reports a collision.
 4. Connect your iPhone by cable or use an already paired wireless development device. Select it in Xcode's device picker. If prompted, enable **Settings → Privacy & Security → Developer Mode** on the iPhone and trust your Mac.
 5. Press **⌘R** (Run). Xcode signs and installs the app. You can then import files and listen without a network connection.
+
+## Signed installation helper (physical iPhone)
+
+For a reproducible, signed development build without manually finding the
+app bundle after compiling, first sign in to **Xcode → Settings → Accounts**
+and enable automatic signing for your Apple team. Unlock and trust your
+iPhone, enable Developer Mode if required, then in a Mac terminal at the repo root:
+
+```bash
+xcrun devicectl list devices
+MP3SHELF_TEAM_ID=YOUR10CHARTEAMID bash ios/scripts/run-on-iphone.sh YOUR_DEVICE_UDID
+```
+
+The script validates the device connection, invokes Xcode's automatic
+development signing, verifies that the resulting app includes a provisioning
+profile and valid signature, installs it, launches it, and writes a private
+`ios/build/iphone-device/QA_RECORD.md` describing which tests remain open.
+`ios/build/` is Git-ignored; **never commit local logs, provisioning files
+or Apple account credentials**. If the default bundle identifier is already
+claimed by another developer team, specify your own unique ID using
+`MP3SHELF_BUNDLE_ID=com.yourteam.mp3shelf`.
+
+**Important:** This helper runs on a Mac attached to the real phone, not on
+GitHub's unsigned CI. It creates an installed *development* app, not a TestFlight
+upload or public release. The device acceptance scenarios are in
+[DEVICE_QA.md](DEVICE_QA.md) and must be tested, recorded and reviewed before
+PRs #1–#4 merge. Building for the iphoneos processor architecture alone does
+not establish successful signing or installation.
 
 ## What works
 
@@ -42,9 +70,9 @@ Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation
 
 ## One-tap downloads for imported Spotify playlists
 
-Open **Playlists → Imported Playlist → Find & Automatically Download Available MP3s**. MP3 Shelf checks every missing song against independent audio catalogs, then automatically downloads qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
+Connect Spotify, select a permitted playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. The app automatically opens the song-by-song download dashboard and checks missing songs against independent authorized audio sources, downloading only qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
 
-**Current catalog adapters:** Internet Archive and Openverse-backed eligible publishers. Before importing a result, the app requires:
+**Current catalog adapters:** Internet Archive, Openverse-backed eligible publishers, and direct Wikimedia Commons. Before importing a result, the app requires:
 - Strict normalized *song title and artist* match; no intentional covers/remixes/other artists.
 - A single MP3 file for the matching archive item, to reject album/concert downloads.
 - A Creative Commons or public-domain license URL declared in the archive item's metadata.
