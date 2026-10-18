@@ -258,23 +258,102 @@ extension AudioSourceFinder {
         return nil
     }
 
+
+    // Wikimedia Commons' MediaWiki file API is a separate upstream catalog:
+    // Commons recordings may be absent from Openverse's index. Only explicit
+    // machine-readable artist/license metadata and actual MP3 file URLs qualify.
+    private struct CommonsResponse: Decodable { let query: CommonsQuery? }
+    private struct CommonsQuery: Decodable { let pages: [String: CommonsPage] }
+    private struct CommonsPage: Decodable {
+        let title: String
+        let imageinfo: [CommonsImage]?
+    }
+    private struct CommonsImage: Decodable {
+        let url: String?
+        let descriptionurl: String?
+        let size: Int?
+        let extmetadata: [String: CommonsField]?
+    }
+    private struct CommonsField: Decodable { let value: String }
+
+    static func commonsCandidate(fileTitle: String, artistCredit: String?,
+                                 download: String?, landing: String?,
+                                 license: String?, bytes: Int?,
+                                 wish: PlaylistWish) -> AudioCatalogMatch? {
+        guard let artistCredit, !artistCredit.contains("<"),
+              exactMetadataMatch(
+                title: (fileTitle as NSString).lastPathComponent
+                    .replacingOccurrences(of: "File:", with: "")
+                    .replacingOccurrences(of: ".mp3", with: "", options: .caseInsensitive),
+                creator: artistCredit.trimmingCharacters(in: .whitespacesAndNewlines),
+                wish: wish),
+              let licenseURL = licensedURL(license),
+              let download, let audioURL = URL(string: download),
+              audioURL.scheme == "https", audioURL.host?.lowercased() == "upload.wikimedia.org",
+              audioURL.pathExtension.lowercased() == "mp3",
+              let landing, let landingURL = URL(string: landing),
+              landingURL.scheme == "https",
+              landingURL.host?.lowercased() == "commons.wikimedia.org",
+              bytes == nil || (bytes! > 0 && bytes! <= 100 * 1024 * 1024)
+        else { return nil }
+        return AudioCatalogMatch(downloadURL: audioURL, itemURL: landingURL,
+                                 licenseURL: licenseURL, sourceName: "Wikimedia Commons")
+    }
+
+    static func findCommons(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+        guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
+        var components = URLComponents(string: "https://commons.wikimedia.org/w/api.php")!
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "query"),
+            URLQueryItem(name: "generator", value: "search"),
+            URLQueryItem(name: "gsrsearch", value: "\"\(wish.title)\" \"\(wish.artist)\""),
+            URLQueryItem(name: "gsrnamespace", value: "6"),
+            URLQueryItem(name: "gsrlimit", value: "20"),
+            URLQueryItem(name: "prop", value: "imageinfo"),
+            URLQueryItem(name: "iiprop", value: "url|size|extmetadata"),
+            URLQueryItem(name: "iiextmetadatafilter", value: "Artist|LicenseUrl"),
+            URLQueryItem(name: "format", value: "json")
+        ]
+        let result: CommonsResponse = try await requestJSON(components.url!)
+        let matches = (result.query?.pages.values ?? Dictionary<String, CommonsPage>().values)
+            .flatMap { page in
+                (page.imageinfo ?? []).compactMap { info in
+                    commonsCandidate(fileTitle: page.title,
+                                     artistCredit: info.extmetadata?["Artist"]?.value,
+                                     download: info.url, landing: info.descriptionurl,
+                                     license: info.extmetadata?["LicenseUrl"]?.value,
+                                     bytes: info.size, wish: wish)
+                }
+            }
+        let unique = Dictionary(grouping: matches, by: { $0.downloadURL.absoluteString })
+        return unique.count == 1 ? unique.values.first?.first : nil
+    }
+
     static func findAcrossCatalogs(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
         try Task.checkCancellation()
-        var archiveError: Error?
+        var firstError: Error?
         do {
             if let archive = try await find(for: wish) { return archive }
         } catch {
             if error is CancellationError { throw error }
-            archiveError = error
+            firstError = error
         }
         try Task.checkCancellation()
         do {
             if let openverse = try await findOpenverse(for: wish) { return openverse }
         } catch {
-            throw error
+            if error is CancellationError { throw error }
+            if firstError == nil { firstError = error }
         }
-        // One catalog being offline is not evidence that a song is unavailable.
-        if let archiveError { throw archiveError }
+        try Task.checkCancellation()
+        do {
+            if let commons = try await findCommons(for: wish) { return commons }
+        } catch {
+            if error is CancellationError { throw error }
+            if firstError == nil { firstError = error }
+        }
+        // Network errors must not be recorded as permanent "unavailable".
+        if let firstError { throw firstError }
         return nil
     }
 }
