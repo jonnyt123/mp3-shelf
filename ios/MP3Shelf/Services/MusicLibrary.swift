@@ -101,26 +101,50 @@ final class MusicLibrary: ObservableObject {
                 let rawName = initialName.flatMap { $0.isEmpty ? nil : $0 }
                     ?? archived.name + "." + ext
                 let original = URL(fileURLWithPath: rawName).lastPathComponent
+                // Match an existing recording by its portable identity only
+                // when the bytes still match. A reused ID with different audio
+                // must not silently link a playlist to the wrong song.
+                if let existing = tracks.first(where: { candidate in
+                    (candidate.portableBackupID == archived.id ||
+                     candidate.id.uuidString == archived.id) &&
+                    PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
+                }) {
+                    restoredIDs[archived.id] = existing.id
+                    report.skipped += 1
+                    continue
+                }
+
                 let imported = try await addLocalAudio(
                     sourceURL: file, originalName: original)
                 if imported { report.imported += 1 }
                 else { report.skipped += 1 }
 
-                // Preserve references to already-present recordings so
-                // repeated restores still recreate the proper playlist order.
                 if !imported {
-                    if let existing = tracks.first(where: { candidate in
+                    // Names and sizes alone are not sufficient: multiple local
+                    // recordings can share both while containing different audio.
+                    if let index = tracks.firstIndex(where: { candidate in
                         candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame &&
-                        Int64((try? fileURL(for: candidate)
-                            .resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) ==
-                            archived.audio.length
+                        PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
                     }) {
-                        restoredIDs[archived.id] = existing.id
+                        restoredIDs[archived.id] = tracks[index].id
+                        if !tracks.contains(where: {
+                            $0.id != tracks[index].id && $0.portableBackupID == archived.id
+                        }) {
+                            tracks[index].portableBackupID = archived.id
+                            save()
+                        }
                     }
                     continue
                 }
                 guard let index = tracks.indices.last else { continue }
                 restoredIDs[archived.id] = tracks[index].id
+                // If the archived identifier belongs to a different local
+                // recording, keep this song's new UUID as its export identity.
+                if !tracks.contains(where: {
+                    $0.id != tracks[index].id && $0.portableBackupID == archived.id
+                }) {
+                    tracks[index].portableBackupID = archived.id
+                }
                 tracks[index].title = archived.name
                 if let artist = archived.artist { tracks[index].artist = artist }
                 if let album = archived.album { tracks[index].album = album }
@@ -163,14 +187,20 @@ final class MusicLibrary: ObservableObject {
             // Web backups use string playlist IDs, not necessarily UUIDs.
             // Keep their source ID so restoring the same archive again (or
             // after an app restart) does not create another copy.
-            if playlists.contains(where: { $0.matchesPortableBackupID(item.id) }) {
+            let resolvedTrackIDs = item.trackIds.compactMap { restoredIDs[$0] }
+            if let index = playlists.firstIndex(where: { $0.matchesPortableBackupID(item.id) }) {
+                // A previous restore might have imported only some recordings.
+                // Complete missing links on retry, preserving user-customized order.
+                for id in resolvedTrackIDs where !playlists[index].trackIDs.contains(id) {
+                    playlists[index].trackIDs.append(id)
+                }
                 continue
             }
             let id = UUID(uuidString: item.id) ?? UUID()
             var playlist = MusicPlaylist(id: id, name: item.name)
             playlist.portableBackupID = item.id
             playlist.sourceURL = item.sourceURL
-            playlist.trackIDs = item.trackIds.compactMap { restoredIDs[$0] }
+            playlist.trackIDs = resolvedTrackIDs
             playlist.sourceOrder = (item.wishes ?? []).map {
                 PlaylistWish(title: $0.title, artist: $0.artist,
                              album: $0.album, spotifyURL: $0.spotifyURL)
