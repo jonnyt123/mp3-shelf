@@ -303,7 +303,8 @@ final class MusicLibrary: ObservableObject {
         }) { return false }
 
         let id = UUID()
-        let destinationName = id.uuidString + "." + extensionName
+        let destinationName = LocalAudioFileNaming.storageName(
+            originalName: originalName, id: id, fileExtension: extensionName)
         let destination = musicDirectory.appendingPathComponent(destinationName)
         try manager.copyItem(at: sourceURL, to: destination)
         do {
