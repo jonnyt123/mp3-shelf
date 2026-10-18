@@ -658,9 +658,19 @@ struct PlaylistDetailView: View {
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
 
+    private var offlineSourceCount: Int {
+        guard let playlist else { return 0 }
+        return playlist.sourceOrder.filter {
+            MusicMatching.matchingTrack(for: $0, in: library.tracks) != nil
+        }.count
+    }
+
     /// Report the real, persisted outcome for each song in the imported
     /// Spotify playlist. Downloading is not the same as already saved offline.
     private func mp3Status(for wish: PlaylistWish) -> (text: String, symbol: String) {
+        if MusicMatching.matchingTrack(for: wish, in: library.tracks) != nil {
+            return ("Saved offline as an audio file", "checkmark.circle.fill")
+        }
         if let ticket = transfers.ticketsForPlaylist(playlistID).first(where: {
             $0.requested.id == wish.id
         }) {
@@ -754,7 +764,26 @@ struct PlaylistDetailView: View {
                     library.automaticDownloadProgress?.playlistID == playlistID ||
                     BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
                     Section("FIND YOUR MUSIC") {
-                        Text("Searches Internet Archive and eligible Openverse catalogs for exact artist/title matches, MP3 files, and declared Creative Commons/public-domain licenses. Verified download URLs transfer through iOS even while the screen is locked. Popular commercial songs are unlikely to qualify.")
+                        VStack(alignment: .leading, spacing: 9) {
+                            PremiumEyebrow(title: "OFFLINE MP3 CONVERSION PROGRESS", color: ShelfTheme.mint)
+                            Text("\(offlineSourceCount) of \(playlist.sourceOrder.count) songs saved offline")
+                                .font(.headline.monospacedDigit())
+                                .foregroundStyle(.white)
+                            ProgressView(value: Double(offlineSourceCount),
+                                         total: Double(max(1, playlist.sourceOrder.count)))
+                                .tint(ShelfTheme.mint)
+                                .accessibilityLabel("Downloaded audio files")
+                                .accessibilityValue("\(offlineSourceCount) of \(playlist.sourceOrder.count) songs saved")
+                            let active = transfers.pendingCount(for: playlistID)
+                            if active > 0 {
+                                Label("\(active) file transfer\(active == 1 ? "" : "s") underway",
+                                      systemImage: "arrow.down.circle")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(ShelfTheme.accent)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        Text("Searches Internet Archive and eligible Openverse catalogs for exact artist/title matches, MP3 files, and declared Creative Commons/public-domain licenses. Downloads save real audio files for offline playback; unmatched commercial songs remain clearly unavailable.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
                             VStack(alignment: .leading, spacing: 6) {
@@ -834,22 +863,45 @@ struct PlaylistDetailView: View {
                     }
                     .onMove { from, to in library.moveTracks(in: playlistID, from: from, to: to) }
                 }
-                if !playlist.missingTracks.isEmpty {
-                    Section("STILL MISSING") {
-                        ForEach(playlist.missingTracks) { wish in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(wish.title).font(.subheadline.bold())
-                                Text(wish.artist).font(.caption).foregroundStyle(ShelfTheme.subdued)
+                if !playlist.sourceOrder.isEmpty {
+                    Section("SONG-BY-SONG MP3 RESULTS") {
+                        ForEach(playlist.sourceOrder) { wish in
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text(wish.title)
+                                    .font(.subheadline.bold())
+                                Text(wish.artist)
+                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 let status = mp3Status(for: wish)
                                 Label(status.text, systemImage: status.symbol)
                                     .font(.caption.weight(.medium))
-                                    .foregroundStyle(status.text.contains("failed") || status.text.contains("No qualifying")
+                                    .foregroundStyle(status.text.contains("failed") ||
+                                                     status.text.contains("No qualifying")
                                         ? ShelfTheme.coral : ShelfTheme.mint)
                                     .accessibilityLabel("\(wish.title): \(status.text)")
+                                if let ticket = transfers.ticketsForPlaylist(playlistID)
+                                    .first(where: { $0.requested.id == wish.id }) {
+                                    if ticket.status == .queued, let total = ticket.totalBytes,
+                                       total > 0, let received = ticket.bytesReceived {
+                                        ProgressView(value: Double(received), total: Double(total))
+                                            .tint(ShelfTheme.accent)
+                                            .accessibilityLabel("Download progress for \(wish.title)")
+                                    }
+                                    if ticket.status == .failed || ticket.status == .cancelled {
+                                        Button("Retry MP3 download") { transfers.retry(ticket.id) }
+                                            .font(.caption.weight(.semibold))
+                                    }
+                                    if ticket.status == .queued || ticket.status == .imported {
+                                        Text("Source: \(ticket.provider)")
+                                            .font(.caption2)
+                                            .foregroundStyle(ShelfTheme.subdued)
+                                    }
+                                }
                                 if let url = wish.spotifyURL, let link = URL(string: url) {
-                                    Link("View on Spotify", destination: link).font(.caption)
+                                    Link("View original on Spotify", destination: link)
+                                        .font(.caption)
                                 }
                             }
+                            .padding(.vertical, 5)
                             .listRowBackground(ShelfTheme.background)
                         }
                     }
