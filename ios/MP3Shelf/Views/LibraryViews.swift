@@ -666,7 +666,7 @@ struct PlaylistDetailView: View {
         }) {
             switch ticket.status {
             case .queued:
-                return ticket.bytesReceived ?? 0 > 0
+                return (ticket.bytesReceived ?? 0) > 0
                     ? ("Downloading MP3…", "arrow.down.circle.fill")
                     : ("MP3 download queued", "clock.arrow.circlepath")
             case .imported:
