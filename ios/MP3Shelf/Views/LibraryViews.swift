@@ -25,6 +25,7 @@ struct LibraryView: View {
     @State private var sortMode: SortMode = .title
     @State private var message: String?
     @State private var renaming: MusicTrack?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var recentlyAdded: [MusicTrack] {
         Array(library.tracks.sorted { $0.addedAt > $1.addedAt }.prefix(8))
@@ -158,7 +159,7 @@ struct LibraryView: View {
                             Text(library.tracks.isEmpty
                                  ? "Start your\nsoundtrack."
                                  : "All yours.\nAlways playing.")
-                                .font(.system(size: 26, weight: .bold, design: .rounded))
+                                .font(.system(.title2, design: .rounded, weight: .bold))
                                 .foregroundStyle(.white)
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(library.tracks.isEmpty
@@ -169,11 +170,13 @@ struct LibraryView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 0)
-                        ArtworkTile(track: library.tracks.last,
-                                    size: library.tracks.isEmpty ? 92 : 110)
-                            .rotationEffect(.degrees(7))
-                            .shadow(color: .black.opacity(0.3), radius: 12, y: 9)
-                            .accessibilityHidden(true)
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            ArtworkTile(track: library.tracks.last,
+                                        size: library.tracks.isEmpty ? 92 : 110)
+                                .rotationEffect(.degrees(7))
+                                .shadow(color: .black.opacity(0.3), radius: 12, y: 9)
+                                .accessibilityHidden(true)
+                        }
                     }
                     if library.tracks.isEmpty {
                         Button {
@@ -469,8 +472,16 @@ struct PlaylistsView: View {
     @EnvironmentObject private var library: MusicLibrary
     @State private var showCreate = false
     @State private var newName = ""
+    @State private var pendingDelete: MusicPlaylist?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private let columns = [GridItem(.flexible(), spacing: 13), GridItem(.flexible(), spacing: 13)]
+    // Accessibility text sizes get a full-width playlist card instead of
+    // squeezing large text into two narrow columns.
+    private var columns: [GridItem] {
+        dynamicTypeSize.isAccessibilitySize
+            ? [GridItem(.flexible(), spacing: 13)]
+            : [GridItem(.flexible(), spacing: 13), GridItem(.flexible(), spacing: 13)]
+    }
 
     var body: some View {
         ScrollView {
@@ -542,9 +553,10 @@ struct PlaylistsView: View {
                                     playlistCard(list, index: index)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("\(list.name), \(list.trackIDs.count) songs offline, \(list.missingTracks.count) still to find")
                                 .contextMenu {
                                     Button(role: .destructive) {
-                                        library.deletePlaylist(list.id)
+                                        pendingDelete = list
                                     } label: { Label("Delete Playlist", systemImage: "trash") }
                                 }
                             }
@@ -573,6 +585,22 @@ struct PlaylistsView: View {
             Button("Create") { library.createPlaylist(newName); newName = "" }
             Button("Cancel", role: .cancel) { newName = "" }
         } message: { Text("Songs stay on your device.") }
+        .confirmationDialog(
+            "Delete \(pendingDelete?.name ?? "playlist")?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete playlist", role: .destructive) {
+                if let playlist = pendingDelete { library.deletePlaylist(playlist.id) }
+                pendingDelete = nil
+            }
+            Button("Keep playlist", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text("Only this playlist will be removed. Your offline songs will remain on this iPhone.")
+        }
     }
 
     private func playlistCard(_ list: MusicPlaylist, index: Int) -> some View {
@@ -585,9 +613,15 @@ struct PlaylistsView: View {
                 Circle().strokeBorder(.white.opacity(0.2), lineWidth: 1)
                     .frame(width: 108, height: 108)
                     .offset(x: 57, y: -33)
-                Image(systemName: ["waveform", "music.mic", "headphones", "record.circle"][index % 4])
-                    .font(.system(size: 39, weight: .ultraLight))
-                    .foregroundStyle(.white.opacity(0.95))
+                if let cover = library.songs(in: list).first {
+                    ArtworkTile(track: cover, size: 112)
+                        .rotationEffect(.degrees(-7))
+                        .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
+                } else {
+                    Image(systemName: ["waveform", "music.mic", "headphones", "record.circle"][index % 4])
+                        .font(.system(size: 39, weight: .ultraLight))
+                        .foregroundStyle(.white.opacity(0.95))
+                }
             }
             .frame(height: 125)
             .clipped()
@@ -596,10 +630,18 @@ struct PlaylistsView: View {
                 .font(.system(.subheadline, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
-            Text("\(list.trackIDs.count) offline · \(list.missingTracks.count) missing")
-                .font(.caption2)
-                .foregroundStyle(ShelfTheme.subdued)
-                .lineLimit(1)
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(ShelfTheme.mint)
+                Text("\(list.trackIDs.count) offline")
+                    .foregroundStyle(ShelfTheme.subdued)
+                if !list.missingTracks.isEmpty {
+                    Text("· \(list.missingTracks.count) to find")
+                        .foregroundStyle(ShelfTheme.coral)
+                }
+            }
+            .font(.caption2.weight(.medium))
+            .lineLimit(1)
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
