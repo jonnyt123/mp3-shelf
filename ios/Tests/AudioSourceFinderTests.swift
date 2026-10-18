@@ -102,6 +102,35 @@ enum AudioSourceFinderTests {
             filetype: "mp3", duration: 212,
             source: "wikimedia", filesize: nil, wish: wish) == nil,
             "do not mistake Openverse milliseconds for seconds")
+        let commons = AudioSourceFinder.commonsCandidate(
+            fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
+            download: "https://upload.wikimedia.org/wikipedia/commons/1/12/The_Song.mp3",
+            landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
+            license: "https://creativecommons.org/licenses/by/4.0/",
+            bytes: 4_000_000, wish: wish)
+        verify(commons?.sourceName == "Wikimedia Commons",
+               "direct Commons file with exact credit and license accepted")
+        verify(AudioSourceFinder.commonsCandidate(
+            fileTitle: "File:The Song.mp3", artistCredit: "Different Performer",
+            download: "https://upload.wikimedia.org/wikipedia/commons/1/12/The_Song.mp3",
+            landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
+            license: "https://creativecommons.org/licenses/by/4.0/",
+            bytes: nil, wish: wish) == nil,
+            "Wikimedia version with different artist rejected")
+        verify(AudioSourceFinder.commonsCandidate(
+            fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
+            download: "https://malicious.invalid/wikipedia/commons/1/12/The_Song.mp3",
+            landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
+            license: "https://creativecommons.org/licenses/by/4.0/",
+            bytes: nil, wish: wish) == nil,
+            "Commons download cannot redirect to untrusted upload hosts")
+        verify(AudioSourceFinder.commonsCandidate(
+            fileTitle: "File:The Song.mp3", artistCredit: "<a>Unverified Artist</a>",
+            download: "https://upload.wikimedia.org/file.mp3",
+            landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
+            license: "https://creativecommons.org/licenses/by/4.0/",
+            bytes: nil, wish: wish) == nil,
+            "HTML author credits are not mistaken for verified artists")
         print("Audio source discovery validation tests passed")
     }
 }
