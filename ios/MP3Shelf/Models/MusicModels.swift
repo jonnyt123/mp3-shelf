@@ -88,11 +88,19 @@ struct PersistedLibrary: Codable {
 struct ImportReport {
     var imported = 0
     var skipped = 0
+    var playlistsAdded = 0
+    var playlistsUpdated = 0
     var errors: [String] = []
 
     var description: String {
         var result = "Imported \(imported) song\(imported == 1 ? "" : "s")."
         if skipped > 0 { result += " Skipped \(skipped) duplicate\(skipped == 1 ? "" : "s")." }
+        if playlistsAdded > 0 {
+            result += " Added \(playlistsAdded) playlist\(playlistsAdded == 1 ? "" : "s")."
+        }
+        if playlistsUpdated > 0 {
+            result += " Reconnected songs in \(playlistsUpdated) existing playlist\(playlistsUpdated == 1 ? "" : "s")."
+        }
         if !errors.isEmpty { result += " \(errors.count) failed: " + errors.prefix(2).joined(separator: "; ") }
         return result
     }
