@@ -21,6 +21,20 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(named != LocalAudioFileNaming.storageName(
             originalName: "The Artist - The Song.mp3", id: otherID, fileExtension: "mp3"),
                         "distinct recordings do not overwrite each other")
+        let validPlaylist = "37i9dQZF1DXcBWIGoYBM5M"
+        verifyDiscovery(SpotifyPlaylistLinks.playlistID(
+            from: "https://open.spotify.com/playlist/\(validPlaylist)?si=share") == validPlaylist,
+            "Spotify share link identifies the selected playlist")
+        for invalid in [
+            "http://open.spotify.com/playlist/\(validPlaylist)",
+            "https://open.spotify.com.evil.invalid/playlist/\(validPlaylist)",
+            "https://open.spotify.com/track/\(validPlaylist)",
+            "https://open.spotify.com/playlist/not-a-valid-spotify-id",
+            "https://user:secret@open.spotify.com/playlist/\(validPlaylist)"
+        ] {
+            verifyDiscovery(SpotifyPlaylistLinks.playlistID(from: invalid) == nil,
+                            "reject unrelated or malformed playlist URLs")
+        }
         let wishes = [
             PlaylistWish(title: "First", artist: "Artist", album: "", spotifyURL: nil),
             PlaylistWish(title: "Second", artist: "Artist", album: "", spotifyURL: nil),
