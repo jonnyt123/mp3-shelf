@@ -242,8 +242,8 @@ struct SpotifyImportView: View {
                     let data = try Data(contentsOf: url)
                     let baseName = url.deletingPathExtension().lastPathComponent
                     latest = try library.importPlaylistCSV(data: data, name: baseName, spotifyURL: optionalSpotifyURL)
-                    if let latest, latest.missing > 0, let imported = library.playlists.last {
-                        library.startAutomaticDownloads(for: imported.id)
+                    if let latest, latest.missing > 0 {
+                        library.startAutomaticDownloads(for: latest.playlistID)
                     }
                 } catch { notice = error.localizedDescription }
             case .failure(let error): notice = error.localizedDescription
