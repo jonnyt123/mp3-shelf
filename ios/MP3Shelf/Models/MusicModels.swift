@@ -1,5 +1,21 @@
 import Foundation
 
+/// Independent downloadable recordings remain individual, recognizable files
+/// in Files → On My iPhone → MP3 Shelf → Music, without filename collisions.
+enum LocalAudioFileNaming {
+    static func storageName(originalName: String, id: UUID, fileExtension: String) -> String {
+        let name = URL(fileURLWithPath: originalName)
+            .deletingPathExtension().lastPathComponent
+        let cleaned = String(name.map { character -> Character in
+            "/\\:*?\"<>|".contains(character) || character.isNewline ? "-" : character
+        })
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        let stem = String((cleaned.isEmpty ? "Offline audio" : cleaned).prefix(96))
+        return "\(stem) [\(id.uuidString.prefix(12))].\(fileExtension.lowercased())"
+    }
+}
+
 enum RepeatMode: String, Codable, CaseIterable {
     case off, all, one
 
