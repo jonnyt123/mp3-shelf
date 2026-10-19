@@ -328,6 +328,23 @@ enum AudioSourceFinderTests {
                     "source inspection remains bounded to 25 candidates")
         verify(prioritizedLinks.first?.lastPathComponent == "verified-track.mp3",
                     "explicit publisher audio beats first 25 generic anchors")
+        let weakPage = WebAudioSearchResult(
+            title: "The Song", description: "Unknown artist, unrelated store",
+            url: URL(string: "https://elsewhere.example/the-song")!)
+        let irrelevantPage = WebAudioSearchResult(
+            title: "Shopping website", description: "Buy a hat",
+            url: URL(string: "https://store.example/hats")!)
+        let chosenPages = WebAudioSearch.pagesWorthInspecting(
+            [irrelevantPage, weakPage, aligned, textOnly],
+            for: wish, limit: 2)
+        verify(chosenPages.map(\.url) == [textOnly.url, weakPage.url],
+               "batch inspection prioritizes strong artist/title matches, excludes audio URLs")
+        verify(WebAudioSearch.pagesWorthInspecting(
+            [irrelevantPage], for: wish, limit: 3).isEmpty,
+               "unrelated search pages are not visited automatically")
+        verify(WebAudioSearch.pagesWorthInspecting(
+            [textOnly], for: wish, limit: 0).isEmpty,
+               "zero page-inspection budget makes no network candidates")
         print("Audio source discovery validation tests passed")
     }
 }
