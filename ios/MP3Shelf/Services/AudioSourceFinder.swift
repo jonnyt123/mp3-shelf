@@ -517,6 +517,22 @@ enum WebAudioSearch {
         return url
     }
 
+    /// Rank likely artist/title references and direct file links first.
+    /// Scores are only navigation hints, never evidence of license or identity.
+    static func resultScore(_ hit: WebAudioSearchResult, for wish: PlaylistWish) -> Int {
+        let combined = MusicMatching.key(hit.title + " " + hit.description +
+                                         " " + hit.url.lastPathComponent)
+        let title = MusicMatching.key(wish.title)
+        let artist = MusicMatching.key(wish.artist)
+        let titlePresent = !title.isEmpty && combined.contains(title)
+        let artistPresent = !artist.isEmpty && combined.contains(artist)
+        var score = hit.isDirectAudio ? 40 : 0
+        if titlePresent { score += 20 }
+        if artistPresent { score += 20 }
+        if titlePresent && artistPresent { score += 40 }
+        return score
+    }
+
     private static func duplicateKey(for url: URL) -> String {
         // Result pages commonly differ only by #fragments or tracking query
         // parameters. Keep their original URLs for navigation and downloads.
@@ -593,7 +609,13 @@ enum WebAudioSearch {
             }
         }
         if merged.isEmpty, let firstError { throw firstError }
-        return merged
+        // Stable ranking keeps equally-scored items in provider discovery
+        // order and prioritizes files/links with both title and artist text.
+        return merged.enumerated().sorted { a, b in
+            let lhs = resultScore(a.element, for: wish)
+            let rhs = resultScore(b.element, for: wish)
+            return lhs == rhs ? a.offset < b.offset : lhs > rhs
+        }.map(\.element)
     }
 
     static func loadKey() -> String? {
