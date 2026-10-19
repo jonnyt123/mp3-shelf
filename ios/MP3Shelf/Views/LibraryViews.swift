@@ -655,6 +655,7 @@ struct PlaylistDetailView: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var editing: MusicTrack?
+    @State private var manuallyAdding: PlaylistWish?
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
 
@@ -896,6 +897,14 @@ struct PlaylistDetailView: View {
                                             .foregroundStyle(ShelfTheme.subdued)
                                     }
                                 }
+                                if MusicMatching.matchingTrack(for: wish, in: library.tracks) == nil {
+                                    Button { manuallyAdding = wish } label: {
+                                        Label("I have an authorized audio link",
+                                              systemImage: "link.badge.plus")
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                    .accessibilityHint("Download a recording you have permission to save and attach it to this missing song.")
+                                }
                                 if let url = wish.spotifyURL, let link = URL(string: url) {
                                     Link("View original on Spotify", destination: link)
                                         .font(.caption)
@@ -922,5 +931,95 @@ struct PlaylistDetailView: View {
             }
         }
         .sheet(item: $editing) { track in RenameTrackView(track: track) }
+        .sheet(item: $manuallyAdding) { wish in
+            AuthorizedPlaylistAudioView(wish: wish)
+        }
+    }
+}
+
+/// Recovery path when an independent catalog cannot locate a licensed recording.
+/// The supplied direct HTTPS audio URL must be provided by the user, not
+/// derived from Spotify streams or an unverified download search engine.
+struct AuthorizedPlaylistAudioView: View {
+    let wish: PlaylistWish
+    @EnvironmentObject private var library: MusicLibrary
+    @Environment(\.dismiss) private var dismiss
+    @State private var link = ""
+    @State private var isDownloading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("MISSING SONG") {
+                    Text(wish.title).font(.headline)
+                    Text(wish.artist).foregroundStyle(.secondary)
+                    if let duration = wish.durationSeconds {
+                        Text("Expected length: \(Int(duration)) seconds")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Section("DIRECT AUDIO FILE URL") {
+                    TextField("https://example.org/song.mp3", text: $link)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    Text("Paste a direct HTTPS file URL only when the rights holder permits downloading. MP3 Shelf checks that the file can play and matches Spotify's duration when available. It will then link the saved recording to this playlist.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
+                              url.scheme?.lowercased() == "https",
+                              url.host != nil else {
+                            errorMessage = "Enter a direct HTTPS audio file link."
+                            return
+                        }
+                        isDownloading = true
+                        Task {
+                            defer { isDownloading = false }
+                            do {
+                                let result = try await library.downloadAudio(from: url, matching: wish)
+                                if result.imported > 0 {
+                                    dismiss()
+                                } else {
+                                    errorMessage = "The audio file is already stored. Check the song's title and artist in your library to match this playlist."
+                                }
+                            } catch {
+                                errorMessage = error.localizedDescription
+                            }
+                        }
+                    } label: {
+                        if isDownloading {
+                            HStack {
+                                ProgressView()
+                                Text("Downloading and checking audio…")
+                            }
+                        } else {
+                            Label("Download and attach this song", systemImage: "arrow.down.circle.fill")
+                        }
+                    }
+                    .disabled(isDownloading || link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                Section {
+                    Text("A Spotify playlist link is not a direct MP3 file. Commercial music usually requires a separate legal purchase or download from the rightsholder.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Attach Offline Audio")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                        .disabled(isDownloading)
+                }
+            }
+            .alert("Audio Download", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
     }
 }
