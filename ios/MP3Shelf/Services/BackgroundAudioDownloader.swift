@@ -34,6 +34,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private var tickets: [UUID: BackgroundAudioTicket] = [:]
     private var processing: Set<UUID> = []
     private weak var library: MusicLibrary?
+    private var cellularApprovedPlaylists = Set<UUID>()
     private var backgroundEventsCompletion: (() -> Void)?
 
     private lazy var session: URLSession = {
@@ -44,6 +45,60 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         configuration.waitsForConnectivity = true
         return URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
     }()
+
+    private func downloadRequest(for url: URL, playlistID: UUID) -> URLRequest {
+        var request = URLRequest(url: url)
+        // Background session is configured to support manual cellular opt-in,
+        // but EVERY task defaults to Wi-Fi-only at the request level.
+        let cellular = cellularApprovedPlaylists.contains(playlistID)
+        request.allowsCellularAccess = cellular
+        request.allowsExpensiveNetworkAccess = cellular
+        return request
+    }
+
+    /// Upgrade already-queued Wi-Fi tasks when the user explicitly approves
+    /// cellular for this playlist. We use new ticket IDs so late delegate
+    /// callbacks from cancelled tasks cannot corrupt the replacement.
+    func enableCellular(for playlistID: UUID) {
+        cellularApprovedPlaylists.insert(playlistID)
+        session.getAllTasks { [weak self] tasks in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                var changed = false
+                for task in tasks {
+                    guard let raw = task.taskDescription,
+                          let oldID = UUID(uuidString: raw),
+                          let oldTicket = self.tickets[oldID],
+                          oldTicket.playlistID == playlistID,
+                          oldTicket.status == .queued,
+                          !self.fm.fileExists(atPath: Self.stagingURL(oldID).path),
+                          task.originalRequest?.allowsCellularAccess == false
+                    else { continue }
+                    var old = oldTicket
+                    old.status = .cancelled
+                    old.failureReason = "Replaced with a cellular-authorized transfer"
+                    self.tickets[oldID] = old
+                    var replacement = BackgroundAudioTicket(
+                        id: UUID(), playlistID: old.playlistID,
+                        requested: old.requested, downloadURL: old.downloadURL,
+                        sourcePage: old.sourcePage, licensePage: old.licensePage,
+                        provider: old.provider)
+                    replacement.startedAt = .now
+                    self.tickets[replacement.id] = replacement
+                    let next = self.session.downloadTask(
+                        with: self.downloadRequest(for: replacement.downloadURL, playlistID: playlistID))
+                    next.taskDescription = replacement.id.uuidString
+                    next.resume()
+                    task.cancel()
+                    changed = true
+                }
+                if changed {
+                    self.persist()
+                    self.updatePending()
+                }
+            }
+        }
+    }
 
     override private init() {
         let root = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -89,7 +144,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         tickets[ticket.id] = ticket
         persist()
         revision += 1
-        let task = session.downloadTask(with: source.downloadURL)
+        let task = session.downloadTask(
+            with: downloadRequest(for: source.downloadURL, playlistID: playlistID))
         task.taskDescription = ticket.id.uuidString
         task.resume()
         updatePending()
@@ -97,7 +153,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     func ticketsForPlaylist(_ playlistID: UUID? = nil) -> [BackgroundAudioTicket] {
-        tickets.values.filter { playlistID == nil || $0.playlistID == playlistID }
+        tickets.values.filter {
+            (playlistID == nil || $0.playlistID == playlistID) &&
+            $0.failureReason != "Replaced with a cellular-authorized transfer"
+        }
             .sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
     }
 
@@ -124,7 +183,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         ticket.startedAt = .now
         tickets[newID] = ticket
         persist()
-        let task = session.downloadTask(with: ticket.downloadURL)
+        let task = session.downloadTask(
+            with: downloadRequest(for: ticket.downloadURL, playlistID: ticket.playlistID))
         task.taskDescription = newID.uuidString
         task.resume()
         updatePending()

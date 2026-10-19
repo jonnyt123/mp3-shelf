@@ -790,7 +790,33 @@ struct PlaylistDetailView: View {
                             }
                         }
                         .padding(.vertical, 8)
-                        Text("Automatic matching checks three openly licensed catalogs. Use Web Search below to also find artist pages, stores and other download information across the wider web.")
+                        if library.isOnWiFi {
+                            Label("On Wi-Fi: available songs are found and downloaded automatically.",
+                                  systemImage: "wifi")
+                                .font(.caption).foregroundStyle(ShelfTheme.mint)
+                        } else if library.isOnCellular {
+                            if library.cellularApproved(for: playlistID) {
+                                Label("Cellular downloads approved for this playlist in this app session.",
+                                      systemImage: "antenna.radiowaves.left.and.right")
+                                    .font(.caption).foregroundStyle(ShelfTheme.accent)
+                            } else {
+                                Label("Waiting for Wi-Fi. No automatic song downloads over cellular.",
+                                      systemImage: "wifi.slash")
+                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                Button {
+                                    library.downloadUsingCellular(for: playlistID)
+                                } label: {
+                                    Label("Download this playlist using cellular data",
+                                          systemImage: "antenna.radiowaves.left.and.right")
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        } else {
+                            Label("Waiting for a Wi-Fi connection to continue downloads.",
+                                  systemImage: "wifi.slash")
+                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        }
+                        Text("Automatic matching checks three openly licensed catalogs. Other web download pages are suggestions requiring review; the app cannot guarantee every Spotify recording is independently downloadable.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         Button {
                             showWebDiscovery = true
@@ -810,8 +836,11 @@ struct PlaylistDetailView: View {
                                     Button("Resume Source Discovery") {
                                         library.resumeSourceDiscovery(for: playlistID)
                                     }
-                                } else if library.automaticDownloadProgress?.playlistID != playlistID ||
-                                            library.automaticDownloadProgress?.isRunning != true {
+                                } else if (library.isOnWiFi ||
+                                            (library.isOnCellular &&
+                                             library.cellularApproved(for: playlistID))) &&
+                                          (library.automaticDownloadProgress?.playlistID != playlistID ||
+                                           library.automaticDownloadProgress?.isRunning != true) {
                                     Button("Resume Search") {
                                         library.resumeSourceDiscovery(for: playlistID)
                                     }

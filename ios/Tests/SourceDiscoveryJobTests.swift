@@ -8,6 +8,18 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
 @main
 enum SourceDiscoveryJobTests {
     static func main() throws {
+        verifyDiscovery(DownloadNetworkPolicy.canDiscover(
+            onWiFi: true, onCellular: false, explicitlyAllowCellular: false),
+            "Wi-Fi downloads run without per-track confirmation")
+        verifyDiscovery(!DownloadNetworkPolicy.canDiscover(
+            onWiFi: false, onCellular: true, explicitlyAllowCellular: false),
+            "cellular automatic downloads are disabled by default")
+        verifyDiscovery(DownloadNetworkPolicy.canDiscover(
+            onWiFi: false, onCellular: true, explicitlyAllowCellular: true),
+            "explicit user approval permits cellular source discovery")
+        verifyDiscovery(!DownloadNetworkPolicy.canDiscover(
+            onWiFi: false, onCellular: false, explicitlyAllowCellular: true),
+            "downloads do not start without network connectivity")
         let id = UUID()
         let named = LocalAudioFileNaming.storageName(
             originalName: "The Artist - The Song.mp3", id: id, fileExtension: "MP3")

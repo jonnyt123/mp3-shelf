@@ -112,6 +112,29 @@ Automatic discovery may still return zero results even while all three catalog
 APIs are operating correctly. The direct-link option is not a stream ripper and
 must only be used for recordings you have permission to download.
 
+## Automatic Wi-Fi playlist downloads
+
+Importing a Spotify playlist starts the existing persisted independent-audio
+source discovery queue immediately, with no per-track approval. The app waits
+for a **satisfied Wi-Fi network** before searching and starting downloads.
+Its background URLSession tasks default to Wi-Fi-only using per-request
+cellular restrictions, so outstanding Wi-Fi transfers wait if the phone moves
+onto cellular. Downloaded, decodable matches enter the offline library
+without additional taps. The app resumes unfinished discovery when reopened
+or when a Wi-Fi path becomes available; iOS controls when suspended
+background transfers actually execute.
+
+On cellular, the playlist dashboard shows **Download this playlist using
+cellular data**. Tapping it explicitly authorizes cellular discovery and
+outstanding matching downloads *for this playlist only* in the current app
+session. Previously queued Wi-Fi-only transfer tasks are replaced with
+cellular-authorized tasks so they do not remain stuck waiting for Wi-Fi.
+This option can use mobile data, and interrupted transfers might restart.
+No blanket cellular permission is stored across relaunches. Album art,
+streaming Spotify tracks and unverified web hits are not downloaded by
+this automatic audio feature. Tracks with no matching independently
+downloadable recording remain unavailable.
+
 ## Broader web search for playlist downloads
 
 Inside any Spotify-imported playlist with missing songs, tap **Search the wider web

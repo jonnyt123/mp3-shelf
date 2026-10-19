@@ -2,6 +2,14 @@ import Foundation
 
 /// Checkpoint for foreground catalog lookups. Written atomically after each
 /// processed song, allowing discovery to resume after app suspension or exit.
+/// Pure policy used by the foreground discovery queue and regression tests.
+enum DownloadNetworkPolicy {
+    static func canDiscover(onWiFi: Bool, onCellular: Bool,
+                            explicitlyAllowCellular: Bool) -> Bool {
+        onWiFi || (onCellular && explicitlyAllowCellular)
+    }
+}
+
 struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     enum Result { case queued, unavailable, failed, alreadyPresent }
 

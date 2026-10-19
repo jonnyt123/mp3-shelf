@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import Combine
 import UIKit
+import Network
 
 struct AutomaticDownloadProgress {
     let playlistID: UUID
@@ -25,6 +26,49 @@ final class MusicLibrary: ObservableObject {
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
     @Published private(set) var discoveryJobs: [SourceDiscoveryJob] = []
+
+    // Wi-Fi is the default. Cellular downloads require explicit, session-only
+    // permission for the individual playlist.
+    @Published private(set) var isOnWiFi = false
+    @Published private(set) var isOnCellular = false
+    @Published private(set) var networkStatusKnown = false
+    private var cellularApprovedPlaylists = Set<UUID>()
+    private let networkMonitor = NWPathMonitor()
+    private let networkMonitorQueue = DispatchQueue(label: "MP3Shelf.wifi-download-policy")
+
+    func cellularApproved(for playlistID: UUID) -> Bool {
+        cellularApprovedPlaylists.contains(playlistID)
+    }
+
+    private func networkAllowsDiscovery(for playlistID: UUID) -> Bool {
+        networkStatusKnown && DownloadNetworkPolicy.canDiscover(
+            onWiFi: isOnWiFi, onCellular: isOnCellular,
+            explicitlyAllowCellular: cellularApprovedPlaylists.contains(playlistID))
+    }
+
+    /// User-initiated cellular override; never persisted or inferred.
+    func downloadUsingCellular(for playlistID: UUID) {
+        guard isOnCellular else { return }
+        cellularApprovedPlaylists.insert(playlistID)
+        BackgroundAudioDownloader.shared.enableCellular(for: playlistID)
+        if discoveryJob(for: playlistID) == nil {
+            startAutomaticDownloads(for: playlistID)
+        } else {
+            resumePendingDiscovery()
+        }
+    }
+
+    private func connectivityChanged(wifi: Bool, cellular: Bool) {
+        isOnWiFi = wifi
+        isOnCellular = cellular
+        networkStatusKnown = true
+        if let current = automaticDownloadProgress,
+           current.isRunning && !networkAllowsDiscovery(for: current.playlistID) {
+            automaticDownloadTask?.cancel()
+        } else {
+            resumePendingDiscovery()
+        }
+    }
 
     private let manager = FileManager.default
     private let storageRoot: URL
@@ -60,6 +104,14 @@ final class MusicLibrary: ObservableObject {
         } catch {
             print("MP3 Shelf could not initialize local storage: \(error)")
         }
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            let wifi = path.status == .satisfied && path.usesInterfaceType(.wifi)
+            let cellular = path.status == .satisfied && path.usesInterfaceType(.cellular)
+            Task { @MainActor [weak self] in
+                self?.connectivityChanged(wifi: wifi, cellular: cellular)
+            }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
     }
 
     /// Creates the same v1 .mp3shelf archive used by the browser PWA.
@@ -380,7 +432,10 @@ final class MusicLibrary: ObservableObject {
 
     func resumePendingDiscovery() {
         guard automaticDownloadTask == nil,
-              let job = discoveryJobs.first(where: { !$0.isPaused && !$0.isComplete }) else { return }
+              let job = discoveryJobs.first(where: {
+                  !$0.isPaused && !$0.isComplete &&
+                  networkAllowsDiscovery(for: $0.playlistID)
+              }) else { return }
         var progress = AutomaticDownloadProgress(playlistID: job.playlistID, total: job.wishes.count)
         progress.processed = job.nextIndex
         progress.queued = job.queued
@@ -463,7 +518,8 @@ final class MusicLibrary: ObservableObject {
         var blockedByNetwork = false
         while let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) {
             var job = discoveryJobs[index]
-            if Task.isCancelled || job.isPaused || job.isComplete { break }
+            if Task.isCancelled || job.isPaused || job.isComplete ||
+                !networkAllowsDiscovery(for: playlistID) { break }
             guard let wish = job.currentWish else { break }
             if var progress = automaticDownloadProgress {
                 progress.currentSong = "\(wish.artist) — \(wish.title)"
@@ -475,7 +531,7 @@ final class MusicLibrary: ObservableObject {
             } else {
                 do {
                     let source = try await AudioSourceFinder.findAcrossCatalogs(for: wish)
-                    if Task.isCancelled { break }
+                    if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) { break }
                     if let source {
                         if BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID) {
                             job.record(.queued)
