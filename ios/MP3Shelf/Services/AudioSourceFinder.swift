@@ -510,7 +510,7 @@ enum WebAudioSearch {
               // Do not connect to raw IP addresses, including loopback,
               // private ranges, link-local and IPv6 literals.
               !host.contains(":"),
-              host.range(of: #"^[0-9]+(\\.[0-9]+){3}$"#,
+              host.range(of: #"^[0-9]+(\.[0-9]+){3}$"#,
                          options: .regularExpression) == nil,
               !["open.spotify.com", "accounts.spotify.com"].contains(host)
         else { return nil }
