@@ -159,6 +159,13 @@ landing pages for advertised audio, with per-page progress and a review
 button for each candidate. This batch inspection requires the user to
 initiate it; results are never automatically downloaded.
 
+The inspector gives precedence to links expressly marked as audio by the
+publisher (Open Graph audio, HTML5 audio, Schema.org `AudioObject`, or a
+download attribute) over arbitrary MP3 hyperlinks. Extensionless URLs
+advertised by audio metadata are also eligible for a limited HTTP HEAD
+content-type check. A matching URL or filename is not confirmation of the
+recording's identity or its download permissions.
+
 For an indexed webpage in **Web Download Search**, tap **Find audio files
 linked on this page**. MP3 Shelf reads only bounded HTML, standard audio
 tags, Open Graph audio metadata, direct file links and Schema.org
