@@ -1070,6 +1070,9 @@ struct WebAudioDiscoveryView: View {
     @State private var scanning = false
     @State private var scanTask: Task<Void, Never>?
     @State private var selectedLink: WebAudioSelection?
+    @State private var inspectingPages: Set<String> = []
+    @State private var extractedLinks: [String: [URL]] = [:]
+    @State private var inspectionErrors: [String: String] = [:]
     @State private var message: String?
 
     // Keep every scan under 100 Brave API requests, regardless of depth.
@@ -1215,6 +1218,48 @@ struct WebAudioDiscoveryView: View {
                                         } label: {
                                             Label("Check and save this audio file", systemImage: "arrow.down.circle")
                                                 .font(.caption.weight(.medium))
+                                        }
+                                    } else {
+                                        Button {
+                                            let page = hit.url
+                                            inspectingPages.insert(hit.id)
+                                            inspectionErrors.removeValue(forKey: hit.id)
+                                            Task {
+                                                defer { inspectingPages.remove(hit.id) }
+                                                do {
+                                                    extractedLinks[hit.id] = try await AudioLandingPageInspector.inspect(page)
+                                                } catch {
+                                                    inspectionErrors[hit.id] = error.localizedDescription
+                                                }
+                                            }
+                                        } label: {
+                                            Label(inspectingPages.contains(hit.id)
+                                                ? "Checking page for audio links…"
+                                                : "Find audio files linked on this page",
+                                                systemImage: "doc.text.magnifyingglass")
+                                                .font(.caption.weight(.medium))
+                                        }
+                                        .disabled(inspectingPages.contains(hit.id))
+                                        if let discovered = extractedLinks[hit.id] {
+                                            if discovered.isEmpty {
+                                                Text("No direct audio files advertised by this page.")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            } else {
+                                                ForEach(discovered, id: \.absoluteString) { file in
+                                                    Button {
+                                                        selectedLink = WebAudioSelection(wish: wish, url: file)
+                                                    } label: {
+                                                        Label("Review \(file.lastPathComponent)",
+                                                              systemImage: "waveform.circle")
+                                                            .font(.caption.weight(.semibold))
+                                                            .lineLimit(2)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let error = inspectionErrors[hit.id] {
+                                            Text(error).font(.caption2).foregroundStyle(.orange)
                                         }
                                     }
                                 }
