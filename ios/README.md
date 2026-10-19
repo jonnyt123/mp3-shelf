@@ -130,6 +130,16 @@ paths:
    - **Extensive**: five separate queries per song, including official
      digital-download and independent archive/source-site searches.
 
+If you enable **Inspect matching webpages during search**, the same explicit
+batch search also examines up to **12 relevant publisher pages per batch**
+(one per song) for direct audio candidates. This is an opt-in extra network
+read, and each inspection checks at most two extensionless links with HTTP
+HEAD. Page selection favors results referencing the requested artist and/or
+title and skips unrelated pages and already-direct audio URLs. You can
+still manually inspect the top five relevant pages for an individual song.
+No web-search or page-inspection result triggers an audio download without
+another explicit user action.
+
 The screen deduplicates URL results and can show up to 75 links per song.
 Each batch performs at most **100 provider API requests**, with **Next batch**
 and **Previous** controls so a long playlist is not truncated. The screen
