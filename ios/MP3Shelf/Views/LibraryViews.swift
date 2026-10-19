@@ -1062,6 +1062,8 @@ struct WebAudioDiscoveryView: View {
     let wishes: [PlaylistWish]
     @Environment(\.dismiss) private var dismiss
     @State private var apiKey = WebAudioSearch.loadKey() ?? ""
+    @State private var searchDepth: WebAudioSearch.SearchDepth = .quick
+    @State private var pageStart = 0
     @State private var results: [UUID: [WebAudioSearchResult]] = [:]
     @State private var issues: [UUID: String] = [:]
     @State private var searched = 0
@@ -1070,14 +1072,18 @@ struct WebAudioDiscoveryView: View {
     @State private var selectedLink: WebAudioSelection?
     @State private var message: String?
 
-    // Avoid unexpectedly spending API credits on giant playlists.
-    private var batch: [PlaylistWish] { Array(wishes.prefix(100)) }
+    // Keep every scan under 100 Brave API requests, regardless of depth.
+    // Pagination makes songs beyond the first 100 accessible without silent cost.
+    private var pageSize: Int { max(1, 100 / searchDepth.rawValue) }
+    private var batch: [PlaylistWish] {
+        Array(wishes.dropFirst(pageStart).prefix(pageSize))
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("SEARCH BEYOND THE CATALOGS") {
-                    Text("Search artist sites, music stores, and download pages across the web for up to 100 missing tracks. Results are leads to inspect, not guaranteed MP3 files.")
+                    Text("Search across artist sites, independent music stores, public archives, and other indexed web pages. Use multiple targeted queries to find more possible download sources.")
                         .font(.subheadline)
                     SecureField("Brave Search API key", text: $apiKey)
                         .textInputAutocapitalization(.never)
@@ -1085,6 +1091,14 @@ struct WebAudioDiscoveryView: View {
                     Text("Brave offers a separate web-search API. Enter your own key once; it stays in this iPhone's Keychain and is sent only to Brave. Searches consume your account's API credits.")
                         .font(.caption).foregroundStyle(.secondary)
                     Link("Get an API key from Brave Search", destination: URL(string: "https://brave.com/search/api/")!)
+                    Picker("Search coverage", selection: $searchDepth) {
+                        ForEach(WebAudioSearch.SearchDepth.allCases) { depth in
+                            Text(depth.label).tag(depth)
+                        }
+                    }
+                    .disabled(scanning)
+                    Text("This batch contains \(batch.count) songs and can make up to \(batch.count * searchDepth.rawValue) billable Brave API searches. Extensive mode combines general, store, direct-file, official and archive searches.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button {
                         guard WebAudioSearch.saveKey(apiKey) else {
                             message = "Could not securely save the search key to Keychain."
@@ -1095,18 +1109,30 @@ struct WebAudioDiscoveryView: View {
                         issues = [:]
                         searched = 0
                         scanning = true
+                        let currentBatch = batch
+                        let depth = searchDepth
                         scanTask = Task {
+                            var scannedStop = false
                             let key = apiKey
-                            for wish in batch {
+                            for wish in currentBatch {
                                 if Task.isCancelled { break }
                                 do {
-                                    results[wish.id] = try await WebAudioSearch.search(for: wish, using: key)
+                                    results[wish.id] = try await WebAudioSearch.search(for: wish, using: key, depth: depth)
                                 } catch is CancellationError {
                                     break
                                 } catch {
                                     issues[wish.id] = error.localizedDescription
+                                    // Do not repeatedly hit an invalid key or exhausted API quota.
+                                    if let problem = error as? WebAudioSearch.SearchFailure {
+                                        switch problem {
+                                        case .rejectedKey, .rateLimited:
+                                            scannedStop = true
+                                        default: break
+                                        }
+                                    }
                                 }
                                 searched += 1
+                                if scannedStop { break }
                             }
                             scanning = false
                         }
@@ -1120,9 +1146,25 @@ struct WebAudioDiscoveryView: View {
                         Text("\(searched) of \(batch.count) songs searched")
                             .font(.caption.monospacedDigit())
                     }
-                    if wishes.count > batch.count {
-                        Text("This scan includes the first 100 missing songs. To avoid excessive API charges, search remaining songs from their individual browser links.")
-                            .font(.caption).foregroundStyle(.secondary)
+                    if !wishes.isEmpty {
+                        HStack(spacing: 16) {
+                            Text("Songs \(pageStart + 1)–\(pageStart + batch.count) of \(wishes.count)")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            if pageStart > 0 {
+                                Button("Previous") {
+                                    pageStart = max(0, pageStart - pageSize)
+                                    searched = 0
+                                }.disabled(scanning)
+                            }
+                            if pageStart + batch.count < wishes.count {
+                                Button("Next batch") {
+                                    pageStart += batch.count
+                                    searched = 0
+                                }.disabled(scanning)
+                            }
+                        }
                     }
                     Text("Web results may be unrelated, behind a purchase, or unauthorized. This feature does not extract Spotify streams, bypass DRM, or automatically download unverified search hits.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -1135,11 +1177,17 @@ struct WebAudioDiscoveryView: View {
                                 Text(wish.artist).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Link(destination: WebAudioSearch.browserURL(for: wish)) {
-                                Label("Browser", systemImage: "safari")
-                                    .labelStyle(.iconOnly)
+                            Menu {
+                                ForEach(WebAudioSearch.BrowserProvider.allCases) { provider in
+                                    Link(destination: WebAudioSearch.browserURL(for: wish, provider: provider)) {
+                                        Text(provider.rawValue)
+                                    }
+                                }
+                            } label: {
+                                Label("10 search sites", systemImage: "globe")
+                                    .font(.caption.weight(.semibold))
                             }
-                            .accessibilityLabel("Search web browser for \(wish.title)")
+                            .accessibilityLabel("Choose a search website for \(wish.title)")
                         }
                         if let issue = issues[wish.id] {
                             Text(issue).font(.caption).foregroundStyle(.orange)
@@ -1188,6 +1236,10 @@ struct WebAudioDiscoveryView: View {
             }
             .sheet(item: $selectedLink) { selected in
                 AuthorizedPlaylistAudioView(wish: selected.wish, initialURL: selected.url)
+            }
+            .onChange(of: searchDepth) { _, _ in
+                pageStart = 0
+                searched = 0
             }
             .onDisappear { scanTask?.cancel() }
             .alert("Web Search", isPresented: Binding(
