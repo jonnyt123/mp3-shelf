@@ -232,6 +232,23 @@ enum AudioSourceFinderTests {
                 relativeTo: sourcePage) == nil, "streaming playlists are not direct audio")
         verify(AudioLandingPageInspector.candidates(in: String(repeating: "a", count: 1_000_001),
                 pageURL: sourcePage).isEmpty, "oversized HTML is never parsed")
+        let aligned = WebAudioSearchResult(
+            title: "The Artist — The Song MP3", description: "Official music download",
+            url: URL(string: "https://publisher.example/the-song.mp3")!)
+        let unrelated = WebAudioSearchResult(
+            title: "Random artist audio", description: "A different song",
+            url: URL(string: "https://publisher.example/random-page")!)
+        let textOnly = WebAudioSearchResult(
+            title: "The Artist - The Song", description: "Music store listing",
+            url: URL(string: "https://publisher.example/album/song")!)
+        verify(WebAudioSearch.resultScore(aligned, for: wish) >
+               WebAudioSearch.resultScore(textOnly, for: wish),
+               "matching downloadable audio files rank above matching pages")
+        verify(WebAudioSearch.resultScore(textOnly, for: wish) >
+               WebAudioSearch.resultScore(unrelated, for: wish),
+               "artist/title evidence ranks ahead of unrelated web pages")
+        verify(WebAudioSearch.resultScore(unrelated, for: wish) == 0,
+               "unrelated links are not described as confirmed song matches")
         print("Audio source discovery validation tests passed")
     }
 }
