@@ -363,9 +363,104 @@ extension AudioSourceFinder {
             if error is CancellationError { throw error }
             if firstError == nil { firstError = error }
         }
+        try Task.checkCancellation()
+        do {
+            if let audius = try await findAudius(for: wish) { return audius }
+        } catch {
+            if error is CancellationError { throw error }
+            if firstError == nil { firstError = error }
+        }
         // Network errors must not be recorded as permanent "unavailable".
         if let firstError { throw firstError }
         return nil
+    }
+}
+
+
+// Audius exposes artist-enabled downloads through its public read-only API.
+// We never use the streaming endpoint. Only exact, ungated, unambiguous
+// downloadable recordings with compatible duration enter the download queue.
+// Audius' Open Music License covers third-party music-player playback, subject
+// to the uploader's access restrictions and alternative licensing choices.
+extension AudioSourceFinder {
+    private struct AudiusSearchResponse: Decodable {
+        let data: [AudiusTrack]
+    }
+    struct AudiusTrack: Decodable {
+        struct User: Decodable {
+            let name: String?
+            let handle: String?
+        }
+        let id: String
+        let title: String
+        let user: User?
+        let duration: Double?
+        let is_downloadable: Bool?
+        let is_download_gated: Bool?
+        let is_stream_gated: Bool?
+        let is_unlisted: Bool?
+        let download_conditions: AudiusGate?
+        let permalink: String?
+        let license: String?
+    }
+    struct AudiusGate: Decodable {}
+
+    static func audiusSearchURL(for wish: PlaylistWish) -> URL {
+        var parts = URLComponents(string: "https://api.audius.co/v1/tracks/search")!
+        parts.queryItems = [
+            URLQueryItem(name: "query", value: "\(wish.artist) \(wish.title)"),
+            URLQueryItem(name: "limit", value: "25"),
+            URLQueryItem(name: "only_downloadable", value: "true")
+        ]
+        return parts.url!
+    }
+
+    static func audiusCandidate(_ track: AudiusTrack, for wish: PlaylistWish) -> AudioCatalogMatch? {
+        guard track.is_downloadable == true,
+              track.is_download_gated != true,
+              track.download_conditions == nil,
+              track.is_stream_gated != true,
+              track.is_unlisted != true,
+              let creditedArtist = track.user?.name,
+              exactMetadataMatch(title: track.title, creator: creditedArtist, wish: wish),
+              !track.id.isEmpty, track.id.count <= 120,
+              track.id.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil,
+              let duration = track.duration, duration > 0, duration <= 3600,
+              wish.durationSeconds.map({ abs($0 - duration) <= 4.0 }) ?? true
+        else { return nil }
+
+        // A permalink must identify a normal public Audius music page.
+        let page: URL
+        if let raw = track.permalink, let url = URL(string: raw),
+           url.scheme?.lowercased() == "https",
+           let host = url.host?.lowercased(),
+           host == "audius.co" || host == "www.audius.co" {
+            page = url
+        } else {
+            // The canonical track page cannot be derived reliably from an
+            // API id alone: skip items without trustworthy attribution.
+            return nil
+        }
+        // The public download endpoint serves MP3 by default; original=false
+        // specifically avoids requesting an original file of unknown format.
+        var download = URLComponents(string:
+            "https://api.audius.co/v1/tracks/\(track.id)/download")!
+        download.queryItems = [URLQueryItem(name: "original", value: "false")]
+        guard let fileURL = download.url else { return nil }
+        return AudioCatalogMatch(
+            downloadURL: fileURL, itemURL: page,
+            licenseURL: URL(string: "https://audius.org/open-music-license.pdf")!,
+            sourceName: "Audius (artist-enabled download)")
+    }
+
+    static func findAudius(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+        guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
+        let response: AudiusSearchResponse = try await requestJSON(audiusSearchURL(for: wish))
+        let matched = response.data.compactMap { audiusCandidate($0, for: wish) }
+        let unique = Dictionary(grouping: matched, by: { $0.downloadURL.absoluteString })
+        // Two exact-looking recordings are ambiguous even when both providers
+        // label them as downloadable. Do not silently choose one.
+        return unique.count == 1 ? unique.values.first?.first : nil
     }
 }
 

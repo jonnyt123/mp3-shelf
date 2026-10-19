@@ -816,7 +816,7 @@ struct PlaylistDetailView: View {
                                   systemImage: "wifi.slash")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
-                        Text("Automatic matching checks three openly licensed catalogs. Other web download pages are suggestions requiring review; the app cannot guarantee every Spotify recording is independently downloadable.")
+                        Text("Automatic matching now checks Internet Archive, Openverse, Wikimedia Commons and artist-enabled Audius downloads. Other web pages require review; not every Spotify recording is independently downloadable.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         Button {
                             showWebDiscovery = true

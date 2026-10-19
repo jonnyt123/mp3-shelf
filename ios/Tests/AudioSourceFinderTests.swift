@@ -345,6 +345,64 @@ enum AudioSourceFinderTests {
         verify(WebAudioSearch.pagesWorthInspecting(
             [textOnly], for: wish, limit: 0).isEmpty,
                "zero page-inspection budget makes no network candidates")
+
+        let audiusArtist = AudioSourceFinder.AudiusTrack.User(
+            name: "The Artist", handle: "the-artist")
+        let audiusOK = AudioSourceFinder.AudiusTrack(
+            id: "D7KyD", title: "The Song", user: audiusArtist,
+            duration: 212, is_downloadable: true, is_download_gated: false,
+            is_stream_gated: false, is_unlisted: false,
+            download_conditions: nil, permalink: "https://audius.co/the-artist/the-song",
+            license: nil)
+        let audiusMatch = AudioSourceFinder.audiusCandidate(audiusOK, for: wish)
+        verify(audiusMatch?.downloadURL.host == "api.audius.co",
+               "Audius artist-enabled direct-download endpoint is recognized")
+        verify(audiusMatch?.sourceName.contains("Audius") == true,
+               "Audius attribution is retained")
+        verify(audiusMatch?.downloadURL.absoluteString.contains("/download?original=false") == true,
+               "Audius requires real download endpoint, not streaming playback")
+        verify(AudioSourceFinder.audiusSearchURL(for: wish).absoluteString.contains(
+            "only_downloadable=true"), "Audius search filters to downloadable tracks")
+        let audiusNonDownload = AudioSourceFinder.AudiusTrack(
+            id: "D7KyD", title: "The Song", user: audiusArtist,
+            duration: 212, is_downloadable: false, is_download_gated: false,
+            is_stream_gated: false, is_unlisted: false,
+            download_conditions: nil, permalink: "https://audius.co/the-artist/the-song",
+            license: nil)
+        verify(AudioSourceFinder.audiusCandidate(audiusNonDownload, for: wish) == nil,
+               "Audius stream-only recordings cannot auto-download")
+        let audiusGated = AudioSourceFinder.AudiusTrack(
+            id: "D7KyD", title: "The Song", user: audiusArtist,
+            duration: 212, is_downloadable: true, is_download_gated: true,
+            is_stream_gated: false, is_unlisted: false,
+            download_conditions: nil, permalink: "https://audius.co/the-artist/the-song",
+            license: nil)
+        verify(AudioSourceFinder.audiusCandidate(audiusGated, for: wish) == nil,
+               "Audius paid or gated downloads are rejected")
+        let audiusWrongArtist = AudioSourceFinder.AudiusTrack(
+            id: "D7KyD", title: "The Song",
+            user: .init(name: "Another Artist", handle: "someone"),
+            duration: 212, is_downloadable: true, is_download_gated: false,
+            is_stream_gated: false, is_unlisted: false,
+            download_conditions: nil, permalink: "https://audius.co/someone/the-song",
+            license: nil)
+        verify(AudioSourceFinder.audiusCandidate(audiusWrongArtist, for: wish) == nil,
+               "a title match cannot replace the original Spotify artist")
+        let audiusWrongDuration = AudioSourceFinder.AudiusTrack(
+            id: "D7KyD", title: "The Song", user: audiusArtist,
+            duration: 30, is_downloadable: true, is_download_gated: false,
+            is_stream_gated: false, is_unlisted: false,
+            download_conditions: nil, permalink: "https://audius.co/the-artist/the-song",
+            license: nil)
+        verify(AudioSourceFinder.audiusCandidate(audiusWrongDuration, for: wish) == nil,
+               "preview-length recordings are rejected against Spotify duration")
+        let audiusSpoof = AudioSourceFinder.AudiusTrack(
+            id: "D7KyD", title: "The Song", user: audiusArtist,
+            duration: 212, is_downloadable: true, is_download_gated: false,
+            is_stream_gated: false, is_unlisted: false, download_conditions: nil,
+            permalink: "https://audius.co.evil.example/the-song", license: nil)
+        verify(AudioSourceFinder.audiusCandidate(audiusSpoof, for: wish) == nil,
+               "Audius result landing URL must be the genuine Audius domain")
         print("Audio source discovery validation tests passed")
     }
 }

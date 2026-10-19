@@ -135,6 +135,24 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Artist-enabled Audius downloads
+
+The automatic Wi-Fi-first matching queue now also checks Audius, without an
+extra API key. MP3 Shelf searches its official public track endpoint for
+artist-enabled downloads, rejects stream-only, gated, unlisted and otherwise
+restricted results, and requires exact artist/title metadata and compatible
+recording duration. More than one eligible exact match is treated as
+ambiguous, never chosen at random. Accepted tracks use the official Audius
+**download** endpoint, not the streaming endpoint. Attribution links to the
+publisher's original Audius page and its Open Music License; final downloaded
+audio is decoded and duration-checked before adding it to the local playlist.
+The Audius uploader and API indicate permissions; the application does not
+independently verify the uploader's ownership. API access can be rate-limited.
+
+Jamendo remains excluded because its API terms restrict offline music
+caching applications. Search results, artist pages and streaming-only
+recordings are never silently substituted for actual downloads.
+
 ## Broader web search for playlist downloads
 
 Inside any Spotify-imported playlist with missing songs, tap **Search the wider web
