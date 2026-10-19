@@ -785,7 +785,8 @@ enum AudioLandingPageInspector {
                        let url = attrs["content"] {
                         add(url, explicitlyDownloadable: true, publisherDeclared: true)
                     }
-                } else if lower.hasPrefix("<a") || lower.hasPrefix("<link") {
+                } else if (lower.hasPrefix("<a") && !lower.hasPrefix("<audio")) ||
+                          lower.hasPrefix("<link") {
                     if let url = attrs["href"] {
                         let isDownload = lower.hasPrefix("<a") &&
                             tag.range(of: #"\sdownload(?:\s|=|>)"#,
