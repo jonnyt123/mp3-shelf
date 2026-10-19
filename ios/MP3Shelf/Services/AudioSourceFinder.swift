@@ -760,7 +760,7 @@ enum AudioLandingPageInspector {
                     if let url = attrs["href"] {
                         let isDownload = lower.hasPrefix("<a") &&
                             tag.range(of: #"\sdownload(?:\s|=|>)"#,
-                                      options: .regularExpression) != nil
+                                      options: [.regularExpression, .caseInsensitive]) != nil
                         let audioType = supportedMIMEs.contains(
                             attrs["type"]?.lowercased() ?? "")
                         add(url, explicitlyDownloadable: isDownload || audioType)
@@ -870,8 +870,8 @@ enum AudioLandingPageInspector {
             probe.httpMethod = "HEAD"
             probe.timeoutInterval = 8
             probe.setValue("audio/*", forHTTPHeaderField: "Accept")
-            if let (_, response) = try? await session.data(for: probe),
-               let http = response as? HTTPURLResponse,
+            if let result = try? await session.data(for: probe),
+               let http = result.1 as? HTTPURLResponse,
                isVerifiedAudioResponse(http) {
                 accepted.append(link)
             }
