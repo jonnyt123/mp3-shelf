@@ -798,7 +798,6 @@ struct PlaylistDetailView: View {
                             Label("Search the wider web for missing songs", systemImage: "globe")
                         }
                         .buttonStyle(.bordered)
-                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Catalog search: \(job.nextIndex)/\(job.wishes.count) processed")
