@@ -533,6 +533,24 @@ enum WebAudioSearch {
         return score
     }
 
+    /// Choose a small, relevant set of source pages to inspect for declared
+    /// downloadable media. A hit needs at least title or artist evidence;
+    /// arbitrary low-relevance pages are excluded from automatic page reads.
+    static func pagesWorthInspecting(_ hits: [WebAudioSearchResult],
+                                     for wish: PlaylistWish, limit: Int) -> [WebAudioSearchResult] {
+        guard limit > 0 else { return [] }
+        return hits.enumerated()
+            .filter { !$0.element.isDirectAudio &&
+                      resultScore($0.element, for: wish) >= 20 }
+            .sorted { left, right in
+                let a = resultScore(left.element, for: wish)
+                let b = resultScore(right.element, for: wish)
+                return a == b ? left.offset < right.offset : a > b
+            }
+            .prefix(limit)
+            .map(\.element)
+    }
+
     private static func duplicateKey(for url: URL) -> String {
         // Result pages commonly differ only by #fragments or tracking query
         // parameters. Keep their original URLs for navigation and downloads.
