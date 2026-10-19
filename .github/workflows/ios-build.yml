@@ -24,3 +24,40 @@ jobs:
       - name: Licensed MP3 source matching regression tests
         run: |
           swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/MP3Shelf/Services/AudioSourceFinder.swift ios/Tests/AudioSourceFinderTests.swift -o /tmp/mp3shelf-source-finder && /tmp/mp3shelf-source-finder
+      - name: Persistent discovery resume regression tests
+        run: |
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Models/SourceDiscoveryJob.swift ios/Tests/SourceDiscoveryJobTests.swift -o /tmp/mp3shelf-discovery && /tmp/mp3shelf-discovery
+      - name: Install and launch iPhone Simulator app
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          xcrun simctl list -j devices available > /tmp/mp3shelf-simulators.json
+          DEVICE=$(python3 - <<'PY'
+          import json
+          with open('/tmp/mp3shelf-simulators.json') as f:
+              data=json.load(f)
+          for runtime, devices in data.get('devices', {}).items():
+              for device in devices:
+                  if 'iPhone' in device.get('name', '') and device.get('isAvailable', False):
+                      print(device['udid'])
+                      raise SystemExit(0)
+          raise SystemExit('No available iPhone Simulator installed')
+          PY
+          )
+          if ! xcrun simctl list devices | grep "$DEVICE" | grep -q "Booted"; then
+            xcrun simctl boot "$DEVICE"
+          fi
+          xcrun simctl bootstatus "$DEVICE" -b
+          APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" -path '*/Build/Products/Debug-iphonesimulator/MP3Shelf.app' -type d -print -quit)
+          test -n "$APP"
+          xcrun simctl install "$DEVICE" "$APP"
+          xcrun simctl launch "$DEVICE" com.jonnyt.mp3shelf
+          sleep 3
+          xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mp3shelf-simulator.png"
+          xcrun simctl terminate "$DEVICE" com.jonnyt.mp3shelf
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mp3shelf-simulator-screenshot
+          path: ${{ runner.temp }}/mp3shelf-simulator.png
+          if-no-files-found: ignore

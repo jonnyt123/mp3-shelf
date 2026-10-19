@@ -63,6 +63,40 @@ Important limits: Source discovery is NOT a background service. Only already-que
 
 Relevant code: AudioSourceFinder.swift, BackgroundAudioDownloader.swift, MusicLibrary.swift and MP3ShelfApp.swift.
 
+## Resumable discovery and download management
+
+**Automatic discovery resume:** Each imported playlist has an independent, atomically
+saved checkpoint in Application Support (`source-discovery.json`) containing the
+next unsearched track, queue counts and pause state. When MP3 Shelf becomes
+active after suspension or an ordinary app restart, it continues unfinished
+catalog lookups. User-paused searches do not auto-resume; use **Resume Source
+Discovery** from the playlist. If a provider/network request fails, its
+cursor is retained and search is retried on the next foreground activation.
+Already queued background transfers are not duplicated on recovery.
+
+**Download Manager:** Open **Settings → Download Manager**, or the download
+icon inside a playlist, to view each authorized catalog MP3 transfer:
+queued/downloading, saved offline, failed and cancelled; byte progress where
+available; source/license links; individual Cancel and Retry; and
+clear-finished-history without deleting audio. Retried transfers get new
+identifiers so a late callback from a cancelled task cannot corrupt the new one.
+Open **Settings → Manage Music Storage** for song-level sizes, total library
+storage and deletion of local files. Removing a downloaded file preserves its
+original imported Spotify playlist entry as an unmatched song.
+
+**Q1 installation check:** GitHub's macOS workflow compiles the project,
+installs/launches/terminates it in an iPhone Simulator, captures a screenshot
+artifact, and runs parser/discovery tests. This is **not** a signed physical
+iPhone build and cannot establish lock-screen or background-transfer behavior
+on hardware. Follow [DEVICE_QA.md](DEVICE_QA.md) on a real phone before release.
+
+**iOS restrictions:** Already-queued URLSession file downloads can continue
+under iOS background scheduling. *New source searches* still require the
+application to be active; automatic resume starts only at a future activation,
+not while the process is suspended or force-quit. There is no guaranteed
+continuous monitoring, uninterrupted search, or universal commercial MP3
+availability.
+
 ## Audio enhancements
 
 - **Crossfade**: Settings → Playback → Song crossfade (0–10 seconds). Uses overlapping local `AVAudioPlayer` instances with equal-power ramps. Enabled only when another song is available.

@@ -169,6 +169,15 @@ struct SettingsView: View {
                 LabeledContent("Downloaded songs", value: "\(library.tracks.count)")
                 LabeledContent("Playlists", value: "\(library.playlists.count)")
             } header: { Text("Offline Storage") }
+            Section("Downloads") {
+                NavigationLink { DownloadManagerView() } label: {
+                    Label("Download Manager", systemImage: "arrow.down.circle")
+                }
+                NavigationLink { MusicStorageView() } label: {
+                    Label("Manage Music Storage", systemImage: "externaldrive")
+                }
+                LabeledContent("Active MP3 Transfers", value: "\(library.pendingBackgroundDownloads)")
+            }
             Section("Backup & Files") {
                 Label("Imported songs are saved in Files → On My iPhone → MP3 Shelf → Music (when file sharing is available).", systemImage: "folder")
                     .font(.subheadline)
