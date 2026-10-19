@@ -81,6 +81,37 @@ Connect Spotify, select a permitted playlist or paste its Spotify share link, th
 
 Catalog licenses are declared by uploaders, **not independently verified by MP3 Shelf**. MP3 Shelf stores attribution links for discovered sources. Catalog metadata can be wrong; compare suspect recordings with their source page. Most commercial Spotify recordings do **not** have a legitimate freely downloadable match, and will remain unmatched. The app never bypasses paywalls or DRM, downloads Spotify streams, scrapes arbitrary converter sites, or silently replaces a requested song with a different recording. Spotify developer terms may impose additional restrictions on apps combining Spotify metadata and other audio services; obtain approval before a public production release.
 
+## If a Spotify playlist says "No qualifying MP3 source found"
+
+This is normally a **catalog availability limit**, not a Spotify sign-in failure. Spotify
+provides **song title, artist, album and duration metadata**, not downloadable MP3
+recordings. MP3 Shelf searches Internet Archive, Openverse and Wikimedia Commons;
+their openly licensed inventories do not include most mainstream commercial releases.
+It will not guess a YouTube converter, replace a song with a cover, or bypass DRM.
+
+To tell an unavailable recording apart from a temporary lookup problem:
+
+1. Open **Playlists → your imported playlist → Song-by-song MP3 results**.
+2. **No qualifying MP3 source found** means the checked catalogs returned no
+   eligible exact recording; repeatedly retrying a commercial track will not
+   make a licensed download appear.
+3. **Searching** or **Awaiting** means discovery has not finished; keep the app
+   open. **Source lookup failed** or **Paused by network error** means retry
+   on a working connection. Downloads already queued are shown under
+   **Add Music → Your downloads**.
+4. To fill an unmatched slot, use **I have an authorized audio link** beside
+   that song and supply a *direct HTTPS URL* to a legally downloadable MP3
+   (or other supported audio file) provided by its rights holder. The app
+   validates the audio and, where Spotify supplied duration, checks the
+   recording's length before assigning the original playlist metadata.
+5. Alternatively import legally acquired MP3/M4A files from **Add Music**.
+   Correct title and artist metadata allow the existing offline files to match
+   imported playlists; edit local metadata from the song menu if necessary.
+
+Automatic discovery may still return zero results even while all three catalog
+APIs are operating correctly. The direct-link option is not a stream ripper and
+must only be used for recordings you have permission to download.
+
 ## Expanded catalogs and background downloading
 
 Q1 — Source search: The app now looks up missing playlist songs through Internet Archive and Openverse. Openverse indexes eligible recordings from Wikimedia Commons, Free Music Archive and ccMixter. Matches require strict artist/title, original publisher MP3 links on allowed HTTPS domains, acceptable filesize, declared Creative Commons/public-domain licensing and duration validation. Jamendo is excluded due to its restrictions for an offline music caching application. Archive and Openverse licensing metadata is uploader-provided, not a guarantee of ownership or permission. Many major-label recordings will have no qualifying source.
