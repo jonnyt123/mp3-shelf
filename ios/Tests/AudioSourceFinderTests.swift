@@ -158,6 +158,31 @@ enum AudioSourceFinderTests {
         verify(WebAudioSearch.sanitizedResultURL(
             "https://open.spotify.com/track/0123456789") == nil,
             "Spotify links are not presented as downloadable audio")
+        let quickQueries = WebAudioSearch.searchQueries(for: wish, depth: .quick)
+        let thoroughQueries = WebAudioSearch.searchQueries(for: wish, depth: .thorough)
+        let extensiveQueries = WebAudioSearch.searchQueries(for: wish, depth: .extensive)
+        verify(quickQueries.count == 1 && thoroughQueries.count == 3 &&
+               extensiveQueries.count == 5, "selectable API request budget per song")
+        verify(Set(extensiveQueries).count == 5, "search strategies use distinct queries")
+        verify(extensiveQueries.contains(where: { $0.contains("filetype:mp3") }),
+               "file-oriented search included in extensive mode")
+        verify(extensiveQueries.contains(where: { $0.contains("bandcamp.com") }),
+               "store and artist-site discovery included")
+        verify(WebAudioSearch.BrowserProvider.allCases.count == 10,
+               "ten browser search destinations available without an API key")
+        for provider in WebAudioSearch.BrowserProvider.allCases {
+            let link = WebAudioSearch.browserURL(for: wish, provider: provider)
+            verify(link.scheme == "https" && link.host != nil &&
+                   !link.absoluteString.contains(" "), "safe encoded search URL for \(provider.rawValue)")
+        }
+        verify(WebAudioSearch.browserURL(for: wish, provider: .bandcamp).host == "bandcamp.com",
+               "artist store search link targets Bandcamp")
+        verify(WebAudioSearch.browserURL(for: wish, provider: .archive).host == "archive.org",
+               "archive search link targets Internet Archive")
+        verify(WebAudioSearch.sanitizedResultURL("https://192.168.1.1/music/song.mp3") == nil,
+               "search results pointing to private networks are discarded")
+        verify(WebAudioSearch.sanitizedResultURL("https://router.internal/song.mp3") == nil,
+               "internal network hostname excluded")
         print("Audio source discovery validation tests passed")
     }
 }
