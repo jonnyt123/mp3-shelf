@@ -1070,6 +1070,7 @@ struct WebAudioDiscoveryView: View {
     @State private var scanning = false
     @State private var scanTask: Task<Void, Never>?
     @State private var selectedLink: WebAudioSelection?
+    @State private var inspectingWish: PlaylistWish?
     @State private var inspectingPages: Set<String> = []
     @State private var extractedLinks: [String: [URL]] = [:]
     @State private var inspectionErrors: [String: String] = [:]
@@ -1192,6 +1193,13 @@ struct WebAudioDiscoveryView: View {
                             }
                             .accessibilityLabel("Choose a search website for \(wish.title)")
                         }
+                        Button {
+                            inspectingWish = wish
+                        } label: {
+                            Label("Inspect a source page URL for audio files",
+                                  systemImage: "doc.text.magnifyingglass")
+                                .font(.caption.weight(.semibold))
+                        }
                         if let issue = issues[wish.id] {
                             Text(issue).font(.caption).foregroundStyle(.orange)
                         } else if let found = results[wish.id] {
@@ -1282,6 +1290,9 @@ struct WebAudioDiscoveryView: View {
             .sheet(item: $selectedLink) { selected in
                 AuthorizedPlaylistAudioView(wish: selected.wish, initialURL: selected.url)
             }
+            .sheet(item: $inspectingWish) { wish in
+                PublisherPageInspectorView(wish: wish)
+            }
             .onChange(of: searchDepth) { _, _ in
                 pageStart = 0
                 searched = 0
@@ -1294,6 +1305,100 @@ struct WebAudioDiscoveryView: View {
                 Button("OK", role: .cancel) { message = nil }
             } message: {
                 Text(message ?? "")
+            }
+        }
+    }
+}
+
+
+/// Supports source pages found in Safari or other search providers when the
+/// user has no Brave API key. All network reads are limited to public HTTPS
+/// HTML and discovered audio requires a separate explicit download action.
+struct PublisherPageInspectorView: View {
+    let wish: PlaylistWish
+    @Environment(\.dismiss) private var dismiss
+    @State private var pageText = ""
+    @State private var isInspecting = false
+    @State private var candidates: [URL] = []
+    @State private var error: String?
+    @State private var chosenAudio: WebAudioSelection?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("SOURCE PAGE") {
+                    Text(wish.title).font(.headline)
+                    Text(wish.artist).font(.subheadline).foregroundStyle(.secondary)
+                    TextField("https://artist.example/music/song", text: $pageText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    Text("Paste a music publisher's public HTTPS page URL. MP3 Shelf will look for explicitly linked MP3, M4A, AAC, WAV or AIFF files in the page's HTML and audio metadata.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        guard let pageURL = WebAudioSearch.sanitizedResultURL(
+                            pageText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                            error = "Enter a public HTTPS webpage URL."
+                            return
+                        }
+                        isInspecting = true
+                        candidates = []
+                        error = nil
+                        Task {
+                            defer { isInspecting = false }
+                            do {
+                                candidates = try await AudioLandingPageInspector.inspect(pageURL)
+                            } catch {
+                                self.error = error.localizedDescription
+                            }
+                        }
+                    } label: {
+                        Label(isInspecting ? "Reading source page…" : "Find downloadable audio on this page",
+                              systemImage: "doc.text.magnifyingglass")
+                    }
+                    .disabled(isInspecting || pageText.isEmpty)
+                    if isInspecting { ProgressView() }
+                    if let error {
+                        Text(error).font(.caption).foregroundStyle(.orange)
+                    }
+                    if !isInspecting, candidates.isEmpty, error == nil {
+                        Text("Not all publishers advertise downloadable files in page HTML. A purchase page or streaming player may not expose a direct download URL.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if !candidates.isEmpty {
+                    Section("POSSIBLE AUDIO FILES") {
+                        ForEach(candidates, id: \.absoluteString) { file in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(file.lastPathComponent)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(file.host ?? "")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                Button {
+                                    chosenAudio = WebAudioSelection(wish: wish, url: file)
+                                } label: {
+                                    Label("Review and download this file", systemImage: "arrow.down.circle")
+                                        .font(.caption.weight(.semibold))
+                                }
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Text("Inspection never guarantees that a recording matches this song or may be copied. A separate download step checks file size, playable format and expected track duration. Login, purchases, scripts and DRM are not bypassed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Inspect Music Page")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                        .disabled(isInspecting)
+                }
+            }
+            .sheet(item: $chosenAudio) { selected in
+                AuthorizedPlaylistAudioView(wish: selected.wish, initialURL: selected.url)
             }
         }
     }
