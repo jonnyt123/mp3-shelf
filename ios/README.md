@@ -151,6 +151,14 @@ or that it matches the intended recording.
 
 ### Read a publisher page to locate direct audio files
 
+Search results are now ranked using visible title and artist evidence. Direct
+audio-file URLs rise to the top, but neither the ranking nor a matching title
+guarantees the right recording or download rights. For a single song, tap
+**Find audio files on top 5 pages** to inspect up to five search result
+landing pages for advertised audio, with per-page progress and a review
+button for each candidate. This batch inspection requires the user to
+initiate it; results are never automatically downloaded.
+
 For an indexed webpage in **Web Download Search**, tap **Find audio files
 linked on this page**. MP3 Shelf reads only bounded HTML, standard audio
 tags, Open Graph audio metadata, direct file links and Schema.org
@@ -162,9 +170,10 @@ website, copy the public HTTPS page URL, and tap **Inspect a source page URL
 for audio files** beside the corresponding song. The app reads the page and
 shows direct MP3/M4A/AAC/WAV/AIFF file URLs, if advertised.
 
-For safety, the inspector does not run JavaScript or inspect streaming
-manifests, follow redirects, authenticate, bypass paywalls, or visit private
-IP addresses. A linked file still needs the existing explicit user action
+For safety, the inspector streams no more than 1 MB of public HTTPS
+HTML per page (even if the server ignores HTTP Range requests), does not
+run JavaScript or inspect streaming manifests, follow redirects,
+authenticate, bypass paywalls, or visit private IP addresses. A linked file still needs the existing explicit user action
 and decoder/size/duration validation to enter the offline library. Most
 streaming or commercial purchase pages will not expose a downloadable file.
 
