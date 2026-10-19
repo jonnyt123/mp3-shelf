@@ -123,3 +123,39 @@ enum MusicMatching {
         return sameTitle.count == 1 ? sameTitle[0] : nil
     }
 }
+
+
+/// Verify identity evidence inside imported audio before assigning playlist
+/// metadata. Missing tags are inconclusive; contradictory tags are a mismatch.
+/// The caller separately validates playable media and Spotify's duration.
+enum SourceAudioIdentity {
+    enum Conflict: String {
+        case title, artist
+    }
+
+    static func conflictingField(title: String?, artist: String?,
+                                 requested: PlaylistWish) -> Conflict? {
+        func normalized(_ value: String?) -> String? {
+            guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            let key = MusicMatching.key(text)
+            guard !key.isEmpty,
+                  !["unknown", "unknownartist", "untitled", "track"].contains(key)
+            else { return nil }
+            return key
+        }
+
+        let wantedTitle = MusicMatching.key(requested.title)
+        if let embedded = normalized(title), !wantedTitle.isEmpty,
+           embedded != wantedTitle {
+            return .title
+        }
+        let wantedArtist = MusicMatching.key(requested.artist)
+        if let embedded = normalized(artist), !wantedArtist.isEmpty,
+           embedded != wantedArtist &&
+           !embedded.contains(wantedArtist) && !wantedArtist.contains(embedded) {
+            return .artist
+        }
+        return nil
+    }
+}
