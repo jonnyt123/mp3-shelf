@@ -772,13 +772,26 @@ enum AudioLandingPageInspector {
         request.setValue("bytes=0-999999", forHTTPHeaderField: "Range")
         let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        let (data, response) = try await session.data(for: request)
+        // Stream only bounded HTML into memory. The Range header is a hint,
+        // not a guarantee: servers can ignore it and return gigabytes.
+        let (stream, response) = try await session.bytes(for: request)
+        defer { stream.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw InspectionError.network }
         if (300...399).contains(http.statusCode) { throw InspectionError.redirect }
         guard http.statusCode == 200 || http.statusCode == 206,
               ["text/html", "application/xhtml+xml"].contains(http.mimeType?.lowercased() ?? "")
         else { throw InspectionError.unsupportedPage }
-        guard data.count <= 1_000_000 else { throw InspectionError.oversizedPage }
+        let maximumBytes = 1_000_000
+        if http.expectedContentLength > Int64(maximumBytes) {
+            throw InspectionError.oversizedPage
+        }
+        var data = Data()
+        data.reserveCapacity(min(Int(max(0, http.expectedContentLength)), maximumBytes))
+        for try await byte in stream {
+            try Task.checkCancellation()
+            if data.count >= maximumBytes { throw InspectionError.oversizedPage }
+            data.append(byte)
+        }
         guard let html = String(data: data, encoding: .utf8) else {
             throw InspectionError.unsupportedPage
         }
