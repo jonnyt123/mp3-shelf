@@ -659,6 +659,11 @@ struct PlaylistDetailView: View {
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
 
+    private var jobHasNoMatches: Bool {
+        guard let job = library.discoveryJob(for: playlistID) else { return false }
+        return job.isComplete && job.queued == 0 && job.unavailable > 0
+    }
+
     private var offlineSourceCount: Int {
         guard let playlist else { return 0 }
         return playlist.sourceOrder.filter {
@@ -766,7 +771,7 @@ struct PlaylistDetailView: View {
                     BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
                     Section("FIND YOUR MUSIC") {
                         VStack(alignment: .leading, spacing: 9) {
-                            PremiumEyebrow(title: "OFFLINE MP3 CONVERSION PROGRESS", color: ShelfTheme.mint)
+                            PremiumEyebrow(title: "OFFLINE SOURCE MATCHING", color: ShelfTheme.mint)
                             Text("\(offlineSourceCount) of \(playlist.sourceOrder.count) songs saved offline")
                                 .font(.headline.monospacedDigit())
                                 .foregroundStyle(.white)
@@ -784,7 +789,7 @@ struct PlaylistDetailView: View {
                             }
                         }
                         .padding(.vertical, 8)
-                        Text("Searches Internet Archive and eligible Openverse catalogs for exact artist/title matches, MP3 files, and declared Creative Commons/public-domain licenses. Downloads save real audio files for offline playback; unmatched commercial songs remain clearly unavailable.")
+                        Text("Searches Internet Archive, Openverse and Wikimedia Commons for exact recordings with downloadable MP3 files and declared Creative Commons/public-domain licenses. Most commercially released songs cannot be downloaded from these catalogs.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
                             VStack(alignment: .leading, spacing: 6) {
@@ -821,6 +826,11 @@ struct PlaylistDetailView: View {
                             } else {
                                 Text(progress.wasCancelled ? "Source discovery stopped." : "Source lookup finished. Background downloads may still be running.")
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                if jobHasNoMatches {
+                                    Label("No authorized matching MP3s found in the connected catalogs. You can attach a legally obtained file link to each missing song below.", systemImage: "info.circle")
+                                        .font(.caption)
+                                        .foregroundStyle(ShelfTheme.subdued)
+                                }
                                 if !playlist.missingTracks.isEmpty {
                                     Button("Retry unmatched songs") {
                                         library.startAutomaticDownloads(for: playlistID)
