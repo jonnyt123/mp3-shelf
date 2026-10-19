@@ -131,6 +131,33 @@ enum AudioSourceFinderTests {
             license: "https://creativecommons.org/licenses/by/4.0/",
             bytes: nil, wish: wish) == nil,
             "HTML author credits are not mistaken for verified artists")
+        // Web-wide search lists possible source pages; unlike catalog matches
+        // these are never automatically treated as licensed MP3 recordings.
+        let webQuery = WebAudioSearch.searchQuery(for: wish)
+        verify(webQuery.contains("The Song") && webQuery.contains("The Artist"),
+               "web query includes the requested title and artist")
+        let browser = WebAudioSearch.browserURL(for: wish)
+        verify(browser.scheme == "https" && browser.host == "search.brave.com",
+               "web search browser fallback is HTTPS")
+        verify(WebAudioSearch.sanitizedResultURL(
+            "https://artist.bandcamp.com/track/the-song") != nil,
+            "artist-hosted download pages are discoverable")
+        verify(WebAudioSearch.sanitizedResultURL(
+            "https://official.example/music/the-song.mp3") != nil,
+            "direct HTTPS MP3 candidate can be surfaced for user review")
+        verify(WebAudioSearchResult(title: "File", description: "",
+            url: URL(string: "https://official.example/music/the-song.mp3")!).isDirectAudio,
+            "direct audio links distinguished from landing pages")
+        verify(WebAudioSearch.sanitizedResultURL("http://official.example/song.mp3") == nil,
+               "insecure web results rejected")
+        verify(WebAudioSearch.sanitizedResultURL(
+            "https://user:pass@official.example/song.mp3") == nil,
+            "credential-bearing web results rejected")
+        verify(WebAudioSearch.sanitizedResultURL("https://localhost/song.mp3") == nil,
+               "local-host web results rejected")
+        verify(WebAudioSearch.sanitizedResultURL(
+            "https://open.spotify.com/track/0123456789") == nil,
+            "Spotify links are not presented as downloadable audio")
         print("Audio source discovery validation tests passed")
     }
 }
