@@ -849,7 +849,7 @@ enum AudioLandingPageInspector {
         }
     }
 
-    static func inspect(_ pageURL: URL) async throws -> [URL] {
+    static func inspect(_ pageURL: URL, maxProbes: Int = 8) async throws -> [URL] {
         guard WebAudioSearch.sanitizedResultURL(pageURL.absoluteString) != nil,
               pageURL.port == nil || pageURL.port == 443 else {
             throw InspectionError.invalidURL
@@ -895,7 +895,7 @@ enum AudioLandingPageInspector {
             // An extensionless endpoint might return a web page, an audio
             // stream or a protected download. HEAD must confirm supported
             // downloadable audio before offering it to the user.
-            guard probed < 8 else { continue }
+            guard probed < max(0, min(maxProbes, 8)) else { continue }
             probed += 1
             var probe = URLRequest(url: link)
             probe.httpMethod = "HEAD"
