@@ -679,18 +679,43 @@ enum AudioLandingPageInspector {
     private static let supportedExtensions: Set<String> = [
         "mp3", "m4a", "aac", "wav", "aif", "aiff"
     ]
+    private static let supportedMIMEs: Set<String> = [
+        "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a",
+        "audio/aac", "audio/wav", "audio/x-wav", "audio/aiff",
+        "audio/x-aiff"
+    ]
 
-    static func candidateURL(_ value: String, relativeTo page: URL) -> URL? {
+    static func isVerifiedAudioResponse(_ response: HTTPURLResponse) -> Bool {
+        guard (200...299).contains(response.statusCode),
+              let mime = response.mimeType?.lowercased(),
+              supportedMIMEs.contains(mime),
+              response.expectedContentLength <= 100 * 1024 * 1024
+        else { return false }
+        return true
+    }
+
+    static func candidateURL(_ value: String, relativeTo page: URL,
+                             explicitlyDownloadable: Bool = false) -> URL? {
         let decoded = value.replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&#38;", with: "&")
             .replacingOccurrences(of: "&quot;", with: "\"")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard decoded.count <= 2_048,
               let url = URL(string: decoded, relativeTo: page)?.absoluteURL,
-              let safe = WebAudioSearch.sanitizedResultURL(url.absoluteString),
-              supportedExtensions.contains(safe.pathExtension.lowercased())
+              let safe = WebAudioSearch.sanitizedResultURL(url.absoluteString)
         else { return nil }
-        return safe
+
+        let fileExtension = safe.pathExtension.lowercased()
+        if supportedExtensions.contains(fileExtension) { return safe }
+
+        // Publishers sometimes use /download?id=123 rather than a .mp3
+        // suffix. Only consider these when the HTML explicitly describes
+        // an audio link. The live HEAD response must also verify audio MIME.
+        let excluded: Set<String> = [
+            "m3u", "m3u8", "mpd", "pls", "asx", "html", "htm",
+            "json", "xml", "js", "css", "pdf"
+        ]
+        return explicitlyDownloadable && !excluded.contains(fileExtension) ? safe : nil
     }
 
     /// Read <audio>, <source>, <a download> and audio <meta> tags, plus
@@ -700,8 +725,9 @@ enum AudioLandingPageInspector {
               html.utf8.count <= 1_000_000 else { return [] }
         var found: [URL] = []
         var seen = Set<String>()
-        func add(_ raw: String) {
-            guard let url = candidateURL(raw, relativeTo: pageURL),
+        func add(_ raw: String, explicitlyDownloadable: Bool = false) {
+            guard let url = candidateURL(raw, relativeTo: pageURL,
+                                         explicitlyDownloadable: explicitlyDownloadable),
                   seen.insert(url.absoluteString).inserted else { return }
             if found.count < 25 { found.append(url) }
         }
@@ -731,9 +757,18 @@ enum AudioLandingPageInspector {
                     if ["og:audio", "og:audio:secure_url", "twitter:player:stream"].contains(property),
                        let url = attrs["content"] { add(url) }
                 } else if lower.hasPrefix("<a") || lower.hasPrefix("<link") {
-                    if let url = attrs["href"] { add(url) }
+                    if let url = attrs["href"] {
+                        let isDownload = lower.hasPrefix("<a") &&
+                            tag.range(of: #"\sdownload(?:\s|=|>)"#,
+                                      options: .regularExpression) != nil
+                        let audioType = supportedMIMEs.contains(
+                            attrs["type"]?.lowercased() ?? "")
+                        add(url, explicitlyDownloadable: isDownload || audioType)
+                    }
                 } else if let url = attrs["src"] {
-                    add(url)
+                    let audioType = supportedMIMEs.contains(
+                        attrs["type"]?.lowercased() ?? "")
+                    add(url, explicitlyDownloadable: audioType)
                 }
                 if found.count >= 25 { break }
             }
@@ -817,6 +852,30 @@ enum AudioLandingPageInspector {
         guard let html = String(data: data, encoding: .utf8) else {
             throw InspectionError.unsupportedPage
         }
-        return candidates(in: html, pageURL: pageURL)
+        let links = candidates(in: html, pageURL: pageURL)
+        var accepted: [URL] = []
+        var probed = 0
+        for link in links {
+            try Task.checkCancellation()
+            if supportedExtensions.contains(link.pathExtension.lowercased()) {
+                accepted.append(link)
+                continue
+            }
+            // An extensionless endpoint might return a web page, an audio
+            // stream or a protected download. HEAD must confirm supported
+            // downloadable audio before offering it to the user.
+            guard probed < 8 else { continue }
+            probed += 1
+            var probe = URLRequest(url: link)
+            probe.httpMethod = "HEAD"
+            probe.timeoutInterval = 8
+            probe.setValue("audio/*", forHTTPHeaderField: "Accept")
+            if let (_, response) = try? await session.data(for: probe),
+               let http = response as? HTTPURLResponse,
+               isVerifiedAudioResponse(http) {
+                accepted.append(link)
+            }
+        }
+        return accepted
     }
 }
