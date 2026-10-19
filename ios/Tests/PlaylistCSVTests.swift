@@ -43,6 +43,31 @@ enum PlaylistCSVTests {
         } catch PlaylistCSVError.missingTitleColumn {
             print("PASS: invalid header rejected")
         }
+        let requestedAudio = PlaylistWish(title: "Blue Sky", artist: "Eva Rivers",
+                                          album: "First EP", spotifyURL: nil,
+                                          durationSeconds: 188)
+        check(SourceAudioIdentity.conflictingField(
+            title: "Blue Sky", artist: "Eva Rivers", requested: requestedAudio) == nil,
+            "matching MP3 metadata is accepted")
+        check(SourceAudioIdentity.conflictingField(
+            title: "Red Sunset", artist: "Eva Rivers",
+            requested: requestedAudio) == .title,
+            "contradictory embedded song title is rejected")
+        check(SourceAudioIdentity.conflictingField(
+            title: "Blue Sky", artist: "Different Performer",
+            requested: requestedAudio) == .artist,
+            "contradictory embedded artist is rejected")
+        check(SourceAudioIdentity.conflictingField(
+            title: nil, artist: nil, requested: requestedAudio) == nil,
+            "untagged media is inconclusive, not falsely conflicting")
+        check(SourceAudioIdentity.conflictingField(
+            title: "Blue Sky", artist: "Eva Rivers ft. Guest",
+            requested: requestedAudio) == nil,
+            "credited collaborations retain the requested artist")
+        check(SourceAudioIdentity.conflictingField(
+            title: "Untitled", artist: "Unknown Artist",
+            requested: requestedAudio) == nil,
+            "generic metadata placeholders do not create false conflicts")
         print("Playlist parser & matcher tests passed")
     }
 }
