@@ -114,30 +114,40 @@ must only be used for recordings you have permission to download.
 
 ## Broader web search for playlist downloads
 
-The **Search the wider web for missing songs** button inside each imported
-playlist opens the optional **Web Download Search** screen.
+Inside any Spotify-imported playlist with missing songs, tap **Search the wider web
+for missing songs**. The **Web Download Search** sheet provides two complementary
+paths:
 
-- Without an account, use a song's **Browser** icon to search the public web
-  for artist-hosted recordings, store pages and download information.
-- For an automated in-app lookup across up to 100 missing songs at once,
-  register for a **Brave Search API key** at https://brave.com/search/api/,
-  enter it into the Web Download Search screen, and press **Find downloadable
-  sources for missing songs**. The key is saved in the iPhone Keychain, not
-  in Git, Spotify, or the portable backup. Brave's separate API may require
-  billing enrollment and charges for searches.
-- Results show the page title, site URL, and summary. You can open any
-  result in Safari, or use **Check and save this audio file** when a result
-  points directly to a supported audio extension. The existing decoder,
-  HTTPS, size, duration and offline-library checks still apply.
-- A search result is not proof of a complete recording or permission to
-  download it. The web search does **not** silently save unverified files
-  and never treats a Spotify stream, preview or converter page as an MP3.
-- You can also use the existing **I have an authorized audio link** button
-  to paste a direct file URL, or import legally acquired music from Files.
+1. **No API key required:** tap **10 search sites** beside a song to open a
+   song-specific search on Brave, Google, Bing, DuckDuckGo, Bandcamp,
+   SoundCloud, Internet Archive, Free Music Archive, ccMixter, or Audius.
+   Search results are source/artist pages, not guaranteed download links.
+2. **Optional in-app results:** add your personal
+   [Brave Search API key](https://brave.com/search/api/). The key stays in the
+   device Keychain, not Spotify or the repository. Choose the lookup depth:
+   - **Quick**: one general download search per song.
+   - **Thorough**: adds focused artist/store and direct-MP3-file queries.
+   - **Extensive**: five separate queries per song, including official
+     digital-download and independent archive/source-site searches.
 
-This is a **broader web index** than the default Archive/Openverse/Commons
-matcher. It increases the number of possible source pages, but it cannot
-guarantee a free download for commercial music.
+The screen deduplicates URL results and can show up to 75 links per song.
+Each batch performs at most **100 provider API requests**, with **Next batch**
+and **Previous** controls so a long playlist is not truncated. The screen
+shows the current batch's maximum billable API requests before searching.
+Each user's Brave API plan determines credits or charges, and a rate-limit
+or rejected-key response stops the batch rather than generating more requests.
+
+Search links let you inspect publishers and download terms. If a result
+links directly to a supported audio file, **Check and save this audio file**
+passes the URL to the existing user-confirmed downloader, which validates
+HTTPS, audio decoding, file size, and expected track duration. An ordinary
+web page is never silently treated as an MP3, and the app doesn't acquire
+Spotify streams or bypass DRM. You can also use **I have an authorized audio
+link** and import previously purchased audio through Files.
+
+This expands *finding links* well beyond the three strict CC/public-domain
+catalogs. A web result does not establish that the file is legally available
+or that it matches the intended recording.
 
 ## Expanded catalogs and background downloading
 
