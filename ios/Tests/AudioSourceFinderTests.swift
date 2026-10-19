@@ -222,6 +222,12 @@ enum AudioSourceFinderTests {
                "script URLs are never audio candidates")
         verify(AudioLandingPageInspector.candidateURL("https://localhost/song.mp3",
                 relativeTo: sourcePage) == nil, "local-network audio URLs rejected")
+        verify(AudioLandingPageInspector.candidateURL("https://127.0.0.2/song.mp3",
+                relativeTo: sourcePage) == nil, "all literal loopback IPs rejected")
+        verify(AudioLandingPageInspector.candidateURL("https://192.168.50.2/song.mp3",
+                relativeTo: sourcePage) == nil, "private IP audio links rejected")
+        verify(AudioLandingPageInspector.candidateURL("https://artist.example:8443/song.mp3",
+                relativeTo: sourcePage) == nil, "nonstandard source ports rejected")
         verify(AudioLandingPageInspector.candidateURL("track.m3u8",
                 relativeTo: sourcePage) == nil, "streaming playlists are not direct audio")
         verify(AudioLandingPageInspector.candidates(in: String(repeating: "a", count: 1_000_001),
