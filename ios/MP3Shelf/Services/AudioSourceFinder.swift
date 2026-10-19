@@ -414,17 +414,88 @@ enum WebAudioSearch {
         }
     }
 
-    static func searchQuery(for wish: PlaylistWish) -> String {
-        // Search for download information, not Spotify streams or converter
-        // sites. A result's presence never proves it is licensed or playable.
-        let artist = wish.artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = wish.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "\"\(artist)\" \"\(title)\" official music download Bandcamp MP3"
+    enum SearchDepth: Int, CaseIterable, Identifiable {
+        case quick = 1, thorough = 3, extensive = 5
+        var id: Int { rawValue }
+        var label: String {
+            switch self {
+            case .quick: return "Quick • 1 search/song"
+            case .thorough: return "Thorough • 3 searches/song"
+            case .extensive: return "Extensive • 5 searches/song"
+            }
+        }
     }
 
-    static func browserURL(for wish: PlaylistWish) -> URL {
-        var parts = URLComponents(string: "https://search.brave.com/search")!
-        parts.queryItems = [URLQueryItem(name: "q", value: searchQuery(for: wish))]
+    enum BrowserProvider: String, CaseIterable, Identifiable {
+        case brave = "Brave"
+        case google = "Google"
+        case bing = "Bing"
+        case duckDuckGo = "DuckDuckGo"
+        case bandcamp = "Bandcamp"
+        case soundCloud = "SoundCloud"
+        case archive = "Internet Archive"
+        case freeMusicArchive = "Free Music Archive"
+        case ccMixter = "ccMixter"
+        case audius = "Audius"
+        var id: String { rawValue }
+    }
+
+    private static func quoted(_ value: String) -> String {
+        "\"" + value.replacingOccurrences(of: "\"", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines) + "\""
+    }
+
+    static func searchQuery(for wish: PlaylistWish) -> String {
+        "\(quoted(wish.artist)) \(quoted(wish.title)) download"
+    }
+
+    static func searchQueries(for wish: PlaylistWish, depth: SearchDepth) -> [String] {
+        let target = "\(quoted(wish.artist)) \(quoted(wish.title))"
+        let queries = [
+            searchQuery(for: wish),
+            "\(target) site:bandcamp.com OR site:soundcloud.com",
+            "\(target) filetype:mp3",
+            "\(target) official digital music download",
+            "\(target) site:archive.org OR site:freemusicarchive.org OR site:ccmixter.org"
+        ]
+        return Array(queries.prefix(depth.rawValue))
+    }
+
+    static func browserURL(for wish: PlaylistWish,
+                           provider: BrowserProvider = .brave) -> URL {
+        let query = "\(wish.artist) \(wish.title)"
+        let base: String
+        let key: String
+        let term: String
+        switch provider {
+        case .brave:
+            base = "https://search.brave.com/search"; key = "q"
+            term = searchQuery(for: wish)
+        case .google:
+            base = "https://www.google.com/search"; key = "q"; term = query + " mp3 download"
+        case .bing:
+            base = "https://www.bing.com/search"; key = "q"; term = query + " audio download"
+        case .duckDuckGo:
+            base = "https://duckduckgo.com/"; key = "q"; term = query + " download"
+        case .bandcamp:
+            base = "https://bandcamp.com/search"; key = "q"; term = query
+        case .soundCloud:
+            base = "https://soundcloud.com/search/sounds"; key = "q"; term = query
+        case .archive:
+            base = "https://archive.org/search"; key = "query"; term = query
+        case .freeMusicArchive:
+            base = "https://www.google.com/search"; key = "q"
+            term = query + " site:freemusicarchive.org"
+        case .ccMixter:
+            base = "https://www.google.com/search"; key = "q"
+            term = query + " site:ccmixter.org"
+        case .audius:
+            base = "https://www.google.com/search"; key = "q"
+            term = query + " site:audius.co"
+        }
+        var parts = URLComponents(string: base)!
+        parts.queryItems = [URLQueryItem(name: key, value: term)]
         return parts.url!
     }
 
@@ -433,49 +504,91 @@ enum WebAudioSearch {
               url.scheme?.lowercased() == "https",
               let host = url.host?.lowercased(), !host.isEmpty,
               url.user == nil, url.password == nil,
-              !host.hasSuffix(".local"), host != "localhost",
-              host != "127.0.0.1", host != "::1",
+              !host.hasSuffix(".local"), !host.hasSuffix(".internal"),
+              host != "localhost", host != "127.0.0.1",
+              host != "0.0.0.0", host != "::1",
+              !host.hasPrefix("192.168."), !host.hasPrefix("10."),
               !["open.spotify.com", "accounts.spotify.com"].contains(host)
         else { return nil }
         return url
     }
 
-    static func search(for wish: PlaylistWish, using apiKey: String) async throws -> [WebAudioSearchResult] {
+    private static func duplicateKey(for url: URL) -> String {
+        // Result pages commonly differ only by #fragments or tracking query
+        // parameters. Keep their original URLs for navigation and downloads.
+        var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        parts?.fragment = nil
+        parts?.queryItems = parts?.queryItems?.filter {
+            let name = $0.name.lowercased()
+            return !name.hasPrefix("utm_") && !["fbclid", "gclid"].contains(name)
+        }
+        return parts?.url?.absoluteString ?? url.absoluteString
+    }
+
+    static func search(for wish: PlaylistWish, using apiKey: String,
+                       depth: SearchDepth = .quick) async throws -> [WebAudioSearchResult] {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { throw SearchFailure.missingKey }
-        try Task.checkCancellation()
-        var parts = URLComponents(string: "https://api.search.brave.com/res/v1/web/search")!
-        parts.queryItems = [
-            URLQueryItem(name: "q", value: searchQuery(for: wish)),
-            URLQueryItem(name: "count", value: "10"),
-            URLQueryItem(name: "search_lang", value: "en")
-        ]
-        var request = URLRequest(url: parts.url!)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(key, forHTTPHeaderField: "X-Subscription-Token")
-        request.timeoutInterval = 20
-        let (bytes, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw SearchFailure.invalidResponse }
-        switch http.statusCode {
-        case 200: break
-        case 401, 403: throw SearchFailure.rejectedKey
-        case 429: throw SearchFailure.rateLimited
-        default: throw SearchFailure.unavailable
+        var merged: [WebAudioSearchResult] = []
+        var seen: Set<String> = []
+        var firstError: Error?
+        // Query variants improve coverage while keeping total network/API
+        // usage explicit and user-selectable. Never download search hits here.
+        for query in searchQueries(for: wish, depth: depth) {
+            try Task.checkCancellation()
+            var parts = URLComponents(string: "https://api.search.brave.com/res/v1/web/search")!
+            parts.queryItems = [
+                URLQueryItem(name: "q", value: query),
+                URLQueryItem(name: "count", value: "20"),
+                URLQueryItem(name: "search_lang", value: "en"),
+                URLQueryItem(name: "result_filter", value: "web")
+            ]
+            var request = URLRequest(url: parts.url!)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue(key, forHTTPHeaderField: "X-Subscription-Token")
+            request.timeoutInterval = 20
+            do {
+                let (bytes, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw SearchFailure.invalidResponse
+                }
+                switch http.statusCode {
+                case 200: break
+                case 401, 403: throw SearchFailure.rejectedKey
+                case 429: throw SearchFailure.rateLimited
+                default: throw SearchFailure.unavailable
+                }
+                guard bytes.count <= 2_000_000,
+                      let page = try? JSONDecoder().decode(Response.self, from: bytes)
+                else { throw SearchFailure.invalidResponse }
+                for hit in page.web?.results ?? [] {
+                    guard let url = sanitizedResultURL(hit.url),
+                          seen.insert(duplicateKey(for: url)).inserted else { continue }
+                    let title = hit.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    merged.append(WebAudioSearchResult(
+                        title: title.isEmpty ? url.host ?? "Web result" : title,
+                        description: hit.description ?? "",
+                        url: url
+                    ))
+                    if merged.count >= 75 { break }
+                }
+                if merged.count >= 75 { break }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Authentication and credit limits cannot be solved by trying
+                // another query; stop rather than making extra paid calls.
+                if let problem = error as? SearchFailure {
+                    switch problem {
+                    case .rejectedKey, .rateLimited: throw error
+                    default: break
+                    }
+                }
+                if firstError == nil { firstError = error }
+            }
         }
-        guard bytes.count <= 2_000_000,
-              let page = try? JSONDecoder().decode(Response.self, from: bytes)
-        else { throw SearchFailure.invalidResponse }
-        var seen = Set<String>()
-        return (page.web?.results ?? []).compactMap { hit in
-            guard let url = sanitizedResultURL(hit.url),
-                  seen.insert(url.absoluteString).inserted else { return nil }
-            let title = hit.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return WebAudioSearchResult(
-                title: title.isEmpty ? url.host ?? "Web result" : title,
-                description: hit.description ?? "",
-                url: url
-            )
-        }
+        if merged.isEmpty, let firstError { throw firstError }
+        return merged
     }
 
     static func loadKey() -> String? {
