@@ -249,6 +249,56 @@ enum AudioSourceFinderTests {
                "artist/title evidence ranks ahead of unrelated web pages")
         verify(WebAudioSearch.resultScore(unrelated, for: wish) == 0,
                "unrelated links are not described as confirmed song matches")
+        let downloadButtonHTML = #"""
+            <a href="/download?track=123" download>Artist download</a>
+            <a href="/download?track=321">Ordinary page link</a>
+            <source src="/audio?file=554" type="audio/mpeg">
+            <a href="/index.html" download>Not an audio file</a>
+            <a href="/stream.m3u8" download>Never use streaming manifests</a>
+            <a href="/actual-song.mp3">Normal MP3 file</a>
+            """#
+        let buttons = AudioLandingPageInspector.candidates(
+            in: downloadButtonHTML, pageURL: sourcePage)
+        verify(buttons.contains { $0.absoluteString == "https://artist.example/download?track=123" },
+               "explicit download attribute discovers extensionless endpoint")
+        verify(buttons.contains { $0.absoluteString == "https://artist.example/audio?file=554" },
+               "audio MIME source tag discovers extensionless endpoint")
+        verify(!buttons.contains { $0.absoluteString == "https://artist.example/download?track=321" },
+               "an ordinary webpage link is not treated as audio")
+        verify(!buttons.contains { $0.pathExtension == "html" },
+               "HTML pages cannot masquerade as download buttons")
+        verify(!buttons.contains { $0.pathExtension == "m3u8" },
+               "streaming manifests cannot masquerade as audio downloads")
+        verify(buttons.contains { $0.lastPathComponent == "actual-song.mp3" },
+               "traditional direct MP3 links still supported")
+        verify(AudioLandingPageInspector.candidateURL(
+            "/download?id=1", relativeTo: sourcePage) == nil,
+            "extensionless URL requires explicit page audio evidence")
+        verify(AudioLandingPageInspector.candidateURL(
+            "/download?id=1", relativeTo: sourcePage, explicitlyDownloadable: true) != nil,
+            "explicit download button permits later HTTP HEAD validation")
+        let validHead = HTTPURLResponse(url: sourcePage, statusCode: 200,
+            httpVersion: nil, headerFields: [
+                "Content-Type": "audio/mpeg",
+                "Content-Length": "1000000"
+            ])!
+        let htmlHead = HTTPURLResponse(url: sourcePage, statusCode: 200,
+            httpVersion: nil, headerFields: ["Content-Type": "text/html"])!
+        let redirectHead = HTTPURLResponse(url: sourcePage, statusCode: 302,
+            httpVersion: nil, headerFields: ["Content-Type": "audio/mpeg"])!
+        let giantHead = HTTPURLResponse(url: sourcePage, statusCode: 200,
+            httpVersion: nil, headerFields: [
+                "Content-Type": "audio/mpeg",
+                "Content-Length": "200000000"
+            ])!
+        verify(AudioLandingPageInspector.isVerifiedAudioResponse(validHead),
+               "audio HEAD response passes MIME and size checks")
+        verify(!AudioLandingPageInspector.isVerifiedAudioResponse(htmlHead),
+               "HTML returned by an extensionless link is rejected")
+        verify(!AudioLandingPageInspector.isVerifiedAudioResponse(redirectHead),
+               "redirect response cannot be accepted as downloadable audio")
+        verify(!AudioLandingPageInspector.isVerifiedAudioResponse(giantHead),
+               "oversized audio content length is rejected")
         print("Audio source discovery validation tests passed")
     }
 }
