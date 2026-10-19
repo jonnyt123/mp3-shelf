@@ -28,11 +28,30 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     var isPaused = false
     var lastError: String? = nil
     var outcomes: [Outcome]? = nil
+    // Optional fields preserve decoding of checkpoints created by older builds.
+    var transientFailureCount: Int? = nil
+    var nextRetryAt: Date? = nil
 
     var id: UUID { playlistID }
     var isComplete: Bool { nextIndex >= wishes.count }
     var remaining: Int { max(0, wishes.count - nextIndex) }
     var currentWish: PlaylistWish? { isComplete ? nil : wishes[nextIndex] }
+
+    func canAttemptLookup(at date: Date) -> Bool {
+        nextRetryAt.map { $0 <= date } ?? true
+    }
+
+    /// The current song is not discarded when a catalog is temporarily down.
+    /// Increasing delays avoid hammering APIs during an outage. The next
+    /// retry date is persisted alongside the existing discovery cursor.
+    mutating func recordTransientFailure(_ message: String, at date: Date = .now) {
+        guard !isComplete else { return }
+        let count = min(7, (transientFailureCount ?? 0) + 1)
+        let delays: [TimeInterval] = [15, 30, 60, 120, 240, 480, 900]
+        transientFailureCount = count
+        nextRetryAt = date.addingTimeInterval(delays[count - 1])
+        lastError = message
+    }
 
     func outcome(for wish: PlaylistWish) -> Outcome? {
         guard let index = wishes.firstIndex(where: { $0.id == wish.id }),
@@ -65,5 +84,7 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         outcomes = updated
         nextIndex += 1
         lastError = nil
+        transientFailureCount = nil
+        nextRetryAt = nil
     }
 }

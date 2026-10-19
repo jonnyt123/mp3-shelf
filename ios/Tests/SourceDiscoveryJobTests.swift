@@ -98,6 +98,40 @@ enum SourceDiscoveryJobTests {
         let cursor = job.nextIndex
         job.record(.failed)
         verifyDiscovery(job.nextIndex == cursor, "complete job cannot advance beyond its list")
+        // A transient provider outage must never skip the current song.
+        let clock = Date(timeIntervalSince1970: 1_700_000_000)
+        var delayed = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        delayed.recordTransientFailure("API temporarily unavailable", at: clock)
+        verifyDiscovery(delayed.nextIndex == 0 && delayed.remaining == 3,
+                        "transient error keeps current song in queue")
+        verifyDiscovery(!delayed.canAttemptLookup(at: clock.addingTimeInterval(14)) &&
+                        delayed.canAttemptLookup(at: clock.addingTimeInterval(15)),
+                        "first automatic retry occurs after 15 seconds")
+        delayed.recordTransientFailure("API temporarily unavailable", at: clock)
+        verifyDiscovery(delayed.nextRetryAt == clock.addingTimeInterval(30),
+                        "repeated failures increase retry delay")
+        for _ in 0..<12 {
+            delayed.recordTransientFailure("API temporarily unavailable", at: clock)
+        }
+        verifyDiscovery(delayed.nextRetryAt == clock.addingTimeInterval(900),
+                        "retry delay is capped at 15 minutes")
+        let resumed = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(delayed))
+        verifyDiscovery(resumed.nextRetryAt == delayed.nextRetryAt &&
+                        resumed.transientFailureCount == delayed.transientFailureCount,
+                        "retry schedule survives app restart")
+        delayed.record(.queued)
+        verifyDiscovery(delayed.nextRetryAt == nil &&
+                        delayed.transientFailureCount == nil,
+                        "successful lookup clears backoff")
+        var backwardCompatible = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(delayed)) as! [String: Any]
+        backwardCompatible.removeValue(forKey: "nextRetryAt")
+        backwardCompatible.removeValue(forKey: "transientFailureCount")
+        let oldCheckpoint = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONSerialization.data(withJSONObject: backwardCompatible))
+        verifyDiscovery(oldCheckpoint.canAttemptLookup(at: clock),
+                        "pre-retry persisted queues remain decodable")
         print("Persistent discovery checkpoint tests passed")
     }
 }

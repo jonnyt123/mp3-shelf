@@ -403,6 +403,40 @@ enum AudioSourceFinderTests {
             permalink: "https://audius.co.evil.example/the-song", license: nil)
         verify(AudioSourceFinder.audiusCandidate(audiusSpoof, for: wish) == nil,
                "Audius result landing URL must be the genuine Audius domain")
+        // Audius' published TrackResponse can use "downloadable" instead
+        // of the legacy "is_downloadable" key.
+        let documentedTrackJSON = """
+        {"id":"D7KyD","title":"The Song",
+         "user":{"name":"The Artist","handle":"the-artist"},
+         "duration":212,"downloadable":true,
+         "permalink":"https://audius.co/the-artist/the-song",
+         "is_unlisted":false,"is_stream_gated":false}
+        """
+        let documentedTrack = try? JSONDecoder().decode(
+            AudioSourceFinder.AudiusTrack.self,
+            from: Data(documentedTrackJSON.utf8))
+        verify(documentedTrack != nil, "decode documented Audius API response")
+        verify(documentedTrack.flatMap {
+            AudioSourceFinder.audiusCandidate($0, for: wish)
+        } != nil, "documented Audius downloadable=true yields a valid candidate")
+
+        let deniedTrackJSON = documentedTrackJSON.replacingOccurrences(
+            of: #""downloadable":true"#, with: #""downloadable":false"#)
+        let deniedTrack = try? JSONDecoder().decode(
+            AudioSourceFinder.AudiusTrack.self,
+            from: Data(deniedTrackJSON.utf8))
+        verify(deniedTrack.flatMap {
+            AudioSourceFinder.audiusCandidate($0, for: wish)
+        } == nil, "documented Audius downloadable=false cannot enter automatic queue")
+        let gatedTrackJSON = documentedTrackJSON.replacingOccurrences(
+            of: #""downloadable":true"#,
+            with: #""downloadable":true,"download_conditions":{"follow_user_id":1}"#)
+        let gatedTrack = try? JSONDecoder().decode(
+            AudioSourceFinder.AudiusTrack.self, from: Data(gatedTrackJSON.utf8))
+        verify(gatedTrack.flatMap {
+            AudioSourceFinder.audiusCandidate($0, for: wish)
+        } == nil, "an Audius gated download cannot enter the automatic queue")
+
         print("Audio source discovery validation tests passed")
     }
 }

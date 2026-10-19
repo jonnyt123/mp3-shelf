@@ -829,7 +829,11 @@ struct PlaylistDetailView: View {
                                 Text("Catalog search: \(job.nextIndex)/\(job.wishes.count) processed")
                                     .font(.caption.monospacedDigit())
                                 if let issue = job.lastError {
-                                    Label("Paused by network error: \(issue)", systemImage: "wifi.exclamationmark")
+                                    Label("Source temporarily unavailable: \(issue)", systemImage: "wifi.exclamationmark")
+                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                }
+                                if let retryAt = job.nextRetryAt, !job.isPaused {
+                                    Text("Automatic retry: \(retryAt.formatted(date: .omitted, time: .shortened))")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 }
                                 if job.isPaused {
@@ -841,8 +845,10 @@ struct PlaylistDetailView: View {
                                              library.cellularApproved(for: playlistID))) &&
                                           (library.automaticDownloadProgress?.playlistID != playlistID ||
                                            library.automaticDownloadProgress?.isRunning != true) {
-                                    Button("Resume Search") {
-                                        library.resumeSourceDiscovery(for: playlistID)
+                                    if job.nextRetryAt == nil {
+                                        Button("Resume Search") {
+                                            library.resumeSourceDiscovery(for: playlistID)
+                                        }
                                     }
                                 }
                             }
@@ -860,7 +866,10 @@ struct PlaylistDetailView: View {
                                     library.pauseSourceDiscovery(for: playlistID)
                                 }
                             } else {
-                                Text(progress.wasCancelled ? "Source discovery stopped." : "Source lookup finished. Background downloads may still be running.")
+                                Text(progress.wasCancelled ? "Source discovery stopped." :
+                                     library.discoveryJob(for: playlistID)?.nextRetryAt != nil
+                                     ? "Source lookup will retry automatically. No tap needed."
+                                     : "Source lookup finished. Background downloads may still be running.")
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 if jobHasNoMatches {
                                     Label("No authorized matching MP3s found in the connected catalogs. You can attach a legally obtained file link to each missing song below.", systemImage: "info.circle")

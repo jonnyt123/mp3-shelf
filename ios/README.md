@@ -135,6 +135,21 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Automatic catalog recovery and Audius response compatibility
+
+Audius' JSON response may use `downloadable` or `is_downloadable`.
+MP3 Shelf accepts either form only when the flag is true and other
+ungated/exact-match checks succeed. Artist-enabled Audius downloads are
+checked before more expensive archive metadata traversal, minimizing
+unnecessary search requests for tracks found early.
+
+Temporary source API failures no longer require tapping **Resume Search**.
+The failed song remains at the persisted discovery cursor, and automatic
+retries use delays of 15, 30, 60, 120, 240, 480 and at most 900 seconds.
+This backoff is saved and resumes when the app next opens. In-app timers
+do not override iOS suspension or the Wi-Fi-only/cellular opt-in policy;
+the system determines when suspended app work may execute.
+
 ## Artist-enabled Audius downloads
 
 The automatic Wi-Fi-first matching queue now also checks Audius, without an

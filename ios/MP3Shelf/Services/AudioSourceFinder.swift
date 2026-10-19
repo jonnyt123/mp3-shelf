@@ -343,8 +343,10 @@ extension AudioSourceFinder {
     static func findAcrossCatalogs(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
         try Task.checkCancellation()
         var firstError: Error?
+        // Artist-enabled Audius tracks are a fast exact-match lookup; search
+        // this endpoint before traversing up to 20 Archive metadata records.
         do {
-            if let archive = try await find(for: wish) { return archive }
+            if let audius = try await findAudius(for: wish) { return audius }
         } catch {
             if error is CancellationError { throw error }
             firstError = error
@@ -365,7 +367,7 @@ extension AudioSourceFinder {
         }
         try Task.checkCancellation()
         do {
-            if let audius = try await findAudius(for: wish) { return audius }
+            if let archive = try await find(for: wish) { return archive }
         } catch {
             if error is CancellationError { throw error }
             if firstError == nil { firstError = error }
@@ -402,6 +404,9 @@ extension AudioSourceFinder {
         let download_conditions: AudiusGate?
         let permalink: String?
         let license: String?
+        // Audius REST/SDK versions surface either "downloadable" or
+        // "is_downloadable". Decode both; honor an explicit false.
+        var downloadable: Bool? = nil
     }
     struct AudiusGate: Decodable {}
 
@@ -416,7 +421,7 @@ extension AudioSourceFinder {
     }
 
     static func audiusCandidate(_ track: AudiusTrack, for wish: PlaylistWish) -> AudioCatalogMatch? {
-        guard track.is_downloadable == true,
+        guard (track.is_downloadable ?? track.downloadable) == true,
               track.is_download_gated != true,
               track.download_conditions == nil,
               track.is_stream_gated != true,

@@ -25,6 +25,8 @@ final class MusicLibrary: ObservableObject {
     @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
+    private var catalogRetryTask: Task<Void, Never>?
+    private var scheduledCatalogRetryAt: Date?
     @Published private(set) var discoveryJobs: [SourceDiscoveryJob] = []
 
     // Wi-Fi is the default. Cellular downloads require explicit, session-only
@@ -403,6 +405,8 @@ final class MusicLibrary: ObservableObject {
         if let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID && !$0.isComplete }) {
             discoveryJobs[index].isPaused = false
             discoveryJobs[index].lastError = nil
+            discoveryJobs[index].nextRetryAt = nil
+            discoveryJobs[index].transientFailureCount = nil
         } else {
             discoveryJobs.removeAll { $0.playlistID == playlistID }
             discoveryJobs.append(SourceDiscoveryJob(playlistID: playlistID, wishes: playlist.missingTracks))
@@ -426,16 +430,28 @@ final class MusicLibrary: ObservableObject {
         guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) else { return }
         discoveryJobs[index].isPaused = false
         discoveryJobs[index].lastError = nil
+        discoveryJobs[index].nextRetryAt = nil
+        discoveryJobs[index].transientFailureCount = nil
         persistDiscovery()
         resumePendingDiscovery()
     }
 
     func resumePendingDiscovery() {
-        guard automaticDownloadTask == nil,
-              let job = discoveryJobs.first(where: {
-                  !$0.isPaused && !$0.isComplete &&
-                  networkAllowsDiscovery(for: $0.playlistID)
-              }) else { return }
+        guard automaticDownloadTask == nil else { return }
+        let eligible = discoveryJobs.filter {
+            !$0.isPaused && !$0.isComplete &&
+            networkAllowsDiscovery(for: $0.playlistID)
+        }
+        let now = Date()
+        guard let job = eligible.first(where: { $0.canAttemptLookup(at: now) }) else {
+            if let next = eligible.compactMap(\.nextRetryAt).filter({ $0 > now }).min() {
+                scheduleCatalogRetry(at: next)
+            }
+            return
+        }
+        catalogRetryTask?.cancel()
+        catalogRetryTask = nil
+        scheduledCatalogRetryAt = nil
         var progress = AutomaticDownloadProgress(playlistID: job.playlistID, total: job.wishes.count)
         progress.processed = job.nextIndex
         progress.queued = job.queued
@@ -444,6 +460,26 @@ final class MusicLibrary: ObservableObject {
         automaticDownloadProgress = progress
         automaticDownloadTask = Task { [weak self] in
             await self?.runAutomaticDownloads(playlistID: job.playlistID)
+        }
+    }
+
+    /// iOS can suspend foreground discovery at any time. Retry checkpoints
+    /// survive app termination and will also be considered on next app launch.
+    private func scheduleCatalogRetry(at deadline: Date) {
+        if catalogRetryTask != nil,
+           let scheduled = scheduledCatalogRetryAt,
+           scheduled <= deadline { return }
+        catalogRetryTask?.cancel()
+        scheduledCatalogRetryAt = deadline
+        catalogRetryTask = Task { [weak self] in
+            let delay = max(0, deadline.timeIntervalSinceNow)
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.scheduledCatalogRetryAt = nil
+            self?.catalogRetryTask = nil
+            self?.resumePendingDiscovery()
         }
     }
 
@@ -515,7 +551,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     private func runAutomaticDownloads(playlistID: UUID) async {
-        var blockedByNetwork = false
+        var retryScheduled = false
         while let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) {
             var job = discoveryJobs[index]
             if Task.isCancelled || job.isPaused || job.isComplete ||
@@ -540,8 +576,8 @@ final class MusicLibrary: ObservableObject {
                 } catch is CancellationError {
                     break
                 } catch {
-                    job.lastError = error.localizedDescription
-                    blockedByNetwork = true
+                    job.recordTransientFailure(error.localizedDescription)
+                    retryScheduled = true
                 }
             }
             discoveryJobs[index] = job
@@ -553,7 +589,7 @@ final class MusicLibrary: ObservableObject {
                 progress.failed = job.failed
                 automaticDownloadProgress = progress
             }
-            if blockedByNetwork { break }
+            if retryScheduled { break }
         }
         if var progress = automaticDownloadProgress {
             progress.isRunning = false
@@ -562,7 +598,9 @@ final class MusicLibrary: ObservableObject {
             automaticDownloadProgress = progress
         }
         automaticDownloadTask = nil
-        if !blockedByNetwork { resumePendingDiscovery() }
+        // If a catalog is down, resumePendingDiscovery schedules the persisted
+        // backoff instead of immediately repeating the same failing request.
+        resumePendingDiscovery()
     }
 
     func downloadAudio(from remoteURL: URL, matching wish: PlaylistWish? = nil,
