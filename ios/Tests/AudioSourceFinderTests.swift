@@ -299,6 +299,35 @@ enum AudioSourceFinderTests {
                "redirect response cannot be accepted as downloadable audio")
         verify(!AudioLandingPageInspector.isVerifiedAudioResponse(giantHead),
                "oversized audio content length is rejected")
+        let publisherHTML = #"""
+            <meta property="og:audio" content="/media?id=531">
+            <audio src="/download/audio?file=23"></audio>
+            <script type="application/ld+json">
+            {"@type":"AudioObject","contentUrl":"/api/audio/recording?id=11"}
+            </script>
+            """#
+        let declaredDownloads = AudioLandingPageInspector.candidates(
+            in: publisherHTML, pageURL: sourcePage)
+        verify(declaredDownloads.count == 3,
+                    "Open Graph, HTML audio and AudioObject all support extensionless audio URLs")
+        verify(declaredDownloads.contains {
+            $0.absoluteString == "https://artist.example/media?id=531"
+        }, "extensionless og:audio link is offered for HEAD verification")
+        verify(declaredDownloads.contains {
+            $0.absoluteString == "https://artist.example/download/audio?file=23"
+        }, "extensionless <audio> source is offered for HEAD verification")
+        verify(declaredDownloads.contains {
+            $0.absoluteString == "https://artist.example/api/audio/recording?id=11"
+        }, "extensionless Schema.org AudioObject contentUrl is offered for HEAD verification")
+        let pageWithManyLinks = (0..<30).map {
+            "<a href=\"/misc/loose-\($0).mp3\">Unrelated file</a>"
+        }.joined() + #"<meta property="og:audio" content="/verified-track.mp3">"#
+        let prioritizedLinks = AudioLandingPageInspector.candidates(
+            in: pageWithManyLinks, pageURL: sourcePage)
+        verify(prioritizedLinks.count == 25,
+                    "source inspection remains bounded to 25 candidates")
+        verify(prioritizedLinks.first?.lastPathComponent == "verified-track.mp3",
+                    "explicit publisher audio beats first 25 generic anchors")
         print("Audio source discovery validation tests passed")
     }
 }
