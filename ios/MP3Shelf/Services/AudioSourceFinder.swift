@@ -504,10 +504,14 @@ enum WebAudioSearch {
               url.scheme?.lowercased() == "https",
               let host = url.host?.lowercased(), !host.isEmpty,
               url.user == nil, url.password == nil,
+              url.port == nil || url.port == 443,
               !host.hasSuffix(".local"), !host.hasSuffix(".internal"),
-              host != "localhost", host != "127.0.0.1",
-              host != "0.0.0.0", host != "::1",
-              !host.hasPrefix("192.168."), !host.hasPrefix("10."),
+              !host.hasSuffix(".onion"), host != "localhost",
+              // Do not connect to raw IP addresses, including loopback,
+              // private ranges, link-local and IPv6 literals.
+              !host.contains(":"),
+              host.range(of: #"^[0-9]+(\\.[0-9]+){3}$"#,
+                         options: .regularExpression) == nil,
               !["open.spotify.com", "accounts.spotify.com"].contains(host)
         else { return nil }
         return url
