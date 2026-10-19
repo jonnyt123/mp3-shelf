@@ -183,6 +183,49 @@ enum AudioSourceFinderTests {
                "search results pointing to private networks are discarded")
         verify(WebAudioSearch.sanitizedResultURL("https://router.internal/song.mp3") == nil,
                "internal network hostname excluded")
+        let sourcePage = URL(string: "https://artist.example/releases/album")!
+        let pageHTML = #"""
+            <html><head>
+              <meta property="og:audio:secure_url" content="/media/lead-track.mp3">
+              <meta property="og:audio" content="https://artist.example/media/lead-track.mp3">
+            </head>
+            <body>
+              <audio controls><source type="audio/mpeg" src="../audio/second-track.mp3"></audio>
+              <a href="https://files.example/authorized%20track.mp3?download=1&amp;v=2" download>Download</a>
+              <a href="http://unsecured.example/song.mp3">HTTP is rejected</a>
+              <a href="https://localhost/internal.mp3">Local network is rejected</a>
+              <a href="https://artist.example/stream.m3u8">Streaming manifests are rejected</a>
+              <script type="application/ld+json">
+                {"@context":"https://schema.org","@type":"AudioObject",
+                 "contentUrl":"https://cdn.example.org/files/third-track.m4a"}
+              </script>
+              <script type="application/ld+json">
+                {"@type":"VideoObject","contentUrl":"https://cdn.example.org/video.mp3"}
+              </script>
+            </body></html>
+            """#
+        let pageLinks = AudioLandingPageInspector.candidates(in: pageHTML, pageURL: sourcePage)
+        verify(pageLinks.count == 4,
+               "inspects audio/meta/anchor/JSON-LD links without unsafe duplicates")
+        verify(pageLinks.contains { $0.absoluteString == "https://artist.example/media/lead-track.mp3" },
+               "relative Open Graph audio metadata is resolved")
+        verify(pageLinks.contains { $0.absoluteString == "https://artist.example/audio/second-track.mp3" },
+               "relative HTML5 audio source is resolved")
+        verify(pageLinks.contains { $0.absoluteString ==
+               "https://files.example/authorized%20track.mp3?download=1&v=2" },
+               "escaped ampersands retain direct file URL parameters")
+        verify(pageLinks.contains { $0.absoluteString == "https://cdn.example.org/files/third-track.m4a" },
+               "structured AudioObject metadata exposes direct M4A audio")
+        verify(!pageLinks.contains { $0.absoluteString.hasSuffix("video.mp3") },
+               "unrelated JSON-LD video files are not treated as audio")
+        verify(AudioLandingPageInspector.candidateURL("javascript:alert(1)", relativeTo: sourcePage) == nil,
+               "script URLs are never audio candidates")
+        verify(AudioLandingPageInspector.candidateURL("https://localhost/song.mp3",
+                relativeTo: sourcePage) == nil, "local-network audio URLs rejected")
+        verify(AudioLandingPageInspector.candidateURL("track.m3u8",
+                relativeTo: sourcePage) == nil, "streaming playlists are not direct audio")
+        verify(AudioLandingPageInspector.candidates(in: String(repeating: "a", count: 1_000_001),
+                pageURL: sourcePage).isEmpty, "oversized HTML is never parsed")
         print("Audio source discovery validation tests passed")
     }
 }
