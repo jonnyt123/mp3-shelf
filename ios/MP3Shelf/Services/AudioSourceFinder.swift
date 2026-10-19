@@ -630,3 +630,154 @@ enum WebAudioSearch {
         #endif
     }
 }
+
+
+// A conservative, read-only landing-page inspector. It finds direct audio URLs
+// explicitly advertised in HTML or AudioObject metadata; it does not run
+// JavaScript, follow streaming manifests, scrape media players or bypass DRM.
+// Candidates still require user approval and normal download validation.
+enum AudioLandingPageInspector {
+    enum InspectionError: LocalizedError {
+        case invalidURL, unsupportedPage, oversizedPage, redirect, network
+        var errorDescription: String? {
+            switch self {
+            case .invalidURL: return "Only public HTTPS music pages can be inspected."
+            case .unsupportedPage: return "This page did not return readable HTML."
+            case .oversizedPage: return "The source page is too large for safe inspection."
+            case .redirect: return "This page redirects elsewhere. Open it in the browser to inspect the publisher."
+            case .network: return "Could not inspect this page. Open it in your browser."
+            }
+        }
+    }
+
+    private static let supportedExtensions: Set<String> = [
+        "mp3", "m4a", "aac", "wav", "aif", "aiff"
+    ]
+
+    static func candidateURL(_ value: String, relativeTo page: URL) -> URL? {
+        let decoded = value.replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&#38;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard decoded.count <= 2_048,
+              let url = URL(string: decoded, relativeTo: page)?.absoluteURL,
+              let safe = WebAudioSearch.sanitizedResultURL(url.absoluteString),
+              supportedExtensions.contains(safe.pathExtension.lowercased())
+        else { return nil }
+        return safe
+    }
+
+    /// Read <audio>, <source>, <a download> and audio <meta> tags, plus
+    /// Schema.org AudioObject.contentUrl. Only HTTPS file URLs are surfaced.
+    static func candidates(in html: String, pageURL: URL) -> [URL] {
+        guard WebAudioSearch.sanitizedResultURL(pageURL.absoluteString) != nil,
+              html.utf8.count <= 1_000_000 else { return [] }
+        var found: [URL] = []
+        var seen = Set<String>()
+        func add(_ raw: String) {
+            guard let url = candidateURL(raw, relativeTo: pageURL),
+                  seen.insert(url.absoluteString).inserted else { return }
+            if found.count < 25 { found.append(url) }
+        }
+
+        func attributes(_ tag: String) -> [String: String] {
+            var result: [String: String] = [:]
+            let pattern = #"([A-Za-z_][A-Za-z0-9_:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return result }
+            let value = tag as NSString
+            for match in regex.matches(in: tag, range: NSRange(location: 0, length: value.length)) {
+                let name = value.substring(with: match.range(at: 1)).lowercased()
+                let attribute = (2...4).first { match.range(at: $0).location != NSNotFound }
+                    .map { value.substring(with: match.range(at: $0)) } ?? ""
+                result[name] = attribute
+            }
+            return result
+        }
+        let tagPattern = #"<(?:a|audio|source|meta|link)\b[^>]*>"#
+        if let regex = try? NSRegularExpression(pattern: tagPattern, options: [.caseInsensitive]) {
+            let value = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: value.length)) {
+                let tag = value.substring(with: match.range)
+                let lower = tag.lowercased()
+                let attrs = attributes(tag)
+                if lower.hasPrefix("<meta") {
+                    let property = (attrs["property"] ?? attrs["name"] ?? "").lowercased()
+                    if ["og:audio", "og:audio:secure_url", "twitter:player:stream"].contains(property),
+                       let url = attrs["content"] { add(url) }
+                } else if lower.hasPrefix("<a") || lower.hasPrefix("<link") {
+                    if let url = attrs["href"] { add(url) }
+                } else if let url = attrs["src"] {
+                    add(url)
+                }
+                if found.count >= 25 { break }
+            }
+        }
+
+        // Schema.org documents may embed a direct downloadable file in
+        // <script type="application/ld+json"> ... AudioObject.contentUrl.
+        let scriptPattern = #"<script\b([^>]*)>(.*?)</script\s*>"#
+        if let regex = try? NSRegularExpression(
+            pattern: scriptPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
+            let value = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: value.length)) {
+                let tag = value.substring(with: match.range(at: 1))
+                guard attributes(tag)["type"]?.lowercased() == "application/ld+json" else { continue }
+                let json = value.substring(with: match.range(at: 2))
+                guard let data = json.data(using: .utf8),
+                      let root = try? JSONSerialization.jsonObject(with: data)
+                else { continue }
+                func walk(_ node: Any, depth: Int) {
+                    guard depth < 12, found.count < 25 else { return }
+                    if let dictionary = node as? [String: Any] {
+                        let types = ([dictionary["@type"] as? String].compactMap { $0 } +
+                                     (dictionary["@type"] as? [String] ?? []))
+                        if types.contains(where: { $0.lowercased().hasSuffix("audioobject") }),
+                           let raw = dictionary["contentUrl"] as? String {
+                            add(raw)
+                        }
+                        for nested in dictionary.values { walk(nested, depth: depth + 1) }
+                    } else if let array = node as? [Any] {
+                        for nested in array { walk(nested, depth: depth + 1) }
+                    }
+                }
+                walk(root, depth: 0)
+            }
+        }
+        return found
+    }
+
+    /// Reject redirects before they reach a local network host or a different
+    /// publisher; let the user follow redirects in a normal browser instead.
+    private final class NoRedirect: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    static func inspect(_ pageURL: URL) async throws -> [URL] {
+        guard WebAudioSearch.sanitizedResultURL(pageURL.absoluteString) != nil,
+              pageURL.port == nil || pageURL.port == 443 else {
+            throw InspectionError.invalidURL
+        }
+        var request = URLRequest(url: pageURL)
+        request.timeoutInterval = 12
+        request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+        request.setValue("bytes=0-999999", forHTTPHeaderField: "Range")
+        let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw InspectionError.network }
+        if (300...399).contains(http.statusCode) { throw InspectionError.redirect }
+        guard http.statusCode == 200 || http.statusCode == 206,
+              ["text/html", "application/xhtml+xml"].contains(http.mimeType?.lowercased() ?? "")
+        else { throw InspectionError.unsupportedPage }
+        guard data.count <= 1_000_000 else { throw InspectionError.oversizedPage }
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw InspectionError.unsupportedPage
+        }
+        return candidates(in: html, pageURL: pageURL)
+    }
+}
