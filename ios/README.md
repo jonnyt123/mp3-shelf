@@ -149,6 +149,26 @@ This expands *finding links* well beyond the three strict CC/public-domain
 catalogs. A web result does not establish that the file is legally available
 or that it matches the intended recording.
 
+### Read a publisher page to locate direct audio files
+
+For an indexed webpage in **Web Download Search**, tap **Find audio files
+linked on this page**. MP3 Shelf reads only bounded HTML, standard audio
+tags, Open Graph audio metadata, direct file links and Schema.org
+`AudioObject.contentUrl` metadata. Results are listed as **possible audio
+files** for individual review; opening a page never starts a download.
+
+Without a Brave API key, use **10 search sites** to find the publisher's
+website, copy the public HTTPS page URL, and tap **Inspect a source page URL
+for audio files** beside the corresponding song. The app reads the page and
+shows direct MP3/M4A/AAC/WAV/AIFF file URLs, if advertised.
+
+For safety, the inspector does not run JavaScript or inspect streaming
+manifests, follow redirects, authenticate, bypass paywalls, or visit private
+IP addresses. A linked file still needs the existing explicit user action
+and decoder/size/duration validation to enter the offline library. Most
+streaming or commercial purchase pages will not expose a downloadable file.
+
+
 ## Expanded catalogs and background downloading
 
 Q1 — Source search: The app now looks up missing playlist songs through Internet Archive and Openverse. Openverse indexes eligible recordings from Wikimedia Commons, Free Music Archive and ccMixter. Matches require strict artist/title, original publisher MP3 links on allowed HTTPS domains, acceptable filesize, declared Creative Commons/public-domain licensing and duration validation. Jamendo is excluded due to its restrictions for an offline music caching application. Archive and Openverse licensing metadata is uploader-provided, not a guarantee of ownership or permission. Many major-label recordings will have no qualifying source.
