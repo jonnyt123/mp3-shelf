@@ -411,12 +411,29 @@ final class MusicLibrary: ObservableObject {
         BackgroundAudioDownloader.shared.stopTransfers(for: playlistID)
     }
 
+    /// A filename or search-result title is not evidence of recording identity.
+    /// If the media file explicitly tags a different title/artist, reject it
+    /// rather than overwrite those tags with the playlist's desired metadata.
+    private func validateEmbeddedIdentity(fileURL: URL, matching wish: PlaylistWish) throws {
+        let metadata = AVURLAsset(url: fileURL).commonMetadata
+        func tag(_ key: AVMetadataKey) -> String? {
+            AVMetadataItem.metadataItems(from: metadata, withKey: key,
+                                         keySpace: .common).first?.stringValue
+        }
+        if let conflict = SourceAudioIdentity.conflictingField(
+            title: tag(.commonKeyTitle), artist: tag(.commonKeyArtist),
+            requested: wish) {
+            throw MusicLibraryError.recordingMetadataMismatch(conflict.rawValue)
+        }
+    }
+
     func importStagedAudio(from fileURL: URL, matching wish: PlaylistWish,
                            attribution: AudioSourceAttribution) async throws -> Bool {
         let bytes = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         guard bytes > 0 && bytes <= 100 * 1024 * 1024 else {
             throw MusicLibraryError.downloadFailed
         }
+        try validateEmbeddedIdentity(fileURL: fileURL, matching: wish)
         let original = "\(wish.artist) - \(wish.title).mp3"
         let imported = try await addLocalAudio(sourceURL: fileURL,
                                                originalName: original,
@@ -524,6 +541,7 @@ final class MusicLibrary: ObservableObject {
         let staging = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + actualExtension)
         try manager.moveItem(at: temporary, to: staging)
         defer { try? manager.removeItem(at: staging) }
+        if let wish { try validateEmbeddedIdentity(fileURL: staging, matching: wish) }
         let imported = try await addLocalAudio(sourceURL: staging,
                                                originalName: filename + "." + actualExtension,
                                                expectedDuration: wish?.durationSeconds)
@@ -684,13 +702,16 @@ final class MusicLibrary: ObservableObject {
 
 enum MusicLibraryError: LocalizedError {
     case unsupportedFormat, invalidDownloadURL, downloadFailed, recordingDurationMismatch
+    case recordingMetadataMismatch(String)
 
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat: return "Only supported audio files (MP3, M4A, AAC, WAV, AIFF) can be imported."
         case .invalidDownloadURL: return "Enter a direct HTTPS audio URL. Spotify streaming links cannot be downloaded."
         case .downloadFailed: return "The audio download did not complete successfully."
-        case .recordingDurationMismatch: return "The downloaded MP3 duration did not match the requested recording."
+        case .recordingDurationMismatch: return "The downloaded audio duration did not match the requested recording."
+        case .recordingMetadataMismatch(let field):
+            return "The downloaded audio's embedded \(field) does not match the requested song. It was not added to your playlist."
         }
     }
 }
