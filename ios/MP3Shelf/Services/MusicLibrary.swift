@@ -566,7 +566,8 @@ final class MusicLibrary: ObservableObject {
                 job.record(.alreadyPresent)
             } else {
                 do {
-                    let source = try await AudioSourceFinder.findAcrossCatalogs(for: wish)
+                    let source = try await AudioSourceFinder.findAcrossCatalogs(
+                        for: wish, allowsCellular: cellularApprovedPlaylists.contains(playlistID))
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) { break }
                     if let source {
                         if BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID) {

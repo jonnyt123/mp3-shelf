@@ -135,6 +135,26 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Request-level Wi-Fi-only source discovery
+
+The automatic playlist queue was already gated by iOS Network framework
+connection monitoring, but its four public catalog API calls previously used
+URLSession's default per-request transport. Every Archive, Openverse,
+Wikimedia Commons and Audius request now defaults to
+`allowsCellularAccess=false`, `allowsExpensiveNetworkAccess=false`
+and `allowsConstrainedNetworkAccess=false` **on the URLRequest itself**.
+This also prevents an in-progress lookup from migrating onto cellular
+after the Wi-Fi network changes, rather than relying only on a path check
+performed before each song.
+
+Choosing **Download this playlist using cellular data** explicitly enables
+cellular, expensive and constrained network access for that playlist's
+catalog requests and iOS background audio transfers. The setting for
+future source discovery is session-only; a previously approved transfer
+task may still finish on cellular across process relaunches because its
+network permission is part of the background task created with that
+explicit consent.
+
 ## Automatic background MP3 transfer recovery
 
 If an otherwise verified audio download is interrupted by a temporary

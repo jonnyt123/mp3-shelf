@@ -74,10 +74,23 @@ enum AudioSourceFinder {
         !value.contains("..")
     }
 
-    private static func requestJSON<T: Decodable>(_ url: URL) async throws -> T {
+    /// Network permission is attached to each individual catalog request,
+    /// not merely checked once before starting a playlist scan. This prevents
+    /// an in-flight lookup silently switching to cellular when Wi-Fi drops.
+    static func catalogRequest(for url: URL, allowsCellular: Bool = false) -> URLRequest {
         var request = URLRequest(url: url)
         request.timeoutInterval = 18
+        request.allowsCellularAccess = allowsCellular
+        request.allowsExpensiveNetworkAccess = allowsCellular
+        request.allowsConstrainedNetworkAccess = allowsCellular
         request.setValue("MP3Shelf/1.1 (personal offline audio library)", forHTTPHeaderField: "User-Agent")
+        return request
+    }
+
+    private static func requestJSON<T: Decodable>(
+        _ url: URL, allowsCellular: Bool = false
+    ) async throws -> T {
+        let request = catalogRequest(for: url, allowsCellular: allowsCellular)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               data.count < 2_000_000 else { throw SourceError.unavailable }
@@ -113,7 +126,8 @@ enum AudioSourceFinder {
             (key == title || key == MusicMatching.key("\(wish.artist) - \(wish.title)"))
     }
 
-    static func find(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+    static func find(for wish: PlaylistWish,
+                     allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
         func escaped(_ value: String) -> String {
             value.replacingOccurrences(of: "\"", with: " ")
@@ -126,13 +140,13 @@ enum AudioSourceFinder {
             URLQueryItem(name: "rows", value: "20"),
             URLQueryItem(name: "output", value: "json")
         ]
-        let search: SearchResponse = try await requestJSON(query.url!)
+        let search: SearchResponse = try await requestJSON(query.url!, allowsCellular: allowsCellular)
         for result in search.response.docs.prefix(20) {
             try Task.checkCancellation()
             guard safeIdentifier(result.identifier) else { continue }
             let metadataURL = URL(string: "https://archive.org/metadata/")!
                 .appendingPathComponent(result.identifier)
-            guard let item: ArchiveItem = try? await requestJSON(metadataURL),
+            guard let item: ArchiveItem = try? await requestJSON(metadataURL, allowsCellular: allowsCellular),
                   let metadata = item.metadata,
                   let license = licensedURL(metadata.licenseurl?.value) else { continue }
 
@@ -225,7 +239,8 @@ extension AudioSourceFinder {
                                  licenseURL: licenseURL, sourceName: "Openverse: \(source)")
     }
 
-    static func findOpenverse(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+    static func findOpenverse(for wish: PlaylistWish,
+                             allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
         // Openverse supports field-based search. Try title+creator first so
         // independent recordings don't get buried beneath general relevance
@@ -247,7 +262,7 @@ extension AudioSourceFinder {
             // Keep errors retryable if no trustworthy result is found.
             let result: OpenverseResponse
             do {
-                result = try await requestJSON(components.url!)
+                result = try await requestJSON(components.url!, allowsCellular: allowsCellular)
             } catch {
                 if error is CancellationError { throw error }
                 if firstSearchError == nil { firstSearchError = error }
@@ -311,7 +326,8 @@ extension AudioSourceFinder {
                                  licenseURL: licenseURL, sourceName: "Wikimedia Commons")
     }
 
-    static func findCommons(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+    static func findCommons(for wish: PlaylistWish,
+                           allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
         var components = URLComponents(string: "https://commons.wikimedia.org/w/api.php")!
         components.queryItems = [
@@ -325,7 +341,7 @@ extension AudioSourceFinder {
             URLQueryItem(name: "iiextmetadatafilter", value: "Artist|LicenseUrl"),
             URLQueryItem(name: "format", value: "json")
         ]
-        let result: CommonsResponse = try await requestJSON(components.url!)
+        let result: CommonsResponse = try await requestJSON(components.url!, allowsCellular: allowsCellular)
         let matches = (result.query?.pages.values ?? Dictionary<String, CommonsPage>().values)
             .flatMap { page in
                 (page.imageinfo ?? []).compactMap { info in
@@ -340,34 +356,35 @@ extension AudioSourceFinder {
         return unique.count == 1 ? unique.values.first?.first : nil
     }
 
-    static func findAcrossCatalogs(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+    static func findAcrossCatalogs(for wish: PlaylistWish,
+                                   allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         try Task.checkCancellation()
         var firstError: Error?
         // Artist-enabled Audius tracks are a fast exact-match lookup; search
         // this endpoint before traversing up to 20 Archive metadata records.
         do {
-            if let audius = try await findAudius(for: wish) { return audius }
+            if let audius = try await findAudius(for: wish, allowsCellular: allowsCellular) { return audius }
         } catch {
             if error is CancellationError { throw error }
             firstError = error
         }
         try Task.checkCancellation()
         do {
-            if let openverse = try await findOpenverse(for: wish) { return openverse }
+            if let openverse = try await findOpenverse(for: wish, allowsCellular: allowsCellular) { return openverse }
         } catch {
             if error is CancellationError { throw error }
             if firstError == nil { firstError = error }
         }
         try Task.checkCancellation()
         do {
-            if let commons = try await findCommons(for: wish) { return commons }
+            if let commons = try await findCommons(for: wish, allowsCellular: allowsCellular) { return commons }
         } catch {
             if error is CancellationError { throw error }
             if firstError == nil { firstError = error }
         }
         try Task.checkCancellation()
         do {
-            if let archive = try await find(for: wish) { return archive }
+            if let archive = try await find(for: wish, allowsCellular: allowsCellular) { return archive }
         } catch {
             if error is CancellationError { throw error }
             if firstError == nil { firstError = error }
@@ -458,9 +475,11 @@ extension AudioSourceFinder {
             sourceName: "Audius (artist-enabled download)")
     }
 
-    static func findAudius(for wish: PlaylistWish) async throws -> AudioCatalogMatch? {
+    static func findAudius(for wish: PlaylistWish,
+                           allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
-        let response: AudiusSearchResponse = try await requestJSON(audiusSearchURL(for: wish))
+        let response: AudiusSearchResponse = try await requestJSON(audiusSearchURL(for: wish),
+                                                                  allowsCellular: allowsCellular)
         let matched = response.data.compactMap { audiusCandidate($0, for: wish) }
         let unique = Dictionary(grouping: matched, by: { $0.downloadURL.absoluteString })
         // Two exact-looking recordings are ambiguous even when both providers

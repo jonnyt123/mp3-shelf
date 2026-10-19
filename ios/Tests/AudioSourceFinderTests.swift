@@ -10,6 +10,22 @@ enum AudioSourceFinderTests {
     static func main() {
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        let testURL = URL(string: "https://api.audius.co/v1/tracks/search")!
+        let wifiCatalogRequest = AudioSourceFinder.catalogRequest(for: testURL)
+        verify(wifiCatalogRequest.allowsCellularAccess == false,
+               "catalog lookups cannot silently switch to cellular")
+        verify(wifiCatalogRequest.allowsExpensiveNetworkAccess == false,
+               "Wi-Fi-only source lookup avoids metered hotspots")
+        verify(wifiCatalogRequest.allowsConstrainedNetworkAccess == false,
+               "automatic lookups respect constrained network connections")
+        verify(wifiCatalogRequest.timeoutInterval == 18,
+               "Wi-Fi-only catalog lookup keeps bounded request timeout")
+        let manuallyApprovedRequest = AudioSourceFinder.catalogRequest(
+            for: testURL, allowsCellular: true)
+        verify(manuallyApprovedRequest.allowsCellularAccess == true &&
+               manuallyApprovedRequest.allowsExpensiveNetworkAccess == true &&
+               manuallyApprovedRequest.allowsConstrainedNetworkAccess == true,
+               "manual cellular opt-in enables catalog requests for that playlist")
         verify(AudioSourceFinder.exactMetadataMatch(title: "The Song", creator: "The Artist",
                                                      wish: wish), "exact title and artist")
         verify(!AudioSourceFinder.exactMetadataMatch(title: "The Song (Live)",
