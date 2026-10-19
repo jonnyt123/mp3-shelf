@@ -170,6 +170,13 @@ website, copy the public HTTPS page URL, and tap **Inspect a source page URL
 for audio files** beside the corresponding song. The app reads the page and
 shows direct MP3/M4A/AAC/WAV/AIFF file URLs, if advertised.
 
+The inspector also recognizes download buttons such as
+`/download?track=123` without a filename extension, but only when the page
+explicitly marks the link as a download or audio resource. These links must
+pass a separate HTTP HEAD check for supported audio MIME type, HTTP success,
+and a maximum declared size of 100 MB before being shown. Sites that do
+not support HEAD may require a normal browser visit instead.
+
 For safety, the inspector streams no more than 1 MB of public HTTPS
 HTML per page (even if the server ignores HTTP Range requests), does not
 run JavaScript or inspect streaming manifests, follow redirects,
