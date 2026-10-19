@@ -368,3 +368,151 @@ extension AudioSourceFinder {
         return nil
     }
 }
+
+
+// Optional web-wide discovery. Unlike the licensed catalog adapters, these
+// are search-engine results: pages are NOT assumed to be directly downloadable
+// or authorized. The user examines the source before supplying a permitted file.
+#if canImport(Security)
+import Security
+#endif
+
+struct WebAudioSearchResult: Identifiable {
+    let title: String
+    let description: String
+    let url: URL
+    var id: String { url.absoluteString }
+    var isDirectAudio: Bool {
+        ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(url.pathExtension.lowercased())
+    }
+}
+
+enum WebAudioSearch {
+    private static let service = "MP3Shelf.WebAudioSearch"
+    private static let account = "brave-search-key"
+
+    private struct Response: Decodable {
+        let web: Web?
+        struct Web: Decodable { let results: [Hit] }
+        struct Hit: Decodable {
+            let title: String?
+            let description: String?
+            let url: String?
+        }
+    }
+
+    enum SearchFailure: LocalizedError {
+        case missingKey, rejectedKey, rateLimited, unavailable, invalidResponse
+        var errorDescription: String? {
+            switch self {
+            case .missingKey: return "Add a Brave Search API key to search web results inside MP3 Shelf."
+            case .rejectedKey: return "The search provider rejected the API key. Check the key in Web Search."
+            case .rateLimited: return "Web search hit its rate or credit limit. Retry later or use browser search."
+            case .unavailable: return "The web search provider is unavailable. Retry or open the browser search."
+            case .invalidResponse: return "The web search provider returned an unexpected response."
+            }
+        }
+    }
+
+    static func searchQuery(for wish: PlaylistWish) -> String {
+        // Search for download information, not Spotify streams or converter
+        // sites. A result's presence never proves it is licensed or playable.
+        let artist = wish.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = wish.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\"\(artist)\" \"\(title)\" official music download Bandcamp MP3"
+    }
+
+    static func browserURL(for wish: PlaylistWish) -> URL {
+        var parts = URLComponents(string: "https://search.brave.com/search")!
+        parts.queryItems = [URLQueryItem(name: "q", value: searchQuery(for: wish))]
+        return parts.url!
+    }
+
+    static func sanitizedResultURL(_ value: String?) -> URL? {
+        guard let value, let url = URL(string: value),
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(), !host.isEmpty,
+              url.user == nil, url.password == nil,
+              !host.hasSuffix(".local"), host != "localhost",
+              host != "127.0.0.1", host != "::1",
+              !["open.spotify.com", "accounts.spotify.com"].contains(host)
+        else { return nil }
+        return url
+    }
+
+    static func search(for wish: PlaylistWish, using apiKey: String) async throws -> [WebAudioSearchResult] {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { throw SearchFailure.missingKey }
+        try Task.checkCancellation()
+        var parts = URLComponents(string: "https://api.search.brave.com/res/v1/web/search")!
+        parts.queryItems = [
+            URLQueryItem(name: "q", value: searchQuery(for: wish)),
+            URLQueryItem(name: "count", value: "10"),
+            URLQueryItem(name: "search_lang", value: "en")
+        ]
+        var request = URLRequest(url: parts.url!)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(key, forHTTPHeaderField: "X-Subscription-Token")
+        request.timeoutInterval = 20
+        let (bytes, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw SearchFailure.invalidResponse }
+        switch http.statusCode {
+        case 200: break
+        case 401, 403: throw SearchFailure.rejectedKey
+        case 429: throw SearchFailure.rateLimited
+        default: throw SearchFailure.unavailable
+        }
+        guard bytes.count <= 2_000_000,
+              let page = try? JSONDecoder().decode(Response.self, from: bytes)
+        else { throw SearchFailure.invalidResponse }
+        var seen = Set<String>()
+        return (page.web?.results ?? []).compactMap { hit in
+            guard let url = sanitizedResultURL(hit.url),
+                  seen.insert(url.absoluteString).inserted else { return nil }
+            let title = hit.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return WebAudioSearchResult(
+                title: title.isEmpty ? url.host ?? "Web result" : title,
+                description: hit.description ?? "",
+                url: url
+            )
+        }
+    }
+
+    static func loadKey() -> String? {
+        #if canImport(Security)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+        #else
+        return nil
+        #endif
+    }
+
+    @discardableResult
+    static func saveKey(_ key: String) -> Bool {
+        #if canImport(Security)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        var values = query
+        values[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        values[kSecValueData as String] = Data(trimmed.utf8)
+        return SecItemAdd(values as CFDictionary, nil) == errSecSuccess
+        #else
+        return false
+        #endif
+    }
+}
