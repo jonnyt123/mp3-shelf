@@ -828,6 +828,11 @@ struct PlaylistDetailView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Catalog search: \(job.nextIndex)/\(job.wishes.count) processed")
                                     .font(.caption.monospacedDigit())
+                                if job.failed > 0 {
+                                    Label("\(job.failed) song lookup(s) failed after retrying. The remaining songs continue automatically.",
+                                          systemImage: "exclamationmark.circle")
+                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                }
                                 if let issue = job.lastError {
                                     Label("Source temporarily unavailable: \(issue)", systemImage: "wifi.exclamationmark")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)

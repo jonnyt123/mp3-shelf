@@ -113,17 +113,32 @@ enum SourceDiscoveryJobTests {
         for _ in 0..<12 {
             delayed.recordTransientFailure("API temporarily unavailable", at: clock)
         }
-        verifyDiscovery(delayed.nextRetryAt == clock.addingTimeInterval(900),
-                        "retry delay is capped at 15 minutes")
+        verifyDiscovery(delayed.nextRetryAt == clock.addingTimeInterval(240),
+                        "retry delay is capped at 4 minutes per attempt")
+        verifyDiscovery(delayed.hasExhaustedAutomaticRetries,
+                        "repeated catalog outages exhaust a bounded budget")
         let resumed = try JSONDecoder().decode(SourceDiscoveryJob.self,
             from: JSONEncoder().encode(delayed))
         verifyDiscovery(resumed.nextRetryAt == delayed.nextRetryAt &&
                         resumed.transientFailureCount == delayed.transientFailureCount,
                         "retry schedule survives app restart")
-        delayed.record(.queued)
+        verifyDiscovery(delayed.finishExhaustedRetriesIfNeeded(),
+                        "exhausted remote lookup advances to the next song")
+        verifyDiscovery(delayed.failed == 1 && delayed.nextIndex == 1 &&
+                        delayed.outcome(for: wishes[0]) == .failed &&
+                        delayed.currentWish?.title == "Second",
+                        "failed lookup does not block the rest of the playlist")
         verifyDiscovery(delayed.nextRetryAt == nil &&
                         delayed.transientFailureCount == nil,
-                        "successful lookup clears backoff")
+                        "failed lookup clears retry delay before continuing")
+        verifyDiscovery(!delayed.finishExhaustedRetriesIfNeeded(),
+                        "exhausted lookup is never double-counted")
+        delayed.recordTransientFailure("Next track temporarily unavailable", at: clock)
+        delayed.record(.queued)
+        verifyDiscovery(delayed.outcome(for: wishes[1]) == .queued &&
+                        delayed.nextRetryAt == nil &&
+                        delayed.transientFailureCount == nil,
+                        "successful second song resets retry history")
         var backwardCompatible = try JSONSerialization.jsonObject(
             with: JSONEncoder().encode(delayed)) as! [String: Any]
         backwardCompatible.removeValue(forKey: "nextRetryAt")

@@ -32,6 +32,14 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     var transientFailureCount: Int? = nil
     var nextRetryAt: Date? = nil
 
+    /// Exhaust a bounded retry budget instead of blocking this playlist
+    /// indefinitely when a remote catalog cannot answer. An exhausted song
+    /// is classified as failed, not falsely recorded as unavailable.
+    static let automaticRetryLimit = 5
+    var hasExhaustedAutomaticRetries: Bool {
+        (transientFailureCount ?? 0) >= Self.automaticRetryLimit
+    }
+
     var id: UUID { playlistID }
     var isComplete: Bool { nextIndex >= wishes.count }
     var remaining: Int { max(0, wishes.count - nextIndex) }
@@ -46,11 +54,21 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     /// retry date is persisted alongside the existing discovery cursor.
     mutating func recordTransientFailure(_ message: String, at date: Date = .now) {
         guard !isComplete else { return }
-        let count = min(7, (transientFailureCount ?? 0) + 1)
-        let delays: [TimeInterval] = [15, 30, 60, 120, 240, 480, 900]
+        let count = min(Self.automaticRetryLimit, (transientFailureCount ?? 0) + 1)
+        let delays: [TimeInterval] = [15, 30, 60, 120, 240]
         transientFailureCount = count
         nextRetryAt = date.addingTimeInterval(delays[count - 1])
         lastError = message
+    }
+
+    /// A source still failing after repeated automatic attempts should not
+    /// hold the rest of the playlist hostage. Manual playlist Retry remains
+    /// available once its missing-song search finishes.
+    @discardableResult
+    mutating func finishExhaustedRetriesIfNeeded() -> Bool {
+        guard hasExhaustedAutomaticRetries && !isComplete else { return false }
+        record(.failed)
+        return true
     }
 
     func outcome(for wish: PlaylistWish) -> Outcome? {

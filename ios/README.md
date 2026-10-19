@@ -144,11 +144,15 @@ checked before more expensive archive metadata traversal, minimizing
 unnecessary search requests for tracks found early.
 
 Temporary source API failures no longer require tapping **Resume Search**.
-The failed song remains at the persisted discovery cursor, and automatic
-retries use delays of 15, 30, 60, 120, 240, 480 and at most 900 seconds.
-This backoff is saved and resumes when the app next opens. In-app timers
-do not override iOS suspension or the Wi-Fi-only/cellular opt-in policy;
-the system determines when suspended app work may execute.
+The failed song stays at the persisted discovery cursor and receives at most
+five automatic attempts, with retry delays of 15, 30, 60 and 120 seconds.
+If the fifth lookup still fails, that song is marked **failed** (not
+"unavailable") and the search continues automatically to the next song.
+The user can rerun **Retry unmatched songs** later when the provider recovers.
+This prevents one prolonged API outage from blocking the entire imported
+playlist. Backoff checkpoints are persisted across relaunches, and a network
+handoff or user pause does not consume an automatic attempt. In-app timers
+cannot override iOS suspension, Wi-Fi-only transfers or cellular opt-in.
 
 ## Artist-enabled Audius downloads
 

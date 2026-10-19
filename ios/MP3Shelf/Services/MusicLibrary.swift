@@ -576,8 +576,14 @@ final class MusicLibrary: ObservableObject {
                 } catch is CancellationError {
                     break
                 } catch {
+                    // A network handoff or user pause must not burn through
+                    // the catalog's retry budget.
+                    if Task.isCancelled || job.isPaused ||
+                        !networkAllowsDiscovery(for: playlistID) { break }
                     job.recordTransientFailure(error.localizedDescription)
-                    retryScheduled = true
+                    // Continue to the NEXT song after five failed attempts,
+                    // preserving the .failed outcome and source discovery log.
+                    retryScheduled = !job.finishExhaustedRetriesIfNeeded()
                 }
             }
             discoveryJobs[index] = job
