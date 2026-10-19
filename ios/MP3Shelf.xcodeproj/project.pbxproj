@@ -11,6 +11,7 @@
 		444444444444444444444444 /* SpotifyViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 333333333333333333333333 /* SpotifyViews.swift */; };
 		222222222222222222222222 /* SpotifyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111111 /* SpotifyService.swift */; };
 		ABCA09110000000000000001 /* AudioSourceFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA09110000000000000002 /* AudioSourceFinder.swift */; };
+		ABCA09110000000000000003 /* BackgroundAudioDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA09110000000000000004 /* BackgroundAudioDownloader.swift */; };
 		628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D41E86730D9D4E46AD7565B /* MP3ShelfApp.swift */; };
 		58F35F17B0B426557F7C6BFE /* MusicModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */; };
 		23F82C0DAB44C8D8C5F26241 /* MusicLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 556E9F57EB89589680F906AF /* MusicLibrary.swift */; };
@@ -29,6 +30,7 @@
 		333333333333333333333333 /* SpotifyViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyViews.swift; sourceTree = "<group>"; };
 		111111111111111111111111 /* SpotifyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyService.swift; sourceTree = "<group>"; };
 		ABCA09110000000000000002 /* AudioSourceFinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSourceFinder.swift; sourceTree = "<group>"; };
+		ABCA09110000000000000004 /* BackgroundAudioDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundAudioDownloader.swift; sourceTree = "<group>"; };
 		3D41E86730D9D4E46AD7565B /* MP3ShelfApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MP3ShelfApp.swift; sourceTree = "<group>"; };
 		3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicModels.swift; sourceTree = "<group>"; };
 		556E9F57EB89589680F906AF /* MusicLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicLibrary.swift; sourceTree = "<group>"; };
@@ -72,6 +74,7 @@
 				555555555555555555555555 /* LyricsParser.swift */,
 				111111111111111111111111 /* SpotifyService.swift */,
 				ABCA09110000000000000002 /* AudioSourceFinder.swift */,
+				ABCA09110000000000000004 /* BackgroundAudioDownloader.swift */,
 			); path = Services; sourceTree = "<group>"; };
 		4E287F692FC82F49C1B450A3 /* Views */ = {isa = PBXGroup; children = (
 				13A88BACB079DF001A2CFB03 /* MainView.swift */,
@@ -109,6 +112,7 @@
 				666666666666666666666666 /* LyricsParser.swift in Sources */,
 				222222222222222222222222 /* SpotifyService.swift in Sources */,
 				ABCA09110000000000000001 /* AudioSourceFinder.swift in Sources */,
+				ABCA09110000000000000003 /* BackgroundAudioDownloader.swift in Sources */,
 				99C401E36FF0BDEE5903FAE2 /* MainView.swift in Sources */,
 				45BDD03CF2227AEBED792CED /* PlayerViews.swift in Sources */,
 				AFBCAD821E0B88FA3FCC9208 /* LibraryViews.swift in Sources */,
