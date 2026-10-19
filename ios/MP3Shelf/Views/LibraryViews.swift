@@ -1063,6 +1063,8 @@ struct WebAudioDiscoveryView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var apiKey = WebAudioSearch.loadKey() ?? ""
     @State private var searchDepth: WebAudioSearch.SearchDepth = .quick
+    @State private var inspectPagesDuringSearch = false
+    @State private var inspectedDuringSearch = 0
     @State private var pageStart = 0
     @State private var results: [UUID: [WebAudioSearchResult]] = [:]
     @State private var issues: [UUID: String] = [:]
@@ -1103,6 +1105,12 @@ struct WebAudioDiscoveryView: View {
                         }
                     }
                     .disabled(scanning)
+                    Toggle("Inspect matching webpages during search", isOn: $inspectPagesDuringSearch)
+                        .disabled(scanning)
+                    if inspectPagesDuringSearch {
+                        Text("After finding search results, inspect up to 12 relevant source pages per batch, one per song, for direct audio links. This sends additional public webpage requests but does not download audio. Longer playlists may require another batch or manual inspection.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Text("This batch contains \(batch.count) songs and can make up to \(batch.count * searchDepth.rawValue) billable Brave API searches. Extensive mode combines general, store, direct-file, official and archive searches.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
@@ -1114,16 +1122,40 @@ struct WebAudioDiscoveryView: View {
                         results = [:]
                         issues = [:]
                         searched = 0
+                        inspectedDuringSearch = 0
                         scanning = true
                         let currentBatch = batch
                         let depth = searchDepth
+                        let inspectPages = inspectPagesDuringSearch
                         scanTask = Task {
+                            var inspectedPages = 0
                             var scannedStop = false
                             let key = apiKey
                             for wish in currentBatch {
                                 if Task.isCancelled { break }
                                 do {
-                                    results[wish.id] = try await WebAudioSearch.search(for: wish, using: key, depth: depth)
+                                    let found = try await WebAudioSearch.search(for: wish, using: key, depth: depth)
+                                    results[wish.id] = found
+                                    if inspectPages && inspectedPages < 12 {
+                                        let candidates = WebAudioSearch.pagesWorthInspecting(
+                                            found, for: wish, limit: 1)
+                                        for hit in candidates {
+                                            if Task.isCancelled { break }
+                                            inspectedPages += 1
+                                            inspectingPages.insert(hit.id)
+                                            do {
+                                                extractedLinks[hit.id] = try await AudioLandingPageInspector.inspect(
+                                                    hit.url, maxProbes: 2)
+                                            } catch is CancellationError {
+                                                inspectingPages.remove(hit.id)
+                                                break
+                                            } catch {
+                                                inspectionErrors[hit.id] = error.localizedDescription
+                                            }
+                                            inspectingPages.remove(hit.id)
+                                            inspectedDuringSearch = inspectedPages
+                                        }
+                                    }
                                 } catch is CancellationError {
                                     break
                                 } catch {
@@ -1149,7 +1181,8 @@ struct WebAudioDiscoveryView: View {
                     .disabled(scanning || apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || batch.isEmpty)
                     if scanning {
                         ProgressView(value: Double(searched), total: Double(max(1, batch.count)))
-                        Text("\(searched) of \(batch.count) songs searched")
+                        Text("\(searched) of \(batch.count) songs searched" +
+                             (inspectPagesDuringSearch ? " · \(inspectedDuringSearch) source pages inspected" : ""))
                             .font(.caption.monospacedDigit())
                     }
                     if !wishes.isEmpty {
@@ -1210,7 +1243,8 @@ struct WebAudioDiscoveryView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             if !found.isEmpty {
-                                let candidates = Array(found.filter { !$0.isDirectAudio }.prefix(5))
+                                let candidates = WebAudioSearch.pagesWorthInspecting(
+                                    found, for: wish, limit: 5)
                                 if !candidates.isEmpty {
                                     Button {
                                         guard !inspectingWishes.contains(wish.id) else { return }
