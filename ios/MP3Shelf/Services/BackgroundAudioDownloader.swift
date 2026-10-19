@@ -18,6 +18,9 @@ struct BackgroundAudioTicket: Codable, Identifiable {
     var totalBytes: Int64? = nil
     var failureReason: String? = nil
     var startedAt: Date? = nil
+    // Optional properties preserve previously persisted queue manifests.
+    var automaticRetryCount: Int? = nil
+    var nextRetryAt: Date? = nil
 }
 
 /// URLSession's background transfer daemon survives ordinary app suspension
@@ -84,10 +87,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                         sourcePage: old.sourcePage, licensePage: old.licensePage,
                         provider: old.provider)
                     replacement.startedAt = .now
+                    replacement.automaticRetryCount = old.automaticRetryCount
+                    replacement.nextRetryAt = old.nextRetryAt
                     self.tickets[replacement.id] = replacement
                     let next = self.session.downloadTask(
                         with: self.downloadRequest(for: replacement.downloadURL, playlistID: playlistID))
                     next.taskDescription = replacement.id.uuidString
+                    next.earliestBeginDate = replacement.nextRetryAt
                     next.resume()
                     task.cancel()
                     changed = true
@@ -155,7 +161,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     func ticketsForPlaylist(_ playlistID: UUID? = nil) -> [BackgroundAudioTicket] {
         tickets.values.filter {
             (playlistID == nil || $0.playlistID == playlistID) &&
-            $0.failureReason != "Replaced with a cellular-authorized transfer"
+            $0.failureReason != "Replaced with a cellular-authorized transfer" &&
+            $0.failureReason != "Replaced by automatic retry"
         }
             .sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
     }
@@ -241,6 +248,45 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         revision += 1
     }
 
+    /// Recover *only* temporary network/server failures. A replacement
+    /// URLSession background task is scheduled immediately with an
+    /// earliestBeginDate, so iOS can perform it while the app is suspended.
+    /// New task/ticket IDs also prevent stale callbacks from older attempts
+    /// from mutating the live download.
+    private func retryTemporaryTransfer(_ id: UUID, reason: String) {
+        guard let previous = tickets[id], previous.status == .queued else { return }
+        let attempt = (previous.automaticRetryCount ?? 0) + 1
+        guard let delay = BackgroundTransferRetryPolicy.delay(afterFailure: attempt),
+              Self.allowedDownloadURL(previous.downloadURL) else {
+            setFailed(id, reason: "\(reason) (automatic retries exhausted)")
+            return
+        }
+
+        var retired = previous
+        retired.status = .cancelled
+        retired.failureReason = "Replaced by automatic retry"
+        tickets[id] = retired
+
+        var replacement = BackgroundAudioTicket(
+            id: UUID(), playlistID: previous.playlistID,
+            requested: previous.requested, downloadURL: previous.downloadURL,
+            sourcePage: previous.sourcePage, licensePage: previous.licensePage,
+            provider: previous.provider)
+        replacement.startedAt = previous.startedAt ?? .now
+        replacement.automaticRetryCount = attempt
+        replacement.nextRetryAt = Date().addingTimeInterval(delay)
+        replacement.failureReason = reason
+        tickets[replacement.id] = replacement
+        persist()
+
+        let task = session.downloadTask(
+            with: downloadRequest(for: replacement.downloadURL, playlistID: replacement.playlistID))
+        task.taskDescription = replacement.id.uuidString
+        task.earliestBeginDate = replacement.nextRetryAt
+        task.resume()
+        updatePending()
+    }
+
     private func setFailed(_ id: UUID, reason: String = "Download or validation failed") {
         guard var ticket = tickets[id], ticket.status == .queued else { return }
         ticket.status = .failed
@@ -293,7 +339,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 try? fm.removeItem(at: stagedURL)
             } catch {
                 // Leave failed transfers retryable via the playlist's retry button.
-                setFailed(ticket.id)
+                setFailed(ticket.id, reason: error.localizedDescription)
                 try? fm.removeItem(at: stagedURL)
             }
         }
@@ -334,12 +380,24 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                                 didFinishDownloadingTo location: URL) {
         guard let id = UUID(uuidString: downloadTask.taskDescription ?? "") else { return }
         guard let http = downloadTask.response as? HTTPURLResponse,
-              (200...299).contains(http.statusCode),
-              http.url.map({ Self.allowedDownloadURL($0) }) == true,
-              let mime = http.mimeType?.lowercased(),
+              http.url.map({ Self.allowedDownloadURL($0) }) == true else {
+            Task { @MainActor in self.setFailed(id, reason: "Invalid download response or destination") }
+            return
+        }
+        guard (200...299).contains(http.statusCode) else {
+            if BackgroundTransferRetryPolicy.isTemporaryHTTP(http.statusCode) {
+                Task { @MainActor in
+                    self.retryTemporaryTransfer(id, reason: "Source server returned HTTP \(http.statusCode)")
+                }
+            } else {
+                Task { @MainActor in self.setFailed(id, reason: "Source server returned HTTP \(http.statusCode)") }
+            }
+            return
+        }
+        guard let mime = http.mimeType?.lowercased(),
               ["audio/mpeg", "audio/mp3", "application/octet-stream", "audio/x-mpeg"].contains(mime)
         else {
-            Task { @MainActor in self.setFailed(id) }
+            Task { @MainActor in self.setFailed(id, reason: "Source returned non-audio content") }
             return
         }
         // Copy/move BEFORE returning: URLSession deletes location at delegate return.
@@ -368,8 +426,17 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask,
                                 didCompleteWithError error: Error?) {
-        guard error != nil, let id = UUID(uuidString: task.taskDescription ?? "") else { return }
-        Task { @MainActor in self.setFailed(id, reason: error?.localizedDescription ?? "Transfer error") }
+        guard let error, let id = UUID(uuidString: task.taskDescription ?? "") else { return }
+        let systemError = error as NSError
+        let shouldRetry = systemError.domain == NSURLErrorDomain &&
+            BackgroundTransferRetryPolicy.isTemporaryURLFailure(systemError.code)
+        Task { @MainActor in
+            if shouldRetry {
+                self.retryTemporaryTransfer(id, reason: error.localizedDescription)
+            } else {
+                self.setFailed(id, reason: error.localizedDescription)
+            }
+        }
     }
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

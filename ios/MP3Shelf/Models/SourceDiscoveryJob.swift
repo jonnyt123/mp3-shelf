@@ -10,6 +10,39 @@ enum DownloadNetworkPolicy {
     }
 }
 
+
+/// Small, bounded recovery budget for actual background file transfers.
+/// The source catalog has its own independent lookup retry policy. Do not
+/// retry invalid media, rejected permissions, or conflicting song metadata.
+enum BackgroundTransferRetryPolicy {
+    static let maxRetries = 3
+
+    static func delay(afterFailure attempt: Int) -> TimeInterval? {
+        switch attempt {
+        case 1: return 45
+        case 2: return 150
+        case 3: return 450
+        default: return nil
+        }
+    }
+
+    static func isTemporaryHTTP(_ statusCode: Int) -> Bool {
+        [408, 429, 500, 502, 503, 504].contains(statusCode)
+    }
+
+    static func isTemporaryURLFailure(_ code: Int) -> Bool {
+        let temporary: Set<Int> = [
+            URLError.Code.timedOut.rawValue,
+            URLError.Code.networkConnectionLost.rawValue,
+            URLError.Code.notConnectedToInternet.rawValue,
+            URLError.Code.cannotConnectToHost.rawValue,
+            URLError.Code.cannotFindHost.rawValue,
+            URLError.Code.dnsLookupFailed.rawValue
+        ]
+        return temporary.contains(code)
+    }
+}
+
 struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     enum Result { case queued, unavailable, failed, alreadyPresent }
 

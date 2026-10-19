@@ -135,6 +135,25 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Automatic background MP3 transfer recovery
+
+If an otherwise verified audio download is interrupted by a temporary
+network error, timeout, HTTP 408/429 or common HTTP 5xx response, MP3 Shelf
+schedules up to three new transfer attempts with iOS background URLSession,
+after at least 45, 150 and 450 seconds. Each retry preserves the originally
+matched recording, playlist and attribution, and defaults to the same
+Wi-Fi-only request restriction. Apple's background transfer daemon handles
+the retry's earliest-start date without requiring another tap or keeping the
+app open, subject to iOS scheduling and force-quit restrictions. A cellular
+override remains per playlist and requires explicit user action.
+
+New ticket identifiers isolate late callbacks from earlier attempts. Retry
+state is optional in the persisted manifest for backward compatibility.
+Server-side permissions and missing files (e.g. HTTP 403/404), invalid media,
+wrong recording metadata or incompatible duration never trigger automatic
+repeated downloads; those failures remain available in Download Manager
+for manual inspection.
+
 ## Automatic catalog recovery and Audius response compatibility
 
 Audius' JSON response may use `downloadable` or `is_downloadable`.

@@ -173,6 +173,13 @@ private struct DownloadTicketRow: View {
                     .background(statusColor.opacity(0.12), in: Capsule())
             }
             if ticket.status == .queued {
+                if let retry = ticket.nextRetryAt {
+                    Label("Temporary interruption · automatic retry \(ticket.automaticRetryCount ?? 0)/\(BackgroundTransferRetryPolicy.maxRetries)",
+                          systemImage: "arrow.clockwise")
+                        .font(.caption.weight(.medium)).foregroundStyle(ShelfTheme.mint)
+                    Text("Scheduled no earlier than \(retry.formatted(date: .omitted, time: .shortened)) · Wi-Fi unless cellular was explicitly approved")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                }
                 if let size = ticket.totalBytes, size > 0 {
                     ProgressView(value: Double(ticket.bytesReceived ?? 0), total: Double(size))
                         .tint(ShelfTheme.mint)

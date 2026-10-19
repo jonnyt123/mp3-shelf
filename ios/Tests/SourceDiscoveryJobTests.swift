@@ -147,6 +147,30 @@ enum SourceDiscoveryJobTests {
             from: JSONSerialization.data(withJSONObject: backwardCompatible))
         verifyDiscovery(oldCheckpoint.canAttemptLookup(at: clock),
                         "pre-retry persisted queues remain decodable")
+        verifyDiscovery(BackgroundTransferRetryPolicy.delay(afterFailure: 1) == 45,
+                        "first interrupted background transfer is delayed")
+        verifyDiscovery(BackgroundTransferRetryPolicy.delay(afterFailure: 2) == 150 &&
+                        BackgroundTransferRetryPolicy.delay(afterFailure: 3) == 450,
+                        "successive transfer failures increase delay")
+        verifyDiscovery(BackgroundTransferRetryPolicy.delay(afterFailure: 4) == nil &&
+                        BackgroundTransferRetryPolicy.delay(afterFailure: 100) == nil,
+                        "background transfers cannot retry indefinitely")
+        for status in [408, 429, 500, 502, 503, 504] {
+            verifyDiscovery(BackgroundTransferRetryPolicy.isTemporaryHTTP(status),
+                            "temporary HTTP \(status) is retried")
+        }
+        for status in [400, 401, 403, 404, 410, 451] {
+            verifyDiscovery(!BackgroundTransferRetryPolicy.isTemporaryHTTP(status),
+                            "permanent HTTP \(status) is not retried")
+        }
+        for error in [URLError.Code.timedOut, .networkConnectionLost, .notConnectedToInternet] {
+            verifyDiscovery(BackgroundTransferRetryPolicy.isTemporaryURLFailure(error.rawValue),
+                            "recoverable network disconnection is retried")
+        }
+        for error in [URLError.Code.badURL, .userAuthenticationRequired, .secureConnectionFailed] {
+            verifyDiscovery(!BackgroundTransferRetryPolicy.isTemporaryURLFailure(error.rawValue),
+                            "invalid links and security failures are not retried")
+        }
         print("Persistent discovery checkpoint tests passed")
     }
 }
