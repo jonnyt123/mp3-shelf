@@ -135,6 +135,32 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Preverified backup download sources for locked-screen recovery
+
+Every newly imported playlist song is looked up across all four supported
+independent catalog APIs concurrently (Audius, Openverse, Wikimedia Commons,
+Internet Archive). The first exact, permitted downloadable recording starts
+as the primary background transfer; up to three other unique verified URLs,
+along with each source's attribution and license, are saved in that ticket's
+Codable manifest. Searching sources concurrently avoids having to wait for four
+catalogs in serial, but does add catalog requests when the first one already
+would have found the song.
+
+If a file is missing, invalid, incorrectly tagged, has a mismatched duration
+or exhausts its ordinary transient retry budget, the background downloader
+automatically switches to the next queued, independently verified source.
+Each new URL gets its own ticket and the same Wi-Fi-only request restriction
+unless the user explicitly enabled cellular for this playlist. Alternative
+source lists persist across ordinary app relaunches and can be consumed by
+the iOS background URLSession daemon callback while the phone is locked.
+The original Spotify playlist entry stays in the correct order and is never
+silently substituted with an unverified live/remix recording. Once all verified
+sources fail, the song stays marked failed with its final error for review.
+
+This is a bounded provider failover, not a guarantee that every commercial
+Spotify recording has an independently downloadable MP3. Spotify tracks and
+DRM-protected media are not downloaded or converted.
+
 ## Request-level Wi-Fi-only source discovery
 
 The automatic playlist queue was already gated by iOS Network framework

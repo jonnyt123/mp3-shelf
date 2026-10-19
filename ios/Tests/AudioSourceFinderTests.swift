@@ -453,6 +453,41 @@ enum AudioSourceFinderTests {
             AudioSourceFinder.audiusCandidate($0, for: wish)
         } == nil, "an Audius gated download cannot enter the automatic queue")
 
+        let firstSource = AudioCatalogMatch(
+            downloadURL: URL(string: "https://first.example/song.mp3")!,
+            itemURL: URL(string: "https://first.example/song")!,
+            licenseURL: URL(string: "https://creativecommons.org/licenses/by/4.0/")!,
+            sourceName: "First verified provider")
+        let secondSource = AudioCatalogMatch(
+            downloadURL: URL(string: "https://second.example/song.mp3")!,
+            itemURL: URL(string: "https://second.example/song")!,
+            licenseURL: URL(string: "https://creativecommons.org/licenses/by/4.0/")!,
+            sourceName: "Second verified provider")
+        let duplicateFirst = AudioCatalogMatch(
+            downloadURL: firstSource.downloadURL,
+            itemURL: URL(string: "https://mirror.example/song")!,
+            licenseURL: firstSource.licenseURL,
+            sourceName: "Duplicate index")
+        let deduped = AudioSourceFinder.uniqueDownloadSources(
+            [firstSource, duplicateFirst, secondSource])
+        verify(deduped.count == 2 &&
+               deduped.map(\.sourceName) == ["First verified provider", "Second verified provider"],
+               "download-source deduplication preserves provider precedence")
+        let fallback = AudioSourceFinder.nextAlternative(
+            to: firstSource.downloadURL, from: [duplicateFirst, secondSource])
+        verify(fallback?.source.downloadURL == secondSource.downloadURL &&
+               fallback?.remaining.isEmpty == true,
+               "failed first source rotates to a distinct verified second source")
+        verify(AudioSourceFinder.nextAlternative(
+            to: secondSource.downloadURL, from: fallback?.remaining ?? []) == nil,
+               "exhausted source alternatives cannot cause repeated download loops")
+        let serializedSources = try? JSONEncoder().encode(deduped)
+        let restoredSources = serializedSources.flatMap {
+            try? JSONDecoder().decode([AudioCatalogMatch].self, from: $0)
+        }
+        verify(restoredSources?.map(\.downloadURL) == deduped.map(\.downloadURL) &&
+               restoredSources?.map(\.sourceName) == deduped.map(\.sourceName),
+               "verified fallback source URLs and attribution survive app restart")
         print("Audio source discovery validation tests passed")
     }
 }

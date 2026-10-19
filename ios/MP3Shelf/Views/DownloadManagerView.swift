@@ -173,6 +173,12 @@ private struct DownloadTicketRow: View {
                     .background(statusColor.opacity(0.12), in: Capsule())
             }
             if ticket.status == .queued {
+                if let alternatives = ticket.alternativeSources, !alternatives.isEmpty {
+                    Label("\(alternatives.count) alternate verified source\(alternatives.count == 1 ? "" : "s") ready if this one fails",
+                          systemImage: "arrow.triangle.branch")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(ShelfTheme.mint)
+                }
                 if let retry = ticket.nextRetryAt {
                     Label("Temporary interruption · automatic retry \(ticket.automaticRetryCount ?? 0)/\(BackgroundTransferRetryPolicy.maxRetries)",
                           systemImage: "arrow.clockwise")

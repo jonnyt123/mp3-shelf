@@ -21,6 +21,9 @@ struct BackgroundAudioTicket: Codable, Identifiable {
     // Optional properties preserve previously persisted queue manifests.
     var automaticRetryCount: Int? = nil
     var nextRetryAt: Date? = nil
+    // Preverified source alternatives survive app termination, so iOS can
+    // switch providers even after the phone is locked. Legacy manifests omit it.
+    var alternativeSources: [AudioCatalogMatch]? = nil
 }
 
 /// URLSession's background transfer daemon survives ordinary app suspension
@@ -89,6 +92,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                     replacement.startedAt = .now
                     replacement.automaticRetryCount = old.automaticRetryCount
                     replacement.nextRetryAt = old.nextRetryAt
+                    replacement.alternativeSources = old.alternativeSources
                     self.tickets[replacement.id] = replacement
                     let next = self.session.downloadTask(
                         with: self.downloadRequest(for: replacement.downloadURL, playlistID: playlistID))
@@ -135,7 +139,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     @discardableResult
-    func enqueue(source: AudioCatalogMatch, requested: PlaylistWish, playlistID: UUID) -> Bool {
+    func enqueue(source: AudioCatalogMatch, requested: PlaylistWish, playlistID: UUID,
+                 alternatives: [AudioCatalogMatch] = []) -> Bool {
         guard Self.allowedDownloadURL(source.downloadURL) else { return false }
         if tickets.values.contains(where: {
             $0.status == .queued && $0.playlistID == playlistID &&
@@ -147,6 +152,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             downloadURL: source.downloadURL, sourcePage: source.itemURL,
             licensePage: source.licenseURL, provider: source.sourceName)
         ticket.startedAt = .now
+        ticket.alternativeSources = AudioSourceFinder.uniqueDownloadSources(
+            alternatives.filter { $0.downloadURL != source.downloadURL &&
+                Self.allowedDownloadURL($0.downloadURL) })
         tickets[ticket.id] = ticket
         persist()
         revision += 1
@@ -162,7 +170,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         tickets.values.filter {
             (playlistID == nil || $0.playlistID == playlistID) &&
             $0.failureReason != "Replaced with a cellular-authorized transfer" &&
-            $0.failureReason != "Replaced by automatic retry"
+            $0.failureReason != "Replaced by automatic retry" &&
+            $0.failureReason != "Replaced by alternate verified source"
         }
             .sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
     }
@@ -188,6 +197,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             downloadURL: previous.downloadURL, sourcePage: previous.sourcePage,
             licensePage: previous.licensePage, provider: previous.provider)
         ticket.startedAt = .now
+        ticket.alternativeSources = previous.alternativeSources
         tickets[newID] = ticket
         persist()
         let task = session.downloadTask(
@@ -275,6 +285,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         replacement.startedAt = previous.startedAt ?? .now
         replacement.automaticRetryCount = attempt
         replacement.nextRetryAt = Date().addingTimeInterval(delay)
+        replacement.alternativeSources = previous.alternativeSources
         replacement.failureReason = reason
         tickets[replacement.id] = replacement
         persist()
@@ -287,8 +298,43 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         updatePending()
     }
 
+    /// After the current file fails validation or exhausts network retries,
+    /// switch to another previously verified catalog result. All candidates
+    /// already passed the title, artist, license and (when available) duration
+    /// checks before the phone was locked.
+    private func tryNextDownloadSource(after id: UUID) -> Bool {
+        guard let old = tickets[id], old.status == .queued,
+              let remaining = old.alternativeSources else { return false }
+        let candidates = remaining.filter { Self.allowedDownloadURL($0.downloadURL) }
+        guard let next = AudioSourceFinder.nextAlternative(to: old.downloadURL,
+                                                            from: candidates) else { return false }
+
+        var superseded = old
+        superseded.status = .cancelled
+        superseded.failureReason = "Replaced by alternate verified source"
+        tickets[id] = superseded
+
+        var replacement = BackgroundAudioTicket(
+            id: UUID(), playlistID: old.playlistID,
+            requested: old.requested, downloadURL: next.source.downloadURL,
+            sourcePage: next.source.itemURL, licensePage: next.source.licenseURL,
+            provider: next.source.sourceName)
+        replacement.startedAt = old.startedAt ?? .now
+        replacement.alternativeSources = next.remaining
+        tickets[replacement.id] = replacement
+        persist()
+
+        let task = session.downloadTask(
+            with: downloadRequest(for: replacement.downloadURL, playlistID: replacement.playlistID))
+        task.taskDescription = replacement.id.uuidString
+        task.resume()
+        updatePending()
+        return true
+    }
+
     private func setFailed(_ id: UUID, reason: String = "Download or validation failed") {
         guard var ticket = tickets[id], ticket.status == .queued else { return }
+        if tryNextDownloadSource(after: id) { return }
         ticket.status = .failed
         ticket.failureReason = reason
         tickets[id] = ticket
@@ -329,12 +375,17 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                     providerName: ticket.provider)
                 let imported = try await library.importStagedAudio(
                     from: stagedURL, matching: ticket.requested, attribution: attribution)
-                if var current = tickets[ticket.id], current.status == .queued {
-                    current.status = imported ? .imported : .failed
-                    tickets[ticket.id] = current
-                    persist()
-                    revision += 1
-                    library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: imported)
+                if imported {
+                    if var current = tickets[ticket.id], current.status == .queued {
+                        current.status = .imported
+                        current.alternativeSources = nil
+                        tickets[ticket.id] = current
+                        persist()
+                        revision += 1
+                        library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: true)
+                    }
+                } else {
+                    setFailed(ticket.id, reason: "Audio already stored or could not be imported")
                 }
                 try? fm.removeItem(at: stagedURL)
             } catch {

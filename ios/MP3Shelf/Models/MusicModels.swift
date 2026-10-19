@@ -80,7 +80,7 @@ struct MusicTrack: Identifiable, Codable, Hashable {
     }
 }
 
-struct PlaylistWish: Identifiable, Codable, Hashable {
+struct PlaylistWish: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
     var title: String
     var artist: String

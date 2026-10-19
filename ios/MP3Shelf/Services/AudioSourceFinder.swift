@@ -6,7 +6,7 @@ import FoundationNetworking
 /// Evidence for a downloadable MP3 that an independent catalog labels as
 /// Creative Commons or public domain. License metadata is supplied by the
 /// uploader, not independently certified by MP3 Shelf.
-struct AudioCatalogMatch {
+struct AudioCatalogMatch: Codable, Sendable {
     let downloadURL: URL
     let itemURL: URL
     let licenseURL: URL
@@ -356,42 +356,86 @@ extension AudioSourceFinder {
         return unique.count == 1 ? unique.values.first?.first : nil
     }
 
+    /// Search all four independent catalogs concurrently while the app is
+    /// active, retaining alternates *before* it hands downloads to iOS. This
+    /// lets a locked iPhone use a different verified source without needing
+    /// to restart foreground source discovery.
+    private struct CatalogLookup: Sendable {
+        let rank: Int
+        let candidate: AudioCatalogMatch?
+        let failed: Bool
+    }
+
+    static func uniqueDownloadSources(_ ordered: [AudioCatalogMatch]) -> [AudioCatalogMatch] {
+        var visited: Set<URL> = []
+        return ordered.filter { visited.insert($0.downloadURL).inserted }
+    }
+
+    static func nextAlternative(to currentURL: URL, from remaining: [AudioCatalogMatch])
+        -> (source: AudioCatalogMatch, remaining: [AudioCatalogMatch])? {
+        guard let index = remaining.firstIndex(where: {
+            $0.downloadURL != currentURL && $0.downloadURL.scheme?.lowercased() == "https"
+        }) else { return nil }
+        return (remaining[index], Array(remaining.dropFirst(index + 1)))
+    }
+
+    static func findDownloadCandidates(for wish: PlaylistWish,
+                                       allowsCellular: Bool = false) async throws -> [AudioCatalogMatch] {
+        try Task.checkCancellation()
+        let found = await withTaskGroup(of: CatalogLookup.self, returning: [CatalogLookup].self) { group in
+            group.addTask {
+                do {
+                    return CatalogLookup(rank: 0,
+                        candidate: try await findAudius(for: wish, allowsCellular: allowsCellular),
+                        failed: false)
+                } catch {
+                    return CatalogLookup(rank: 0, candidate: nil, failed: true)
+                }
+            }
+            group.addTask {
+                do {
+                    return CatalogLookup(rank: 1,
+                        candidate: try await findOpenverse(for: wish, allowsCellular: allowsCellular),
+                        failed: false)
+                } catch {
+                    return CatalogLookup(rank: 1, candidate: nil, failed: true)
+                }
+            }
+            group.addTask {
+                do {
+                    return CatalogLookup(rank: 2,
+                        candidate: try await findCommons(for: wish, allowsCellular: allowsCellular),
+                        failed: false)
+                } catch {
+                    return CatalogLookup(rank: 2, candidate: nil, failed: true)
+                }
+            }
+            group.addTask {
+                do {
+                    return CatalogLookup(rank: 3,
+                        candidate: try await find(for: wish, allowsCellular: allowsCellular),
+                        failed: false)
+                } catch {
+                    return CatalogLookup(rank: 3, candidate: nil, failed: true)
+                }
+            }
+            var results: [CatalogLookup] = []
+            for await result in group { results.append(result) }
+            return results
+        }
+        try Task.checkCancellation()
+        let candidates = uniqueDownloadSources(found.sorted { $0.rank < $1.rank }
+            .compactMap(\.candidate))
+        if !candidates.isEmpty { return candidates }
+        // Do not permanently label a track missing when every available
+        // source might have been hidden by a temporary provider outage.
+        if found.contains(where: \.failed) { throw SourceError.unavailable }
+        return []
+    }
+
     static func findAcrossCatalogs(for wish: PlaylistWish,
                                    allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
-        try Task.checkCancellation()
-        var firstError: Error?
-        // Artist-enabled Audius tracks are a fast exact-match lookup; search
-        // this endpoint before traversing up to 20 Archive metadata records.
-        do {
-            if let audius = try await findAudius(for: wish, allowsCellular: allowsCellular) { return audius }
-        } catch {
-            if error is CancellationError { throw error }
-            firstError = error
-        }
-        try Task.checkCancellation()
-        do {
-            if let openverse = try await findOpenverse(for: wish, allowsCellular: allowsCellular) { return openverse }
-        } catch {
-            if error is CancellationError { throw error }
-            if firstError == nil { firstError = error }
-        }
-        try Task.checkCancellation()
-        do {
-            if let commons = try await findCommons(for: wish, allowsCellular: allowsCellular) { return commons }
-        } catch {
-            if error is CancellationError { throw error }
-            if firstError == nil { firstError = error }
-        }
-        try Task.checkCancellation()
-        do {
-            if let archive = try await find(for: wish, allowsCellular: allowsCellular) { return archive }
-        } catch {
-            if error is CancellationError { throw error }
-            if firstError == nil { firstError = error }
-        }
-        // Network errors must not be recorded as permanent "unavailable".
-        if let firstError { throw firstError }
-        return nil
+        try await findDownloadCandidates(for: wish, allowsCellular: allowsCellular).first
     }
 }
 
