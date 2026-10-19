@@ -656,6 +656,7 @@ struct PlaylistDetailView: View {
     @EnvironmentObject private var playback: PlaybackController
     @State private var editing: MusicTrack?
     @State private var manuallyAdding: PlaylistWish?
+    @State private var showWebDiscovery = false
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
 
@@ -789,7 +790,14 @@ struct PlaylistDetailView: View {
                             }
                         }
                         .padding(.vertical, 8)
-                        Text("Searches Internet Archive, Openverse and Wikimedia Commons for exact recordings with downloadable MP3 files and declared Creative Commons/public-domain licenses. Most commercially released songs cannot be downloaded from these catalogs.")
+                        Text("Automatic matching checks three openly licensed catalogs. Use Web Search below to also find artist pages, stores and other download information across the wider web.")
+                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        Button {
+                            showWebDiscovery = true
+                        } label: {
+                            Label("Search the wider web for missing songs", systemImage: "globe")
+                        }
+                        .buttonStyle(.bordered)
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
                             VStack(alignment: .leading, spacing: 6) {
@@ -944,6 +952,9 @@ struct PlaylistDetailView: View {
         .sheet(item: $manuallyAdding) { wish in
             AuthorizedPlaylistAudioView(wish: wish)
         }
+        .sheet(isPresented: $showWebDiscovery) {
+            WebAudioDiscoveryView(wishes: playlist?.missingTracks ?? [])
+        }
     }
 }
 
@@ -952,6 +963,7 @@ struct PlaylistDetailView: View {
 /// derived from Spotify streams or an unverified download search engine.
 struct AuthorizedPlaylistAudioView: View {
     let wish: PlaylistWish
+    var initialURL: URL? = nil
     @EnvironmentObject private var library: MusicLibrary
     @Environment(\.dismiss) private var dismiss
     @State private var link = ""
@@ -1016,6 +1028,9 @@ struct AuthorizedPlaylistAudioView: View {
             }
             .navigationTitle("Attach Offline Audio")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                if link.isEmpty, let initialURL { link = initialURL.absoluteString }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }
@@ -1029,6 +1044,160 @@ struct AuthorizedPlaylistAudioView: View {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: {
                 Text(errorMessage ?? "")
+            }
+        }
+    }
+}
+
+
+private struct WebAudioSelection: Identifiable {
+    let id = UUID()
+    let wish: PlaylistWish
+    let url: URL
+}
+
+/// Optional broad web search for download *pages* and direct audio links.
+/// Only a URL explicitly chosen by the user is submitted to the local
+/// audio importer; a search result is never silently treated as an MP3.
+struct WebAudioDiscoveryView: View {
+    let wishes: [PlaylistWish]
+    @Environment(\.dismiss) private var dismiss
+    @State private var apiKey = WebAudioSearch.loadKey() ?? ""
+    @State private var results: [UUID: [WebAudioSearchResult]] = [:]
+    @State private var issues: [UUID: String] = [:]
+    @State private var searched = 0
+    @State private var scanning = false
+    @State private var scanTask: Task<Void, Never>?
+    @State private var selectedLink: WebAudioSelection?
+    @State private var message: String?
+
+    // Avoid unexpectedly spending API credits on giant playlists.
+    private var batch: [PlaylistWish] { Array(wishes.prefix(100)) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("SEARCH BEYOND THE CATALOGS") {
+                    Text("Search artist sites, music stores, and download pages across the web for up to 100 missing tracks. Results are leads to inspect, not guaranteed MP3 files.")
+                        .font(.subheadline)
+                    SecureField("Brave Search API key", text: $apiKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Text("Brave offers a separate web-search API. Enter your own key once; it stays in this iPhone's Keychain and is sent only to Brave. Searches consume your account's API credits.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Link("Get an API key from Brave Search", destination: URL(string: "https://brave.com/search/api/")!)
+                    Button {
+                        guard WebAudioSearch.saveKey(apiKey) else {
+                            message = "Could not securely save the search key to Keychain."
+                            return
+                        }
+                        scanTask?.cancel()
+                        results = [:]
+                        issues = [:]
+                        searched = 0
+                        scanning = true
+                        scanTask = Task {
+                            let key = apiKey
+                            for wish in batch {
+                                if Task.isCancelled { break }
+                                do {
+                                    results[wish.id] = try await WebAudioSearch.search(for: wish, using: key)
+                                } catch is CancellationError {
+                                    break
+                                } catch {
+                                    issues[wish.id] = error.localizedDescription
+                                }
+                                searched += 1
+                            }
+                            scanning = false
+                        }
+                    } label: {
+                        Label(scanning ? "Searching web…" : "Find downloadable sources for missing songs",
+                              systemImage: "magnifyingglass")
+                    }
+                    .disabled(scanning || apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || batch.isEmpty)
+                    if scanning {
+                        ProgressView(value: Double(searched), total: Double(max(1, batch.count)))
+                        Text("\(searched) of \(batch.count) songs searched")
+                            .font(.caption.monospacedDigit())
+                    }
+                    if wishes.count > batch.count {
+                        Text("This scan includes the first 100 missing songs. To avoid excessive API charges, search remaining songs from their individual browser links.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("Web results may be unrelated, behind a purchase, or unauthorized. This feature does not extract Spotify streams, bypass DRM, or automatically download unverified search hits.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(batch) { wish in
+                    Section {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(wish.title).font(.subheadline.weight(.semibold))
+                                Text(wish.artist).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Link(destination: WebAudioSearch.browserURL(for: wish)) {
+                                Label("Browser", systemImage: "safari")
+                                    .labelStyle(.iconOnly)
+                            }
+                            .accessibilityLabel("Search web browser for \(wish.title)")
+                        }
+                        if let issue = issues[wish.id] {
+                            Text(issue).font(.caption).foregroundStyle(.orange)
+                        } else if let found = results[wish.id] {
+                            if found.isEmpty {
+                                Text("No indexed download pages returned.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            ForEach(found) { hit in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Link(destination: hit.url) {
+                                        Label(hit.title, systemImage: "arrow.up.right.square")
+                                            .font(.subheadline.weight(.semibold))
+                                    }
+                                    Text(hit.url.host ?? "")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                    if !hit.description.isEmpty {
+                                        Text(hit.description)
+                                            .font(.caption).foregroundStyle(.secondary)
+                                            .lineLimit(3)
+                                    }
+                                    if hit.isDirectAudio {
+                                        Button {
+                                            selectedLink = WebAudioSelection(wish: wish, url: hit.url)
+                                        } label: {
+                                            Label("Check and save this audio file", systemImage: "arrow.down.circle")
+                                                .font(.caption.weight(.medium))
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 3)
+                            }
+                        } else if !scanning {
+                            Text("Use Browser without an API key, or scan for in-app search results.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Web Download Search")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .sheet(item: $selectedLink) { selected in
+                AuthorizedPlaylistAudioView(wish: selected.wish, initialURL: selected.url)
+            }
+            .onDisappear { scanTask?.cancel() }
+            .alert("Web Search", isPresented: Binding(
+                get: { message != nil },
+                set: { if !$0 { message = nil } }
+            )) {
+                Button("OK", role: .cancel) { message = nil }
+            } message: {
+                Text(message ?? "")
             }
         }
     }
