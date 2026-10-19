@@ -230,6 +230,7 @@ extension AudioSourceFinder {
         // Openverse supports field-based search. Try title+creator first so
         // independent recordings don't get buried beneath general relevance
         // matches; use the broader query only if no unique eligible result.
+        var firstSearchError: Error?
         for fieldSearch in [true, false] {
             try Task.checkCancellation()
             var components = URLComponents(string: "https://api.openverse.org/v1/audio/")!
@@ -242,7 +243,16 @@ extension AudioSourceFinder {
             if fieldSearch {
                 components.queryItems?.append(URLQueryItem(name: "creator", value: wish.artist))
             }
-            let result: OpenverseResponse = try await requestJSON(components.url!)
+            // A failed focused request must not skip the broader lookup.
+            // Keep errors retryable if no trustworthy result is found.
+            let result: OpenverseResponse
+            do {
+                result = try await requestJSON(components.url!)
+            } catch {
+                if error is CancellationError { throw error }
+                if firstSearchError == nil { firstSearchError = error }
+                continue
+            }
             let matches = result.results.compactMap {
                 openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
                                    landing: $0.foreign_landing_url, license: $0.license_url,
@@ -255,6 +265,7 @@ extension AudioSourceFinder {
             if unique.count == 1 { return unique.values.first?.first }
             if unique.count > 1 { return nil }
         }
+        if let firstSearchError { throw firstSearchError }
         return nil
     }
 
