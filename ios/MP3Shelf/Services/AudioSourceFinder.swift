@@ -518,10 +518,11 @@ enum WebAudioSearch {
         // parameters. Keep their original URLs for navigation and downloads.
         var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
         parts?.fragment = nil
-        parts?.queryItems = parts?.queryItems?.filter {
+        let filteredItems = parts?.queryItems?.filter {
             let name = $0.name.lowercased()
             return !name.hasPrefix("utm_") && !["fbclid", "gclid"].contains(name)
         }
+        parts?.queryItems = filteredItems
         return parts?.url?.absoluteString ?? url.absoluteString
     }
 
