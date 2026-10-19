@@ -723,13 +723,22 @@ enum AudioLandingPageInspector {
     static func candidates(in html: String, pageURL: URL) -> [URL] {
         guard WebAudioSearch.sanitizedResultURL(pageURL.absoluteString) != nil,
               html.utf8.count <= 1_000_000 else { return [] }
-        var found: [URL] = []
+        // Prefer explicit publisher-declared audio/download metadata over
+        // arbitrary <a href="track.mp3"> links on a compilation page.
+        // Preserve discovered order within each confidence tier.
+        var declared: [URL] = []
+        var linked: [URL] = []
         var seen = Set<String>()
-        func add(_ raw: String, explicitlyDownloadable: Bool = false) {
+        func add(_ raw: String, explicitlyDownloadable: Bool = false,
+                 publisherDeclared: Bool = false) {
             guard let url = candidateURL(raw, relativeTo: pageURL,
                                          explicitlyDownloadable: explicitlyDownloadable),
                   seen.insert(url.absoluteString).inserted else { return }
-            if found.count < 25 { found.append(url) }
+            if publisherDeclared {
+                if declared.count < 25 { declared.append(url) }
+            } else if linked.count < 25 {
+                linked.append(url)
+            }
         }
 
         func attributes(_ tag: String) -> [String: String] {
@@ -755,7 +764,9 @@ enum AudioLandingPageInspector {
                 if lower.hasPrefix("<meta") {
                     let property = (attrs["property"] ?? attrs["name"] ?? "").lowercased()
                     if ["og:audio", "og:audio:secure_url", "twitter:player:stream"].contains(property),
-                       let url = attrs["content"] { add(url) }
+                       let url = attrs["content"] {
+                        add(url, explicitlyDownloadable: true, publisherDeclared: true)
+                    }
                 } else if lower.hasPrefix("<a") || lower.hasPrefix("<link") {
                     if let url = attrs["href"] {
                         let isDownload = lower.hasPrefix("<a") &&
@@ -763,14 +774,16 @@ enum AudioLandingPageInspector {
                                       options: [.regularExpression, .caseInsensitive]) != nil
                         let audioType = supportedMIMEs.contains(
                             attrs["type"]?.lowercased() ?? "")
-                        add(url, explicitlyDownloadable: isDownload || audioType)
+                        add(url, explicitlyDownloadable: isDownload || audioType,
+                            publisherDeclared: isDownload || audioType)
                     }
                 } else if let url = attrs["src"] {
                     let audioType = supportedMIMEs.contains(
                         attrs["type"]?.lowercased() ?? "")
-                    add(url, explicitlyDownloadable: audioType)
+                    let audioElement = lower.hasPrefix("<audio")
+                    add(url, explicitlyDownloadable: audioType || audioElement,
+                        publisherDeclared: audioType || audioElement)
                 }
-                if found.count >= 25 { break }
             }
         }
 
@@ -788,13 +801,13 @@ enum AudioLandingPageInspector {
                       let root = try? JSONSerialization.jsonObject(with: data)
                 else { continue }
                 func walk(_ node: Any, depth: Int) {
-                    guard depth < 12, found.count < 25 else { return }
+                    guard depth < 12, declared.count < 25 else { return }
                     if let dictionary = node as? [String: Any] {
                         let types = ([dictionary["@type"] as? String].compactMap { $0 } +
                                      (dictionary["@type"] as? [String] ?? []))
                         if types.contains(where: { $0.lowercased().hasSuffix("audioobject") }),
                            let raw = dictionary["contentUrl"] as? String {
-                            add(raw)
+                            add(raw, explicitlyDownloadable: true, publisherDeclared: true)
                         }
                         for nested in dictionary.values { walk(nested, depth: depth + 1) }
                     } else if let array = node as? [Any] {
@@ -804,7 +817,7 @@ enum AudioLandingPageInspector {
                 walk(root, depth: 0)
             }
         }
-        return found
+        return Array((declared + linked).prefix(25))
     }
 
     /// Reject redirects before they reach a local network host or a different
