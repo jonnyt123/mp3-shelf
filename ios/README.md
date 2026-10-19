@@ -112,6 +112,33 @@ Automatic discovery may still return zero results even while all three catalog
 APIs are operating correctly. The direct-link option is not a stream ripper and
 must only be used for recordings you have permission to download.
 
+## Broader web search for playlist downloads
+
+The **Search the wider web for missing songs** button inside each imported
+playlist opens the optional **Web Download Search** screen.
+
+- Without an account, use a song's **Browser** icon to search the public web
+  for artist-hosted recordings, store pages and download information.
+- For an automated in-app lookup across up to 100 missing songs at once,
+  register for a **Brave Search API key** at https://brave.com/search/api/,
+  enter it into the Web Download Search screen, and press **Find downloadable
+  sources for missing songs**. The key is saved in the iPhone Keychain, not
+  in Git, Spotify, or the portable backup. Brave's separate API may require
+  billing enrollment and charges for searches.
+- Results show the page title, site URL, and summary. You can open any
+  result in Safari, or use **Check and save this audio file** when a result
+  points directly to a supported audio extension. The existing decoder,
+  HTTPS, size, duration and offline-library checks still apply.
+- A search result is not proof of a complete recording or permission to
+  download it. The web search does **not** silently save unverified files
+  and never treats a Spotify stream, preview or converter page as an MP3.
+- You can also use the existing **I have an authorized audio link** button
+  to paste a direct file URL, or import legally acquired music from Files.
+
+This is a **broader web index** than the default Archive/Openverse/Commons
+matcher. It increases the number of possible source pages, but it cannot
+guarantee a free download for commercial music.
+
 ## Expanded catalogs and background downloading
 
 Q1 — Source search: The app now looks up missing playlist songs through Internet Archive and Openverse. Openverse indexes eligible recordings from Wikimedia Commons, Free Music Archive and ccMixter. Matches require strict artist/title, original publisher MP3 links on allowed HTTPS domains, acceptable filesize, declared Creative Commons/public-domain licensing and duration validation. Jamendo is excluded due to its restrictions for an offline music caching application. Archive and Openverse licensing metadata is uploader-provided, not a guarantee of ownership or permission. Many major-label recordings will have no qualifying source.
