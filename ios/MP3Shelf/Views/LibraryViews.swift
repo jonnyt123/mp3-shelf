@@ -1072,6 +1072,8 @@ struct WebAudioDiscoveryView: View {
     @State private var selectedLink: WebAudioSelection?
     @State private var inspectingWish: PlaylistWish?
     @State private var inspectingPages: Set<String> = []
+    @State private var inspectingWishes: Set<UUID> = []
+    @State private var inspectedCount: [UUID: Int] = [:]
     @State private var extractedLinks: [String: [URL]] = [:]
     @State private var inspectionErrors: [String: String] = [:]
     @State private var message: String?
@@ -1207,6 +1209,49 @@ struct WebAudioDiscoveryView: View {
                                 Text("No indexed download pages returned.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
+                            if !found.isEmpty {
+                                let candidates = Array(found.filter { !$0.isDirectAudio }.prefix(5))
+                                if !candidates.isEmpty {
+                                    Button {
+                                        guard !inspectingWishes.contains(wish.id) else { return }
+                                        inspectingWishes.insert(wish.id)
+                                        inspectedCount[wish.id] = 0
+                                        Task {
+                                            defer { inspectingWishes.remove(wish.id) }
+                                            for hit in candidates {
+                                                if Task.isCancelled { break }
+                                                if extractedLinks[hit.id] != nil {
+                                                    inspectedCount[wish.id, default: 0] += 1
+                                                    continue
+                                                }
+                                                inspectingPages.insert(hit.id)
+                                                inspectionErrors.removeValue(forKey: hit.id)
+                                                do {
+                                                    extractedLinks[hit.id] = try await AudioLandingPageInspector.inspect(hit.url)
+                                                } catch {
+                                                    inspectionErrors[hit.id] = error.localizedDescription
+                                                }
+                                                inspectingPages.remove(hit.id)
+                                                inspectedCount[wish.id, default: 0] += 1
+                                            }
+                                        }
+                                    } label: {
+                                        Label(inspectingWishes.contains(wish.id)
+                                              ? "Checking source pages…"
+                                              : "Find audio files on top \(candidates.count) pages",
+                                              systemImage: "square.stack.3d.up.magnifyingglass")
+                                            .font(.caption.weight(.semibold))
+                                    }
+                                    .disabled(inspectingWishes.contains(wish.id))
+                                    if inspectingWishes.contains(wish.id) {
+                                        ProgressView(value: Double(inspectedCount[wish.id] ?? 0),
+                                                     total: Double(candidates.count))
+                                            .accessibilityLabel("Inspecting music webpages")
+                                        Text("Only direct audio files advertised in page HTML are listed.")
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
                             ForEach(found) { hit in
                                 VStack(alignment: .leading, spacing: 5) {
                                     Link(destination: hit.url) {
@@ -1215,6 +1260,16 @@ struct WebAudioDiscoveryView: View {
                                     }
                                     Text(hit.url.host ?? "")
                                         .font(.caption2).foregroundStyle(.secondary)
+                                    let score = WebAudioSearch.resultScore(hit, for: wish)
+                                    if hit.isDirectAudio {
+                                        Label("Direct audio file URL", systemImage: "waveform")
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(ShelfTheme.mint)
+                                    } else if score >= 80 {
+                                        Label("Song and artist mentioned", systemImage: "text.magnifyingglass")
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(ShelfTheme.accent)
+                                    }
                                     if !hit.description.isEmpty {
                                         Text(hit.description)
                                             .font(.caption).foregroundStyle(.secondary)
