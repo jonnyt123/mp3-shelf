@@ -171,6 +171,30 @@ enum SourceDiscoveryJobTests {
             verifyDiscovery(!BackgroundTransferRetryPolicy.isTemporaryURLFailure(error.rawValue),
                             "invalid links and security failures are not retried")
         }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let stale = now.addingTimeInterval(-BackgroundTransferRecoveryPolicy.minimumAge - 1)
+        let fresh = now.addingTimeInterval(-20)
+        func canRestore(startedAt: Date? = stale,
+                        first: Bool = false, second: Bool = false,
+                        unknown: Bool = false, staged: Bool = false,
+                        importing: Bool = false) -> Bool {
+            BackgroundTransferRecoveryPolicy.shouldRecover(
+                startedAt: startedAt, checkedAt: now,
+                firstScanHasTask: first, secondScanHasTask: second,
+                hasUnidentifiedTasks: unknown, hasStagedFile: staged,
+                isImporting: importing)
+        }
+        verifyDiscovery(canRestore(),
+                        "two clean URLSession scans recover an abandoned old download")
+        verifyDiscovery(!canRestore(startedAt: fresh) &&
+                        !canRestore(startedAt: nil),
+                        "new or pre-upgrade tickets are never prematurely duplicated")
+        verifyDiscovery(!canRestore(first: true) && !canRestore(second: true),
+                        "an active task in either scan prevents duplicate transfers")
+        verifyDiscovery(!canRestore(unknown: true),
+                        "unidentifiable background tasks block unsafe resurrection")
+        verifyDiscovery(!canRestore(staged: true) && !canRestore(importing: true),
+                        "staged media or in-progress import is never downloaded twice")
         print("Persistent discovery checkpoint tests passed")
     }
 }

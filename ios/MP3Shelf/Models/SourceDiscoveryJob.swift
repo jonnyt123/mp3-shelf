@@ -43,6 +43,23 @@ enum BackgroundTransferRetryPolicy {
     }
 }
 
+/// The local transfer manifest and iOS' background URLSession can drift
+/// apart after a crash or the system discards a task. Be conservative: do not
+/// duplicate a live task or reissue one whose staging file awaits import.
+enum BackgroundTransferRecoveryPolicy {
+    static let minimumAge: TimeInterval = 15 * 60
+
+    static func shouldRecover(startedAt: Date?, checkedAt: Date,
+                              firstScanHasTask: Bool, secondScanHasTask: Bool,
+                              hasUnidentifiedTasks: Bool,
+                              hasStagedFile: Bool, isImporting: Bool) -> Bool {
+        guard let startedAt,
+              checkedAt.timeIntervalSince(startedAt) >= minimumAge else { return false }
+        return !firstScanHasTask && !secondScanHasTask &&
+            !hasUnidentifiedTasks && !hasStagedFile && !isImporting
+    }
+}
+
 struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     enum Result { case queued, unavailable, failed, alreadyPresent }
 

@@ -135,6 +135,26 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Recovering orphaned background transfers after relaunch
+
+MP3 Shelf's persisted download manifest can outlive its matching iOS
+background URLSession task after an app crash or an OS task-discard. This
+formerly left an old song permanently showing "Queued" even though no
+transfer could complete. Foreground attachment now first recovers any
+staged audio, then inspects iOS' background task inventory **twice**,
+ten seconds apart. Only queued tickets at least 15 minutes old, with
+no corresponding task in either inventory and no staged file or active
+import, are recreated. Unidentifiable URLSession tasks block recovery
+rather than risk a duplicate download.
+
+The restored transfer preserves its verified source, alternative-source
+fallbacks, playlist, attribution and retry budget. Tickets for already
+imported songs can be finalized without downloading the bytes again.
+The replacement URLRequest retains the Wi-Fi-only default and only uses
+cellular if that playlist was explicitly approved in the *current*
+session. No background timer, forced execution or additional user tap
+is introduced; iOS still decides when background transfers run.
+
 ## Preverified backup download sources for locked-screen recovery
 
 Every newly imported playlist song is looked up across all four supported

@@ -39,6 +39,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private let manifestURL: URL
     private var tickets: [UUID: BackgroundAudioTicket] = [:]
     private var processing: Set<UUID> = []
+    private var reconcilingOrphans = false
     private weak var library: MusicLibrary?
     private var cellularApprovedPlaylists = Set<UUID>()
     private var backgroundEventsCompletion: (() -> Void)?
@@ -131,11 +132,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         self.library = library
         activate()
         updatePending()
-        Task { await recoverStagedDownloads() }
-        // Do not classify jobs as orphaned here: a completed transfer can
-        // disappear from getAllTasks before its completion delegate is delivered.
-        // The download delegate (or later explicit user cancellation) owns
-        // terminal transitions, preserving valid files across cold relaunches.
+        Task { [weak self] in
+            await self?.recoverStagedDownloads()
+            // Two delayed URLSession inventory checks avoid treating a file
+            // whose completion callback is still arriving as abandoned.
+            await self?.recoverAbandonedBackgroundTasks()
+        }
     }
 
     @discardableResult
@@ -171,7 +173,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             (playlistID == nil || $0.playlistID == playlistID) &&
             $0.failureReason != "Replaced with a cellular-authorized transfer" &&
             $0.failureReason != "Replaced by automatic retry" &&
-            $0.failureReason != "Replaced by alternate verified source"
+            $0.failureReason != "Replaced by alternate verified source" &&
+            $0.failureReason != "Recovered missing background task"
         }
             .sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
     }
@@ -395,6 +398,114 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
         }
         updatePending()
+    }
+
+    private struct BackgroundTaskInventory {
+        let ids: Set<UUID>
+        let hasUnknownTasks: Bool
+    }
+
+    private func backgroundTaskInventory() async -> BackgroundTaskInventory {
+        await withCheckedContinuation { continuation in
+            session.getAllTasks { tasks in
+                let ids = Set(tasks.compactMap { task -> UUID? in
+                    guard let description = task.taskDescription else { return nil }
+                    return UUID(uuidString: description)
+                })
+                continuation.resume(returning: BackgroundTaskInventory(
+                    ids: ids, hasUnknownTasks: ids.count != tasks.count))
+            }
+        }
+    }
+
+    /// Reconnect a persisted ticket that iOS no longer knows about. A single
+    /// getAllTasks query is NOT sufficient: a completed task can vanish before
+    /// its file-move callback finishes. Require an aged ticket and two scans,
+    /// and re-check the current ticket and staging/import status after the wait.
+    private func recoverAbandonedBackgroundTasks() async {
+        guard !reconcilingOrphans else { return }
+        reconcilingOrphans = true
+        defer { reconcilingOrphans = false }
+
+        let first = await backgroundTaskInventory()
+        let firstCheck = Date()
+        let possible = tickets.values.filter { ticket in
+            ticket.status == .queued &&
+            BackgroundTransferRecoveryPolicy.shouldRecover(
+                startedAt: ticket.startedAt, checkedAt: firstCheck,
+                firstScanHasTask: first.ids.contains(ticket.id),
+                secondScanHasTask: false,
+                hasUnidentifiedTasks: first.hasUnknownTasks,
+                hasStagedFile: fm.fileExists(atPath: Self.stagingURL(ticket.id).path),
+                isImporting: processing.contains(ticket.id))
+        }.map(\.id)
+        guard !possible.isEmpty else { return }
+
+        // This wait is only for already-stale tickets on foreground attach.
+        // It is not a background timer or an attempt to bypass iOS scheduling.
+        do {
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+        } catch { return }
+        let second = await backgroundTaskInventory()
+        guard !second.hasUnknownTasks else { return }
+        var restored = false
+        for id in possible {
+            guard let current = tickets[id], current.status == .queued,
+                  BackgroundTransferRecoveryPolicy.shouldRecover(
+                      startedAt: current.startedAt, checkedAt: Date(),
+                      firstScanHasTask: first.ids.contains(id),
+                      secondScanHasTask: second.ids.contains(id),
+                      hasUnidentifiedTasks: second.hasUnknownTasks,
+                      hasStagedFile: fm.fileExists(atPath: Self.stagingURL(id).path),
+                      isImporting: processing.contains(id)) else { continue }
+
+            // A recording might already have been imported before a crash
+            // prevented the transfer manifest from being finalized.
+            if let library,
+               MusicMatching.matchingTrack(for: current.requested, in: library.tracks) != nil {
+                var finished = current
+                finished.status = .imported
+                finished.alternativeSources = nil
+                tickets[id] = finished
+                library.finishedBackgroundDownload(for: current.playlistID, succeeded: true)
+                restored = true
+                continue
+            }
+            guard Self.allowedDownloadURL(current.downloadURL) else {
+                setFailed(id, reason: "The saved download URL is no longer supported")
+                continue
+            }
+            var replaced = current
+            replaced.status = .cancelled
+            replaced.failureReason = "Recovered missing background task"
+            tickets[id] = replaced
+
+            var replacement = BackgroundAudioTicket(
+                id: UUID(), playlistID: current.playlistID,
+                requested: current.requested, downloadURL: current.downloadURL,
+                sourcePage: current.sourcePage, licensePage: current.licensePage,
+                provider: current.provider)
+            replacement.startedAt = .now
+            replacement.automaticRetryCount = current.automaticRetryCount
+            replacement.nextRetryAt = current.nextRetryAt
+            replacement.alternativeSources = current.alternativeSources
+            tickets[replacement.id] = replacement
+            persist()
+
+            // Explicit cellular approval is session-only; after relaunch,
+            // replacement requests safely return to the Wi-Fi default.
+            let task = session.downloadTask(
+                with: downloadRequest(for: replacement.downloadURL,
+                                      playlistID: replacement.playlistID))
+            task.taskDescription = replacement.id.uuidString
+            task.earliestBeginDate = replacement.nextRetryAt
+            task.resume()
+            restored = true
+        }
+        if restored {
+            persist()
+            updatePending()
+        }
     }
 
     private func finishBackgroundEvents() async {
