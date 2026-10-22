@@ -107,6 +107,20 @@ enum MusicMatching {
         return base.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 
+    /// Reuse only a single matching offline recording whose duration is
+    /// compatible with the requested Spotify track. Title/artist alone is
+    /// insufficient to cancel a paid-for, in-progress background download
+    /// when an alternate version has already been saved.
+    static func reusableOfflineTrack(for wish: PlaylistWish,
+                                     in library: [MusicTrack]) -> MusicTrack? {
+        guard let track = matchingTrack(for: wish, in: library) else { return nil }
+        if let expected = wish.durationSeconds,
+           (!track.duration.isFinite || abs(track.duration - expected) > 4) {
+            return nil
+        }
+        return track
+    }
+
     static func matchingTrack(for wish: PlaylistWish, in library: [MusicTrack]) -> MusicTrack? {
         let name = key(wish.title)
         guard !name.isEmpty else { return nil }

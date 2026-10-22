@@ -23,6 +23,22 @@ enum PlaylistCSVTests {
         let tabRows = try PlaylistCSV.parse(Data(tab.utf8))
         check(tabRows.first?.artist == "A Singer", "TSV support")
         let owned = MusicTrack(title: "A Song, In Two Parts", artist: "Singer", album: "First", fileName: "1.mp3", originalFileName: "1.mp3", duration: 12)
+        let savedWish = PlaylistWish(title: owned.title, artist: owned.artist,
+                                     album: owned.album, spotifyURL: nil, durationSeconds: 12)
+        check(MusicMatching.reusableOfflineTrack(for: savedWish, in: [owned])?.id == owned.id,
+              "already downloaded identical recording can satisfy a second playlist")
+        let wrongDuration = PlaylistWish(title: owned.title, artist: owned.artist,
+                                         album: owned.album, spotifyURL: nil,
+                                         durationSeconds: 185)
+        check(MusicMatching.reusableOfflineTrack(for: wrongDuration, in: [owned]) == nil,
+              "short previews never replace full-length playlist recordings")
+        let smallDifference = PlaylistWish(title: owned.title, artist: owned.artist,
+                                           album: owned.album, spotifyURL: nil,
+                                           durationSeconds: 15.9)
+        check(MusicMatching.reusableOfflineTrack(for: smallDifference, in: [owned])?.id == owned.id,
+              "minor duration metadata rounding does not force a duplicate download")
+        check(MusicMatching.reusableOfflineTrack(for: savedWish, in: [owned, owned]) == nil,
+              "ambiguous duplicate library entries are never arbitrarily reused")
         check(MusicMatching.matchingTrack(for: wishes[0], in: [owned])?.id == owned.id, "artist list matching")
         check(MusicMatching.matchingTrack(for: wishes[0], in: []) == nil, "never claim an unowned song matched")
         let ambiguous = MusicTrack(title: owned.title, artist: owned.artist, album: owned.album, fileName: "2.mp3", originalFileName: "2.mp3", duration: 12)

@@ -491,6 +491,16 @@ final class MusicLibrary: ObservableObject {
 
     /// Resolved URLs transfer via Apple's background daemon. The UI receives
     /// results when the app is running or next reactivated by the system.
+    /// Used by the background transfer manager before starting a retry,
+    /// falling back to another provider or importing a staged duplicate.
+    /// Check that the file still exists as well as its metadata/duration.
+    func hasOfflineRecording(matching wish: PlaylistWish) -> Bool {
+        guard let track = MusicMatching.reusableOfflineTrack(for: wish, in: tracks) else {
+            return false
+        }
+        return manager.fileExists(atPath: fileURL(for: track).path)
+    }
+
     func finishedBackgroundDownload(for playlistID: UUID, succeeded: Bool) {
         guard var progress = automaticDownloadProgress, progress.playlistID == playlistID else { return }
         if succeeded { progress.downloaded += 1 }

@@ -135,6 +135,27 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Avoiding duplicate playlist downloads and already-saved recordings
+
+If two imported Spotify playlists refer to the same exact recording, both
+may already have queued background transfers. When one finishes, MP3 Shelf
+checks all other pending tickets against the authoritative offline library,
+verifies artist/title and compatible duration, and marks satisfied tickets
+as saved. Redundant iOS background tasks are cancelled, and no fallback
+provider or transfer retry is launched for a song already on the phone.
+The same reconciliation occurs when reattaching after app relaunch and
+before processing staged downloads; cancelled tickets are not imported
+from stale completion snapshots. Existing completed recordings are never
+deleted.
+
+Only a unique, genuinely present on-device file counts as reusable. A
+short preview or an alternate version with a duration difference over
+four seconds does **not** satisfy the full Spotify wish; ambiguous library
+matches also remain unresolved. The individual playlist's original
+source-order position is preserved by existing library reconciliation.
+These checks prevent wasted bandwidth without making unverified music
+matches or downloading anything from Spotify.
+
 ## Recovering orphaned background transfers after relaunch
 
 MP3 Shelf's persisted download manifest can outlive its matching iOS
