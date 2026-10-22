@@ -23,6 +23,22 @@ enum PlaylistCSVTests {
         let tabRows = try PlaylistCSV.parse(Data(tab.utf8))
         check(tabRows.first?.artist == "A Singer", "TSV support")
         let owned = MusicTrack(title: "A Song, In Two Parts", artist: "Singer", album: "First", fileName: "1.mp3", originalFileName: "1.mp3", duration: 12)
+        let savedWish = PlaylistWish(title: owned.title, artist: owned.artist,
+                                     album: owned.album, spotifyURL: nil, durationSeconds: 12)
+        check(MusicMatching.reusableOfflineTrack(for: savedWish, in: [owned])?.id == owned.id,
+              "already downloaded identical recording can satisfy a second playlist")
+        let wrongDuration = PlaylistWish(title: owned.title, artist: owned.artist,
+                                         album: owned.album, spotifyURL: nil,
+                                         durationSeconds: 185)
+        check(MusicMatching.reusableOfflineTrack(for: wrongDuration, in: [owned]) == nil,
+              "short previews never replace full-length playlist recordings")
+        let smallDifference = PlaylistWish(title: owned.title, artist: owned.artist,
+                                           album: owned.album, spotifyURL: nil,
+                                           durationSeconds: 15.9)
+        check(MusicMatching.reusableOfflineTrack(for: smallDifference, in: [owned])?.id == owned.id,
+              "minor duration metadata rounding does not force a duplicate download")
+        check(MusicMatching.reusableOfflineTrack(for: savedWish, in: [owned, owned]) == nil,
+              "ambiguous duplicate library entries are never arbitrarily reused")
         check(MusicMatching.matchingTrack(for: wishes[0], in: [owned])?.id == owned.id, "artist list matching")
         check(MusicMatching.matchingTrack(for: wishes[0], in: []) == nil, "never claim an unowned song matched")
         let ambiguous = MusicTrack(title: owned.title, artist: owned.artist, album: owned.album, fileName: "2.mp3", originalFileName: "2.mp3", duration: 12)
@@ -43,6 +59,31 @@ enum PlaylistCSVTests {
         } catch PlaylistCSVError.missingTitleColumn {
             print("PASS: invalid header rejected")
         }
+        let requestedAudio = PlaylistWish(title: "Blue Sky", artist: "Eva Rivers",
+                                          album: "First EP", spotifyURL: nil,
+                                          durationSeconds: 188)
+        check(SourceAudioIdentity.conflictingField(
+            title: "Blue Sky", artist: "Eva Rivers", requested: requestedAudio) == nil,
+            "matching MP3 metadata is accepted")
+        check(SourceAudioIdentity.conflictingField(
+            title: "Red Sunset", artist: "Eva Rivers",
+            requested: requestedAudio) == .title,
+            "contradictory embedded song title is rejected")
+        check(SourceAudioIdentity.conflictingField(
+            title: "Blue Sky", artist: "Different Performer",
+            requested: requestedAudio) == .artist,
+            "contradictory embedded artist is rejected")
+        check(SourceAudioIdentity.conflictingField(
+            title: nil, artist: nil, requested: requestedAudio) == nil,
+            "untagged media is inconclusive, not falsely conflicting")
+        check(SourceAudioIdentity.conflictingField(
+            title: "Blue Sky", artist: "Eva Rivers ft. Guest",
+            requested: requestedAudio) == nil,
+            "credited collaborations retain the requested artist")
+        check(SourceAudioIdentity.conflictingField(
+            title: "Untitled", artist: "Unknown Artist",
+            requested: requestedAudio) == nil,
+            "generic metadata placeholders do not create false conflicts")
         print("Playlist parser & matcher tests passed")
     }
 }

@@ -4,7 +4,7 @@ A standalone **SwiftUI** iOS application that can be opened directly in Xcode an
 
 ## Requirements
 
-- Mac with Xcode 15.4 or later (iOS 17 deployment target)
+- Mac with Xcode 16.4 or later (recommended for the current signing and QA workflow; iOS 17 deployment target)
 - iPhone running iOS 17 or later
 - Apple ID added in Xcode → Settings → Accounts; free Personal Team signing is sufficient for device testing, subject to Apple's provisioning limitations
 
@@ -15,6 +15,34 @@ A standalone **SwiftUI** iOS application that can be opened directly in Xcode an
 3. Enable **Automatically manage signing**, select your own **Team** (Personal Team works), and change **Bundle Identifier** if Xcode reports a collision.
 4. Connect your iPhone by cable or use an already paired wireless development device. Select it in Xcode's device picker. If prompted, enable **Settings → Privacy & Security → Developer Mode** on the iPhone and trust your Mac.
 5. Press **⌘R** (Run). Xcode signs and installs the app. You can then import files and listen without a network connection.
+
+## Signed installation helper (physical iPhone)
+
+For a reproducible, signed development build without manually finding the
+app bundle after compiling, first sign in to **Xcode → Settings → Accounts**
+and enable automatic signing for your Apple team. Unlock and trust your
+iPhone, enable Developer Mode if required, then in a Mac terminal at the repo root:
+
+```bash
+xcrun devicectl list devices
+MP3SHELF_TEAM_ID=YOUR10CHARTEAMID bash ios/scripts/run-on-iphone.sh YOUR_DEVICE_UDID
+```
+
+The script validates the device connection, invokes Xcode's automatic
+development signing, verifies that the resulting app includes a provisioning
+profile and valid signature, installs it, launches it, and writes a private
+`ios/build/iphone-device/QA_RECORD.md` describing which tests remain open.
+`ios/build/` is Git-ignored; **never commit local logs, provisioning files
+or Apple account credentials**. If the default bundle identifier is already
+claimed by another developer team, specify your own unique ID using
+`MP3SHELF_BUNDLE_ID=com.yourteam.mp3shelf`.
+
+**Important:** This helper runs on a Mac attached to the real phone, not on
+GitHub's unsigned CI. It creates an installed *development* app, not a TestFlight
+upload or public release. The device acceptance scenarios are in
+[DEVICE_QA.md](DEVICE_QA.md) and must be tested, recorded and reviewed before
+PRs #1–#4 merge. Building for the iphoneos processor architecture alone does
+not establish successful signing or installation.
 
 ## What works
 
@@ -42,9 +70,9 @@ Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation
 
 ## One-tap downloads for imported Spotify playlists
 
-Open **Playlists → Imported Playlist → Find & Automatically Download Available MP3s**. MP3 Shelf checks every missing song against independent audio catalogs, then automatically downloads qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
+Connect Spotify, select a permitted playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. The app automatically opens the song-by-song download dashboard and checks missing songs against independent authorized audio sources, downloading only qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
 
-**Current catalog adapters:** Internet Archive and Openverse-backed eligible publishers. Before importing a result, the app requires:
+**Current catalog adapters:** Internet Archive, Openverse-backed eligible publishers, and direct Wikimedia Commons. Before importing a result, the app requires:
 - Strict normalized *song title and artist* match; no intentional covers/remixes/other artists.
 - A single MP3 file for the matching archive item, to reject album/concert downloads.
 - A Creative Commons or public-domain license URL declared in the archive item's metadata.
@@ -52,6 +80,293 @@ Open **Playlists → Imported Playlist → Find & Automatically Download Availab
 - HTTPS download, decodable local audio, and a maximum 100 MB transfer.
 
 Catalog licenses are declared by uploaders, **not independently verified by MP3 Shelf**. MP3 Shelf stores attribution links for discovered sources. Catalog metadata can be wrong; compare suspect recordings with their source page. Most commercial Spotify recordings do **not** have a legitimate freely downloadable match, and will remain unmatched. The app never bypasses paywalls or DRM, downloads Spotify streams, scrapes arbitrary converter sites, or silently replaces a requested song with a different recording. Spotify developer terms may impose additional restrictions on apps combining Spotify metadata and other audio services; obtain approval before a public production release.
+
+## If a Spotify playlist says "No qualifying MP3 source found"
+
+This is normally a **catalog availability limit**, not a Spotify sign-in failure. Spotify
+provides **song title, artist, album and duration metadata**, not downloadable MP3
+recordings. MP3 Shelf searches Internet Archive, Openverse and Wikimedia Commons;
+their openly licensed inventories do not include most mainstream commercial releases.
+It will not guess a YouTube converter, replace a song with a cover, or bypass DRM.
+
+To tell an unavailable recording apart from a temporary lookup problem:
+
+1. Open **Playlists → your imported playlist → Song-by-song MP3 results**.
+2. **No qualifying MP3 source found** means the checked catalogs returned no
+   eligible exact recording; repeatedly retrying a commercial track will not
+   make a licensed download appear.
+3. **Searching** or **Awaiting** means discovery has not finished; keep the app
+   open. **Source lookup failed** or **Paused by network error** means retry
+   on a working connection. Downloads already queued are shown under
+   **Add Music → Your downloads**.
+4. To fill an unmatched slot, use **I have an authorized audio link** beside
+   that song and supply a *direct HTTPS URL* to a legally downloadable MP3
+   (or other supported audio file) provided by its rights holder. The app
+   validates the audio and, where Spotify supplied duration, checks the
+   recording's length before assigning the original playlist metadata.
+5. Alternatively import legally acquired MP3/M4A files from **Add Music**.
+   Correct title and artist metadata allow the existing offline files to match
+   imported playlists; edit local metadata from the song menu if necessary.
+
+Automatic discovery may still return zero results even while all three catalog
+APIs are operating correctly. The direct-link option is not a stream ripper and
+must only be used for recordings you have permission to download.
+
+## Automatic Wi-Fi playlist downloads
+
+Importing a Spotify playlist starts the existing persisted independent-audio
+source discovery queue immediately, with no per-track approval. The app waits
+for a **satisfied Wi-Fi network** before searching and starting downloads.
+Its background URLSession tasks default to Wi-Fi-only using per-request
+cellular restrictions, so outstanding Wi-Fi transfers wait if the phone moves
+onto cellular. Downloaded, decodable matches enter the offline library
+without additional taps. The app resumes unfinished discovery when reopened
+or when a Wi-Fi path becomes available; iOS controls when suspended
+background transfers actually execute.
+
+On cellular, the playlist dashboard shows **Download this playlist using
+cellular data**. Tapping it explicitly authorizes cellular discovery and
+outstanding matching downloads *for this playlist only* in the current app
+session. Previously queued Wi-Fi-only transfer tasks are replaced with
+cellular-authorized tasks so they do not remain stuck waiting for Wi-Fi.
+This option can use mobile data, and interrupted transfers might restart.
+No blanket cellular permission is stored across relaunches. Album art,
+streaming Spotify tracks and unverified web hits are not downloaded by
+this automatic audio feature. Tracks with no matching independently
+downloadable recording remain unavailable.
+
+## Avoiding duplicate playlist downloads and already-saved recordings
+
+If two imported Spotify playlists refer to the same exact recording, both
+may already have queued background transfers. When one finishes, MP3 Shelf
+checks all other pending tickets against the authoritative offline library,
+verifies artist/title and compatible duration, and marks satisfied tickets
+as saved. Redundant iOS background tasks are cancelled, and no fallback
+provider or transfer retry is launched for a song already on the phone.
+The same reconciliation occurs when reattaching after app relaunch and
+before processing staged downloads; cancelled tickets are not imported
+from stale completion snapshots. Existing completed recordings are never
+deleted.
+
+Only a unique, genuinely present on-device file counts as reusable. A
+short preview or an alternate version with a duration difference over
+four seconds does **not** satisfy the full Spotify wish; ambiguous library
+matches also remain unresolved. The individual playlist's original
+source-order position is preserved by existing library reconciliation.
+These checks prevent wasted bandwidth without making unverified music
+matches or downloading anything from Spotify.
+
+## Recovering orphaned background transfers after relaunch
+
+MP3 Shelf's persisted download manifest can outlive its matching iOS
+background URLSession task after an app crash or an OS task-discard. This
+formerly left an old song permanently showing "Queued" even though no
+transfer could complete. Foreground attachment now first recovers any
+staged audio, then inspects iOS' background task inventory **twice**,
+ten seconds apart. Only queued tickets at least 15 minutes old, with
+no corresponding task in either inventory and no staged file or active
+import, are recreated. Unidentifiable URLSession tasks block recovery
+rather than risk a duplicate download.
+
+The restored transfer preserves its verified source, alternative-source
+fallbacks, playlist, attribution and retry budget. Tickets for already
+imported songs can be finalized without downloading the bytes again.
+The replacement URLRequest retains the Wi-Fi-only default and only uses
+cellular if that playlist was explicitly approved in the *current*
+session. No background timer, forced execution or additional user tap
+is introduced; iOS still decides when background transfers run.
+
+## Preverified backup download sources for locked-screen recovery
+
+Every newly imported playlist song is looked up across all four supported
+independent catalog APIs concurrently (Audius, Openverse, Wikimedia Commons,
+Internet Archive). The first exact, permitted downloadable recording starts
+as the primary background transfer; up to three other unique verified URLs,
+along with each source's attribution and license, are saved in that ticket's
+Codable manifest. Searching sources concurrently avoids having to wait for four
+catalogs in serial, but does add catalog requests when the first one already
+would have found the song.
+
+If a file is missing, invalid, incorrectly tagged, has a mismatched duration
+or exhausts its ordinary transient retry budget, the background downloader
+automatically switches to the next queued, independently verified source.
+Each new URL gets its own ticket and the same Wi-Fi-only request restriction
+unless the user explicitly enabled cellular for this playlist. Alternative
+source lists persist across ordinary app relaunches and can be consumed by
+the iOS background URLSession daemon callback while the phone is locked.
+The original Spotify playlist entry stays in the correct order and is never
+silently substituted with an unverified live/remix recording. Once all verified
+sources fail, the song stays marked failed with its final error for review.
+
+This is a bounded provider failover, not a guarantee that every commercial
+Spotify recording has an independently downloadable MP3. Spotify tracks and
+DRM-protected media are not downloaded or converted.
+
+## Request-level Wi-Fi-only source discovery
+
+The automatic playlist queue was already gated by iOS Network framework
+connection monitoring, but its four public catalog API calls previously used
+URLSession's default per-request transport. Every Archive, Openverse,
+Wikimedia Commons and Audius request now defaults to
+`allowsCellularAccess=false`, `allowsExpensiveNetworkAccess=false`
+and `allowsConstrainedNetworkAccess=false` **on the URLRequest itself**.
+This also prevents an in-progress lookup from migrating onto cellular
+after the Wi-Fi network changes, rather than relying only on a path check
+performed before each song.
+
+Choosing **Download this playlist using cellular data** explicitly enables
+cellular, expensive and constrained network access for that playlist's
+catalog requests and iOS background audio transfers. The setting for
+future source discovery is session-only; a previously approved transfer
+task may still finish on cellular across process relaunches because its
+network permission is part of the background task created with that
+explicit consent.
+
+## Automatic background MP3 transfer recovery
+
+If an otherwise verified audio download is interrupted by a temporary
+network error, timeout, HTTP 408/429 or common HTTP 5xx response, MP3 Shelf
+schedules up to three new transfer attempts with iOS background URLSession,
+after at least 45, 150 and 450 seconds. Each retry preserves the originally
+matched recording, playlist and attribution, and defaults to the same
+Wi-Fi-only request restriction. Apple's background transfer daemon handles
+the retry's earliest-start date without requiring another tap or keeping the
+app open, subject to iOS scheduling and force-quit restrictions. A cellular
+override remains per playlist and requires explicit user action.
+
+New ticket identifiers isolate late callbacks from earlier attempts. Retry
+state is optional in the persisted manifest for backward compatibility.
+Server-side permissions and missing files (e.g. HTTP 403/404), invalid media,
+wrong recording metadata or incompatible duration never trigger automatic
+repeated downloads; those failures remain available in Download Manager
+for manual inspection.
+
+## Automatic catalog recovery and Audius response compatibility
+
+Audius' JSON response may use `downloadable` or `is_downloadable`.
+MP3 Shelf accepts either form only when the flag is true and other
+ungated/exact-match checks succeed. Artist-enabled Audius downloads are
+checked before more expensive archive metadata traversal, minimizing
+unnecessary search requests for tracks found early.
+
+Temporary source API failures no longer require tapping **Resume Search**.
+The failed song stays at the persisted discovery cursor and receives at most
+five automatic attempts, with retry delays of 15, 30, 60 and 120 seconds.
+If the fifth lookup still fails, that song is marked **failed** (not
+"unavailable") and the search continues automatically to the next song.
+The user can rerun **Retry unmatched songs** later when the provider recovers.
+This prevents one prolonged API outage from blocking the entire imported
+playlist. Backoff checkpoints are persisted across relaunches, and a network
+handoff or user pause does not consume an automatic attempt. In-app timers
+cannot override iOS suspension, Wi-Fi-only transfers or cellular opt-in.
+
+## Artist-enabled Audius downloads
+
+The automatic Wi-Fi-first matching queue now also checks Audius, without an
+extra API key. MP3 Shelf searches its official public track endpoint for
+artist-enabled downloads, rejects stream-only, gated, unlisted and otherwise
+restricted results, and requires exact artist/title metadata and compatible
+recording duration. More than one eligible exact match is treated as
+ambiguous, never chosen at random. Accepted tracks use the official Audius
+**download** endpoint, not the streaming endpoint. Attribution links to the
+publisher's original Audius page and its Open Music License; final downloaded
+audio is decoded and duration-checked before adding it to the local playlist.
+The Audius uploader and API indicate permissions; the application does not
+independently verify the uploader's ownership. API access can be rate-limited.
+
+Jamendo remains excluded because its API terms restrict offline music
+caching applications. Search results, artist pages and streaming-only
+recordings are never silently substituted for actual downloads.
+
+## Broader web search for playlist downloads
+
+Inside any Spotify-imported playlist with missing songs, tap **Search the wider web
+for missing songs**. The **Web Download Search** sheet provides two complementary
+paths:
+
+1. **No API key required:** tap **10 search sites** beside a song to open a
+   song-specific search on Brave, Google, Bing, DuckDuckGo, Bandcamp,
+   SoundCloud, Internet Archive, Free Music Archive, ccMixter, or Audius.
+   Search results are source/artist pages, not guaranteed download links.
+2. **Optional in-app results:** add your personal
+   [Brave Search API key](https://brave.com/search/api/). The key stays in the
+   device Keychain, not Spotify or the repository. Choose the lookup depth:
+   - **Quick**: one general download search per song.
+   - **Thorough**: adds focused artist/store and direct-MP3-file queries.
+   - **Extensive**: five separate queries per song, including official
+     digital-download and independent archive/source-site searches.
+
+If you enable **Inspect matching webpages during search**, the same explicit
+batch search also examines up to **12 relevant publisher pages per batch**
+(one per song) for direct audio candidates. This is an opt-in extra network
+read, and each inspection checks at most two extensionless links with HTTP
+HEAD. Page selection favors results referencing the requested artist and/or
+title and skips unrelated pages and already-direct audio URLs. You can
+still manually inspect the top five relevant pages for an individual song.
+No web-search or page-inspection result triggers an audio download without
+another explicit user action.
+
+The screen deduplicates URL results and can show up to 75 links per song.
+Each batch performs at most **100 provider API requests**, with **Next batch**
+and **Previous** controls so a long playlist is not truncated. The screen
+shows the current batch's maximum billable API requests before searching.
+Each user's Brave API plan determines credits or charges, and a rate-limit
+or rejected-key response stops the batch rather than generating more requests.
+
+Search links let you inspect publishers and download terms. If a result
+links directly to a supported audio file, **Check and save this audio file**
+passes the URL to the existing user-confirmed downloader, which validates
+HTTPS, audio decoding, file size, and expected track duration. An ordinary
+web page is never silently treated as an MP3, and the app doesn't acquire
+Spotify streams or bypass DRM. You can also use **I have an authorized audio
+link** and import previously purchased audio through Files.
+
+This expands *finding links* well beyond the three strict CC/public-domain
+catalogs. A web result does not establish that the file is legally available
+or that it matches the intended recording.
+
+### Read a publisher page to locate direct audio files
+
+Search results are now ranked using visible title and artist evidence. Direct
+audio-file URLs rise to the top, but neither the ranking nor a matching title
+guarantees the right recording or download rights. For a single song, tap
+**Find audio files on top 5 pages** to inspect up to five search result
+landing pages for advertised audio, with per-page progress and a review
+button for each candidate. This batch inspection requires the user to
+initiate it; results are never automatically downloaded.
+
+The inspector gives precedence to links expressly marked as audio by the
+publisher (Open Graph audio, HTML5 audio, Schema.org `AudioObject`, or a
+download attribute) over arbitrary MP3 hyperlinks. Extensionless URLs
+advertised by audio metadata are also eligible for a limited HTTP HEAD
+content-type check. A matching URL or filename is not confirmation of the
+recording's identity or its download permissions.
+
+For an indexed webpage in **Web Download Search**, tap **Find audio files
+linked on this page**. MP3 Shelf reads only bounded HTML, standard audio
+tags, Open Graph audio metadata, direct file links and Schema.org
+`AudioObject.contentUrl` metadata. Results are listed as **possible audio
+files** for individual review; opening a page never starts a download.
+
+Without a Brave API key, use **10 search sites** to find the publisher's
+website, copy the public HTTPS page URL, and tap **Inspect a source page URL
+for audio files** beside the corresponding song. The app reads the page and
+shows direct MP3/M4A/AAC/WAV/AIFF file URLs, if advertised.
+
+The inspector also recognizes download buttons such as
+`/download?track=123` without a filename extension, but only when the page
+explicitly marks the link as a download or audio resource. These links must
+pass a separate HTTP HEAD check for supported audio MIME type, HTTP success,
+and a maximum declared size of 100 MB before being shown. Sites that do
+not support HEAD may require a normal browser visit instead.
+
+For safety, the inspector streams no more than 1 MB of public HTTPS
+HTML per page (even if the server ignores HTTP Range requests), does not
+run JavaScript or inspect streaming manifests, follow redirects,
+authenticate, bypass paywalls, or visit private IP addresses. A linked file still needs the existing explicit user action
+and decoder/size/duration validation to enter the offline library. Most
+streaming or commercial purchase pages will not expose a downloadable file.
+
 
 ## Expanded catalogs and background downloading
 

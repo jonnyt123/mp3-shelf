@@ -18,6 +18,16 @@
       <key>CFBundleURLSchemes</key><array><string>mp3shelf-auth</string></array>
     </dict></array>
     <key>LSRequiresIPhoneOS</key><true/>
+    <key>UTExportedTypeDeclarations</key>
+    <array><dict>
+      <key>UTTypeIdentifier</key><string>com.jonnyt.mp3shelf.backup</string>
+      <key>UTTypeDescription</key><string>MP3 Shelf Portable Backup</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+      <key>UTTypeTagSpecification</key><dict>
+        <key>public.filename-extension</key><array><string>mp3shelf</string></array>
+        <key>public.mime-type</key><string>application/vnd.mp3-shelf.backup</string>
+      </dict>
+    </dict></array>
     <key>UIBackgroundModes</key><array><string>audio</string></array>
     <key>UIFileSharingEnabled</key><true/>
     <key>LSSupportsOpeningDocumentsInPlace</key><true/>

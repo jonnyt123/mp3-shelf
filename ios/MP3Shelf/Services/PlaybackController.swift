@@ -27,6 +27,16 @@ final class PlaybackController: NSObject, ObservableObject {
     private var fadeTimer: Timer?
     private var outgoingPlayer: AVAudioPlayer?
     private var queue: [UUID] = []
+
+    /// Read-only queue preview for the native Now Playing screen.
+    /// Uses the active playback order and never mutates the playlist.
+    var upcomingTracks: [MusicTrack] {
+        guard let library, let currentTrackID,
+              let index = queue.firstIndex(of: currentTrackID) else { return [] }
+        return queue.dropFirst(index + 1).prefix(3)
+            .compactMap { library.song(with: $0) }
+    }
+
     private let relay = AudioCompletionRelay()
     private var remoteControlsConfigured = false
 

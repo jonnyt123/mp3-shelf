@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import Combine
 import UIKit
+import Network
 
 struct AutomaticDownloadProgress {
     let playlistID: UUID
@@ -24,7 +25,52 @@ final class MusicLibrary: ObservableObject {
     @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
+    private var catalogRetryTask: Task<Void, Never>?
+    private var scheduledCatalogRetryAt: Date?
     @Published private(set) var discoveryJobs: [SourceDiscoveryJob] = []
+
+    // Wi-Fi is the default. Cellular downloads require explicit, session-only
+    // permission for the individual playlist.
+    @Published private(set) var isOnWiFi = false
+    @Published private(set) var isOnCellular = false
+    @Published private(set) var networkStatusKnown = false
+    private var cellularApprovedPlaylists = Set<UUID>()
+    private let networkMonitor = NWPathMonitor()
+    private let networkMonitorQueue = DispatchQueue(label: "MP3Shelf.wifi-download-policy")
+
+    func cellularApproved(for playlistID: UUID) -> Bool {
+        cellularApprovedPlaylists.contains(playlistID)
+    }
+
+    private func networkAllowsDiscovery(for playlistID: UUID) -> Bool {
+        networkStatusKnown && DownloadNetworkPolicy.canDiscover(
+            onWiFi: isOnWiFi, onCellular: isOnCellular,
+            explicitlyAllowCellular: cellularApprovedPlaylists.contains(playlistID))
+    }
+
+    /// User-initiated cellular override; never persisted or inferred.
+    func downloadUsingCellular(for playlistID: UUID) {
+        guard isOnCellular else { return }
+        cellularApprovedPlaylists.insert(playlistID)
+        BackgroundAudioDownloader.shared.enableCellular(for: playlistID)
+        if discoveryJob(for: playlistID) == nil {
+            startAutomaticDownloads(for: playlistID)
+        } else {
+            resumePendingDiscovery()
+        }
+    }
+
+    private func connectivityChanged(wifi: Bool, cellular: Bool) {
+        isOnWiFi = wifi
+        isOnCellular = cellular
+        networkStatusKnown = true
+        if let current = automaticDownloadProgress,
+           current.isRunning && !networkAllowsDiscovery(for: current.playlistID) {
+            automaticDownloadTask?.cancel()
+        } else {
+            resumePendingDiscovery()
+        }
+    }
 
     private let manager = FileManager.default
     private let storageRoot: URL
@@ -60,6 +106,176 @@ final class MusicLibrary: ObservableObject {
         } catch {
             print("MP3 Shelf could not initialize local storage: \(error)")
         }
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            let wifi = path.status == .satisfied && path.usesInterfaceType(.wifi)
+            let cellular = path.status == .satisfied && path.usesInterfaceType(.cellular)
+            Task { @MainActor [weak self] in
+                self?.connectivityChanged(wifi: wifi, cellular: cellular)
+            }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
+    }
+
+    /// Creates the same v1 .mp3shelf archive used by the browser PWA.
+    /// No Spotify tokens, account secrets or discovery queue internals are exported.
+    func exportPortableBackup() async throws -> URL {
+        let items = tracks.map { track in
+            let lyrics = track.lyricsFileName.flatMap {
+                try? String(contentsOf: lyricsDirectory.appendingPathComponent($0), encoding: .utf8)
+            }
+            return PortableShelfArchive.MediaInput(
+                track: track, audioURL: fileURL(for: track),
+                artwork: artwork(for: track)?.jpegData(compressionQuality: 0.9),
+                lyrics: lyrics
+            )
+        }
+        let destination = manager.temporaryDirectory
+            .appendingPathComponent("MP3Shelf-\(UUID().uuidString).mp3shelf")
+        // Gather UI-dependent artwork before leaving the main actor, then
+        // stream potentially gigabytes of audio to disk off the UI thread.
+        let playlistSnapshot = playlists
+        return try await Task.detached(priority: .userInitiated) {
+            try PortableShelfArchive.export(items, playlists: playlistSnapshot, to: destination)
+            return destination
+        }.value
+    }
+
+    /// Adds valid files from a browser or native backup without deleting
+    /// anything already on this iPhone. Archive metadata is validated first.
+    func importPortableBackup(from url: URL) async throws -> ImportReport {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        let archive = try PortableShelfArchive.open(url)
+        var report = ImportReport()
+        var restoredIDs: [String: UUID] = [:]
+        for archived in archive.manifest.tracks {
+            var temporary: URL?
+            do {
+                let ext = try PortableShelfArchive.audioExtension(for: archived)
+                let file = try PortableShelfArchive.extract(
+                    archived.audio, from: archive, extensionName: ext)
+                temporary = file
+                defer { try? manager.removeItem(at: file) }
+                let initialName = archived.originalName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let rawName = initialName.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? archived.name + "." + ext
+                let original = URL(fileURLWithPath: rawName).lastPathComponent
+                // Match an existing recording by its portable identity only
+                // when the bytes still match. A reused ID with different audio
+                // must not silently link a playlist to the wrong song.
+                if let existing = tracks.first(where: { candidate in
+                    (candidate.portableBackupID == archived.id ||
+                     candidate.id.uuidString == archived.id) &&
+                    PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
+                }) {
+                    restoredIDs[archived.id] = existing.id
+                    report.skipped += 1
+                    continue
+                }
+
+                let imported = try await addLocalAudio(
+                    sourceURL: file, originalName: original)
+                if imported { report.imported += 1 }
+                else { report.skipped += 1 }
+
+                if !imported {
+                    // Names and sizes alone are not sufficient: multiple local
+                    // recordings can share both while containing different audio.
+                    if let index = tracks.firstIndex(where: { candidate in
+                        candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame &&
+                        PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
+                    }) {
+                        restoredIDs[archived.id] = tracks[index].id
+                        if !tracks.contains(where: {
+                            $0.id != tracks[index].id &&
+                            ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
+                        }) {
+                            tracks[index].portableBackupID = archived.id
+                            save()
+                        }
+                    }
+                    continue
+                }
+                guard let index = tracks.indices.last else { continue }
+                restoredIDs[archived.id] = tracks[index].id
+                // If the archived identifier belongs to a different local
+                // recording, keep this song's new UUID as its export identity.
+                if !tracks.contains(where: {
+                    $0.id != tracks[index].id &&
+                            ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
+                }) {
+                    tracks[index].portableBackupID = archived.id
+                }
+                tracks[index].title = archived.name
+                if let artist = archived.artist { tracks[index].artist = artist }
+                if let album = archived.album { tracks[index].album = album }
+                tracks[index].isFavorite = archived.isFavorite ?? false
+                let epoch = archived.importedAt / 1000
+                if epoch.isFinite && epoch > 0 {
+                    tracks[index].addedAt = Date(timeIntervalSince1970: epoch)
+                }
+                if let attribution = archived.attribution,
+                   attribution.sourceURL.hasPrefix("https://"),
+                   attribution.licenseURL.hasPrefix("https://") {
+                    tracks[index].sourceAttribution = AudioSourceAttribution(
+                        pageURL: attribution.sourceURL,
+                        licenseURL: attribution.licenseURL,
+                        providerName: attribution.provider
+                    )
+                }
+                if let artwork = archived.artwork {
+                    let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
+                    if UIImage(data: bytes) != nil {
+                        let filename = tracks[index].id.uuidString + ".img"
+                        try bytes.write(to: artworkDirectory.appendingPathComponent(filename),
+                                        options: .atomic)
+                        tracks[index].artworkFileName = filename
+                    }
+                }
+                if let lyrics = archived.lyrics, !lyrics.isEmpty {
+                    let filename = tracks[index].id.uuidString + ".lrc"
+                    try Data(lyrics.utf8).write(
+                        to: lyricsDirectory.appendingPathComponent(filename), options: .atomic)
+                    tracks[index].lyricsFileName = filename
+                }
+                save()
+            } catch {
+                report.errors.append("\(archived.name): \(error.localizedDescription)")
+            }
+            if let temporary { try? manager.removeItem(at: temporary) }
+        }
+        for item in archive.manifest.playlists {
+            // Web backups use string playlist IDs, not necessarily UUIDs.
+            // Keep their source ID so restoring the same archive again (or
+            // after an app restart) does not create another copy.
+            let resolvedTrackIDs = item.trackIds.compactMap { restoredIDs[$0] }
+            if let index = playlists.firstIndex(where: { $0.matchesPortableBackupID(item.id) }) {
+                // A previous restore might have imported only some recordings.
+                // Complete missing links on retry, preserving user-customized order.
+                var addedLinks = 0
+                for id in resolvedTrackIDs where !playlists[index].trackIDs.contains(id) {
+                    playlists[index].trackIDs.append(id)
+                    addedLinks += 1
+                }
+                if addedLinks > 0 { report.playlistsUpdated += 1 }
+                continue
+            }
+            let id = UUID(uuidString: item.id) ?? UUID()
+            var playlist = MusicPlaylist(id: id, name: item.name)
+            playlist.portableBackupID = item.id
+            playlist.sourceURL = item.sourceURL
+            playlist.trackIDs = resolvedTrackIDs
+            playlist.sourceOrder = (item.wishes ?? []).map {
+                PlaylistWish(title: $0.title, artist: $0.artist,
+                             album: $0.album, spotifyURL: $0.spotifyURL)
+            }
+            playlist.missingTracks = playlist.sourceOrder
+            playlists.append(playlist)
+            report.playlistsAdded += 1
+        }
+        reconcileMissingSongs()
+        save()
+        return report
     }
 
     func fileURL(for track: MusicTrack) -> URL { musicDirectory.appendingPathComponent(track.fileName) }
@@ -133,13 +349,16 @@ final class MusicLibrary: ObservableObject {
         guard allowed.contains(extensionName) else { throw MusicLibraryError.unsupportedFormat }
         let fileSize = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
         // Avoid importing the same file more than once, without treating all tracks with the same title as duplicates.
-        if tracks.contains(where: { track in
-            track.originalFileName.caseInsensitiveCompare(originalName) == .orderedSame &&
-            ((try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -2) == fileSize
+        if fileSize >= 0 && tracks.contains(where: { track in
+            let existingURL = fileURL(for: track)
+            return track.originalFileName.caseInsensitiveCompare(originalName) == .orderedSame &&
+                ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -2) == fileSize &&
+                PortableShelfArchive.audioFilesIdentical(sourceURL, existingURL)
         }) { return false }
 
         let id = UUID()
-        let destinationName = id.uuidString + "." + extensionName
+        let destinationName = LocalAudioFileNaming.storageName(
+            originalName: originalName, id: id, fileExtension: extensionName)
         let destination = musicDirectory.appendingPathComponent(destinationName)
         try manager.copyItem(at: sourceURL, to: destination)
         do {
@@ -186,6 +405,8 @@ final class MusicLibrary: ObservableObject {
         if let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID && !$0.isComplete }) {
             discoveryJobs[index].isPaused = false
             discoveryJobs[index].lastError = nil
+            discoveryJobs[index].nextRetryAt = nil
+            discoveryJobs[index].transientFailureCount = nil
         } else {
             discoveryJobs.removeAll { $0.playlistID == playlistID }
             discoveryJobs.append(SourceDiscoveryJob(playlistID: playlistID, wishes: playlist.missingTracks))
@@ -209,13 +430,28 @@ final class MusicLibrary: ObservableObject {
         guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) else { return }
         discoveryJobs[index].isPaused = false
         discoveryJobs[index].lastError = nil
+        discoveryJobs[index].nextRetryAt = nil
+        discoveryJobs[index].transientFailureCount = nil
         persistDiscovery()
         resumePendingDiscovery()
     }
 
     func resumePendingDiscovery() {
-        guard automaticDownloadTask == nil,
-              let job = discoveryJobs.first(where: { !$0.isPaused && !$0.isComplete }) else { return }
+        guard automaticDownloadTask == nil else { return }
+        let eligible = discoveryJobs.filter {
+            !$0.isPaused && !$0.isComplete &&
+            networkAllowsDiscovery(for: $0.playlistID)
+        }
+        let now = Date()
+        guard let job = eligible.first(where: { $0.canAttemptLookup(at: now) }) else {
+            if let next = eligible.compactMap(\.nextRetryAt).filter({ $0 > now }).min() {
+                scheduleCatalogRetry(at: next)
+            }
+            return
+        }
+        catalogRetryTask?.cancel()
+        catalogRetryTask = nil
+        scheduledCatalogRetryAt = nil
         var progress = AutomaticDownloadProgress(playlistID: job.playlistID, total: job.wishes.count)
         progress.processed = job.nextIndex
         progress.queued = job.queued
@@ -227,6 +463,26 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
+    /// iOS can suspend foreground discovery at any time. Retry checkpoints
+    /// survive app termination and will also be considered on next app launch.
+    private func scheduleCatalogRetry(at deadline: Date) {
+        if catalogRetryTask != nil,
+           let scheduled = scheduledCatalogRetryAt,
+           scheduled <= deadline { return }
+        catalogRetryTask?.cancel()
+        scheduledCatalogRetryAt = deadline
+        catalogRetryTask = Task { [weak self] in
+            let delay = max(0, deadline.timeIntervalSinceNow)
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.scheduledCatalogRetryAt = nil
+            self?.catalogRetryTask = nil
+            self?.resumePendingDiscovery()
+        }
+    }
+
     private func persistDiscovery() {
         if let data = try? JSONEncoder().encode(discoveryJobs) {
             try? data.write(to: discoveryURL, options: .atomic)
@@ -235,6 +491,16 @@ final class MusicLibrary: ObservableObject {
 
     /// Resolved URLs transfer via Apple's background daemon. The UI receives
     /// results when the app is running or next reactivated by the system.
+    /// Used by the background transfer manager before starting a retry,
+    /// falling back to another provider or importing a staged duplicate.
+    /// Check that the file still exists as well as its metadata/duration.
+    func hasOfflineRecording(matching wish: PlaylistWish) -> Bool {
+        guard let track = MusicMatching.reusableOfflineTrack(for: wish, in: tracks) else {
+            return false
+        }
+        return manager.fileExists(atPath: fileURL(for: track).path)
+    }
+
     func finishedBackgroundDownload(for playlistID: UUID, succeeded: Bool) {
         guard var progress = automaticDownloadProgress, progress.playlistID == playlistID else { return }
         if succeeded { progress.downloaded += 1 }
@@ -246,12 +512,29 @@ final class MusicLibrary: ObservableObject {
         BackgroundAudioDownloader.shared.stopTransfers(for: playlistID)
     }
 
+    /// A filename or search-result title is not evidence of recording identity.
+    /// If the media file explicitly tags a different title/artist, reject it
+    /// rather than overwrite those tags with the playlist's desired metadata.
+    private func validateEmbeddedIdentity(fileURL: URL, matching wish: PlaylistWish) throws {
+        let metadata = AVURLAsset(url: fileURL).commonMetadata
+        func tag(_ key: AVMetadataKey) -> String? {
+            AVMetadataItem.metadataItems(from: metadata, withKey: key,
+                                         keySpace: .common).first?.stringValue
+        }
+        if let conflict = SourceAudioIdentity.conflictingField(
+            title: tag(.commonKeyTitle), artist: tag(.commonKeyArtist),
+            requested: wish) {
+            throw MusicLibraryError.recordingMetadataMismatch(conflict.rawValue)
+        }
+    }
+
     func importStagedAudio(from fileURL: URL, matching wish: PlaylistWish,
                            attribution: AudioSourceAttribution) async throws -> Bool {
         let bytes = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         guard bytes > 0 && bytes <= 100 * 1024 * 1024 else {
             throw MusicLibraryError.downloadFailed
         }
+        try validateEmbeddedIdentity(fileURL: fileURL, matching: wish)
         let original = "\(wish.artist) - \(wish.title).mp3"
         let imported = try await addLocalAudio(sourceURL: fileURL,
                                                originalName: original,
@@ -278,10 +561,11 @@ final class MusicLibrary: ObservableObject {
     }
 
     private func runAutomaticDownloads(playlistID: UUID) async {
-        var blockedByNetwork = false
+        var retryScheduled = false
         while let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) {
             var job = discoveryJobs[index]
-            if Task.isCancelled || job.isPaused || job.isComplete { break }
+            if Task.isCancelled || job.isPaused || job.isComplete ||
+                !networkAllowsDiscovery(for: playlistID) { break }
             guard let wish = job.currentWish else { break }
             if var progress = automaticDownloadProgress {
                 progress.currentSong = "\(wish.artist) — \(wish.title)"
@@ -292,18 +576,27 @@ final class MusicLibrary: ObservableObject {
                 job.record(.alreadyPresent)
             } else {
                 do {
-                    let source = try await AudioSourceFinder.findAcrossCatalogs(for: wish)
-                    if Task.isCancelled { break }
-                    if let source {
-                        if BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID) {
+                    let sources = try await AudioSourceFinder.findDownloadCandidates(
+                        for: wish, allowsCellular: cellularApprovedPlaylists.contains(playlistID))
+                    if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) { break }
+                    if let source = sources.first {
+                        if BackgroundAudioDownloader.shared.enqueue(
+                            source: source, requested: wish, playlistID: playlistID,
+                            alternatives: Array(sources.dropFirst())) {
                             job.record(.queued)
                         } else { job.record(.failed) }
                     } else { job.record(.unavailable) }
                 } catch is CancellationError {
                     break
                 } catch {
-                    job.lastError = error.localizedDescription
-                    blockedByNetwork = true
+                    // A network handoff or user pause must not burn through
+                    // the catalog's retry budget.
+                    if Task.isCancelled || job.isPaused ||
+                        !networkAllowsDiscovery(for: playlistID) { break }
+                    job.recordTransientFailure(error.localizedDescription)
+                    // Continue to the NEXT song after five failed attempts,
+                    // preserving the .failed outcome and source discovery log.
+                    retryScheduled = !job.finishExhaustedRetriesIfNeeded()
                 }
             }
             discoveryJobs[index] = job
@@ -315,7 +608,7 @@ final class MusicLibrary: ObservableObject {
                 progress.failed = job.failed
                 automaticDownloadProgress = progress
             }
-            if blockedByNetwork { break }
+            if retryScheduled { break }
         }
         if var progress = automaticDownloadProgress {
             progress.isRunning = false
@@ -324,7 +617,9 @@ final class MusicLibrary: ObservableObject {
             automaticDownloadProgress = progress
         }
         automaticDownloadTask = nil
-        if !blockedByNetwork { resumePendingDiscovery() }
+        // If a catalog is down, resumePendingDiscovery schedules the persisted
+        // backoff instead of immediately repeating the same failing request.
+        resumePendingDiscovery()
     }
 
     func downloadAudio(from remoteURL: URL, matching wish: PlaylistWish? = nil,
@@ -359,6 +654,7 @@ final class MusicLibrary: ObservableObject {
         let staging = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + actualExtension)
         try manager.moveItem(at: temporary, to: staging)
         defer { try? manager.removeItem(at: staging) }
+        if let wish { try validateEmbeddedIdentity(fileURL: staging, matching: wish) }
         let imported = try await addLocalAudio(sourceURL: staging,
                                                originalName: filename + "." + actualExtension,
                                                expectedDuration: wish?.durationSeconds)
@@ -456,11 +752,22 @@ final class MusicLibrary: ObservableObject {
 
     func importPlaylist(wishes: [PlaylistWish], name: String, sourceURL: String? = nil) -> PlaylistImportReport {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        var playlist = MusicPlaylist(name: trimmed.isEmpty ? "Imported Playlist" : trimmed)
-        if let sourceURL, let parsed = URL(string: sourceURL),
-           parsed.scheme == "https", parsed.host == "open.spotify.com", parsed.path.hasPrefix("/playlist/") {
-            playlist.sourceURL = sourceURL
+        let displayName = trimmed.isEmpty ? "Imported Playlist" : trimmed
+        let spotifyID = sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:))
+        // Importing the same Spotify link twice must not duplicate its library,
+        // reset a running discovery cursor or invalidate pending transfer IDs.
+        if let spotifyID,
+           let index = playlists.firstIndex(where: {
+               $0.sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:)) == spotifyID
+           }) {
+            reconcileMissingSongs()
+            return PlaylistImportReport(playlistID: playlists[index].id,
+                                        playlistName: playlists[index].name,
+                                        matched: playlists[index].trackIDs.count,
+                                        missing: playlists[index].missingTracks.count)
         }
+        var playlist = MusicPlaylist(name: displayName)
+        if spotifyID != nil { playlist.sourceURL = sourceURL }
         playlist.sourceOrder = wishes
         for wish in wishes {
             if let track = MusicMatching.matchingTrack(for: wish, in: tracks) {
@@ -471,7 +778,8 @@ final class MusicLibrary: ObservableObject {
         }
         playlists.append(playlist)
         save()
-        return PlaylistImportReport(playlistName: playlist.name, matched: playlist.trackIDs.count,
+        return PlaylistImportReport(playlistID: playlist.id, playlistName: playlist.name,
+                                    matched: playlist.trackIDs.count,
                                     missing: playlist.missingTracks.count)
     }
 
@@ -507,13 +815,16 @@ final class MusicLibrary: ObservableObject {
 
 enum MusicLibraryError: LocalizedError {
     case unsupportedFormat, invalidDownloadURL, downloadFailed, recordingDurationMismatch
+    case recordingMetadataMismatch(String)
 
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat: return "Only supported audio files (MP3, M4A, AAC, WAV, AIFF) can be imported."
         case .invalidDownloadURL: return "Enter a direct HTTPS audio URL. Spotify streaming links cannot be downloaded."
         case .downloadFailed: return "The audio download did not complete successfully."
-        case .recordingDurationMismatch: return "The downloaded MP3 duration did not match the requested recording."
+        case .recordingDurationMismatch: return "The downloaded audio duration did not match the requested recording."
+        case .recordingMetadataMismatch(let field):
+            return "The downloaded audio's embedded \(field) does not match the requested song. It was not added to your playlist."
         }
     }
 }
