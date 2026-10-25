@@ -84,6 +84,44 @@ enum PlaylistCSVTests {
             title: "Untitled", artist: "Unknown Artist",
             requested: requestedAudio) == nil,
             "generic metadata placeholders do not create false conflicts")
+        let newTrack = PlaylistWish(title: "New Song", artist: "Fresh Artist",
+                                    album: "New Album", spotifyURL: nil, durationSeconds: 201)
+        let previous = [
+            PlaylistWish(title: "First", artist: "Band", album: "Old",
+                         spotifyURL: "https://open.spotify.com/track/1TqHaKt6gS8L6bEx4JjUhy",
+                         durationSeconds: 180),
+            PlaylistWish(title: "Second", artist: "Band", album: "Old",
+                         spotifyURL: "https://open.spotify.com/track/0TqHaKt6gS8L6bEx4JjUhy",
+                         durationSeconds: 190)
+        ]
+        let refreshed = [
+            newTrack,
+            PlaylistWish(title: "Second (updated)", artist: "Band", album: "New",
+                         spotifyURL: previous[1].spotifyURL, durationSeconds: 191)
+        ]
+        let synced = SpotifyPlaylistSync.merge(previous: previous, latest: refreshed)
+        check(synced.count == 2 && synced[0].id == newTrack.id &&
+              synced[1].id == previous[1].id,
+              "Spotify reimport preserves existing IDs, inserts new songs and removes old ones")
+        check(synced[1].album == "New" && synced[1].durationSeconds == 191,
+              "Spotify refresh updates metadata and preserves the original track identity")
+        let duplicate = PlaylistWish(title: "Repeat", artist: "Band", album: "",
+                                     spotifyURL: previous[0].spotifyURL, durationSeconds: 180)
+        let duplicateOld = [previous[0], duplicate]
+        let duplicateSync = SpotifyPlaylistSync.merge(
+            previous: duplicateOld, latest: [duplicate, previous[0]])
+        check(duplicateSync.map(\.id) == duplicateOld.map(\.id),
+              "duplicate Spotify track occurrences keep distinct persisted IDs")
+        let oldNoLink = PlaylistWish(title: "Unlinked Track", artist: "Band",
+                                     album: "", spotifyURL: nil, durationSeconds: 222)
+        let newNoLink = PlaylistWish(title: "Unlinked Track", artist: "Band",
+                                     album: "Remastered", spotifyURL: nil, durationSeconds: 222.2)
+        check(SpotifyPlaylistSync.merge(previous: [oldNoLink], latest: [newNoLink]).first?.id == oldNoLink.id,
+              "CSV-origin entries use artist/title/duration for stable sync identity")
+        let alternateCut = PlaylistWish(title: "Unlinked Track", artist: "Band",
+                                         album: "", spotifyURL: nil, durationSeconds: 20)
+        check(SpotifyPlaylistSync.merge(previous: [oldNoLink], latest: [alternateCut]).first?.id != oldNoLink.id,
+              "preview-length alternate recordings cannot impersonate full track IDs")
         print("Playlist parser & matcher tests passed")
     }
 }

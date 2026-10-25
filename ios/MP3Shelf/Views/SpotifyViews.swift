@@ -139,7 +139,10 @@ struct SpotifyConnectView: View {
             let report = library.importPlaylist(wishes: wishes, name: list.name,
                 sourceURL: list.external_urls?.spotify ??
                     "https://open.spotify.com/playlist/\(list.id)")
-            if report.missing > 0 {
+            if report.missing > 0 && library.discoveryJob(for: report.playlistID) == nil {
+                // First-time import queues everything. Existing Spotify links
+                // are synced incrementally inside MusicLibrary instead of
+                // starting a full new search of previously unavailable songs.
                 library.startAutomaticDownloads(for: report.playlistID)
             }
             selectedPlaylistID = report.playlistID

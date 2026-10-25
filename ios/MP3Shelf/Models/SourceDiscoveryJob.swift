@@ -61,12 +61,12 @@ enum BackgroundTransferRecoveryPolicy {
 }
 
 struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
-    enum Result { case queued, unavailable, failed, alreadyPresent }
+    enum Result { case queued, unavailable, failed, alreadyPresent, removed }
 
     /// Per-song outcome for the Spotify → independent-source MP3 matching
     /// dashboard. Optional so existing checkpoint JSON remains decodable.
     enum Outcome: String, Codable, Equatable {
-        case queued, unavailable, failed, alreadyPresent, previous
+        case queued, unavailable, failed, alreadyPresent, removed, previous
     }
 
     var playlistID: UUID
@@ -121,6 +121,17 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         return true
     }
 
+    /// Append only genuinely new missing tracks while keeping completed
+    /// entries and their persisted cursor, outcomes, retries and errors intact.
+    /// Safe even when a duplicate song occurs more than once in the playlist.
+    @discardableResult
+    mutating func appendNewMissingWishes(_ missing: [PlaylistWish]) -> Int {
+        var ids = Set(wishes.map(\.id))
+        let appended = missing.filter { ids.insert($0.id).inserted }
+        wishes.append(contentsOf: appended)
+        return appended.count
+    }
+
     func outcome(for wish: PlaylistWish) -> Outcome? {
         guard let index = wishes.firstIndex(where: { $0.id == wish.id }),
               index < nextIndex else { return nil }
@@ -148,6 +159,8 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
             updated.append(.failed)
         case .alreadyPresent:
             updated.append(.alreadyPresent)
+        case .removed:
+            updated.append(.removed)
         }
         outcomes = updated
         nextIndex += 1

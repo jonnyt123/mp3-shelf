@@ -195,6 +195,24 @@ enum SourceDiscoveryJobTests {
                         "unidentifiable background tasks block unsafe resurrection")
         verifyDiscovery(!canRestore(staged: true) && !canRestore(importing: true),
                         "staged media or in-progress import is never downloaded twice")
+        var refreshedJob = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        refreshedJob.record(.queued)
+        let added = PlaylistWish(title: "Recently Added", artist: "Band",
+                                 album: "", spotifyURL: nil, durationSeconds: 180)
+        verifyDiscovery(refreshedJob.appendNewMissingWishes([wishes[1], added, added]) == 1,
+                        "playlist refresh appends only new Spotify occurrences")
+        verifyDiscovery(refreshedJob.nextIndex == 1 && refreshedJob.queued == 1 &&
+                        refreshedJob.wishes.last?.id == added.id,
+                        "refresh preserves download cursor and completed outcome")
+        refreshedJob.record(.removed)
+        verifyDiscovery(refreshedJob.outcome(for: wishes[1]) == .removed &&
+                        refreshedJob.nextIndex == 2,
+                        "removed Spotify entries advance without scanning catalogs")
+        let synchronized = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(refreshedJob))
+        verifyDiscovery(synchronized.wishes.last?.id == added.id &&
+                        synchronized.outcome(for: wishes[1]) == .removed,
+                        "refreshed playlist checkpoint survives app relaunch")
         print("Persistent discovery checkpoint tests passed")
     }
 }

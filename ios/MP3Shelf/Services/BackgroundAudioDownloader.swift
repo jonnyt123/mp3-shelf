@@ -246,6 +246,17 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         for id in ids { cancelTransfer(id) }
     }
 
+    /// When the user refreshes a Spotify playlist, stop background transfers
+    /// for tracks removed from that playlist. Do not delete library recordings
+    /// or cancel tasks belonging to another playlist.
+    func cancelRemovedTracks(for playlistID: UUID, keepingIDs: Set<UUID>) {
+        let removed = tickets.values.filter {
+            $0.playlistID == playlistID && $0.status == .queued &&
+            !keepingIDs.contains($0.requested.id)
+        }.map(\.id)
+        for id in removed { cancelTransfer(id) }
+    }
+
     func setBackgroundEventsCompletion(_ completion: @escaping () -> Void) {
         backgroundEventsCompletion = completion
         activate()

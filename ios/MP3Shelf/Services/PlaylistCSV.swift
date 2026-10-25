@@ -98,6 +98,41 @@ enum PlaylistCSV {
     }
 }
 
+
+/// Sync a previously imported Spotify playlist without changing the identity
+/// of unchanged entries. An identical track can occur more than once; consume
+/// old occurrence IDs in sequence rather than collapsing duplicate entries.
+enum SpotifyPlaylistSync {
+    static func identity(_ wish: PlaylistWish) -> String {
+        if let raw = wish.spotifyURL,
+           let url = URLComponents(string: raw),
+           url.scheme?.lowercased() == "https",
+           url.host?.lowercased() == "open.spotify.com",
+           url.path.split(separator: "/").count == 2,
+           url.path.hasPrefix("/track/"),
+           let id = url.path.split(separator: "/").last,
+           id.count == 22 && id.allSatisfy({ $0.isASCII && $0.isLetter || $0.isASCII && $0.isNumber }) {
+            return "spotify:\(id)"
+        }
+        // Older CSV imports can lack an authentic Spotify track link.
+        // Include the known duration so remixes and previews remain distinct.
+        let length = wish.durationSeconds.map { String(Int($0.rounded())) } ?? "unknown"
+        return "metadata:\(MusicMatching.key(wish.title)):\(MusicMatching.key(wish.artist)):\(length)"
+    }
+
+    static func merge(previous: [PlaylistWish], latest: [PlaylistWish]) -> [PlaylistWish] {
+        var buckets = Dictionary(grouping: previous, by: identity)
+        return latest.map { updated in
+            let key = identity(updated)
+            guard var old = buckets[key], !old.isEmpty else { return updated }
+            var stable = updated
+            stable.id = old.removeFirst().id
+            buckets[key] = old
+            return stable
+        }
+    }
+}
+
 enum MusicMatching {
     static func key(_ text: String) -> String {
         var base = text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)

@@ -135,6 +135,29 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Updating the same Spotify playlist without re-downloading everything
+
+Re-importing a previously linked Spotify playlist now synchronizes new,
+removed and reordered songs into its **existing** library playlist rather
+than returning the stale snapshot. The latest Spotify track metadata is
+applied, but every unchanged occurrence retains its original `PlaylistWish`
+UUID, including duplicates and reordered tracks. That preserves background
+download IDs, checkpoints and per-song discovery results.
+
+The automatic discovery queue appends **only newly added missing songs**,
+without re-searching previously unavailable songs or resetting the cursor.
+Old entries removed from Spotify are marked as removed when reached by the
+discovery job, and any corresponding uncompleted transfer for that playlist
+is cancelled. Previously imported audio stays in the owner's local music
+library. Source-order tracks removed from Spotify no longer linger in the
+playlist simply because reconciliation preserved manual additions; genuinely
+manual additions remain.
+
+Refreshing does not bypass a user-paused discovery job or turn cellular
+downloading on. Spotify metadata refresh requires an explicit import action
+and Spotify API access; this change does **not** claim iOS can silently poll
+Spotify while the app is suspended.
+
 ## Avoiding duplicate playlist downloads and already-saved recordings
 
 If two imported Spotify playlists refer to the same exact recording, both

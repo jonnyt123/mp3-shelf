@@ -571,7 +571,13 @@ final class MusicLibrary: ObservableObject {
                 progress.currentSong = "\(wish.artist) — \(wish.title)"
                 automaticDownloadProgress = progress
             }
-            if MusicMatching.matchingTrack(for: wish, in: tracks) != nil ||
+            if !playlists.contains(where: {
+                $0.id == playlistID && $0.sourceOrder.contains(where: { $0.id == wish.id })
+            }) {
+                // Deleted Spotify entries stay in historical discovery results
+                // but do not trigger new catalog requests or MP3 transfers.
+                job.record(.removed)
+            } else if MusicMatching.reusableOfflineTrack(for: wish, in: tracks) != nil ||
                 BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
                 job.record(.alreadyPresent)
             } else {
@@ -754,14 +760,57 @@ final class MusicLibrary: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = trimmed.isEmpty ? "Imported Playlist" : trimmed
         let spotifyID = sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:))
-        // Importing the same Spotify link twice must not duplicate its library,
-        // reset a running discovery cursor or invalidate pending transfer IDs.
+        // Refreshing an existing Spotify link updates the actual song list,
+        // not just the dashboard. Preserve stable per-occurrence wish IDs,
+        // pending transfer IDs and completed discovery outcomes.
         if let spotifyID,
            let index = playlists.firstIndex(where: {
                $0.sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:)) == spotifyID
            }) {
-            reconcileMissingSongs()
-            return PlaylistImportReport(playlistID: playlists[index].id,
+            let old = playlists[index]
+            let updated = SpotifyPlaylistSync.merge(previous: old.sourceOrder, latest: wishes)
+            let previousIDs = old.sourceOrder.map(\.id)
+            let currentIDs = updated.map(\.id)
+            let listChanged = previousIDs != currentIDs ||
+                zip(old.sourceOrder, updated).contains(where: {
+                    $0.title != $1.title || $0.artist != $1.artist ||
+                    $0.album != $1.album || $0.durationSeconds != $1.durationSeconds
+                })
+            if listChanged {
+                if automaticDownloadProgress?.playlistID == old.id {
+                    automaticDownloadTask?.cancel()
+                }
+                // Distinguish manually added local files from tracks that
+                // belonged to the previous Spotify source-order mapping.
+                let formerlySourced = Set(old.sourceOrder.compactMap {
+                    MusicMatching.reusableOfflineTrack(for: $0, in: tracks)?.id
+                })
+                playlists[index].trackIDs.removeAll { formerlySourced.contains($0) }
+                playlists[index].sourceOrder = updated
+                playlists[index].name = displayName
+                playlists[index].sourceURL = sourceURL
+                reconcileMissingSongs()
+                BackgroundAudioDownloader.shared.cancelRemovedTracks(
+                    for: old.id, keepingIDs: Set(currentIDs))
+            } else {
+                reconcileMissingSongs()
+            }
+            // A finished job stays complete when Spotify has not added songs;
+            // a refresh should NOT rescan all old unavailable songs.
+            if let jobIndex = discoveryJobs.firstIndex(where: { $0.playlistID == old.id }) {
+                let newTracks = discoveryJobs[jobIndex].appendNewMissingWishes(
+                    playlists[index].missingTracks)
+                if newTracks > 0 {
+                    persistDiscovery()
+                    resumePendingDiscovery()
+                }
+            } else if !playlists[index].missingTracks.isEmpty {
+                discoveryJobs.append(SourceDiscoveryJob(
+                    playlistID: old.id, wishes: playlists[index].missingTracks))
+                persistDiscovery()
+                resumePendingDiscovery()
+            }
+            return PlaylistImportReport(playlistID: old.id,
                                         playlistName: playlists[index].name,
                                         matched: playlists[index].trackIDs.count,
                                         missing: playlists[index].missingTracks.count)
