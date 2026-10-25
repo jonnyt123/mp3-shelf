@@ -204,6 +204,15 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(refreshedJob.nextIndex == 1 && refreshedJob.queued == 1 &&
                         refreshedJob.wishes.last?.id == added.id,
                         "refresh preserves download cursor and completed outcome")
+        let editedPending = PlaylistWish(id: wishes[1].id,
+            title: "Second (renamed)", artist: wishes[1].artist,
+            album: "New Album", spotifyURL: wishes[1].spotifyURL,
+            durationSeconds: 213)
+        verifyDiscovery(refreshedJob.appendNewMissingWishes([editedPending]) == 0 &&
+                        refreshedJob.wishes[1].title == "Second (renamed)" &&
+                        refreshedJob.wishes[1].durationSeconds == 213 &&
+                        refreshedJob.nextIndex == 1,
+                        "refresh updates unprocessed song metadata without resetting cursor")
         refreshedJob.record(.removed)
         verifyDiscovery(refreshedJob.outcome(for: wishes[1]) == .removed &&
                         refreshedJob.nextIndex == 2,

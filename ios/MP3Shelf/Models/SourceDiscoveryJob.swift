@@ -126,6 +126,14 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     /// Safe even when a duplicate song occurs more than once in the playlist.
     @discardableResult
     mutating func appendNewMissingWishes(_ missing: [PlaylistWish]) -> Int {
+        let updated = Dictionary(uniqueKeysWithValues: missing.map { ($0.id, $0) })
+        // Refresh metadata for unfinished lookups using the same Spotify
+        // occurrence IDs; retain all historical outcomes and retry cursors.
+        for index in nextIndex..<wishes.count {
+            if let latest = updated[wishes[index].id] {
+                wishes[index] = latest
+            }
+        }
         var ids = Set(wishes.map(\.id))
         let appended = missing.filter { ids.insert($0.id).inserted }
         wishes.append(contentsOf: appended)

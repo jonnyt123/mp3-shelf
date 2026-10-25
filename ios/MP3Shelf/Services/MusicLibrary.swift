@@ -772,9 +772,10 @@ final class MusicLibrary: ObservableObject {
             let previousIDs = old.sourceOrder.map(\.id)
             let currentIDs = updated.map(\.id)
             let listChanged = previousIDs != currentIDs ||
-                zip(old.sourceOrder, updated).contains(where: {
-                    $0.title != $1.title || $0.artist != $1.artist ||
-                    $0.album != $1.album || $0.durationSeconds != $1.durationSeconds
+                zip(old.sourceOrder, updated).contains(where: { pair in
+                    pair.0.title != pair.1.title || pair.0.artist != pair.1.artist ||
+                    pair.0.album != pair.1.album ||
+                    pair.0.durationSeconds != pair.1.durationSeconds
                 })
             if listChanged {
                 if automaticDownloadProgress?.playlistID == old.id {
