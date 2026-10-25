@@ -708,6 +708,8 @@ struct PlaylistDetailView: View {
                 return ("Previously queued — check Downloads", "arrow.down.circle")
             case .alreadyPresent:
                 return ("Matched an existing recording", "checkmark.circle")
+            case .removed:
+                return ("Removed from the refreshed Spotify playlist", "minus.circle")
             case .previous:
                 return ("Previously checked — try search again", "clock.arrow.circlepath")
             case nil:
