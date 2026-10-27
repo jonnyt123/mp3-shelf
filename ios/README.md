@@ -302,6 +302,19 @@ task may still finish on cellular across process relaunches because its
 network permission is part of the background task created with that
 explicit consent.
 
+## Serialized background MP3 staging and iOS completion
+
+Multiple background URLSession callbacks may arrive while the library is still
+validating and importing an earlier MP3. Staged recovery now uses a main-actor
+single-flight coordinator: overlapping callbacks await the current pass and
+request one additional pass to import files staged during the first. The
+app does **not** call iOS' `handleEventsForBackgroundURLSession` completion
+handler until all requested staging passes finish. A cancelled or completed
+ticket still cannot be re-imported. This prevents concurrent file mutations,
+dropped staging callbacks and premature headless process suspension. Regression
+coverage includes simultaneous import and completion calls; real device
+background delivery remains a separate release gate.
+
 ## Automatic background MP3 transfer recovery
 
 An interrupted Wi-Fi connection no longer exhausts the three-attempt server
