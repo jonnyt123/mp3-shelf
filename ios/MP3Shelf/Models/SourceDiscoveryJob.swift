@@ -43,6 +43,27 @@ enum BackgroundTransferRetryPolicy {
     }
 }
 
+/// Limit oversized transfers as soon as the background daemon reports their
+/// expected or received bytes, not only after downloading the whole file.
+/// Progress coalescing avoids hundreds of SwiftUI refreshes per recording.
+enum BackgroundTransferProgressPolicy {
+    static let maxBytes: Int64 = 100 * 1024 * 1024
+    static let minimumUpdateBytes: Int64 = 256 * 1024
+
+    static func exceedsLimit(received: Int64, expected: Int64) -> Bool {
+        received > maxBytes || expected > maxBytes
+    }
+
+    static func shouldPublish(received: Int64, total: Int64,
+                              previousReceived: Int64?) -> Bool {
+        guard received >= 0 else { return false }
+        guard let previousReceived else { return true }
+        return received < previousReceived ||
+            received - previousReceived >= minimumUpdateBytes ||
+            (total > 0 && received >= total && previousReceived < total)
+    }
+}
+
 /// The local transfer manifest and iOS' background URLSession can drift
 /// apart after a crash or the system discards a task. Be conservative: do not
 /// duplicate a live task or reissue one whose staging file awaits import.
