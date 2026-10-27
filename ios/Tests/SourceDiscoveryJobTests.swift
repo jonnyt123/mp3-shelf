@@ -147,6 +147,29 @@ enum SourceDiscoveryJobTests {
             from: JSONSerialization.data(withJSONObject: backwardCompatible))
         verifyDiscovery(oldCheckpoint.canAttemptLookup(at: clock),
                         "pre-retry persisted queues remain decodable")
+        let byteLimit = BackgroundTransferProgressPolicy.maxBytes
+        verifyDiscovery(!BackgroundTransferProgressPolicy.exceedsLimit(
+            received: byteLimit, expected: -1) &&
+            !BackgroundTransferProgressPolicy.exceedsLimit(
+                received: 1024, expected: byteLimit),
+            "100 MB files remain eligible, including unknown transfer size")
+        verifyDiscovery(BackgroundTransferProgressPolicy.exceedsLimit(
+            received: byteLimit + 1, expected: -1) &&
+            BackgroundTransferProgressPolicy.exceedsLimit(
+                received: 0, expected: byteLimit + 1),
+            "oversized downloads stop as soon as received or announced size exceeds limit")
+        verifyDiscovery(BackgroundTransferProgressPolicy.shouldPublish(
+            received: 0, total: -1, previousReceived: nil) &&
+            !BackgroundTransferProgressPolicy.shouldPublish(
+                received: 1024, total: 1_000_000, previousReceived: 0) &&
+            BackgroundTransferProgressPolicy.shouldPublish(
+                received: 300_000, total: 1_000_000, previousReceived: 0),
+            "progress UI coalesces small increments without losing meaningful movement")
+        verifyDiscovery(BackgroundTransferProgressPolicy.shouldPublish(
+            received: 999_999, total: 999_999, previousReceived: 999_000) &&
+            BackgroundTransferProgressPolicy.shouldPublish(
+                received: 250, total: -1, previousReceived: 50_000),
+            "finished downloads and restarted transfers always refresh progress")
         verifyDiscovery(BackgroundTransferRetryPolicy.delay(afterFailure: 1) == 45,
                         "first interrupted background transfer is delayed")
         verifyDiscovery(BackgroundTransferRetryPolicy.delay(afterFailure: 2) == 150 &&

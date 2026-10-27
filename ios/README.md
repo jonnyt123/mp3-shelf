@@ -28,6 +28,10 @@ end it early; this is best-effort resume, not guaranteed immediate/continuous
 downloads after locking the screen. Catalog requests run Wi-Fi-only in these
 background windows even if cellular was manually enabled earlier. Already
 queued iOS background transfers continue under their own request policies.
+Background file transfers reject declared or observed payloads larger than
+100 MB as soon as URLSession reports the size, and progress UI updates are
+coalesced to avoid unnecessary SwiftUI re-rendering during high-speed Wi-Fi
+transfers.
 Background task execution requires iOS to permit background app activity;
 force-quitting or system restrictions can prevent it. Importing Spotify
 metadata still requires online authentication, and no DRM/Spotify streams
