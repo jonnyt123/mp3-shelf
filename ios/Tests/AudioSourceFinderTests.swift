@@ -41,6 +41,55 @@ enum AudioSourceFinderTests {
                "spoofed license host rejected")
         verify(AudioSourceFinder.licensedURL("https://example.com/free-download.mp3") == nil,
                "unlicensed file link rejected")
+        let ccMixterURL = URLComponents(
+            url: AudioSourceFinder.ccMixterSearchURL(for: wish),
+            resolvingAgainstBaseURL: false)!
+        verify(ccMixterURL.url?.host == "ccmixter.org" &&
+               ccMixterURL.queryItems?.first(where: { $0.name == "f" })?.value == "rss" &&
+               ccMixterURL.queryItems?.first(where: { $0.name == "search" })?.value == wish.title &&
+               ccMixterURL.queryItems?.first(where: { $0.name == "limit" })?.value == "20",
+               "official ccMixter search uses bounded public RSS API")
+        let ccMixterFeed = """
+            <?xml version="1.0"?>
+            <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"
+                               xmlns:cc="http://creativecommons.org/ns#">
+              <channel><title>ccMixter matches</title>
+                <item>
+                  <title>The Song</title>
+                  <dc:creator>The Artist</dc:creator>
+                  <link>https://ccmixter.org/files/the_artist/1234</link>
+                  <enclosure url="https://ccmixter.org/content/the_artist/the_song.mp3"
+                             type="audio/mpeg" />
+                  <cc:license>https://creativecommons.org/licenses/by/4.0/</cc:license>
+                </item>
+              </channel>
+            </rss>
+            """
+        let ccMixterMatches = AudioSourceFinder.ccMixterCandidates(
+            in: Data(ccMixterFeed.utf8), matching: wish)
+        verify(ccMixterMatches?.count == 1 &&
+               ccMixterMatches?.first?.sourceName == "ccMixter" &&
+               ccMixterMatches?.first?.downloadURL.pathExtension == "mp3",
+               "ccMixter RSS exact recording with declared CC license is eligible")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data("not xml".utf8), matching: wish) == nil,
+               "malformed publisher RSS cannot create any MP3 candidates")
+        let ccMixterWrongLicense = ccMixterFeed.replacingOccurrences(
+            of: "https://creativecommons.org/licenses/by/4.0/",
+            with: "https://example.com/terms")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(ccMixterWrongLicense.utf8), matching: wish)?.isEmpty == true,
+               "ccMixter download is rejected without explicit CC permission")
+        let ccMixterWrongVersion = ccMixterFeed.replacingOccurrences(
+            of: "<title>The Song</title>", with: "<title>The Song (Live)</title>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(ccMixterWrongVersion.utf8), matching: wish)?.isEmpty == true,
+               "ccMixter live/remix recording does not silently replace Spotify version")
+        let ccMixterWrongHost = ccMixterFeed.replacingOccurrences(
+            of: "https://ccmixter.org/content/", with: "https://evil.example/content/")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(ccMixterWrongHost.utf8), matching: wish)?.isEmpty == true,
+               "untrusted MP3 host is rejected even when RSS claims a valid license")
         let openverse = AudioSourceFinder.openverseCandidate(
             title: "The Song", creator: "The Artist",
             download: "https://upload.wikimedia.org/wikipedia/commons/1/12/the-song.mp3",
