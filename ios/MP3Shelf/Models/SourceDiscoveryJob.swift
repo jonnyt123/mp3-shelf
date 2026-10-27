@@ -263,8 +263,49 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
 
     var id: UUID { playlistID }
     var isComplete: Bool { nextIndex >= wishes.count }
-    var remaining: Int { max(0, wishes.count - nextIndex) }
-    var currentWish: PlaylistWish? { isComplete ? nil : wishes[nextIndex] }
+    var remaining: Int { max(0, wishes.count - max(0, nextIndex)) }
+    var currentWish: PlaylistWish? {
+        // Malformed persisted indices must never subscript wishes[-1].
+        guard wishes.indices.contains(nextIndex) else { return nil }
+        return wishes[nextIndex]
+    }
+
+    /// Clamp a malformed/partially-written checkpoint rather than crashing
+    /// during playlist resumption. Valid checkpoints are left unchanged.
+    /// Return true if anything was repaired so the caller can persist later.
+    @discardableResult
+    mutating func repairPersistedCheckpoint() -> Bool {
+        var changed = false
+        let validIndex = min(max(0, nextIndex), wishes.count)
+        if nextIndex != validIndex {
+            nextIndex = validIndex
+            // Retry state belongs to the previous invalid cursor, not to the
+            // newly selected song.
+            transientFailureCount = nil
+            nextRetryAt = nil
+            changed = true
+        }
+        let validQueued = min(max(0, queued), validIndex)
+        let validUnavailable = min(max(0, unavailable), validIndex)
+        let validFailed = min(max(0, failed), validIndex)
+        if queued != validQueued { queued = validQueued; changed = true }
+        if unavailable != validUnavailable { unavailable = validUnavailable; changed = true }
+        if failed != validFailed { failed = validFailed; changed = true }
+        if let savedOutcomes = outcomes, savedOutcomes.count > validIndex {
+            outcomes = Array(savedOutcomes.prefix(validIndex))
+            changed = true
+        }
+        if let attempts = transientFailureCount {
+            let clamped = min(max(0, attempts), Self.automaticRetryLimit)
+            if attempts != clamped { transientFailureCount = clamped; changed = true }
+        }
+        if isComplete && (nextRetryAt != nil || transientFailureCount != nil) {
+            nextRetryAt = nil
+            transientFailureCount = nil
+            changed = true
+        }
+        return changed
+    }
 
     func canAttemptLookup(at date: Date) -> Bool {
         nextRetryAt.map { $0 <= date } ?? true
@@ -274,6 +315,7 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     /// Increasing delays avoid hammering APIs during an outage. The next
     /// retry date is persisted alongside the existing discovery cursor.
     mutating func recordTransientFailure(_ message: String, at date: Date = .now) {
+        if nextIndex < 0 || nextIndex > wishes.count { repairPersistedCheckpoint() }
         guard !isComplete else { return }
         let count = min(Self.automaticRetryLimit, (transientFailureCount ?? 0) + 1)
         let delays: [TimeInterval] = [15, 30, 60, 120, 240]
@@ -297,6 +339,7 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     /// Safe even when a duplicate song occurs more than once in the playlist.
     @discardableResult
     mutating func appendNewMissingWishes(_ missing: [PlaylistWish]) -> Int {
+        if nextIndex < 0 || nextIndex > wishes.count { repairPersistedCheckpoint() }
         // Some external playlist feeds can repeat an internal wish ID.
         // Accept the newest metadata without crashing on duplicate keys.
         let updated = Dictionary(missing.map { ($0.id, $0) },
@@ -321,6 +364,7 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     }
 
     mutating func record(_ result: Result) {
+        if nextIndex < 0 || nextIndex > wishes.count { repairPersistedCheckpoint() }
         guard !isComplete else { return }
         var updated = outcomes ?? Array(repeating: Outcome.previous, count: nextIndex)
         // Repair truncated/corrupted optional history without changing the
