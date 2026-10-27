@@ -41,6 +41,44 @@ enum AudioSourceFinderTests {
                "spoofed license host rejected")
         verify(AudioSourceFinder.licensedURL("https://example.com/free-download.mp3") == nil,
                "unlicensed file link rejected")
+        let archiveSearch = URLComponents(
+            url: AudioSourceFinder.archiveSearchURL(for: wish, page: 2),
+            resolvingAgainstBaseURL: false)!
+        verify(archiveSearch.url?.host == "archive.org" &&
+               archiveSearch.queryItems?.first(where: { $0.name == "page" })?.value == "2" &&
+               archiveSearch.queryItems?.first(where: { $0.name == "rows" })?.value == "20",
+               "Internet Archive searches a bounded second batch of licensed recordings")
+        verify(URLComponents(url: AudioSourceFinder.archiveSearchURL(
+            for: wish, page: 99), resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "page" })?.value == "2",
+               "Internet Archive pagination clamps to the documented 2-page budget")
+        let archiveMatch = AudioCatalogMatch(
+            downloadURL: URL(string: "https://archive.org/download/a/song.mp3")!,
+            itemURL: URL(string: "https://archive.org/details/a")!,
+            licenseURL: URL(string: "https://creativecommons.org/licenses/by/4.0/")!,
+            sourceName: "Internet Archive")
+        let commonsMatch = AudioCatalogMatch(
+            downloadURL: URL(string: "https://upload.wikimedia.org/audio/song.mp3")!,
+            itemURL: URL(string: "https://commons.wikimedia.org/wiki/File:song.mp3")!,
+            licenseURL: URL(string: "https://creativecommons.org/licenses/by/4.0/")!,
+            sourceName: "Wikimedia Commons")
+        let discovered = [archiveMatch, commonsMatch]
+        verify(AudioSourceFinder.prioritize(
+            discovered, successfulProviders: [], failedProviders: [])
+                .first?.sourceName == "Internet Archive",
+               "new sources have equal neutral reliability and preserve discovery order")
+        verify(AudioSourceFinder.prioritize(
+            discovered, successfulProviders: ["Wikimedia Commons"], failedProviders: [])
+                .first?.sourceName == "Wikimedia Commons",
+               "verified offline imports improve source priority")
+        verify(AudioSourceFinder.prioritize(
+            discovered, successfulProviders: [], failedProviders: ["Internet Archive"])
+                .first?.sourceName == "Wikimedia Commons",
+               "terminal failures lower provider priority")
+        verify(AudioSourceFinder.prioritize(
+            [archiveMatch, archiveMatch, commonsMatch],
+            successfulProviders: [], failedProviders: []).count == 2,
+               "source scoring still removes duplicate download URLs")
         let ccMixterURL = URLComponents(
             url: AudioSourceFinder.ccMixterSearchURL(for: wish),
             resolvingAgainstBaseURL: false)!
