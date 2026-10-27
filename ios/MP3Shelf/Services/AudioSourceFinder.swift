@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -382,7 +385,7 @@ extension AudioSourceFinder {
         return unique.count == 1 ? unique.values.first?.first : nil
     }
 
-    /// Search all four independent catalogs concurrently while the app is
+    /// Search independent catalogs concurrently while the app is
     /// active, retaining alternates *before* it hands downloads to iOS. This
     /// lets a locked iPhone use a different verified source without needing
     /// to restart foreground source discovery.
@@ -444,6 +447,14 @@ extension AudioSourceFinder {
                 } catch {
                     return CatalogLookup(rank: 3, candidate: nil, failed: true)
                 }
+            }
+            group.addTask {
+                // Supplemental publisher catalog. If ccMixter's older RSS API
+                // is unavailable, existing healthy providers must not retry
+                // every unrelated Spotify song because of this one service.
+                let candidate = try? await findCCMixter(
+                    for: wish, allowsCellular: allowsCellular)
+                return CatalogLookup(rank: 4, candidate: candidate, failed: false)
             }
             var results: [CatalogLookup] = []
             for await result in group { results.append(result) }
@@ -1098,5 +1109,137 @@ enum AudioLandingPageInspector {
             }
         }
         return accepted
+    }
+}
+
+
+// Official ccMixter ccHost Query API exposes an RSS feed without an API key.
+// Exact metadata and uploader-supplied Creative Commons evidence are still
+// mandatory; RSS enclosures alone are not permission or identity evidence.
+extension AudioSourceFinder {
+    struct CCMixterFeedTrack {
+        var title = ""
+        var creator = ""
+        var landingURL = ""
+        var downloadURL = ""
+        var licenseURL = ""
+    }
+
+    private final class CCMixterRSSReader: NSObject, XMLParserDelegate {
+        var tracks: [CCMixterFeedTrack] = []
+        private var current: CCMixterFeedTrack?
+        private var activeField = ""
+        private var characters = ""
+
+        func parser(_ parser: XMLParser, didStartElement elementName: String,
+                    namespaceURI: String?, qualifiedName qName: String?,
+                    attributes attributeDict: [String: String] = [:]) {
+            let field = String(elementName.split(separator: ":").last ?? "").lowercased()
+            if field == "item" {
+                current = CCMixterFeedTrack()
+            } else if field == "enclosure", current != nil {
+                let type = (attributeDict["type"] ?? "").lowercased()
+                let raw = attributeDict["url"] ?? ""
+                if type == "audio/mpeg" || URL(string: raw)?.pathExtension.lowercased() == "mp3" {
+                    current?.downloadURL = raw
+                }
+            } else if field == "license", current != nil {
+                if let url = attributeDict["rdf:resource"] ?? attributeDict["resource"] ??
+                        attributeDict["href"] {
+                    current?.licenseURL = url
+                }
+            }
+            activeField = current == nil ? "" : field
+            characters = ""
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            if ["title", "creator", "author", "link", "license"].contains(activeField) {
+                characters += string
+            }
+        }
+
+        func parser(_ parser: XMLParser, didEndElement elementName: String,
+                    namespaceURI: String?, qualifiedName qName: String?) {
+            let field = String(elementName.split(separator: ":").last ?? "").lowercased()
+            let content = characters.trimmingCharacters(in: .whitespacesAndNewlines)
+            if current != nil {
+                switch field {
+                case "title": current?.title = content
+                case "creator": current?.creator = content
+                case "author":
+                    if current?.creator.isEmpty == true { current?.creator = content }
+                case "link": current?.landingURL = content
+                case "license":
+                    if !content.isEmpty { current?.licenseURL = content }
+                case "item":
+                    if let entry = current { tracks.append(entry) }
+                    current = nil
+                default: break
+                }
+            }
+            activeField = ""
+            characters = ""
+        }
+
+        func read(_ data: Data) -> [CCMixterFeedTrack]? {
+            let parser = XMLParser(data: data)
+            parser.shouldResolveExternalEntities = false
+            parser.delegate = self
+            return parser.parse() ? tracks : nil
+        }
+    }
+
+    static func ccMixterSearchURL(for wish: PlaylistWish) -> URL {
+        var parts = URLComponents(string: "https://ccmixter.org/api/query")!
+        parts.queryItems = [
+            URLQueryItem(name: "f", value: "rss"),
+            URLQueryItem(name: "search", value: wish.title),
+            URLQueryItem(name: "search_type", value: "match"),
+            URLQueryItem(name: "limit", value: "20")
+        ]
+        return parts.url!
+    }
+
+    static func ccMixterCandidate(_ track: CCMixterFeedTrack,
+                                   for wish: PlaylistWish) -> AudioCatalogMatch? {
+        guard exactMetadataMatch(title: track.title, creator: track.creator, wish: wish),
+              let license = licensedURL(track.licenseURL),
+              let page = URL(string: track.landingURL), page.scheme == "https",
+              let pageHost = page.host?.lowercased(),
+              (pageHost == "ccmixter.org" || pageHost == "www.ccmixter.org"),
+              page.path.hasPrefix("/files/"), page.user == nil, page.password == nil,
+              let download = URL(string: track.downloadURL),
+              download.scheme == "https",
+              let host = download.host?.lowercased(),
+              (host == "ccmixter.org" || host.hasSuffix(".ccmixter.org")),
+              download.user == nil, download.password == nil,
+              download.pathExtension.lowercased() == "mp3"
+        else { return nil }
+        return AudioCatalogMatch(downloadURL: download, itemURL: page,
+                                 licenseURL: license, sourceName: "ccMixter")
+    }
+
+    static func ccMixterCandidates(in rssData: Data,
+                                   matching wish: PlaylistWish) -> [AudioCatalogMatch]? {
+        guard let tracks = CCMixterRSSReader().read(rssData) else { return nil }
+        return uniqueDownloadSources(tracks.compactMap {
+            ccMixterCandidate($0, for: wish)
+        })
+    }
+
+    static func findCCMixter(for wish: PlaylistWish,
+                             allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
+        guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
+        let request = catalogRequest(for: ccMixterSearchURL(for: wish),
+                                     allowsCellular: allowsCellular)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 200, !data.isEmpty, data.count <= 1_000_000,
+              let matches = ccMixterCandidates(in: data, matching: wish)
+        else { throw SourceError.unavailable }
+        // Distinct eligible uploads may be separate remixes or releases.
+        // Do not treat matching RSS text as proof that versions are identical.
+        return matches.count == 1 ? matches.first : nil
     }
 }
