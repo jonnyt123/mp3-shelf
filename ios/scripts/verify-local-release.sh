@@ -47,21 +47,6 @@ DERIVED="$OUT/DerivedData"
 mkdir -p "$OUT"
 cd "$ROOT"
 
-if ! command -v swiftc >/dev/null 2>&1; then
-  echo "ERROR: Swift compiler not found." >&2
-  exit 2
-fi
-if [[ "$MODE" != tests ]]; then
-  if [[ "$(uname -s)" != Darwin ]] || ! command -v xcodebuild >/dev/null 2>&1; then
-    echo "ERROR: Native builds require macOS with full Xcode selected." >&2
-    exit 2
-  fi
-  if ! xcodebuild -version > "$OUT/xcode-version.txt" 2>&1; then
-    echo "ERROR: Select full Xcode using xcode-select, not Command Line Tools." >&2
-    exit 2
-  fi
-fi
-
 COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 DIRTY=no
 if [[ -n "$(git status --porcelain --untracked-files=normal 2>/dev/null || true)" ]]; then
@@ -92,6 +77,21 @@ on_exit() {
   fi
 }
 trap on_exit EXIT
+
+if ! command -v swiftc >/dev/null 2>&1; then
+  echo "ERROR: Swift compiler not found." >&2
+  exit 2
+fi
+if [[ "$MODE" != tests ]]; then
+  if [[ "$(uname -s)" != Darwin ]] || ! command -v xcodebuild >/dev/null 2>&1; then
+    echo "ERROR: Native builds require macOS with full Xcode selected." >&2
+    exit 2
+  fi
+  if ! xcodebuild -version > "$OUT/xcode-version.txt" 2>&1; then
+    echo "ERROR: Select full Xcode using xcode-select, not Command Line Tools." >&2
+    exit 2
+  fi
+fi
 
 run_step() {
   local name="$1"; shift
