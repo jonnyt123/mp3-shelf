@@ -102,6 +102,31 @@ enum BackgroundDiscoveryPolicy {
         onWiFi && !job.isPaused && !job.isComplete &&
             job.canAttemptLookup(at: date)
     }
+
+    /// Rotate across playlists between independently granted iOS windows, so
+    /// a long playlist cannot monopolize rare background processing time.
+    static func nextJob(in jobs: [SourceDiscoveryJob], lastPlaylistID: UUID?,
+                        onWiFi: Bool, at date: Date) -> SourceDiscoveryJob? {
+        guard onWiFi, !jobs.isEmpty else { return nil }
+        let start = lastPlaylistID.flatMap { id in
+            jobs.firstIndex(where: { $0.playlistID == id }).map { ($0 + 1) % jobs.count }
+        } ?? 0
+        for offset in 0..<jobs.count {
+            let job = jobs[(start + offset) % jobs.count]
+            if canProcess(onWiFi: true, job: job, at: date) { return job }
+        }
+        return nil
+    }
+
+    /// BGProcessingTask is opportunistic. Schedule no earlier than the first
+    /// provider retry deadline, instead of waking solely to rediscover backoff.
+    static func earliestUsefulDate(for jobs: [SourceDiscoveryJob], at date: Date) -> Date? {
+        let active = jobs.filter { !$0.isPaused && !$0.isComplete }
+        guard !active.isEmpty else { return nil }
+        return active.map { job in
+            max(date, job.nextRetryAt ?? date)
+        }.min()
+    }
 }
 
 struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
