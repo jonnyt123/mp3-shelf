@@ -463,6 +463,10 @@ final class MusicLibrary: ObservableObject {
         BackgroundDiscoveryPolicy.hasPending(discoveryJobs)
     }
 
+    var nextBackgroundDiscoveryDate: Date? {
+        BackgroundDiscoveryPolicy.earliestUsefulDate(for: discoveryJobs, at: Date())
+    }
+
     /// BGProcessingTask does at most five catalogue lookups per system-granted
     /// window. Its requests are forced to Wi-Fi-only, regardless of any
     /// foreground cellular opt-in that may have been granted earlier.
@@ -478,11 +482,14 @@ final class MusicLibrary: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
         guard !Task.isCancelled else { return false }
-        guard isOnWiFi,
-              let next = discoveryJobs.first(where: {
-                  BackgroundDiscoveryPolicy.canProcess(
-                      onWiFi: isOnWiFi, job: $0, at: Date())
-              }) else { return true }
+        let previousID = UserDefaults.standard
+            .string(forKey: "mp3shelf.backgroundDiscoveryLastPlaylistID")
+            .flatMap(UUID.init(uuidString:))
+        guard let next = BackgroundDiscoveryPolicy.nextJob(
+            in: discoveryJobs, lastPlaylistID: previousID,
+            onWiFi: isOnWiFi, at: Date()) else { return true }
+        UserDefaults.standard.set(next.playlistID.uuidString,
+                                  forKey: "mp3shelf.backgroundDiscoveryLastPlaylistID")
 
         var progress = AutomaticDownloadProgress(
             playlistID: next.playlistID, total: next.wishes.count)
