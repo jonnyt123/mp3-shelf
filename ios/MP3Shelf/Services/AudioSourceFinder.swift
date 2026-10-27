@@ -688,8 +688,9 @@ enum WebAudioSearch {
             base = "https://www.google.com/search"; key = "q"
             term = query + " site:freemusicarchive.org"
         case .ccMixter:
-            base = "https://www.google.com/search"; key = "q"
-            term = query + " site:ccmixter.org"
+            // Keep the fallback on the publisher's own site, not a
+            // web-search-engine index that may miss newly uploaded songs.
+            base = "https://ccmixter.org/search"; key = "search_text"; term = query
         case .audius:
             base = "https://www.google.com/search"; key = "q"
             term = query + " site:audius.co"
