@@ -177,7 +177,28 @@ enum SourceDiscoveryJobTests {
                         "successive transfer failures increase delay")
         verifyDiscovery(BackgroundTransferRetryPolicy.delay(afterFailure: 4) == nil &&
                         BackgroundTransferRetryPolicy.delay(afterFailure: 100) == nil,
-                        "background transfers cannot retry indefinitely")
+                        "non-connectivity transfer failures cannot retry indefinitely")
+        verifyDiscovery(BackgroundTransferRetryPolicy.isConnectivityInterruption(
+            URLError.Code.notConnectedToInternet.rawValue) &&
+            BackgroundTransferRetryPolicy.isConnectivityInterruption(
+                URLError.Code.networkConnectionLost.rawValue) &&
+            BackgroundTransferRetryPolicy.isConnectivityInterruption(
+                URLError.Code.dataNotAllowed.rawValue),
+            "offline, interrupted and restricted-network errors keep pending Wi-Fi work")
+        verifyDiscovery(!BackgroundTransferRetryPolicy.isConnectivityInterruption(
+            URLError.Code.timedOut.rawValue) &&
+            !BackgroundTransferRetryPolicy.isConnectivityInterruption(
+                URLError.Code.badURL.rawValue),
+            "server timeout and invalid URLs do not qualify for unlimited connectivity wait")
+        verifyDiscovery(BackgroundTransferRetryPolicy.connectivityDelay(afterFailure: 1) == 60 &&
+            BackgroundTransferRetryPolicy.connectivityDelay(afterFailure: 2) == 180 &&
+            BackgroundTransferRetryPolicy.connectivityDelay(afterFailure: 3) == 600 &&
+            BackgroundTransferRetryPolicy.connectivityDelay(afterFailure: 4) == 1_800 &&
+            BackgroundTransferRetryPolicy.connectivityDelay(afterFailure: 15) == 3_600,
+            "Wi-Fi-reconnect attempts use bounded one-hour maximum delay")
+        verifyDiscovery(BackgroundTransferRetryPolicy.isTemporaryURLFailure(
+            URLError.Code.dataNotAllowed.rawValue),
+            "network permission interruption is retryable without changing permissions")
         for status in [408, 429, 500, 502, 503, 504] {
             verifyDiscovery(BackgroundTransferRetryPolicy.isTemporaryHTTP(status),
                             "temporary HTTP \(status) is retried")
