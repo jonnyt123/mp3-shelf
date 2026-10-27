@@ -390,8 +390,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     private func updateProgress(_ id: UUID, received: Int64, total: Int64) {
         guard var ticket = tickets[id], ticket.status == .queued else { return }
+        let knownTotal = total > 0 ? total : nil
+        guard BackgroundTransferProgressPolicy.shouldPublish(
+            received: received, total: total, previousReceived: ticket.bytesReceived
+        ) || (knownTotal != nil && ticket.totalBytes != knownTotal) else { return }
         ticket.bytesReceived = received
-        ticket.totalBytes = total > 0 ? total : nil
+        ticket.totalBytes = knownTotal
         tickets[id] = ticket
         revision += 1
         // Byte-level progress is intentionally not flushed to disk for each callback;
@@ -619,7 +623,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
             let bytes = (try FileManager.default.attributesOfItem(atPath: location.path)[.size] as? NSNumber)?.int64Value ?? 0
-            guard bytes > 0 && bytes <= 100 * 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
+            guard bytes > 0 && bytes <= BackgroundTransferProgressPolicy.maxBytes else {
+                throw CocoaError(.fileReadTooLarge)
+            }
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: location, to: destination)
             Task { @MainActor in await self.recoverStagedDownloads() }
@@ -632,6 +638,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                                 didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
                                 totalBytesExpectedToWrite: Int64) {
         guard let id = UUID(uuidString: downloadTask.taskDescription ?? "") else { return }
+        if BackgroundTransferProgressPolicy.exceedsLimit(
+            received: totalBytesWritten, expected: totalBytesExpectedToWrite) {
+            // Refuse oversized downloads before the entire file reaches disk.
+            // A queued alternative can take over after the failure is recorded.
+            downloadTask.cancel()
+            Task { @MainActor in
+                self.setFailed(id, reason: "Source exceeds the 100 MB download limit")
+            }
+            return
+        }
         Task { @MainActor in
             self.updateProgress(id, received: totalBytesWritten, total: totalBytesExpectedToWrite)
         }
