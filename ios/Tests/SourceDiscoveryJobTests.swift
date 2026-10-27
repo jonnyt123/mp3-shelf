@@ -226,6 +226,21 @@ enum SourceDiscoveryJobTests {
         let backgroundClock = Date(timeIntervalSince1970: 1_700_100_000)
         verifyDiscovery(BackgroundDiscoveryPolicy.maxSongsPerPass == 5,
                         "background source discovery is bounded to five songs")
+        verifyDiscovery(BackgroundDiscoveryPolicy.canStartForegroundScan(
+            isSceneActive: true, hasForegroundTask: false, hasBackgroundBatch: false),
+            "idle foreground discovery can start automatically")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
+            isSceneActive: true, hasForegroundTask: true, hasBackgroundBatch: false),
+            "Wi-Fi change does not start duplicate foreground discovery")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
+            isSceneActive: true, hasForegroundTask: false, hasBackgroundBatch: true),
+            "Wi-Fi callback cannot bypass the five-song background batch limit")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
+            isSceneActive: true, hasForegroundTask: true, hasBackgroundBatch: true),
+            "neither active scan permits a concurrent source lookup")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
+            isSceneActive: false, hasForegroundTask: false, hasBackgroundBatch: false),
+            "headless URLSession wake cannot initiate unbounded catalog discovery")
         verifyDiscovery(BackgroundDiscoveryPolicy.canProcess(
             onWiFi: true, job: backgroundJob, at: backgroundClock),
             "background source discovery can run on Wi-Fi")

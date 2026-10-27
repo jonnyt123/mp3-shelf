@@ -25,6 +25,12 @@ final class MusicLibrary: ObservableObject {
     @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
+    // Serializes bounded BGProcessingTask scans with network-triggered foreground scans.
+    // All access runs on the MusicLibrary main actor.
+    private var backgroundDiscoveryInProgress = false
+    // False in URLSession-only headless launches: they may import completed
+    // transfers but must not begin unrestricted catalog discovery.
+    private var foregroundDiscoveryEnabled = false
     private var catalogRetryTask: Task<Void, Never>?
     private var scheduledCatalogRetryAt: Date?
     @Published private(set) var discoveryJobs: [SourceDiscoveryJob] = []
@@ -57,6 +63,23 @@ final class MusicLibrary: ObservableObject {
             startAutomaticDownloads(for: playlistID)
         } else {
             resumePendingDiscovery()
+        }
+    }
+
+    /// A visible, active SwiftUI scene owns unbounded source lookups. iOS may
+    /// create MusicLibrary for a background URLSession callback without a scene.
+    func setForegroundDiscoveryEnabled(_ enabled: Bool) {
+        guard foregroundDiscoveryEnabled != enabled else { return }
+        foregroundDiscoveryEnabled = enabled
+        if enabled {
+            resumePendingDiscovery()
+        } else {
+            // Keep the persisted cursor intact; the system's bounded background
+            // task can still look up additional songs when iOS grants it time.
+            automaticDownloadTask?.cancel()
+            catalogRetryTask?.cancel()
+            catalogRetryTask = nil
+            scheduledCatalogRetryAt = nil
         }
     }
 
@@ -444,7 +467,11 @@ final class MusicLibrary: ObservableObject {
     /// window. Its requests are forced to Wi-Fi-only, regardless of any
     /// foreground cellular opt-in that may have been granted earlier.
     func runBackgroundDiscoveryBatch() async -> Bool {
-        guard automaticDownloadTask == nil else { return true }
+        guard !backgroundDiscoveryInProgress && automaticDownloadTask == nil else { return true }
+        // Claim the queue before the first suspension; NWPathMonitor may fire
+        // while we await the initial network path or an external catalog.
+        backgroundDiscoveryInProgress = true
+        defer { backgroundDiscoveryInProgress = false }
         // A headless launch starts NWPathMonitor asynchronously. Wait briefly
         // for its first update rather than treating an unknown path as cellular.
         for _ in 0..<16 where !networkStatusKnown && !Task.isCancelled {
@@ -472,7 +499,11 @@ final class MusicLibrary: ObservableObject {
     }
 
     func resumePendingDiscovery() {
-        guard automaticDownloadTask == nil else { return }
+        guard BackgroundDiscoveryPolicy.canStartForegroundScan(
+            isSceneActive: foregroundDiscoveryEnabled,
+            hasForegroundTask: automaticDownloadTask != nil,
+            hasBackgroundBatch: backgroundDiscoveryInProgress
+        ) else { return }
         let eligible = discoveryJobs.filter {
             !$0.isPaused && !$0.isComplete &&
             networkAllowsDiscovery(for: $0.playlistID)

@@ -16,7 +16,11 @@ required the app to be foregrounded. The app now registers a permitted
 background window when a playlist still has unprocessed songs and the app
 moves to the background. The task checks actual Wi-Fi connectivity, processes
 at most five pending tracks, persists every resulting lookup, and submits
-another background request if more work remains. User-paused playlists and
+another background request if more work remains. The background batch owns
+the discovery queue until it finishes, so a Wi-Fi status notification cannot
+start an overlapping foreground search or bypass its five-song limit.
+A headless URLSession wake can import completed MP3s without enabling an
+unbounded search; only an active app scene starts foreground discovery. User-paused playlists and
 persisted provider retry backoff are respected.
 
 Apple decides **whether and when** a BGProcessingTask executes, and can
