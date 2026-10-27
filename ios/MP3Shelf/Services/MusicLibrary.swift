@@ -661,10 +661,11 @@ final class MusicLibrary: ObservableObject {
                 job.record(.alreadyPresent)
             } else {
                 do {
-                    let sources = try await AudioSourceFinder.findDownloadCandidates(
-                        for: wish,
-                        allowsCellular: !backgroundWiFiOnly &&
-                            cellularApprovedPlaylists.contains(playlistID))
+                    let sources = BackgroundAudioDownloader.shared.prioritize(
+                        try await AudioSourceFinder.findDownloadCandidates(
+                            for: wish,
+                            allowsCellular: !backgroundWiFiOnly &&
+                                cellularApprovedPlaylists.contains(playlistID)))
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
                         (backgroundWiFiOnly && !isOnWiFi) { break }
                     if let source = sources.first {
