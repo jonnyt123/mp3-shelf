@@ -376,6 +376,67 @@ enum SourceDiscoveryJobTests {
         await finishingEvents.value
         verifyDiscovery(importPasses == 2,
                         "overlapping imports coalesce while completion awaits final staging pass")
+        let completedRetry = BackgroundProviderHistoryPolicy.Outcome(
+            provider: "Internet Archive", imported: true, failed: false,
+            failureReason: nil)
+        let staleRetry = BackgroundProviderHistoryPolicy.Outcome(
+            provider: "Internet Archive", imported: true, failed: false,
+            failureReason: "Previous Wi-Fi failure")
+        let alreadyStored = BackgroundProviderHistoryPolicy.Outcome(
+            provider: "Openverse", imported: true, failed: false,
+            failureReason: "This recording is already saved offline")
+        let failedSource = BackgroundProviderHistoryPolicy.Outcome(
+            provider: "Wikimedia Commons", imported: false, failed: true,
+            failureReason: "Invalid audio")
+        let pendingTransfer = BackgroundProviderHistoryPolicy.Outcome(
+            provider: "ccMixter", imported: false, failed: false,
+            failureReason: "Waiting for Wi-Fi")
+        verifyDiscovery(BackgroundProviderHistoryPolicy.counts(completedRetry) &&
+                        BackgroundProviderHistoryPolicy.counts(failedSource) &&
+                        !BackgroundProviderHistoryPolicy.counts(staleRetry) &&
+                        !BackgroundProviderHistoryPolicy.counts(alreadyStored) &&
+                        !BackgroundProviderHistoryPolicy.counts(pendingTransfer),
+                        "only verified imported recordings and terminal source failures affect provider priority")
+        let history = BackgroundProviderHistoryPolicy.sources(
+            in: [completedRetry, staleRetry, alreadyStored, failedSource, pendingTransfer])
+        verifyDiscovery(history.successful == ["Internet Archive"] &&
+                        history.failed == ["Wikimedia Commons"],
+                        "a recovered MP3 download improves source ranking without rewarding duplicates or incomplete transfers")
+        let repeated = Array(repeating: completedRetry, count: 250)
+        verifyDiscovery(BackgroundProviderHistoryPolicy.sources(
+            in: repeated).successful.count == BackgroundProviderHistoryPolicy.maxOutcomes,
+            "source ranking only processes the most recent 200 eligible outcomes")
+
+        struct ManifestFixture {
+            let id: UUID
+            let startedAt: Date?
+            let title: String
+        }
+        let collisionID = UUID()
+        let firstAttempt = ManifestFixture(
+            id: collisionID, startedAt: Date(timeIntervalSince1970: 1000),
+            title: "stale manifest entry")
+        let newerAttempt = ManifestFixture(
+            id: collisionID, startedAt: Date(timeIntervalSince1970: 2000),
+            title: "latest valid download")
+        let earlierAttempt = ManifestFixture(
+            id: collisionID, startedAt: Date(timeIntervalSince1970: 500),
+            title: "even older")
+        let unrelatedAttempt = ManifestFixture(
+            id: UUID(), startedAt: nil, title: "other playlist")
+        let restoredManifest = BackgroundTicketManifestPolicy.distinctByIdentifier(
+            [firstAttempt, newerAttempt, earlierAttempt, unrelatedAttempt],
+            id: { $0.id }, startedAt: { $0.startedAt })
+        verifyDiscovery(restoredManifest.count == 2 &&
+                        restoredManifest[collisionID]?.title == "latest valid download" &&
+                        restoredManifest[unrelatedAttempt.id]?.title == "other playlist",
+                        "duplicate ticket IDs no longer crash manifest restoration or lose unrelated queued downloads")
+        let legacyCollision = BackgroundTicketManifestPolicy.distinctByIdentifier(
+            [ManifestFixture(id: collisionID, startedAt: nil, title: "legacy first"),
+             ManifestFixture(id: collisionID, startedAt: nil, title: "legacy second")],
+            id: { $0.id }, startedAt: { $0.startedAt })
+        verifyDiscovery(legacyCollision[collisionID]?.title == "legacy first",
+                        "legacy manifest duplicates without timestamps are stable and deterministic")
         print("Persistent discovery checkpoint tests passed")
     }
 }
