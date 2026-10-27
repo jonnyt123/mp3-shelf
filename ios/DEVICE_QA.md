@@ -5,12 +5,19 @@ simulator build is a separate, useful check and does not replace these tests.
 
 ## Preparation
 
-1. On a Mac with Xcode 16.4 or newer, check out `feat/ios-resumable-discovery-download-manager`.
+1. On a Mac with Xcode 16.4 or newer, check out `feat/ios-premium-visual-refresh` (the PR #4 head, not the older discovery-only branch).
 2. Open `ios/MP3Shelf.xcodeproj`, choose the MP3Shelf app target,
    enable Automatically Manage Signing, and select your Apple development team.
 3. Connect an iPhone with iOS 17+, unlock/trust the Mac, enable Developer Mode
    if prompted, and select the actual iPhone as the Xcode run destination.
-4. Press **Run (⌘R)**. Record the device, iOS version, and Xcode build output.
+4. Press **Run (⌘R)**, or execute the signed-install helper documented
+   in [README.md](README.md):
+   `MP3SHELF_TEAM_ID=YOUR10CHARTEAMID bash ios/scripts/run-on-iphone.sh DEVICE_UDID`.
+   The helper verifies a development provisioning profile and signature,
+   installs and launches the app, and writes
+   `ios/build/iphone-device/QA_RECORD.md` locally (Git-ignored). It does not
+   perform the end-to-end Spotify/audio acceptance tests below. Record the
+   physical device, iOS version, tested commit and installation result.
 5. Import a legally obtained MP3 and verify offline playback using Airplane Mode.
    Check lock-screen play/pause, seek, skip, Bluetooth/headphones, foreground and
    background audio, shuffle and repeat.
@@ -57,12 +64,101 @@ simulator build is a separate, useful check and does not replace these tests.
 4. Close/reopen the app and verify completed history, pending items and sizes.
 5. Verify unrelated audio, artwork and playlists are unchanged.
 
+## Portable backup / restore acceptance (Q1)
+
+1. On the iPhone, import at least three different authorized audio recordings;
+   add favorites, lyrics, artwork, and two playlists with distinct track orders.
+2. **Prepare portable backup** from Settings. While the archive streams, verify
+   the interface remains responsive, then save the share-sheet result to Files.
+3. Re-import that backup without deleting the current library. Ensure recordings
+   remain single-copy, playlists are not duplicated, and user-customized playlist
+   order is retained.
+4. Import a separately created web `.mp3shelf` archive with non-UUID track and
+   playlist IDs. Verify exact audio playback, artwork, title, artist, favorites,
+   and playlist order; export again and verify IDs are stable in the web app.
+5. Repeat the web import after editing a local song title. Existing audio should
+   be reused rather than creating another song. If an earlier import partially
+   failed, retry and confirm missing playlist links are reconstructed.
+6. Try an invalid archive, truncated payload, an archive with a dangling playlist
+   song ID, and a same-size recording containing different audio bytes. Confirm
+   no incorrect track links or silent replacements.
+7. Test a large archive, Files access from an external provider, low-storage
+   conditions, interruption and relaunch. Verify errors are surfaced and any
+   newly imported intact songs remain playable.
+
+## Premium design / accessibility acceptance (Q2)
+
+1. Review all four tabs and Now Playing on a smaller iPhone and a current
+   larger-screen iPhone, in both light and dark system appearance.
+2. Test largest accessibility Dynamic Type sizes: artwork must not crush the
+   library hero and the playlist grid must become a single readable column.
+3. Verify VoiceOver names/values for playback, shuffle, repeat, filters, backup,
+   playlist counts and destructive controls. Confirm sufficient contrast.
+4. Long-press a playlist and choose Delete. Confirm a destructive dialog is shown
+   and Cancel leaves both playlist and files untouched; deleting a playlist does
+   not remove its saved audio.
+5. Search songs, artists and albums with whitespace, enable Favorites, sort each
+   ordering, and verify the play queue is consistent with the visible list.
+6. Check reduced transparency, Reduce Motion, AirPlay route controls and
+   Lock Screen controls while background audio is active.
+
+## Release integrity gate (Q3)
+
+- GitHub CI must pass **Debug and Release unsigned simulator builds**, parser,
+  licensed-source matching, background discovery, archive regression tests,
+  launch/install smoke checks and all eight screenshots at the same head SHA.
+- Simulator success validates neither on-device code signing nor real background
+  scheduling, system-media controls or actual Spotify/provider access.
+- Physical iPhone acceptance and provider/platform compliance remain required
+  before any production-ready, TestFlight or App Store assertion.
+- Only merge stacked PRs in dependency order after checks have passed and
+  unresolved release-critical regressions are addressed.
+
+## Spotify → individual MP3 end-to-end acceptance (current candidate)
+
+Record the exact tested PR #4 commit and real iPhone model before starting.
+Use only independent recordings that actually authorize downloading; never use
+Spotify audio streams, search-engine scraping, or a different artist's recording.
+
+1. Connect an eligible Spotify test account and paste its permitted 22-character
+   playlist share link. Confirm the app automatically imports the song metadata,
+   starts MP3 source discovery and **opens the song-by-song dashboard** without a
+   second action.
+2. Re-import the same link while discovery or downloads are running; confirm
+   that it reuses the **same playlist ID** and does not reset a valid transfer.
+3. Use a playlist with a deliberately available, explicitly licensed exact-match
+   recording in Internet Archive, Openverse or Wikimedia Commons. Verify the
+   matching source page, creator, CC/CC0 license, MP3 format and track duration.
+4. Confirm a uniquely named .mp3 file appears under Files → On My iPhone →
+   MP3 Shelf → Music. Inspect its extension and playable duration, switch on
+   Airplane Mode, play offline, and confirm the dashboard says saved.
+5. Include an unavailable commercial song and a plausible cover/live recording.
+   Confirm neither gets quietly substituted. Check **No qualifying MP3 source**
+   for the unavailable track and its playlist position preserved.
+6. Lock the phone during an eligible download, reopen, and check Download Manager
+   byte-level progress and completed import. Retry a failed transfer and ensure
+   that the newer ticket supersedes the failed ticket.
+7. Test cellular/Wi-Fi interruption, catalog timeout, 404 or HTML masquerading
+   as MP3, near-full storage, and app relaunch. Network problems must remain
+   retryable, not be misreported as a definitive "not found".
+8. Verify original native .mp3 files remain unmodified. Re-import a playlist
+   after some MP3s are present and make sure recordings and playlist rows are
+   not duplicated.
+9. Capture non-sensitive evidence (selected source URL/license, song match
+   status, device/iOS version, Files directory listing, and redacted logs)
+   in issue #6. Mark each step PASS/FAIL/NOT RUN without guessing.
+
+Automated unsigned `iphoneos` compilation is useful architecture coverage
+but **cannot** validate Apple signing, install, live Spotify OAuth/provider
+network access, actual system background scheduling or offline playback on
+physical hardware. These remain external release blockers until run on device.
+
 ## Test record (fill out during real device run)
 
 - Date / iPhone model / iOS version:
 - Xcode version / signing team:
 - Simulator smoke check:
-- Physical install: NOT YET VERIFIED
+- Physical install: NOT YET VERIFIED (signed Xcode/devicectl run on a real iPhone required; unsigned CI does not count)
 - Offline playback / lock screen: NOT YET VERIFIED
 - Interrupt/resume search: NOT YET VERIFIED
 - Locked transfer: NOT YET VERIFIED

@@ -98,6 +98,41 @@ enum PlaylistCSV {
     }
 }
 
+
+/// Sync a previously imported Spotify playlist without changing the identity
+/// of unchanged entries. An identical track can occur more than once; consume
+/// old occurrence IDs in sequence rather than collapsing duplicate entries.
+enum SpotifyPlaylistSync {
+    static func identity(_ wish: PlaylistWish) -> String {
+        if let raw = wish.spotifyURL,
+           let url = URLComponents(string: raw),
+           url.scheme?.lowercased() == "https",
+           url.host?.lowercased() == "open.spotify.com",
+           url.path.split(separator: "/").count == 2,
+           url.path.hasPrefix("/track/"),
+           let id = url.path.split(separator: "/").last,
+           id.count == 22 && id.allSatisfy({ $0.isASCII && $0.isLetter || $0.isASCII && $0.isNumber }) {
+            return "spotify:\(id)"
+        }
+        // Older CSV imports can lack an authentic Spotify track link.
+        // Include the known duration so remixes and previews remain distinct.
+        let length = wish.durationSeconds.map { String(Int($0.rounded())) } ?? "unknown"
+        return "metadata:\(MusicMatching.key(wish.title)):\(MusicMatching.key(wish.artist)):\(length)"
+    }
+
+    static func merge(previous: [PlaylistWish], latest: [PlaylistWish]) -> [PlaylistWish] {
+        var buckets = Dictionary(grouping: previous, by: identity)
+        return latest.map { updated in
+            let key = identity(updated)
+            guard var old = buckets[key], !old.isEmpty else { return updated }
+            var stable = updated
+            stable.id = old.removeFirst().id
+            buckets[key] = old
+            return stable
+        }
+    }
+}
+
 enum MusicMatching {
     static func key(_ text: String) -> String {
         var base = text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
@@ -105,6 +140,32 @@ enum MusicMatching {
             base.removeSubrange(range)
         }
         return base.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+    }
+
+    /// Two Spotify wishes may share a title and artist but describe different
+    /// recordings, such as a preview, radio edit or extended version. Never
+    /// coalesce their background transfers without compatible duration data.
+    static func sameRequestedRecording(_ lhs: PlaylistWish, _ rhs: PlaylistWish) -> Bool {
+        guard key(lhs.title) == key(rhs.title), !key(lhs.title).isEmpty,
+              key(lhs.artist) == key(rhs.artist), !key(lhs.artist).isEmpty else { return false }
+        switch (lhs.durationSeconds, rhs.durationSeconds) {
+        case (nil, nil): return true
+        case let (a?, b?): return a.isFinite && b.isFinite && abs(a - b) <= 4
+        default: return false
+        }
+    }
+
+    /// Filter version/duration candidates before disambiguating by artist.
+    /// Otherwise two same-name edits of different lengths are incorrectly
+    /// treated as ambiguous, even when exactly one is the requested version.
+    static func reusableOfflineTrack(for wish: PlaylistWish,
+                                     in library: [MusicTrack]) -> MusicTrack? {
+        let durationCompatible = library.filter { track in
+            guard let expected = wish.durationSeconds else { return true }
+            return expected.isFinite && track.duration.isFinite &&
+                abs(track.duration - expected) <= 4
+        }
+        return matchingTrack(for: wish, in: durationCompatible)
     }
 
     static func matchingTrack(for wish: PlaylistWish, in library: [MusicTrack]) -> MusicTrack? {
@@ -121,5 +182,41 @@ enum MusicMatching {
             return both.count == 1 ? both[0] : nil
         }
         return sameTitle.count == 1 ? sameTitle[0] : nil
+    }
+}
+
+
+/// Verify identity evidence inside imported audio before assigning playlist
+/// metadata. Missing tags are inconclusive; contradictory tags are a mismatch.
+/// The caller separately validates playable media and Spotify's duration.
+enum SourceAudioIdentity {
+    enum Conflict: String {
+        case title, artist
+    }
+
+    static func conflictingField(title: String?, artist: String?,
+                                 requested: PlaylistWish) -> Conflict? {
+        func normalized(_ value: String?) -> String? {
+            guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            let key = MusicMatching.key(text)
+            guard !key.isEmpty,
+                  !["unknown", "unknownartist", "untitled", "track"].contains(key)
+            else { return nil }
+            return key
+        }
+
+        let wantedTitle = MusicMatching.key(requested.title)
+        if let embedded = normalized(title), !wantedTitle.isEmpty,
+           embedded != wantedTitle {
+            return .title
+        }
+        let wantedArtist = MusicMatching.key(requested.artist)
+        if let embedded = normalized(artist), !wantedArtist.isEmpty,
+           embedded != wantedArtist &&
+           !embedded.contains(wantedArtist) && !wantedArtist.contains(embedded) {
+            return .artist
+        }
+        return nil
     }
 }

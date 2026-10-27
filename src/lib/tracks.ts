@@ -1,5 +1,11 @@
 import{readAudioMetadata}from"./id3";
-export type Track={id:string;name:string;originalName?:string;artist?:string;album?:string;artwork?:Blob;size:number;type:string;importedAt:number;blob:Blob};
+export type Track={
+ id:string;name:string;originalName?:string;artist?:string;album?:string;
+ artwork?:Blob;size:number;type:string;importedAt:number;blob:Blob;
+ // Optional portable metadata survives browser↔iPhone backup round trips.
+ isFavorite?:boolean;lyrics?:string;
+ attribution?:{sourceURL:string;licenseURL:string;creator:string;license:string;provider:string};
+};
 const DATABASE="mp3-shelf", STORE="tracks";
 function openDatabase():Promise<IDBDatabase>{return new Promise((resolve,reject)=>{const request=indexedDB.open(DATABASE,1);request.onupgradeneeded=()=>{const db=request.result;if(!db.objectStoreNames.contains(STORE))db.createObjectStore(STORE,{keyPath:"id"})};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
 function finish(transaction:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error)})}
