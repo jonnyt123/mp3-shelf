@@ -124,7 +124,13 @@ final class MusicLibrary: ObservableObject {
             }
             if let saved = try? Data(contentsOf: discoveryURL),
                let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
-                discoveryJobs = decoded.filter { job in playlists.contains { $0.id == job.playlistID } }
+                discoveryJobs = decoded.filter { job in
+                    playlists.contains { $0.id == job.playlistID }
+                }.map { checkpoint in
+                    var repaired = checkpoint
+                    repaired.repairPersistedCheckpoint()
+                    return repaired
+                }
             }
         } catch {
             print("MP3 Shelf could not initialize local storage: \(error)")
