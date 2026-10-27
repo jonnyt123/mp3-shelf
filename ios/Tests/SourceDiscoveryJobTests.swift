@@ -222,6 +222,30 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(synchronized.wishes.last?.id == added.id &&
                         synchronized.outcome(for: wishes[1]) == .removed,
                         "refreshed playlist checkpoint survives app relaunch")
+        var backgroundJob = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        let backgroundClock = Date(timeIntervalSince1970: 1_700_100_000)
+        verifyDiscovery(BackgroundDiscoveryPolicy.maxSongsPerPass == 5,
+                        "background source discovery is bounded to five songs")
+        verifyDiscovery(BackgroundDiscoveryPolicy.canProcess(
+            onWiFi: true, job: backgroundJob, at: backgroundClock),
+            "background source discovery can run on Wi-Fi")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canProcess(
+            onWiFi: false, job: backgroundJob, at: backgroundClock),
+            "system-granted background window does not authorize cellular")
+        backgroundJob.recordTransientFailure("Temporary catalog error",
+                                             at: backgroundClock)
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canProcess(
+            onWiFi: true, job: backgroundJob, at: backgroundClock),
+            "background discovery honors persisted API retry backoff")
+        backgroundJob.nextRetryAt = nil
+        backgroundJob.isPaused = true
+        verifyDiscovery(!BackgroundDiscoveryPolicy.hasPending([backgroundJob]) &&
+                        !BackgroundDiscoveryPolicy.canProcess(
+                            onWiFi: true, job: backgroundJob, at: backgroundClock),
+                        "user-paused playlists never schedule background work")
+        backgroundJob.isPaused = false
+        verifyDiscovery(BackgroundDiscoveryPolicy.hasPending([backgroundJob]),
+                        "unfinished unpaused playlist can request a background window")
         print("Persistent discovery checkpoint tests passed")
     }
 }

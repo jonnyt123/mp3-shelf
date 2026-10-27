@@ -1,10 +1,62 @@
 import SwiftUI
 import UIKit
+import BackgroundTasks
 #if DEBUG
 import AVFoundation
 #endif
 
+/// Background URLSession handles file transfers; BGProcessingTask provides
+/// best-effort runtime for the catalog lookup queue that precedes them.
+/// iOS chooses when (or whether) a background processing window is granted.
+enum MP3ShelfBackgroundDiscovery {
+    static let identifier = "com.jonnyt.mp3shelf.discovery"
+
+    @MainActor static weak var foregroundLibrary: MusicLibrary?
+
+    static func register() {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { task in
+            guard let processing = task as? BGProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            let worker = Task { @MainActor in
+                // On a headless launch there is no visible SwiftUI scene.
+                // Retain a library for the complete processing window.
+                let library = foregroundLibrary ?? MusicLibrary()
+                let finishedNormally = await library.runBackgroundDiscoveryBatch()
+                processing.setTaskCompleted(success: finishedNormally)
+                if library.hasPendingDiscoveryWork {
+                    schedule()
+                }
+            }
+            processing.expirationHandler = { worker.cancel() }
+        }
+    }
+
+    static func schedule() {
+        let request = BGProcessingTaskRequest(identifier: identifier)
+        request.requiresNetworkConnectivity = true
+        request.requiresExternalPower = false
+        request.earliestBeginDate = Date().addingTimeInterval(10 * 60)
+        do {
+            try BGTaskScheduler.shared.submit(request)
+        } catch {
+            // Background processing is opportunistic, and iOS can reject
+            // requests due to system limits or user configuration. Queued
+            // file transfers and foreground resume remain fully functional.
+            print("MP3 Shelf background source discovery scheduling: \(error)")
+        }
+    }
+}
+
 final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions:
+                         [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        MP3ShelfBackgroundDiscovery.register()
+        return true
+    }
+
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
@@ -38,6 +90,7 @@ struct MP3ShelfApp: App {
                 .preferredColorScheme(.dark)
                 .onAppear {
                     playback.connect(to: library)
+                    MP3ShelfBackgroundDiscovery.foregroundLibrary = library
                     BackgroundAudioDownloader.shared.attach(to: library)
                     library.resumePendingDiscovery()
                     #if DEBUG
@@ -58,6 +111,10 @@ struct MP3ShelfApp: App {
                     if phase == .active {
                         BackgroundAudioDownloader.shared.attach(to: library)
                         library.resumePendingDiscovery()
+                    } else if phase == .background && library.hasPendingDiscoveryWork {
+                        // BGProcessingTasks are scheduled before suspension;
+                        // the next launch may be delayed or skipped by iOS.
+                        MP3ShelfBackgroundDiscovery.schedule()
                     }
                 }
         }

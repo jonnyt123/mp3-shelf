@@ -60,6 +60,21 @@ enum BackgroundTransferRecoveryPolicy {
     }
 }
 
+/// Pure, testable eligibility for bounded system-scheduled catalog work.
+/// The foreground queue continues to use the normal user-approved policy.
+enum BackgroundDiscoveryPolicy {
+    static let maxSongsPerPass = 5
+
+    static func hasPending(_ jobs: [SourceDiscoveryJob]) -> Bool {
+        jobs.contains { !$0.isPaused && !$0.isComplete }
+    }
+
+    static func canProcess(onWiFi: Bool, job: SourceDiscoveryJob, at date: Date) -> Bool {
+        onWiFi && !job.isPaused && !job.isComplete &&
+            job.canAttemptLookup(at: date)
+    }
+}
+
 struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     enum Result { case queued, unavailable, failed, alreadyPresent, removed }
 

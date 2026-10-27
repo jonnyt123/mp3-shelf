@@ -2,6 +2,29 @@
 
 A standalone **SwiftUI** iOS application that can be opened directly in Xcode and installed on a physical iPhone. It complements the existing MP3 Shelf Next.js web app, without replacing or altering the web app.
 
+## Wi-Fi-only background source-discovery batches
+
+Once a Spotify playlist is imported, the app persists the song-lookup queue.
+Normal URLSession background tasks can download already-discovered MP3s
+while the phone is locked; **finding** the next audio source previously
+required the app to be foregrounded. The app now registers a permitted
+`BGProcessingTask` during launch and requests an opportunistic network-enabled
+background window when a playlist still has unprocessed songs and the app
+moves to the background. The task checks actual Wi-Fi connectivity, processes
+at most five pending tracks, persists every resulting lookup, and submits
+another background request if more work remains. User-paused playlists and
+persisted provider retry backoff are respected.
+
+Apple decides **whether and when** a BGProcessingTask executes, and can
+end it early; this is best-effort resume, not guaranteed immediate/continuous
+downloads after locking the screen. Catalog requests run Wi-Fi-only in these
+background windows even if cellular was manually enabled earlier. Already
+queued iOS background transfers continue under their own request policies.
+Background task execution requires iOS to permit background app activity;
+force-quitting or system restrictions can prevent it. Importing Spotify
+metadata still requires online authentication, and no DRM/Spotify streams
+are downloaded.
+
 ## Requirements
 
 - Mac with Xcode 16.4 or later (recommended for the current signing and QA workflow; iOS 17 deployment target)

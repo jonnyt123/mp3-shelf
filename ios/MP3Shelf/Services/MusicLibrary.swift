@@ -436,6 +436,41 @@ final class MusicLibrary: ObservableObject {
         resumePendingDiscovery()
     }
 
+    var hasPendingDiscoveryWork: Bool {
+        BackgroundDiscoveryPolicy.hasPending(discoveryJobs)
+    }
+
+    /// BGProcessingTask does at most five catalogue lookups per system-granted
+    /// window. Its requests are forced to Wi-Fi-only, regardless of any
+    /// foreground cellular opt-in that may have been granted earlier.
+    func runBackgroundDiscoveryBatch() async -> Bool {
+        guard automaticDownloadTask == nil else { return true }
+        // A headless launch starts NWPathMonitor asynchronously. Wait briefly
+        // for its first update rather than treating an unknown path as cellular.
+        for _ in 0..<16 where !networkStatusKnown && !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        guard !Task.isCancelled else { return false }
+        guard isOnWiFi,
+              let next = discoveryJobs.first(where: {
+                  BackgroundDiscoveryPolicy.canProcess(
+                      onWiFi: isOnWiFi, job: $0, at: Date())
+              }) else { return true }
+
+        var progress = AutomaticDownloadProgress(
+            playlistID: next.playlistID, total: next.wishes.count)
+        progress.processed = next.nextIndex
+        progress.queued = next.queued
+        progress.failed = next.failed
+        progress.unavailable = next.unavailable
+        automaticDownloadProgress = progress
+        await runAutomaticDownloads(
+            playlistID: next.playlistID,
+            maxProcessedSongs: BackgroundDiscoveryPolicy.maxSongsPerPass,
+            backgroundWiFiOnly: true)
+        return !Task.isCancelled
+    }
+
     func resumePendingDiscovery() {
         guard automaticDownloadTask == nil else { return }
         let eligible = discoveryJobs.filter {
@@ -560,12 +595,18 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
-    private func runAutomaticDownloads(playlistID: UUID) async {
+    private func runAutomaticDownloads(
+        playlistID: UUID, maxProcessedSongs: Int? = nil,
+        backgroundWiFiOnly: Bool = false
+    ) async {
         var retryScheduled = false
+        var processedThisPass = 0
         while let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) {
+            if let maximum = maxProcessedSongs, processedThisPass >= maximum { break }
             var job = discoveryJobs[index]
             if Task.isCancelled || job.isPaused || job.isComplete ||
-                !networkAllowsDiscovery(for: playlistID) { break }
+                !networkAllowsDiscovery(for: playlistID) ||
+                (backgroundWiFiOnly && !isOnWiFi) { break }
             guard let wish = job.currentWish else { break }
             if var progress = automaticDownloadProgress {
                 progress.currentSong = "\(wish.artist) — \(wish.title)"
@@ -583,8 +624,11 @@ final class MusicLibrary: ObservableObject {
             } else {
                 do {
                     let sources = try await AudioSourceFinder.findDownloadCandidates(
-                        for: wish, allowsCellular: cellularApprovedPlaylists.contains(playlistID))
-                    if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) { break }
+                        for: wish,
+                        allowsCellular: !backgroundWiFiOnly &&
+                            cellularApprovedPlaylists.contains(playlistID))
+                    if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
+                        (backgroundWiFiOnly && !isOnWiFi) { break }
                     if let source = sources.first {
                         if BackgroundAudioDownloader.shared.enqueue(
                             source: source, requested: wish, playlistID: playlistID,
@@ -605,6 +649,7 @@ final class MusicLibrary: ObservableObject {
                     retryScheduled = !job.finishExhaustedRetriesIfNeeded()
                 }
             }
+            processedThisPass += 1
             discoveryJobs[index] = job
             persistDiscovery()
             if var progress = automaticDownloadProgress {
@@ -623,9 +668,13 @@ final class MusicLibrary: ObservableObject {
             automaticDownloadProgress = progress
         }
         automaticDownloadTask = nil
-        // If a catalog is down, resumePendingDiscovery schedules the persisted
-        // backoff instead of immediately repeating the same failing request.
-        resumePendingDiscovery()
+        // Never start an unbounded foreground scan at the end of a
+        // system-granted, time-limited background processing window.
+        if !backgroundWiFiOnly {
+            // If a catalog is down, resumePendingDiscovery schedules the
+            // persisted backoff instead of hammering the provider.
+            resumePendingDiscovery()
+        }
     }
 
     func downloadAudio(from remoteURL: URL, matching wish: PlaylistWish? = nil,
