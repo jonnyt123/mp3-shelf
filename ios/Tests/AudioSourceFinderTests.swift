@@ -279,6 +279,14 @@ enum AudioSourceFinderTests {
                "artist store search link targets Bandcamp")
         verify(WebAudioSearch.browserURL(for: wish, provider: .archive).host == "archive.org",
                "archive search link targets Internet Archive")
+        let ccMixterBrowseURL = WebAudioSearch.browserURL(
+            for: wish, provider: .ccMixter)
+        verify(ccMixterBrowseURL.host == "ccmixter.org" &&
+               ccMixterBrowseURL.path == "/search" &&
+               URLComponents(url: ccMixterBrowseURL, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "search_text" })?.value ==
+                    "\(wish.artist) \(wish.title)",
+               "publisher fallback opens ccMixter search directly")
         verify(WebAudioSearch.sanitizedResultURL("https://192.168.1.1/music/song.mp3") == nil,
                "search results pointing to private networks are discarded")
         verify(WebAudioSearch.sanitizedResultURL("https://router.internal/song.mp3") == nil,
