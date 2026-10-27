@@ -248,7 +248,7 @@ extension AudioSourceFinder {
     static func shouldSearchNextOpenversePage(page: Int, pageCount: Int?,
                                               returned: Int, eligible: Int) -> Bool {
         guard page > 0, page < maxOpenversePages, eligible == 0 else { return false }
-        return pageCount.map { page < $0 } ?? returned >= 50
+        return pageCount.map { page < $0 } ?? (returned >= 50)
     }
 
     static func openverseSearchURL(for wish: PlaylistWish, fieldSearch: Bool,
