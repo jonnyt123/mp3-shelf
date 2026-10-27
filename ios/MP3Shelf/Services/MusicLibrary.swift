@@ -471,7 +471,15 @@ final class MusicLibrary: ObservableObject {
         // Claim the queue before the first suspension; NWPathMonitor may fire
         // while we await the initial network path or an external catalog.
         backgroundDiscoveryInProgress = true
-        defer { backgroundDiscoveryInProgress = false }
+        defer {
+            backgroundDiscoveryInProgress = false
+            // A foreground activation may have arrived while the bounded
+            // background lookup was awaiting a provider response. Re-check
+            // after releasing the ownership flag so that request is not lost.
+            if foregroundDiscoveryEnabled {
+                resumePendingDiscovery()
+            }
+        }
         // A headless launch starts NWPathMonitor asynchronously. Wait briefly
         // for its first update rather than treating an unknown path as cellular.
         for _ in 0..<16 where !networkStatusKnown && !Task.isCancelled {
