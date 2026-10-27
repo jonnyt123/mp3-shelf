@@ -20,6 +20,8 @@ struct BackgroundAudioTicket: Codable, Identifiable {
     var startedAt: Date? = nil
     // Optional properties preserve previously persisted queue manifests.
     var automaticRetryCount: Int? = nil
+    // Independent from server errors; missing in legacy manifests.
+    var connectivityRetryCount: Int? = nil
     var nextRetryAt: Date? = nil
     // Preverified source alternatives survive app termination, so iOS can
     // switch providers even after the phone is locked. Legacy manifests omit it.
@@ -60,6 +62,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let cellular = cellularApprovedPlaylists.contains(playlistID)
         request.allowsCellularAccess = cellular
         request.allowsExpensiveNetworkAccess = cellular
+        request.allowsConstrainedNetworkAccess = cellular
         return request
     }
 
@@ -92,6 +95,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                         provider: old.provider)
                     replacement.startedAt = .now
                     replacement.automaticRetryCount = old.automaticRetryCount
+                    replacement.connectivityRetryCount = old.connectivityRetryCount
                     replacement.nextRetryAt = old.nextRetryAt
                     replacement.alternativeSources = old.alternativeSources
                     self.tickets[replacement.id] = replacement
@@ -321,14 +325,28 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// earliestBeginDate, so iOS can perform it while the app is suspended.
     /// New task/ticket IDs also prevent stale callbacks from older attempts
     /// from mutating the live download.
-    private func retryTemporaryTransfer(_ id: UUID, reason: String) {
+    private func retryTemporaryTransfer(_ id: UUID, reason: String,
+                                        connectivityInterruption: Bool = false) {
         reconcileAlreadyStoredDownloads()
         guard let previous = tickets[id], previous.status == .queued else { return }
-        let attempt = (previous.automaticRetryCount ?? 0) + 1
-        guard let delay = BackgroundTransferRetryPolicy.delay(afterFailure: attempt),
-              Self.allowedDownloadURL(previous.downloadURL) else {
-            setFailed(id, reason: "\(reason) (automatic retries exhausted)")
+        guard Self.allowedDownloadURL(previous.downloadURL) else {
+            setFailed(id, reason: "Source URL is no longer accepted")
             return
+        }
+        let nextServerAttempt = (previous.automaticRetryCount ?? 0) + 1
+        let nextConnectionAttempt = min((previous.connectivityRetryCount ?? 0) + 1, 16)
+        let delay: TimeInterval
+        if connectivityInterruption {
+            // Wi-Fi loss must not consume the separate server retry budget.
+            delay = BackgroundTransferRetryPolicy.connectivityDelay(
+                afterFailure: nextConnectionAttempt)
+        } else {
+            guard let allowedDelay = BackgroundTransferRetryPolicy.delay(
+                afterFailure: nextServerAttempt) else {
+                setFailed(id, reason: "\(reason) (automatic retries exhausted)")
+                return
+            }
+            delay = allowedDelay
         }
 
         var retired = previous
@@ -342,7 +360,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             sourcePage: previous.sourcePage, licensePage: previous.licensePage,
             provider: previous.provider)
         replacement.startedAt = previous.startedAt ?? .now
-        replacement.automaticRetryCount = attempt
+        replacement.automaticRetryCount = connectivityInterruption ?
+            previous.automaticRetryCount : nextServerAttempt
+        replacement.connectivityRetryCount = connectivityInterruption ?
+            nextConnectionAttempt : previous.connectivityRetryCount
         replacement.nextRetryAt = Date().addingTimeInterval(delay)
         replacement.alternativeSources = previous.alternativeSources
         replacement.failureReason = reason
@@ -557,6 +578,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 provider: current.provider)
             replacement.startedAt = .now
             replacement.automaticRetryCount = current.automaticRetryCount
+            replacement.connectivityRetryCount = current.connectivityRetryCount
             replacement.nextRetryAt = current.nextRetryAt
             replacement.alternativeSources = current.alternativeSources
             tickets[replacement.id] = replacement
@@ -674,9 +696,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let systemError = error as NSError
         let shouldRetry = systemError.domain == NSURLErrorDomain &&
             BackgroundTransferRetryPolicy.isTemporaryURLFailure(systemError.code)
+        let connectionLost = systemError.domain == NSURLErrorDomain &&
+            BackgroundTransferRetryPolicy.isConnectivityInterruption(systemError.code)
         Task { @MainActor in
             if shouldRetry {
-                self.retryTemporaryTransfer(id, reason: error.localizedDescription)
+                self.retryTemporaryTransfer(id, reason: error.localizedDescription,
+                                            connectivityInterruption: connectionLost)
             } else {
                 self.setFailed(id, reason: error.localizedDescription)
             }
