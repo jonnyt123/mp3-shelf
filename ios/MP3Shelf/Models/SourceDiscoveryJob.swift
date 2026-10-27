@@ -67,9 +67,10 @@ enum BackgroundDiscoveryPolicy {
 
     /// NWPathMonitor can report Wi-Fi just as a system background batch begins.
     /// Do not launch a second, unbounded foreground lookup from that callback.
-    static func canStartForegroundScan(hasForegroundTask: Bool,
+    static func canStartForegroundScan(isSceneActive: Bool,
+                                       hasForegroundTask: Bool,
                                        hasBackgroundBatch: Bool) -> Bool {
-        !hasForegroundTask && !hasBackgroundBatch
+        isSceneActive && !hasForegroundTask && !hasBackgroundBatch
     }
 
     static func hasPending(_ jobs: [SourceDiscoveryJob]) -> Bool {
