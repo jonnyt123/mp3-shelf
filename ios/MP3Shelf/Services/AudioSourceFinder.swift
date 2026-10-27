@@ -186,6 +186,7 @@ enum AudioSourceFinder {
 extension AudioSourceFinder {
     private struct OpenverseResponse: Decodable {
         let results: [OpenverseResult]
+        let page_count: Int?
     }
     private struct OpenverseResult: Decodable {
         let title: String?
@@ -239,6 +240,33 @@ extension AudioSourceFinder {
                                  licenseURL: licenseURL, sourceName: "Openverse: \(source)")
     }
 
+    static let maxOpenversePages = 2
+
+    /// Keep extra queries bounded for battery life and anonymous API limits.
+    /// A second page is only useful when no verified recording was found on
+    /// the first page and the catalog reports that more results exist.
+    static func shouldSearchNextOpenversePage(page: Int, pageCount: Int?,
+                                              returned: Int, eligible: Int) -> Bool {
+        guard page > 0, page < maxOpenversePages, eligible == 0 else { return false }
+        return pageCount.map { page < $0 } ?? (returned >= 50)
+    }
+
+    static func openverseSearchURL(for wish: PlaylistWish, fieldSearch: Bool,
+                                   page: Int) -> URL {
+        var components = URLComponents(string: "https://api.openverse.org/v1/audio/")!
+        components.queryItems = [
+            URLQueryItem(name: fieldSearch ? "title" : "q",
+                         value: fieldSearch ? wish.title : "\"\(wish.title)\" \"\(wish.artist)\""),
+            URLQueryItem(name: "extension", value: "mp3"),
+            URLQueryItem(name: "page_size", value: "50"),
+            URLQueryItem(name: "page", value: String(max(1, min(page, maxOpenversePages))))
+        ]
+        if fieldSearch {
+            components.queryItems?.append(URLQueryItem(name: "creator", value: wish.artist))
+        }
+        return components.url!
+    }
+
     static func findOpenverse(for wish: PlaylistWish,
                              allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
@@ -247,38 +275,36 @@ extension AudioSourceFinder {
         // matches; use the broader query only if no unique eligible result.
         var firstSearchError: Error?
         for fieldSearch in [true, false] {
-            try Task.checkCancellation()
-            var components = URLComponents(string: "https://api.openverse.org/v1/audio/")!
-            components.queryItems = [
-                URLQueryItem(name: fieldSearch ? "title" : "q",
-                             value: fieldSearch ? wish.title : "\"\(wish.title)\" \"\(wish.artist)\""),
-                URLQueryItem(name: "extension", value: "mp3"),
-                URLQueryItem(name: "page_size", value: "50")
-            ]
-            if fieldSearch {
-                components.queryItems?.append(URLQueryItem(name: "creator", value: wish.artist))
+            for page in 1...maxOpenversePages {
+                try Task.checkCancellation()
+                // A failed focused request must not skip the broader lookup.
+                // Keep errors retryable if no trustworthy result is found.
+                let result: OpenverseResponse
+                do {
+                    result = try await requestJSON(
+                        openverseSearchURL(for: wish, fieldSearch: fieldSearch, page: page),
+                        allowsCellular: allowsCellular)
+                } catch {
+                    if error is CancellationError { throw error }
+                    if firstSearchError == nil { firstSearchError = error }
+                    break
+                }
+                let matches = result.results.compactMap {
+                    openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
+                                       landing: $0.foreign_landing_url, license: $0.license_url,
+                                       filetype: $0.filetype, duration: $0.duration,
+                                       source: $0.source, filesize: $0.filesize, wish: wish)
+                }
+                // Different URLs could be distinct performances. Do not silently
+                // choose between two matching candidates, even on later pages.
+                let unique = Dictionary(grouping: matches,
+                                        by: { $0.downloadURL.absoluteString })
+                if unique.count == 1 { return unique.values.first?.first }
+                if unique.count > 1 { return nil }
+                if !shouldSearchNextOpenversePage(
+                    page: page, pageCount: result.page_count,
+                    returned: result.results.count, eligible: unique.count) { break }
             }
-            // A failed focused request must not skip the broader lookup.
-            // Keep errors retryable if no trustworthy result is found.
-            let result: OpenverseResponse
-            do {
-                result = try await requestJSON(components.url!, allowsCellular: allowsCellular)
-            } catch {
-                if error is CancellationError { throw error }
-                if firstSearchError == nil { firstSearchError = error }
-                continue
-            }
-            let matches = result.results.compactMap {
-                openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
-                                   landing: $0.foreign_landing_url, license: $0.license_url,
-                                   filetype: $0.filetype, duration: $0.duration,
-                                   source: $0.source, filesize: $0.filesize, wish: wish)
-            }
-            // Distinct candidate URLs may represent alternate performances.
-            // Never choose one arbitrarily.
-            let unique = Dictionary(grouping: matches, by: { $0.downloadURL.absoluteString })
-            if unique.count == 1 { return unique.values.first?.first }
-            if unique.count > 1 { return nil }
         }
         if let firstSearchError { throw firstSearchError }
         return nil

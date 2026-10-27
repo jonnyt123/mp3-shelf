@@ -107,7 +107,7 @@ Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation
 
 Connect Spotify, select a permitted playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. The app automatically opens the song-by-song download dashboard and checks missing songs against independent authorized audio sources, downloading only qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
 
-**Current catalog adapters:** Internet Archive, Openverse-backed eligible publishers, and direct Wikimedia Commons. Before importing a result, the app requires:
+**Current catalog adapters:** Internet Archive, Openverse-backed eligible publishers, direct Wikimedia Commons, and artist-enabled Audius downloads. Openverse now checks up to two result pages for each focused or broader query only when no eligible candidate appeared earlier. Search remains bounded, follows the catalog's pagination metadata, and still requires an exact recording and a supported direct MP3 host. Before importing a result, the app requires:
 - Strict normalized *song title and artist* match; no intentional covers/remixes/other artists.
 - A single MP3 file for the matching archive item, to reject album/concert downloads.
 - A Creative Commons or public-domain license URL declared in the archive item's metadata.
