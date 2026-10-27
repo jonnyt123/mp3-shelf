@@ -11,6 +11,59 @@ enum DownloadNetworkPolicy {
 }
 
 
+/// Only a real, verified MP3 import should improve its catalog's reliability.
+/// A temporary network error on a *later successful* ticket must be cleared
+/// at completion. Duplicate/previously saved recordings are not new successes.
+enum BackgroundProviderHistoryPolicy {
+    struct Outcome {
+        let provider: String
+        let imported: Bool
+        let failed: Bool
+        let failureReason: String?
+    }
+
+    static let maxOutcomes = 200
+
+    static func counts(_ outcome: Outcome) -> Bool {
+        (outcome.imported && outcome.failureReason == nil) || outcome.failed
+    }
+
+    static func sources(in outcomes: [Outcome]) -> (successful: [String], failed: [String]) {
+        var successful: [String] = []
+        var failed: [String] = []
+        for outcome in outcomes.prefix(maxOutcomes) {
+            if outcome.imported && outcome.failureReason == nil {
+                successful.append(outcome.provider)
+            } else if outcome.failed {
+                failed.append(outcome.provider)
+            }
+        }
+        return (successful, failed)
+    }
+}
+
+/// Protect manifest restore from malformed/duplicate identifiers rather than
+/// crashing on Dictionary(uniqueKeysWithValues:). Prefer the most recently
+/// started ticket on collision; older tickets without a time retain first-win.
+enum BackgroundTicketManifestPolicy {
+    static func distinctByIdentifier<T>(
+        _ values: [T], id: (T) -> UUID, startedAt: (T) -> Date?
+    ) -> [UUID: T] {
+        var result: [UUID: T] = [:]
+        for value in values {
+            let identifier = id(value)
+            guard let existing = result[identifier] else {
+                result[identifier] = value
+                continue
+            }
+            let previousDate = startedAt(existing) ?? .distantPast
+            let incomingDate = startedAt(value) ?? .distantPast
+            if incomingDate > previousDate { result[identifier] = value }
+        }
+        return result
+    }
+}
+
 /// Small, bounded recovery budget for actual background file transfers.
 /// The source catalog has its own independent lookup retry policy. Do not
 /// retry invalid media, rejected permissions, or conflicting song metadata.

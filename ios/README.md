@@ -138,7 +138,7 @@ Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation
 
 Connect Spotify, select a permitted playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. The app automatically opens the song-by-song download dashboard and checks missing songs against independent authorized audio sources, downloading only qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
 
-**Automatic reliability ranking:** Verified MP3 imports increase a provider's priority, while terminal failures decrease it; the most recent 200 outcomes are used with neutral smoothing so unfamiliar sources remain eligible. Cancellations, temporary retries and already-stored duplicates are excluded. Verified alternate URLs remain queued in priority order for background fallback.
+**Automatic reliability ranking:** Verified MP3 imports increase a provider's priority, while terminal failures decrease it; the most recent 200 outcomes are used with neutral smoothing so unfamiliar sources remain eligible. Cancellations, temporary retries and already-stored duplicates are excluded. A recording successfully imported after a Wi-Fi or server retry clears its previous transient error so it counts as a real success, not an unresolved failure. Verified alternate URLs remain queued in priority order for background fallback.
 
 **Bounded Internet Archive discovery:** The Archive search now includes indexed title/creator metadata and checks the most relevant records first. Item-detail lookups are capped at eight per page, no new requests start after a 45-second search window, and at most two result pages are considered. An HTTP request already in flight may finish after that deadline, subject to its separate request timeout. Each selected recording still requires an original/direct MP3, exact artist/title identity, an uploader-declared Creative Commons/public-domain license and downloaded duration validation. This favors completing more playlist songs in each system-granted background window instead of spending minutes probing dozens of lower-quality Archive records. The trade-off is that valid uploads deeper in the result pages might require manual discovery; no unverified recording is imported automatically.
 
@@ -344,6 +344,12 @@ ticket still cannot be re-imported. This prevents concurrent file mutations,
 dropped staging callbacks and premature headless process suspension. Regression
 coverage includes simultaneous import and completion calls; real device
 background delivery remains a separate release gate.
+
+A stored download manifest with repeated ticket IDs is now restored without an
+app-launch crash. When repeated records have different start timestamps, the
+most recent entry is retained; older legacy entries without timestamps are
+handled deterministically. This is a corruption/upgrade safety measure, not
+permission to silently repeat a queued audio transfer.
 
 ## Automatic background MP3 transfer recovery
 
