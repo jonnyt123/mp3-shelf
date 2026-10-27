@@ -122,7 +122,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         manifestURL = root.appendingPathComponent("background-audio-tickets.json")
         if let data = try? Data(contentsOf: manifestURL),
            let saved = try? JSONDecoder().decode([BackgroundAudioTicket].self, from: data) {
-            tickets = Dictionary(uniqueKeysWithValues: saved.map { ($0.id, $0) })
+            tickets = BackgroundTicketManifestPolicy.distinctByIdentifier(
+                saved, id: { $0.id }, startedAt: { $0.startedAt })
         }
         super.init()
     }
@@ -150,14 +151,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// never count as successes or failures. The most recent 200 terminal
     /// outcomes keep decisions responsive and bound scoring cost.
     func prioritize(_ candidates: [AudioCatalogMatch]) -> [AudioCatalogMatch] {
+        func outcome(_ ticket: BackgroundAudioTicket) -> BackgroundProviderHistoryPolicy.Outcome {
+            BackgroundProviderHistoryPolicy.Outcome(
+                provider: ticket.provider,
+                imported: ticket.status == .imported,
+                failed: ticket.status == .failed,
+                failureReason: ticket.failureReason)
+        }
         let recent = tickets.values.filter {
-            ($0.status == .imported && $0.failureReason == nil) || $0.status == .failed
+            BackgroundProviderHistoryPolicy.counts(outcome($0))
         }.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
-            .prefix(200)
+            .prefix(BackgroundProviderHistoryPolicy.maxOutcomes)
+        let proven = BackgroundProviderHistoryPolicy.sources(in: recent.map(outcome))
         return AudioSourceFinder.prioritize(
-            candidates,
-            successfulProviders: recent.filter { $0.status == .imported }.map(\.provider),
-            failedProviders: recent.filter { $0.status == .failed }.map(\.provider))
+            candidates, successfulProviders: proven.successful,
+            failedProviders: proven.failed)
     }
 
     @discardableResult
@@ -481,6 +489,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 if imported {
                     if var current = tickets[ticket.id], current.status == .queued {
                         current.status = .imported
+                        // An earlier network retry is not an error once the
+                        // recording has actually been decoded and imported.
+                        // Leaving the transient reason here wrongly excludes
+                        // successful retry downloads from provider scoring.
+                        current.failureReason = nil
+                        current.nextRetryAt = nil
                         current.alternativeSources = nil
                         tickets[ticket.id] = current
                         persist()
@@ -568,6 +582,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             if let library, library.hasOfflineRecording(matching: current.requested) {
                 var finished = current
                 finished.status = .imported
+                finished.failureReason = nil
+                finished.nextRetryAt = nil
                 finished.alternativeSources = nil
                 tickets[id] = finished
                 library.finishedBackgroundDownload(for: current.playlistID, succeeded: true)
