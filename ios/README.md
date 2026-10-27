@@ -16,7 +16,10 @@ required the app to be foregrounded. The app now registers a permitted
 background window when a playlist still has unprocessed songs and the app
 moves to the background. The task checks actual Wi-Fi connectivity, processes
 at most five pending tracks, persists every resulting lookup, and submits
-another background request if more work remains. The background batch owns
+another background request if more work remains. Each background window
+rotates to the next eligible playlist and scheduling respects persisted catalog
+retry deadlines instead of spending system windows on premature retries.
+The background batch owns
 the discovery queue until it finishes, so a Wi-Fi status notification cannot
 start an overlapping foreground search or bypass its five-song limit.
 A headless URLSession wake can import completed MP3s without enabling an

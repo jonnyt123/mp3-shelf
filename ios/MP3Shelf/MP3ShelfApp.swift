@@ -27,18 +27,19 @@ enum MP3ShelfBackgroundDiscovery {
                 let finishedNormally = await library.runBackgroundDiscoveryBatch()
                 processing.setTaskCompleted(success: finishedNormally)
                 if library.hasPendingDiscoveryWork {
-                    schedule()
+                    schedule(nextUsefulDate: library.nextBackgroundDiscoveryDate)
                 }
             }
             processing.expirationHandler = { worker.cancel() }
         }
     }
 
-    static func schedule() {
+    static func schedule(nextUsefulDate: Date? = nil) {
         let request = BGProcessingTaskRequest(identifier: identifier)
         request.requiresNetworkConnectivity = true
         request.requiresExternalPower = false
-        request.earliestBeginDate = Date().addingTimeInterval(10 * 60)
+        let minimumDelay = Date().addingTimeInterval(10 * 60)
+        request.earliestBeginDate = max(minimumDelay, nextUsefulDate ?? minimumDelay)
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {
@@ -124,7 +125,8 @@ struct MP3ShelfApp: App {
                     } else if phase == .background && library.hasPendingDiscoveryWork {
                         // BGProcessingTasks are scheduled before suspension;
                         // the next launch may be delayed or skipped by iOS.
-                        MP3ShelfBackgroundDiscovery.schedule()
+                        MP3ShelfBackgroundDiscovery.schedule(
+                            nextUsefulDate: library.nextBackgroundDiscoveryDate)
                     }
                 }
         }
