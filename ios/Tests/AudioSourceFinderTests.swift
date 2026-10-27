@@ -49,6 +49,41 @@ enum AudioSourceFinderTests {
             filetype: "mp3", duration: 212000,
             source: "wikimedia", filesize: 5_000_000, wish: wish)
         verify(openverse != nil, "Openverse Wikimedia MP3 exact match accepted")
+        let focusedOpenverse = URLComponents(
+            url: AudioSourceFinder.openverseSearchURL(
+                for: wish, fieldSearch: true, page: 2),
+            resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func parameter(_ name: String, in items: [URLQueryItem]) -> String? {
+            items.first(where: { $0.name == name })?.value
+        }
+        verify(parameter("title", in: focusedOpenverse) == wish.title &&
+               parameter("creator", in: focusedOpenverse) == wish.artist &&
+               parameter("extension", in: focusedOpenverse) == "mp3" &&
+               parameter("page", in: focusedOpenverse) == "2",
+               "focused Openverse lookup searches second page with exact title/artist filters")
+        let broadOpenverse = URLComponents(
+            url: AudioSourceFinder.openverseSearchURL(
+                for: wish, fieldSearch: false, page: 1),
+            resolvingAgainstBaseURL: false)?.queryItems ?? []
+        verify(parameter("q", in: broadOpenverse) == "\"The Song\" \"The Artist\"" &&
+               parameter("creator", in: broadOpenverse) == nil &&
+               parameter("page_size", in: broadOpenverse) == "50",
+               "Openverse fallback retains quoted title and artist search")
+        verify(AudioSourceFinder.shouldSearchNextOpenversePage(
+            page: 1, pageCount: 3, returned: 50, eligible: 0) &&
+               AudioSourceFinder.shouldSearchNextOpenversePage(
+                   page: 1, pageCount: nil, returned: 50, eligible: 0),
+               "a full unmatched catalog page searches for more authorized MP3s")
+        verify(!AudioSourceFinder.shouldSearchNextOpenversePage(
+            page: 1, pageCount: 1, returned: 50, eligible: 0) &&
+               !AudioSourceFinder.shouldSearchNextOpenversePage(
+                   page: 1, pageCount: nil, returned: 20, eligible: 0),
+               "catalog exhaustion stops unnecessary pagination")
+        verify(!AudioSourceFinder.shouldSearchNextOpenversePage(
+            page: 2, pageCount: 100, returned: 50, eligible: 0) &&
+               !AudioSourceFinder.shouldSearchNextOpenversePage(
+                   page: 1, pageCount: 100, returned: 50, eligible: 1),
+               "Openverse requests stay bounded and stop after a verified candidate")
         verify(AudioSourceFinder.openverseCandidate(
             title: "The Song", creator: "The Artist",
             download: "https://mp3d.jamendo.com/song.mp3",
