@@ -54,6 +54,34 @@ are downloaded.
 4. Connect your iPhone by cable or use an already paired wireless development device. Select it in Xcode's device picker. If prompted, enable **Settings → Privacy & Security → Developer Mode** on the iPhone and trust your Mac.
 5. Press **⌘R** (Run). Xcode signs and installs the app. You can then import files and listen without a network connection.
 
+## Local native release verification (no GitHub Actions minutes)
+
+The current native iOS development code lives in the newest **stacked iOS PR**
+branch, not in the default `main` PWA. To test the complete latest stack,
+check out `feat/ios-local-release-gate-no-actions` in your local clone. You can
+also use GitHub's **Code → Download ZIP** after choosing that branch. Opening
+`ios/MP3Shelf.xcodeproj` on default `main` will not include these new features.
+
+On a Mac with full Xcode selected, run:
+
+```bash
+bash ios/scripts/verify-local-release.sh
+```
+
+This executes all five native Swift regression suites, unsigned Simulator
+Debug and Release builds, and an unsigned physical-iPhone architecture Release
+build **locally**. It never queues a GitHub Actions workflow. Add `--smoke` to
+install and launch the Debug app on a locally installed iPhone Simulator and
+capture eight UI screenshots; screenshots still require manual visual review.
+Use `--tests-only` to run just portable Swift suites or `--builds-only` to
+compile the three native configurations. Logs, binaries and a truthful
+`QA_RECORD.md` appear only under `ios/build/local-release/` (Git-ignored).
+
+This is neither an Apple-signed development app nor an on-device background
+transfer test. To install on a real iPhone, use the separate signing helper
+below and complete `DEVICE_QA.md`. GitHub branch protection and release checks
+are not bypassed.
+
 ## Signed installation helper (physical iPhone)
 
 For a reproducible, signed development build without manually finding the
