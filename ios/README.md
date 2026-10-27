@@ -135,6 +135,23 @@ streaming Spotify tracks and unverified web hits are not downloaded by
 this automatic audio feature. Tracks with no matching independently
 downloadable recording remain unavailable.
 
+## Version-safe Spotify playlist matching and download queues
+
+A Spotify playlist can contain a radio edit, preview and full-length recording
+with identical song titles and artist credits. The offline library, playlist
+reconciliation, song-by-song status labels and automatic background queue now
+use version-safe matching: known durations must be within four seconds, and
+unambiguous title/artist metadata is still required. File existence is checked
+before declaring a recording already downloaded.
+
+Background transfer deduplication also compares compatible durations rather
+than collapsing different versions into the same pending ticket. When a
+playlist wish has no duration information, it cannot cancel a known-duration
+transfer based on its name alone; two identical unknown-duration CSV wishes
+can still share a queue entry. A full-length recording can be selected even
+when a distinct shorter version with the same title is already in the library,
+while multiple equally matching files remain ambiguous.
+
 ## Updating the same Spotify playlist without re-downloading everything
 
 Re-importing a previously linked Spotify playlist now synchronizes new,

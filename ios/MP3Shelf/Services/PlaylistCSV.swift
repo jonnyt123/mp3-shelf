@@ -142,18 +142,30 @@ enum MusicMatching {
         return base.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 
-    /// Reuse only a single matching offline recording whose duration is
-    /// compatible with the requested Spotify track. Title/artist alone is
-    /// insufficient to cancel a paid-for, in-progress background download
-    /// when an alternate version has already been saved.
+    /// Two Spotify wishes may share a title and artist but describe different
+    /// recordings, such as a preview, radio edit or extended version. Never
+    /// coalesce their background transfers without compatible duration data.
+    static func sameRequestedRecording(_ lhs: PlaylistWish, _ rhs: PlaylistWish) -> Bool {
+        guard key(lhs.title) == key(rhs.title), !key(lhs.title).isEmpty,
+              key(lhs.artist) == key(rhs.artist), !key(lhs.artist).isEmpty else { return false }
+        switch (lhs.durationSeconds, rhs.durationSeconds) {
+        case (nil, nil): return true
+        case let (a?, b?): return a.isFinite && b.isFinite && abs(a - b) <= 4
+        default: return false
+        }
+    }
+
+    /// Filter version/duration candidates before disambiguating by artist.
+    /// Otherwise two same-name edits of different lengths are incorrectly
+    /// treated as ambiguous, even when exactly one is the requested version.
     static func reusableOfflineTrack(for wish: PlaylistWish,
                                      in library: [MusicTrack]) -> MusicTrack? {
-        guard let track = matchingTrack(for: wish, in: library) else { return nil }
-        if let expected = wish.durationSeconds,
-           (!track.duration.isFinite || abs(track.duration - expected) > 4) {
-            return nil
+        let durationCompatible = library.filter { track in
+            guard let expected = wish.durationSeconds else { return true }
+            return expected.isFinite && track.duration.isFinite &&
+                abs(track.duration - expected) <= 4
         }
-        return track
+        return matchingTrack(for: wish, in: durationCompatible)
     }
 
     static func matchingTrack(for wish: PlaylistWish, in library: [MusicTrack]) -> MusicTrack? {

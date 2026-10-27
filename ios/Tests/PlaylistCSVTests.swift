@@ -39,6 +39,35 @@ enum PlaylistCSVTests {
               "minor duration metadata rounding does not force a duplicate download")
         check(MusicMatching.reusableOfflineTrack(for: savedWish, in: [owned, owned]) == nil,
               "ambiguous duplicate library entries are never arbitrarily reused")
+        let preview = MusicTrack(title: owned.title, artist: owned.artist, album: owned.album,
+                                 fileName: "preview.mp3", originalFileName: "preview.mp3",
+                                 duration: 28)
+        check(MusicMatching.reusableOfflineTrack(for: savedWish, in: [preview, owned])?.id == owned.id,
+              "a compatible full recording is reused despite a same-name short edit")
+        check(MusicMatching.reusableOfflineTrack(for: wrongDuration, in: [preview, owned]) == nil,
+              "wrong duration is not counted as downloaded by playlist reconciliation")
+        let fullLength = PlaylistWish(title: owned.title, artist: owned.artist,
+                                      album: owned.album, spotifyURL: nil, durationSeconds: 185)
+        let previewLength = PlaylistWish(title: owned.title, artist: owned.artist,
+                                         album: owned.album, spotifyURL: nil, durationSeconds: 28)
+        check(!MusicMatching.sameRequestedRecording(fullLength, previewLength),
+              "different song versions must retain independent download tickets")
+        check(MusicMatching.sameRequestedRecording(savedWish, smallDifference),
+              "same recording tolerates minor duration metadata differences")
+        let withoutDuration = PlaylistWish(title: owned.title, artist: owned.artist,
+                                           album: owned.album, spotifyURL: nil)
+        check(!MusicMatching.sameRequestedRecording(savedWish, withoutDuration),
+              "unknown duration cannot silently take over a known-duration transfer")
+        check(MusicMatching.sameRequestedRecording(withoutDuration, withoutDuration),
+              "legacy CSV wishes without duration still deduplicate exact requests")
+        let differentArtist = PlaylistWish(title: owned.title, artist: "A Different Band",
+                                           album: owned.album, spotifyURL: nil, durationSeconds: 12)
+        check(!MusicMatching.sameRequestedRecording(savedWish, differentArtist),
+              "artist mismatch cannot deduplicate independent recordings")
+        let otherFull = MusicTrack(title: owned.title, artist: owned.artist, album: owned.album,
+                                   fileName: "full2.mp3", originalFileName: "full2.mp3", duration: 12.5)
+        check(MusicMatching.reusableOfflineTrack(for: savedWish, in: [owned, otherFull]) == nil,
+              "two compatible full-length recordings remain ambiguous")
         check(MusicMatching.matchingTrack(for: wishes[0], in: [owned])?.id == owned.id, "artist list matching")
         check(MusicMatching.matchingTrack(for: wishes[0], in: []) == nil, "never claim an unowned song matched")
         let ambiguous = MusicTrack(title: owned.title, artist: owned.artist, album: owned.album, fileName: "2.mp3", originalFileName: "2.mp3", duration: 12)

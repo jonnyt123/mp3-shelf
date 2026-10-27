@@ -147,8 +147,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         guard Self.allowedDownloadURL(source.downloadURL) else { return false }
         if tickets.values.contains(where: {
             $0.status == .queued && $0.playlistID == playlistID &&
-            MusicMatching.key($0.requested.title) == MusicMatching.key(requested.title) &&
-            MusicMatching.key($0.requested.artist) == MusicMatching.key(requested.artist)
+            MusicMatching.sameRequestedRecording($0.requested, requested)
         }) { return false }
         var ticket = BackgroundAudioTicket(
             id: UUID(), playlistID: playlistID, requested: requested,
@@ -183,8 +182,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     func isQueued(_ wish: PlaylistWish, for playlistID: UUID) -> Bool {
         tickets.values.contains {
             $0.status == .queued && $0.playlistID == playlistID &&
-            MusicMatching.key($0.requested.title) == MusicMatching.key(wish.title) &&
-            MusicMatching.key($0.requested.artist) == MusicMatching.key(wish.artist)
+            MusicMatching.sameRequestedRecording($0.requested, wish)
         }
     }
 

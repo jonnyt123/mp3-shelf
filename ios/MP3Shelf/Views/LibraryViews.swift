@@ -668,14 +668,14 @@ struct PlaylistDetailView: View {
     private var offlineSourceCount: Int {
         guard let playlist else { return 0 }
         return playlist.sourceOrder.filter {
-            MusicMatching.matchingTrack(for: $0, in: library.tracks) != nil
+            MusicMatching.reusableOfflineTrack(for: $0, in: library.tracks) != nil
         }.count
     }
 
     /// Report the real, persisted outcome for each song in the imported
     /// Spotify playlist. Downloading is not the same as already saved offline.
     private func mp3Status(for wish: PlaylistWish) -> (text: String, symbol: String) {
-        if MusicMatching.matchingTrack(for: wish, in: library.tracks) != nil {
+        if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) != nil {
             return ("Saved offline as an audio file", "checkmark.circle.fill")
         }
         if let ticket = transfers.ticketsForPlaylist(playlistID).first(where: {
@@ -959,7 +959,7 @@ struct PlaylistDetailView: View {
                                             .foregroundStyle(ShelfTheme.subdued)
                                     }
                                 }
-                                if MusicMatching.matchingTrack(for: wish, in: library.tracks) == nil {
+                                if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) == nil {
                                     Button { manuallyAdding = wish } label: {
                                         Label("I have an authorized audio link",
                                               systemImage: "link.badge.plus")

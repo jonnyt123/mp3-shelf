@@ -734,7 +734,7 @@ final class MusicLibrary: ObservableObject {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].trackIDs.removeAll { $0 == trackID }
         if let track = song(with: trackID),
-           let wishIndex = playlists[index].sourceOrder.firstIndex(where: { MusicMatching.matchingTrack(for: $0, in: [track]) != nil }) {
+           let wishIndex = playlists[index].sourceOrder.firstIndex(where: { MusicMatching.reusableOfflineTrack(for: $0, in: [track]) != nil }) {
             playlists[index].sourceOrder.remove(at: wishIndex)
         }
         save()
@@ -820,7 +820,7 @@ final class MusicLibrary: ObservableObject {
         if spotifyID != nil { playlist.sourceURL = sourceURL }
         playlist.sourceOrder = wishes
         for wish in wishes {
-            if let track = MusicMatching.matchingTrack(for: wish, in: tracks) {
+            if let track = MusicMatching.reusableOfflineTrack(for: wish, in: tracks) {
                 playlist.trackIDs.append(track.id)
             } else {
                 playlist.missingTracks.append(wish)
@@ -839,7 +839,7 @@ final class MusicLibrary: ObservableObject {
             var ordered: [UUID] = []
             var missing: [PlaylistWish] = []
             for wish in playlists[index].sourceOrder {
-                if let track = MusicMatching.matchingTrack(for: wish, in: tracks) {
+                if let track = MusicMatching.reusableOfflineTrack(for: wish, in: tracks) {
                     ordered.append(track.id)
                 } else {
                     missing.append(wish)
