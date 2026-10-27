@@ -65,6 +65,13 @@ enum BackgroundTransferRecoveryPolicy {
 enum BackgroundDiscoveryPolicy {
     static let maxSongsPerPass = 5
 
+    /// NWPathMonitor can report Wi-Fi just as a system background batch begins.
+    /// Do not launch a second, unbounded foreground lookup from that callback.
+    static func canStartForegroundScan(hasForegroundTask: Bool,
+                                       hasBackgroundBatch: Bool) -> Bool {
+        !hasForegroundTask && !hasBackgroundBatch
+    }
+
     static func hasPending(_ jobs: [SourceDiscoveryJob]) -> Bool {
         jobs.contains { !$0.isPaused && !$0.isComplete }
     }
