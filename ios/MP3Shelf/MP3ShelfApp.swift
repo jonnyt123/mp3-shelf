@@ -100,7 +100,7 @@ struct MP3ShelfApp: App {
                     playback.connect(to: library)
                     MP3ShelfBackgroundDiscovery.foregroundLibrary = library
                     BackgroundAudioDownloader.shared.attach(to: library)
-                    library.resumePendingDiscovery()
+                    library.setForegroundDiscoveryEnabled(scenePhase == .active)
                     #if DEBUG
                     let snapshotArguments = ProcessInfo.processInfo.arguments
                     if !didStartVisualFixture &&
@@ -116,9 +116,11 @@ struct MP3ShelfApp: App {
                     #endif
                 }
                 .onChange(of: scenePhase) { _, phase in
+                    // Background URLSession callbacks can run with no visible UI.
+                    // Only an active scene may start unrestricted source scans.
+                    library.setForegroundDiscoveryEnabled(phase == .active)
                     if phase == .active {
                         BackgroundAudioDownloader.shared.attach(to: library)
-                        library.resumePendingDiscovery()
                     } else if phase == .background && library.hasPendingDiscoveryWork {
                         // BGProcessingTasks are scheduled before suspension;
                         // the next launch may be delayed or skipped by iOS.
