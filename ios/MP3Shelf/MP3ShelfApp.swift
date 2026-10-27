@@ -23,6 +23,7 @@ enum MP3ShelfBackgroundDiscovery {
                 // On a headless launch there is no visible SwiftUI scene.
                 // Retain a library for the complete processing window.
                 let library = foregroundLibrary ?? MusicLibrary()
+                BackgroundAudioDownloader.shared.attach(to: library)
                 let finishedNormally = await library.runBackgroundDiscoveryBatch()
                 processing.setTaskCompleted(success: finishedNormally)
                 if library.hasPendingDiscoveryWork {
@@ -65,7 +66,14 @@ final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
             return
         }
         Task { @MainActor in
-            BackgroundAudioDownloader.shared.setBackgroundEventsCompletion(completionHandler)
+            // iOS may relaunch us ONLY for the background URLSession, without
+            // creating a visible SwiftUI scene. Keep a headless library alive
+            // until all completed audio is validated and imported.
+            let library = MP3ShelfBackgroundDiscovery.foregroundLibrary ?? MusicLibrary()
+            BackgroundAudioDownloader.shared.attach(to: library)
+            BackgroundAudioDownloader.shared.setBackgroundEventsCompletion {
+                withExtendedLifetime(library) { completionHandler() }
+            }
         }
     }
 }

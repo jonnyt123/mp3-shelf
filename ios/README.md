@@ -6,7 +6,11 @@ A standalone **SwiftUI** iOS application that can be opened directly in Xcode an
 
 Once a Spotify playlist is imported, the app persists the song-lookup queue.
 Normal URLSession background tasks can download already-discovered MP3s
-while the phone is locked; **finding** the next audio source previously
+while the phone is locked. On a background URLSession-only relaunch (without
+a SwiftUI scene), the application delegate now keeps a headless MusicLibrary
+alive through completion of file validation and import, so verified audio
+does not stay stranded as a staged file until the user manually reopens
+the app. **Finding** the next audio source previously
 required the app to be foregrounded. The app now registers a permitted
 `BGProcessingTask` during launch and requests an opportunistic network-enabled
 background window when a playlist still has unprocessed songs and the app
