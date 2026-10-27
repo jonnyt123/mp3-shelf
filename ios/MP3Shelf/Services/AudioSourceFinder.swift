@@ -30,7 +30,11 @@ enum AudioSourceFinder {
     }
     private struct SearchResponse: Decodable { let response: SearchBody }
     private struct SearchBody: Decodable { let docs: [SearchItem] }
-    private struct SearchItem: Decodable { let identifier: String }
+    private struct SearchItem: Decodable {
+        let identifier: String
+        let title: FlexibleText?
+        let creator: FlexibleText?
+    }
     private struct ArchiveItem: Decodable {
         let metadata: ItemMetadata?
         let files: [ArchiveFile]?
@@ -129,7 +133,32 @@ enum AudioSourceFinder {
             (key == title || key == MusicMatching.key("\(wish.artist) - \(wish.title)"))
     }
 
+    // Avoid spending an entire iOS background processing window on up to
+    // 40 sequential Archive metadata requests for a single Spotify song.
+    // Prefer likely exact hits and leave time for the next playlist track.
+    enum ArchiveLookupBudget {
+        static let maxDetailRequestsPerPage = 8
+        static let maxElapsedSeconds: TimeInterval = 45
+
+        static func canRequestDetails(completed: Int, startedAt: Date,
+                                      now: Date) -> Bool {
+            completed >= 0 && completed < maxDetailRequestsPerPage &&
+                now.timeIntervalSince(startedAt) < maxElapsedSeconds
+        }
+
+        static func stillWithinWindow(startedAt: Date, now: Date) -> Bool {
+            now.timeIntervalSince(startedAt) < maxElapsedSeconds
+        }
+    }
+
     static let maxArchiveSearchPages = 2
+
+    static func archiveIndexRelevance(title: String, creator: String,
+                                      for wish: PlaylistWish) -> Int {
+        let titleScore = MusicMatching.key(title) == MusicMatching.key(wish.title) ? 2 : 0
+        let creatorScore = MusicMatching.key(creator) == MusicMatching.key(wish.artist) ? 1 : 0
+        return titleScore + creatorScore
+    }
 
     static func archiveSearchURL(for wish: PlaylistWish, page: Int) -> URL {
         func escaped(_ value: String) -> String {
@@ -140,6 +169,8 @@ enum AudioSourceFinder {
         query.queryItems = [
             URLQueryItem(name: "q", value: "mediatype:audio AND (title:(\"\(escaped(wish.title))\") OR description:(\"\(escaped(wish.title))\")) AND creator:(\"\(escaped(wish.artist))\")"),
             URLQueryItem(name: "fl[]", value: "identifier"),
+            URLQueryItem(name: "fl[]", value: "title"),
+            URLQueryItem(name: "fl[]", value: "creator"),
             URLQueryItem(name: "rows", value: "20"),
             URLQueryItem(name: "page", value: String(max(1, min(page, maxArchiveSearchPages)))),
             URLQueryItem(name: "output", value: "json")
@@ -150,16 +181,35 @@ enum AudioSourceFinder {
     static func find(for wish: PlaylistWish,
                      allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
-        // The public search API supports pagination. Only request page two
-        // when page one has no verified recording and its results are full.
+        // The public search API supports pagination. Within a finite time
+        // budget prioritize likely exact title/artist entries before probing
+        // Archive item metadata. All files still require full verification.
+        let lookupStartedAt = Date()
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
+            guard ArchiveLookupBudget.stillWithinWindow(
+                startedAt: lookupStartedAt, now: Date()) else { break }
             let search: SearchResponse = try await requestJSON(
                 archiveSearchURL(for: wish, page: page),
                 allowsCellular: allowsCellular)
-            for result in search.response.docs.prefix(20) {
+            let ranked = search.response.docs.prefix(20).enumerated().sorted { left, right in
+                let l = archiveIndexRelevance(
+                    title: left.element.title?.value ?? "",
+                    creator: left.element.creator?.value ?? "", for: wish)
+                let r = archiveIndexRelevance(
+                    title: right.element.title?.value ?? "",
+                    creator: right.element.creator?.value ?? "", for: wish)
+                return l == r ? left.offset < right.offset : l > r
+            }
+            var detailRequests = 0
+            for entry in ranked {
                 try Task.checkCancellation()
+                guard ArchiveLookupBudget.canRequestDetails(
+                    completed: detailRequests, startedAt: lookupStartedAt,
+                    now: Date()) else { break }
+                let result = entry.element
                 guard safeIdentifier(result.identifier) else { continue }
+                detailRequests += 1
                 let metadataURL = URL(string: "https://archive.org/metadata/")!
                     .appendingPathComponent(result.identifier)
                 guard let item: ArchiveItem = try? await requestJSON(
@@ -186,7 +236,9 @@ enum AudioSourceFinder {
                 return AudioCatalogMatch(downloadURL: downloadURL, itemURL: itemURL,
                                          licenseURL: license, sourceName: "Internet Archive")
             }
-            if search.response.docs.count < 20 { break }
+            if search.response.docs.count < 20 ||
+                !ArchiveLookupBudget.stillWithinWindow(
+                    startedAt: lookupStartedAt, now: Date()) { break }
         }
         return nil
     }
