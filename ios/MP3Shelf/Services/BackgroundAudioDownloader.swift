@@ -141,6 +141,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
     }
 
+    /// Learn from completed media imports, not search hits. Transfer history
+    /// survives restarts; abandoned, duplicate, cancelled and retry tickets
+    /// never count as successes or failures. The most recent 200 terminal
+    /// outcomes keep decisions responsive and bound scoring cost.
+    func prioritize(_ candidates: [AudioCatalogMatch]) -> [AudioCatalogMatch] {
+        let recent = tickets.values.filter {
+            ($0.status == .imported && $0.failureReason == nil) || $0.status == .failed
+        }.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
+            .prefix(200)
+        return AudioSourceFinder.prioritize(
+            candidates,
+            successfulProviders: recent.filter { $0.status == .imported }.map(\.provider),
+            failedProviders: recent.filter { $0.status == .failed }.map(\.provider))
+    }
+
     @discardableResult
     func enqueue(source: AudioCatalogMatch, requested: PlaylistWish, playlistID: UUID,
                  alternatives: [AudioCatalogMatch] = []) -> Bool {
