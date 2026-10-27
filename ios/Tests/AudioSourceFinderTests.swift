@@ -52,6 +52,38 @@ enum AudioSourceFinderTests {
             for: wish, page: 99), resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "page" })?.value == "2",
                "Internet Archive pagination clamps to the documented 2-page budget")
+        let archiveFields = archiveSearch.queryItems?.filter { $0.name == "fl[]" }
+            .compactMap(\.value) ?? []
+        verify(archiveFields.contains("title") && archiveFields.contains("creator"),
+               "Archive search retrieves title and creator before expensive detail lookups")
+        let budget = AudioSourceFinder.ArchiveLookupBudget.self
+        let started = Date(timeIntervalSince1970: 1_700_000_000)
+        verify(budget.maxDetailRequestsPerPage == 8 &&
+               budget.maxElapsedSeconds == 45,
+               "per-song Archive requests and wall-clock time are bounded")
+        verify(budget.canRequestDetails(
+            completed: 0, startedAt: started, now: started) &&
+               budget.canRequestDetails(
+            completed: 7, startedAt: started, now: started.addingTimeInterval(44)),
+               "Archive details can still be queried while within both limits")
+        verify(!budget.canRequestDetails(
+            completed: 8, startedAt: started, now: started) &&
+               !budget.canRequestDetails(
+            completed: 1, startedAt: started, now: started.addingTimeInterval(45)),
+               "Archive stops at eight detail lookups or a 45-second window")
+        verify(!budget.stillWithinWindow(
+            startedAt: started, now: started.addingTimeInterval(46)),
+               "Archive page two cannot start after per-song deadline")
+        verify(AudioSourceFinder.archiveIndexRelevance(
+            title: "The Song", creator: "The Artist", for: wish) >
+               AudioSourceFinder.archiveIndexRelevance(
+            title: "Another Song", creator: "The Artist", for: wish),
+               "exact Archive title and creator are inspected before album/index noise")
+        verify(AudioSourceFinder.archiveIndexRelevance(
+            title: "Another Song", creator: "The Artist", for: wish) >
+               AudioSourceFinder.archiveIndexRelevance(
+            title: "Another Song", creator: "Another Artist", for: wish),
+               "artist attribution remains a ranking signal, never a license bypass")
         let archiveMatch = AudioCatalogMatch(
             downloadURL: URL(string: "https://archive.org/download/a/song.mp3")!,
             itemURL: URL(string: "https://archive.org/details/a")!,
