@@ -26,6 +26,25 @@ enum BackgroundTransferRetryPolicy {
         }
     }
 
+    /// Connectivity loss is not a broken server or bad song source. Retry in
+    /// the existing background URLSession until a permitted connection returns.
+    /// Delay is capped so prolonged offline periods do not spin up tasks.
+    static func isConnectivityInterruption(_ code: Int) -> Bool {
+        code == URLError.Code.notConnectedToInternet.rawValue ||
+            code == URLError.Code.networkConnectionLost.rawValue ||
+            code == URLError.Code.dataNotAllowed.rawValue
+    }
+
+    static func connectivityDelay(afterFailure count: Int) -> TimeInterval {
+        switch count {
+        case ...1: return 60
+        case 2: return 180
+        case 3: return 600
+        case 4: return 1_800
+        default: return 3_600
+        }
+    }
+
     static func isTemporaryHTTP(_ statusCode: Int) -> Bool {
         [408, 429, 500, 502, 503, 504].contains(statusCode)
     }
@@ -35,6 +54,7 @@ enum BackgroundTransferRetryPolicy {
             URLError.Code.timedOut.rawValue,
             URLError.Code.networkConnectionLost.rawValue,
             URLError.Code.notConnectedToInternet.rawValue,
+            URLError.Code.dataNotAllowed.rawValue,
             URLError.Code.cannotConnectToHost.rawValue,
             URLError.Code.cannotFindHost.rawValue,
             URLError.Code.dnsLookupFailed.rawValue
