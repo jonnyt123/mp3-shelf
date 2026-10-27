@@ -304,15 +304,25 @@ explicit consent.
 
 ## Automatic background MP3 transfer recovery
 
-If an otherwise verified audio download is interrupted by a temporary
-network error, timeout, HTTP 408/429 or common HTTP 5xx response, MP3 Shelf
-schedules up to three new transfer attempts with iOS background URLSession,
-after at least 45, 150 and 450 seconds. Each retry preserves the originally
-matched recording, playlist and attribution, and defaults to the same
-Wi-Fi-only request restriction. Apple's background transfer daemon handles
-the retry's earliest-start date without requiring another tap or keeping the
-app open, subject to iOS scheduling and force-quit restrictions. A cellular
-override remains per playlist and requires explicit user action.
+An interrupted Wi-Fi connection no longer exhausts the three-attempt server
+retry budget. When a transfer is cancelled by lost connectivity, no network
+or an OS data-access restriction, its background URLSession ticket is
+recreated with a persistent, gradually increasing reconnection delay of
+1, 3, 10, 30 and then at most 60 minutes. Connection-loss retries continue
+while the track remains queued; they do not change download sources merely
+because Wi-Fi is temporarily unavailable. A new ticket preserves the
+originally matched recording, playlist, attribution and verified alternates.
+iOS controls actual transfer/relaunch timing, and the user can still cancel.
+
+Server timeouts, HTTP 408/429 and common HTTP 5xx responses retain a
+**separate three-attempt** retry budget, with delays of 45, 150 and
+450 seconds. Bad sources, invalid media and permission failures continue to
+use the terminal-failure/verified-alternate process.
+
+Every default audio URLRequest now explicitly forbids cellular, expensive and
+Low Data Mode networks; existing session-only, per-playlist cellular approval
+permits those networks. The retry schedule never silently grants cellular
+permission after Wi-Fi disappears.
 
 New ticket identifiers isolate late callbacks from earlier attempts. Retry
 state is optional in the persisted manifest for backward compatibility.
