@@ -5,7 +5,7 @@ simulator build is a separate, useful check and does not replace these tests.
 
 ## Preparation
 
-1. On a Mac with Xcode 16.4 or newer, check out `feat/ios-premium-visual-refresh` (the PR #4 head, not the older discovery-only branch).
+1. On a Mac with Xcode 16.4 or newer, check out the **latest stacked native iOS branch** (`feat/ios-local-release-gate-no-actions` for this revision). The default `main` branch still contains the older web PWA; PR #4 is an earlier intermediate iOS branch. Run `bash ios/scripts/verify-local-release.sh` from the repository root to record local Swift regression and native build results without GitHub Actions minutes. Running the script does not replace on-device tests.
 2. Open `ios/MP3Shelf.xcodeproj`, choose the MP3Shelf app target,
    enable Automatically Manage Signing, and select your Apple development team.
 3. Connect an iPhone with iOS 17+, unlock/trust the Mac, enable Developer Mode
