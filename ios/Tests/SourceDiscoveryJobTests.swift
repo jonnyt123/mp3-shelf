@@ -98,6 +98,63 @@ enum SourceDiscoveryJobTests {
         let cursor = job.nextIndex
         job.record(.failed)
         verifyDiscovery(job.nextIndex == cursor, "complete job cannot advance beyond its list")
+        // A truncated or malformed persisted discovery cursor must never
+        // subscript wishes[-1], allocate a negative-sized outcome array,
+        // or skip a still-unprocessed song after relaunch.
+        var healthyCheckpoint = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        healthyCheckpoint.record(.queued)
+        verifyDiscovery(!healthyCheckpoint.repairPersistedCheckpoint() &&
+                        healthyCheckpoint.nextIndex == 1 &&
+                        healthyCheckpoint.outcome(for: wishes[0]) == .queued,
+                        "healthy persisted checkpoints are preserved byte-for-byte in memory")
+        var invalidNegative = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        invalidNegative.nextIndex = -3
+        invalidNegative.queued = -100
+        invalidNegative.outcomes = [.queued, .failed]
+        invalidNegative.transientFailureCount = -1
+        invalidNegative.nextRetryAt = Date(timeIntervalSince1970: 1_700_000_000)
+        verifyDiscovery(invalidNegative.currentWish == nil && invalidNegative.remaining == 3,
+                        "negative persisted cursor cannot subscript an invalid song index")
+        let decodedNegative = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(invalidNegative))
+        var repairedNegative = decodedNegative
+        verifyDiscovery(repairedNegative.repairPersistedCheckpoint() &&
+                        repairedNegative.nextIndex == 0 &&
+                        repairedNegative.currentWish?.id == wishes[0].id &&
+                        repairedNegative.queued == 0 &&
+                        repairedNegative.outcomes?.isEmpty == true &&
+                        repairedNegative.nextRetryAt == nil &&
+                        repairedNegative.transientFailureCount == nil,
+                        "saved negative cursor, counts, and obsolete retry state are repaired")
+        repairedNegative.record(.queued)
+        verifyDiscovery(repairedNegative.nextIndex == 1 && repairedNegative.queued == 1,
+                        "restored first song can be processed without losing playlist progress")
+        var invalidOversized = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        invalidOversized.nextIndex = Int.max
+        invalidOversized.failed = Int.max
+        invalidOversized.outcomes = Array(repeating: .failed, count: 6)
+        invalidOversized.transientFailureCount = Int.max
+        invalidOversized.nextRetryAt = Date(timeIntervalSince1970: 1_700_000_000)
+        verifyDiscovery(invalidOversized.repairPersistedCheckpoint() &&
+                        invalidOversized.nextIndex == wishes.count &&
+                        invalidOversized.isComplete &&
+                        invalidOversized.remaining == 0 &&
+                        invalidOversized.failed == wishes.count &&
+                        invalidOversized.outcomes?.count == wishes.count &&
+                        invalidOversized.transientFailureCount == nil &&
+                        invalidOversized.nextRetryAt == nil,
+                        "oversized saved cursor and history are bounded by actual song count")
+        var truncatedHistory = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        truncatedHistory.nextIndex = 2
+        truncatedHistory.outcomes = [.previous]
+        verifyDiscovery(!truncatedHistory.repairPersistedCheckpoint() &&
+                        truncatedHistory.outcomes?.count == 1,
+                        "legacy short history is preserved for record() migration")
+        truncatedHistory.record(.failed)
+        verifyDiscovery(truncatedHistory.nextIndex == 3 &&
+                        truncatedHistory.outcomes?.count == 3 &&
+                        truncatedHistory.outcome(for: wishes[2]) == .failed,
+                        "truncated outcome history safely fills only its missing entries")
         // A transient provider outage must never skip the current song.
         let clock = Date(timeIntervalSince1970: 1_700_000_000)
         var delayed = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
