@@ -129,9 +129,9 @@ enum AudioSourceFinder {
             (key == title || key == MusicMatching.key("\(wish.artist) - \(wish.title)"))
     }
 
-    static func find(for wish: PlaylistWish,
-                     allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
-        guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
+    static let maxArchiveSearchPages = 2
+
+    static func archiveSearchURL(for wish: PlaylistWish, page: Int) -> URL {
         func escaped(_ value: String) -> String {
             value.replacingOccurrences(of: "\"", with: " ")
                  .replacingOccurrences(of: "\n", with: " ")
@@ -141,41 +141,52 @@ enum AudioSourceFinder {
             URLQueryItem(name: "q", value: "mediatype:audio AND (title:(\"\(escaped(wish.title))\") OR description:(\"\(escaped(wish.title))\")) AND creator:(\"\(escaped(wish.artist))\")"),
             URLQueryItem(name: "fl[]", value: "identifier"),
             URLQueryItem(name: "rows", value: "20"),
+            URLQueryItem(name: "page", value: String(max(1, min(page, maxArchiveSearchPages)))),
             URLQueryItem(name: "output", value: "json")
         ]
-        let search: SearchResponse = try await requestJSON(query.url!, allowsCellular: allowsCellular)
-        for result in search.response.docs.prefix(20) {
-            try Task.checkCancellation()
-            guard safeIdentifier(result.identifier) else { continue }
-            let metadataURL = URL(string: "https://archive.org/metadata/")!
-                .appendingPathComponent(result.identifier)
-            guard let item: ArchiveItem = try? await requestJSON(metadataURL, allowsCellular: allowsCellular),
-                  let metadata = item.metadata,
-                  let license = licensedURL(metadata.licenseurl?.value) else { continue }
+        return query.url!
+    }
 
-            let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
-            let originalFiles = audioFiles.filter { $0.source == "original" }
-            let eligibleFiles = originalFiles.isEmpty ? audioFiles : originalFiles
-            // Some Archive items represent an album of individually downloadable
-            // original MP3 files. Select only a uniquely named recording, never
-            // an arbitrary album, concert mix, or generated derivative.
-            let matches = eligibleFiles.filter { file in
-                archiveFileCandidate(name: file.name, source: file.source,
-                                     lengthBytes: file.length,
-                                     itemTitle: metadata.title?.value ?? "",
-                                     itemCreator: metadata.creator?.value ?? "",
-                                     audioFileCount: eligibleFiles.count, wish: wish)
+    static func find(for wish: PlaylistWish,
+                     allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
+        guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
+        // The public search API supports pagination. Only request page two
+        // when page one has no verified recording and its results are full.
+        for page in 1...maxArchiveSearchPages {
+            try Task.checkCancellation()
+            let search: SearchResponse = try await requestJSON(
+                archiveSearchURL(for: wish, page: page),
+                allowsCellular: allowsCellular)
+            for result in search.response.docs.prefix(20) {
+                try Task.checkCancellation()
+                guard safeIdentifier(result.identifier) else { continue }
+                let metadataURL = URL(string: "https://archive.org/metadata/")!
+                    .appendingPathComponent(result.identifier)
+                guard let item: ArchiveItem = try? await requestJSON(
+                    metadataURL, allowsCellular: allowsCellular),
+                      let metadata = item.metadata,
+                      let license = licensedURL(metadata.licenseurl?.value) else { continue }
+
+                let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
+                let originalFiles = audioFiles.filter { $0.source == "original" }
+                let eligibleFiles = originalFiles.isEmpty ? audioFiles : originalFiles
+                let matches = eligibleFiles.filter { file in
+                    archiveFileCandidate(name: file.name, source: file.source,
+                                         lengthBytes: file.length,
+                                         itemTitle: metadata.title?.value ?? "",
+                                         itemCreator: metadata.creator?.value ?? "",
+                                         audioFileCount: eligibleFiles.count, wish: wish)
+                }
+                guard matches.count == 1, let file = matches.first else { continue }
+                let itemURL = URL(string: "https://archive.org/details/")!
+                    .appendingPathComponent(result.identifier)
+                let downloadURL = URL(string: "https://archive.org/download/")!
+                    .appendingPathComponent(result.identifier)
+                    .appendingPathComponent(file.name)
+                return AudioCatalogMatch(downloadURL: downloadURL, itemURL: itemURL,
+                                         licenseURL: license, sourceName: "Internet Archive")
             }
-            guard matches.count == 1, let file = matches.first else { continue }
-            // Archive lengths are bytes, never time. The downloaded recording
-            // is decoded and measured against Spotify's duration before saving.
-            let itemURL = URL(string: "https://archive.org/details/")!
-                .appendingPathComponent(result.identifier)
-            let downloadURL = URL(string: "https://archive.org/download/")!
-                .appendingPathComponent(result.identifier)
-                .appendingPathComponent(file.name)
-            return AudioCatalogMatch(downloadURL: downloadURL, itemURL: itemURL,
-                                     licenseURL: license, sourceName: "Internet Archive")
+            if search.response.docs.count < 20 { break }
         }
         return nil
     }
@@ -398,6 +409,29 @@ extension AudioSourceFinder {
     static func uniqueDownloadSources(_ ordered: [AudioCatalogMatch]) -> [AudioCatalogMatch] {
         var visited: Set<URL> = []
         return ordered.filter { visited.insert($0.downloadURL).inserted }
+    }
+
+    /// Smoothed per-provider success rate. New sources start at a neutral
+    /// 50%, so one failure cannot permanently suppress any catalog.
+    /// Equal scores preserve discovery order, and missing audio never counts
+    /// as a successful download.
+    static func prioritize(_ matches: [AudioCatalogMatch],
+                           successfulProviders: [String],
+                           failedProviders: [String]) -> [AudioCatalogMatch] {
+        let successes = Dictionary(successfulProviders.map { ($0, 1) },
+                                   uniquingKeysWith: +)
+        let failures = Dictionary(failedProviders.map { ($0, 1) },
+                                  uniquingKeysWith: +)
+        func confidence(_ provider: String) -> Double {
+            let success = successes[provider, default: 0]
+            let failure = failures[provider, default: 0]
+            return Double(success + 1) / Double(success + failure + 2)
+        }
+        return uniqueDownloadSources(matches).enumerated().sorted { lhs, rhs in
+            let left = confidence(lhs.element.sourceName)
+            let right = confidence(rhs.element.sourceName)
+            return left == right ? lhs.offset < rhs.offset : left > right
+        }.map(\.element)
     }
 
     static func nextAlternative(to currentURL: URL, from remaining: [AudioCatalogMatch])
