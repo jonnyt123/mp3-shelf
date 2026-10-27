@@ -284,6 +284,45 @@ enum SourceDiscoveryJobTests {
         backgroundJob.isPaused = false
         verifyDiscovery(BackgroundDiscoveryPolicy.hasPending([backgroundJob]),
                         "unfinished unpaused playlist can request a background window")
+        // Long playlists should not starve later playlists when iOS grants
+        // only a handful of short background processing windows.
+        let firstWindow = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        let secondWindow = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        let thirdWindow = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        let fairJobs = [firstWindow, secondWindow, thirdWindow]
+        verifyDiscovery(BackgroundDiscoveryPolicy.nextJob(
+            in: fairJobs, lastPlaylistID: nil, onWiFi: true,
+            at: backgroundClock)?.playlistID == firstWindow.playlistID,
+            "first background window begins with first available playlist")
+        verifyDiscovery(BackgroundDiscoveryPolicy.nextJob(
+            in: fairJobs, lastPlaylistID: firstWindow.playlistID,
+            onWiFi: true, at: backgroundClock)?.playlistID == secondWindow.playlistID &&
+            BackgroundDiscoveryPolicy.nextJob(
+                in: fairJobs, lastPlaylistID: thirdWindow.playlistID,
+                onWiFi: true, at: backgroundClock)?.playlistID == firstWindow.playlistID,
+            "successive windows rotate and wrap across playlists")
+        verifyDiscovery(BackgroundDiscoveryPolicy.nextJob(
+            in: fairJobs, lastPlaylistID: firstWindow.playlistID,
+            onWiFi: false, at: backgroundClock) == nil,
+            "rotating background queue never authorizes cellular discovery")
+        var blockedPlaylist = secondWindow
+        blockedPlaylist.isPaused = true
+        var deferredPlaylist = thirdWindow
+        deferredPlaylist.nextRetryAt = backgroundClock.addingTimeInterval(45 * 60)
+        verifyDiscovery(BackgroundDiscoveryPolicy.nextJob(
+            in: [firstWindow, blockedPlaylist, deferredPlaylist],
+            lastPlaylistID: firstWindow.playlistID, onWiFi: true,
+            at: backgroundClock)?.playlistID == firstWindow.playlistID,
+            "skip paused and backing-off playlists rather than wasting a window")
+        verifyDiscovery(BackgroundDiscoveryPolicy.earliestUsefulDate(
+            for: [blockedPlaylist, deferredPlaylist], at: backgroundClock) ==
+                deferredPlaylist.nextRetryAt,
+            "system wake is deferred until the provider retry becomes due")
+        verifyDiscovery(BackgroundDiscoveryPolicy.earliestUsefulDate(
+            for: [firstWindow, deferredPlaylist], at: backgroundClock) == backgroundClock &&
+            BackgroundDiscoveryPolicy.earliestUsefulDate(
+                for: [blockedPlaylist], at: backgroundClock) == nil,
+            "ready playlists trigger work while paused-only queues do not")
         print("Persistent discovery checkpoint tests passed")
     }
 }
