@@ -7,7 +7,7 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
 
 @main
 enum SourceDiscoveryJobTests {
-    static func main() throws {
+    @MainActor static func main() async throws {
         verifyDiscovery(DownloadNetworkPolicy.canDiscover(
             onWiFi: true, onCellular: false, explicitlyAllowCellular: false),
             "Wi-Fi downloads run without per-track confirmation")
@@ -344,6 +344,38 @@ enum SourceDiscoveryJobTests {
             BackgroundDiscoveryPolicy.earliestUsefulDate(
                 for: [blockedPlaylist], at: backgroundClock) == nil,
             "ready playlists trigger work while paused-only queues do not")
+        // URLSession may deliver two completed MP3s while a third callback
+        // reports that iOS has no more background events. Every caller must
+        // await the import pass and any additional pass requested during it.
+        let staging = StagedAudioRecoveryCoordinator()
+        var importPasses = 0
+        var unblockImport: CheckedContinuation<Void, Never>?
+        let firstImport = Task { @MainActor in
+            await staging.run {
+                importPasses += 1
+                if importPasses == 1 {
+                    await withCheckedContinuation { continuation in
+                        unblockImport = continuation
+                    }
+                }
+            }
+        }
+        while unblockImport == nil { await Task.yield() }
+        let secondImport = Task { @MainActor in
+            await staging.run { importPasses += 1 }
+        }
+        let finishingEvents = Task { @MainActor in
+            await staging.run { importPasses += 1 }
+        }
+        for _ in 0..<8 { await Task.yield() }
+        verifyDiscovery(importPasses == 1,
+                        "staged downloads are never imported concurrently")
+        unblockImport?.resume()
+        await firstImport.value
+        await secondImport.value
+        await finishingEvents.value
+        verifyDiscovery(importPasses == 2,
+                        "overlapping imports coalesce while completion awaits final staging pass")
         print("Persistent discovery checkpoint tests passed")
     }
 }

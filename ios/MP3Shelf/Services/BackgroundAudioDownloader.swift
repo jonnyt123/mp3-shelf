@@ -438,7 +438,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // the OS restores actual task progress after process reattachment.
     }
 
+    private let stagedRecoveryCoordinator = StagedAudioRecoveryCoordinator()
+
+    /// A URLSession callback, foreground attach and didFinishEvents may all
+    /// request staging concurrently. Await the whole serialized import queue
+    /// before acknowledging system background events; never report completion
+    /// while a separately-started import is still awaiting file validation.
     private func recoverStagedDownloads() async {
+        await stagedRecoveryCoordinator.run {
+            await self.importStagedDownloadsPass()
+        }
+    }
+
+    private func importStagedDownloadsPass() async {
         // A queued transfer might have become redundant because a separate
         // playlist or manual import already saved the exact recording.
         reconcileAlreadyStoredDownloads()

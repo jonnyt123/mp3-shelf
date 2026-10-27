@@ -84,6 +84,35 @@ enum BackgroundTransferProgressPolicy {
     }
 }
 
+/// Coalesce overlapping URLSession callbacks into one verified staging pass.
+/// The last caller must not report background events complete until its pass
+/// (and any newly staged media arriving during that pass) has finished.
+@MainActor
+final class StagedAudioRecoveryCoordinator {
+    private var isRunning = false
+    private var needsAnotherPass = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func run(_ performPass: @MainActor () async -> Void) async {
+        if isRunning {
+            needsAnotherPass = true
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+            return
+        }
+        isRunning = true
+        repeat {
+            needsAnotherPass = false
+            await performPass()
+        } while needsAnotherPass
+        isRunning = false
+        let resumed = waiters
+        waiters.removeAll()
+        for continuation in resumed { continuation.resume() }
+    }
+}
+
 /// The local transfer manifest and iOS' background URLSession can drift
 /// apart after a crash or the system discards a task. Be conservative: do not
 /// duplicate a live task or reissue one whose staging file awaits import.
