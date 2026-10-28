@@ -361,8 +361,10 @@ enum SourceDiscoveryJobTests {
             !DownloadNetworkPolicy.canDiscover(
                 onWiFi: false, onCellular: true, explicitlyAllowCellular: false) &&
             DownloadNetworkPolicy.canDiscover(
-                onWiFi: false, onCellular: true, explicitlyAllowCellular: true),
-            "foreground resume preserves Wi-Fi-only default while honoring explicit cellular approval")
+                onWiFi: false, onCellular: true, explicitlyAllowCellular: true) &&
+            !DownloadNetworkPolicy.canDiscover(
+                onWiFi: false, onCellular: false, explicitlyAllowCellular: true),
+            "foreground resume requires a known permitted path and honors explicit cellular approval")
         verifyDiscovery(BackgroundDiscoveryPolicy.canProcess(
             onWiFi: true, job: backgroundJob, at: backgroundClock),
             "background source discovery can run on Wi-Fi")
