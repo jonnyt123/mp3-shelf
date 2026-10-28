@@ -369,6 +369,11 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(!BackgroundDiscoveryPolicy.canProcess(
             onWiFi: false, job: backgroundJob, at: backgroundClock),
             "system-granted background window does not authorize cellular")
+        verifyDiscovery(!DownloadNetworkPolicy.canDiscover(
+            onWiFi: false, onCellular: true, explicitlyAllowCellular: true) ||
+            !BackgroundDiscoveryPolicy.canProcess(
+                onWiFi: false, job: backgroundJob, at: backgroundClock),
+            "foreground cellular approval cannot authorize background discovery")
         backgroundJob.recordTransientFailure("Temporary catalog error",
                                              at: backgroundClock)
         verifyDiscovery(!BackgroundDiscoveryPolicy.canProcess(
