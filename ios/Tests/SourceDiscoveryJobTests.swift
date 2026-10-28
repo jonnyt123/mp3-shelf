@@ -368,6 +368,11 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(BackgroundDiscoveryPolicy.canProcess(
             onWiFi: true, job: backgroundJob, at: backgroundClock),
             "background source discovery can run on Wi-Fi")
+        var completedBackgroundJob = backgroundJob
+        completedBackgroundJob.record(.queued)
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canProcess(
+            onWiFi: true, job: completedBackgroundJob, at: backgroundClock),
+            "completed playlists are not rescanned in a later background window")
         verifyDiscovery(!BackgroundDiscoveryPolicy.canProcess(
             onWiFi: false, job: backgroundJob, at: backgroundClock),
             "system-granted background window does not authorize cellular")
