@@ -215,6 +215,16 @@ enum BackgroundDiscoveryPolicy {
             job.canAttemptLookup(at: date)
     }
 
+    /// Do not spend catalog retry budget when a bounded Wi-Fi-only lookup
+    /// loses its permitted network while the provider request is in flight.
+    static func canRecordLookupFailure(isCancelled: Bool, isPaused: Bool,
+                                       networkAllowed: Bool,
+                                       backgroundWiFiOnly: Bool,
+                                       onWiFi: Bool) -> Bool {
+        !isCancelled && !isPaused && networkAllowed &&
+            (!backgroundWiFiOnly || onWiFi)
+    }
+
     /// Rotate across playlists between independently granted iOS windows, so
     /// a long playlist cannot monopolize rare background processing time.
     static func nextJob(in jobs: [SourceDiscoveryJob], lastPlaylistID: UUID?,
