@@ -328,20 +328,24 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(BackgroundDiscoveryPolicy.maxSongsPerPass == 5,
                         "background source discovery is bounded to five songs")
         verifyDiscovery(BackgroundDiscoveryPolicy.canStartForegroundScan(
-            isSceneActive: true, hasForegroundTask: false, hasBackgroundBatch: false),
+            isSceneActive: true, hasForegroundTask: false, hasBackgroundBatch: false, hasPendingWork: true),
             "idle foreground discovery can start automatically")
         verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
-            isSceneActive: true, hasForegroundTask: true, hasBackgroundBatch: false),
+            isSceneActive: true, hasForegroundTask: true, hasBackgroundBatch: false, hasPendingWork: true),
             "Wi-Fi change does not start duplicate foreground discovery")
         verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
-            isSceneActive: true, hasForegroundTask: false, hasBackgroundBatch: true),
+            isSceneActive: true, hasForegroundTask: false, hasBackgroundBatch: true, hasPendingWork: true),
             "Wi-Fi callback cannot bypass the five-song background batch limit")
         verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
-            isSceneActive: true, hasForegroundTask: true, hasBackgroundBatch: true),
+            isSceneActive: true, hasForegroundTask: true, hasBackgroundBatch: true, hasPendingWork: true),
             "neither active scan permits a concurrent source lookup")
         verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
-            isSceneActive: false, hasForegroundTask: false, hasBackgroundBatch: false),
+            isSceneActive: false, hasForegroundTask: false, hasBackgroundBatch: false, hasPendingWork: true),
             "headless URLSession wake cannot initiate unbounded catalog discovery")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
+            isSceneActive: true, hasForegroundTask: false, hasBackgroundBatch: false,
+            hasPendingWork: false),
+            "an empty discovery queue cannot schedule a foreground scan")
         verifyDiscovery(BackgroundDiscoveryPolicy.shouldResumeForegroundDiscovery(
             isSceneActive: true, foregroundRequestPending: true,
             hasBackgroundBatch: false),
