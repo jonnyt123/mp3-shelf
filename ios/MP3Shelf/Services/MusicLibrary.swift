@@ -526,7 +526,8 @@ final class MusicLibrary: ObservableObject {
         guard BackgroundDiscoveryPolicy.canStartForegroundScan(
             isSceneActive: foregroundDiscoveryEnabled,
             hasForegroundTask: automaticDownloadTask != nil,
-            hasBackgroundBatch: backgroundDiscoveryInProgress
+            hasBackgroundBatch: backgroundDiscoveryInProgress,
+            hasPendingWork: hasPendingDiscoveryWork
         ) else { return }
         let eligible = discoveryJobs.filter {
             !$0.isPaused && !$0.isComplete &&
