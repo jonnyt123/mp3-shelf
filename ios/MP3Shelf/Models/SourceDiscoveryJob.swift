@@ -192,8 +192,9 @@ enum BackgroundDiscoveryPolicy {
     /// Do not launch a second, unbounded foreground lookup from that callback.
     static func canStartForegroundScan(isSceneActive: Bool,
                                        hasForegroundTask: Bool,
-                                       hasBackgroundBatch: Bool) -> Bool {
-        isSceneActive && !hasForegroundTask && !hasBackgroundBatch
+                                       hasBackgroundBatch: Bool,
+                                       hasPendingWork: Bool) -> Bool {
+        isSceneActive && hasPendingWork && !hasForegroundTask && !hasBackgroundBatch
     }
 
     /// A foreground request that arrived during a bounded background pass
