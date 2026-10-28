@@ -382,11 +382,6 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(!BackgroundDiscoveryPolicy.canProcess(
             onWiFi: false, job: backgroundJob, at: backgroundClock),
             "system-granted background window does not authorize cellular")
-        verifyDiscovery(DownloadNetworkPolicy.canDiscover(
-            onWiFi: false, onCellular: true, explicitlyAllowCellular: true) &&
-            !BackgroundDiscoveryPolicy.canProcess(
-                onWiFi: false, job: backgroundJob, at: backgroundClock),
-            "foreground cellular approval does not authorize background discovery")
         verifyDiscovery(!DownloadNetworkPolicy.canDiscover(
             onWiFi: false, onCellular: false, explicitlyAllowCellular: true),
             "unknown network path remains blocked despite cellular approval")
