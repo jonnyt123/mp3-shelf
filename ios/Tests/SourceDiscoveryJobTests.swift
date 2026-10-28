@@ -382,6 +382,27 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(!BackgroundDiscoveryPolicy.canProcess(
             onWiFi: false, job: backgroundJob, at: backgroundClock),
             "system-granted background window does not authorize cellular")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canRecordLookupFailure(
+            isCancelled: false, isPaused: false, networkAllowed: true,
+            backgroundWiFiOnly: true, onWiFi: false),
+            "Wi-Fi loss during a background lookup does not spend catalog retry budget")
+        verifyDiscovery(BackgroundDiscoveryPolicy.canRecordLookupFailure(
+            isCancelled: false, isPaused: false, networkAllowed: true,
+            backgroundWiFiOnly: true, onWiFi: true) &&
+            BackgroundDiscoveryPolicy.canRecordLookupFailure(
+                isCancelled: false, isPaused: false, networkAllowed: true,
+                backgroundWiFiOnly: false, onWiFi: false),
+            "real provider errors remain retryable on permitted foreground or background paths")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.canRecordLookupFailure(
+            isCancelled: true, isPaused: false, networkAllowed: true,
+            backgroundWiFiOnly: false, onWiFi: true) &&
+            !BackgroundDiscoveryPolicy.canRecordLookupFailure(
+                isCancelled: false, isPaused: true, networkAllowed: true,
+                backgroundWiFiOnly: false, onWiFi: true) &&
+            !BackgroundDiscoveryPolicy.canRecordLookupFailure(
+                isCancelled: false, isPaused: false, networkAllowed: false,
+                backgroundWiFiOnly: false, onWiFi: true),
+            "cancelled, paused or network-blocked requests do not spend retry budget")
         verifyDiscovery(!DownloadNetworkPolicy.canDiscover(
             onWiFi: false, onCellular: false, explicitlyAllowCellular: true),
             "unknown network path remains blocked despite cellular approval")
