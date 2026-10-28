@@ -476,7 +476,10 @@ final class MusicLibrary: ObservableObject {
             // A foreground activation may have arrived while the bounded
             // background lookup was awaiting a provider response. Re-check
             // after releasing the ownership flag so that request is not lost.
-            if foregroundDiscoveryEnabled {
+            if BackgroundDiscoveryPolicy.shouldResumeForegroundAfterBatch(
+                isSceneActive: foregroundDiscoveryEnabled,
+                hasPendingWork: hasPendingDiscoveryWork
+            ) {
                 resumePendingDiscovery()
             }
         }
