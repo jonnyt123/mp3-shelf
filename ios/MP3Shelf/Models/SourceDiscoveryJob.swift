@@ -77,6 +77,15 @@ enum BackgroundDiscoveryPolicy {
         jobs.contains { !$0.isPaused && !$0.isComplete }
     }
 
+    /// A foreground request that arrived during a bounded background pass
+    /// may be resumed only after the pass releases its ownership flag.
+    static func shouldResumeForegroundAfterBatch(
+        isSceneActive: Bool,
+        hasPendingWork: Bool
+    ) -> Bool {
+        isSceneActive && hasPendingWork
+    }
+
     static func canProcess(onWiFi: Bool, job: SourceDiscoveryJob, at date: Date) -> Bool {
         onWiFi && !job.isPaused && !job.isComplete &&
             job.canAttemptLookup(at: date)

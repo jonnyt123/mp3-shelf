@@ -241,6 +241,15 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(!BackgroundDiscoveryPolicy.canStartForegroundScan(
             isSceneActive: false, hasForegroundTask: false, hasBackgroundBatch: false),
             "headless URLSession wake cannot initiate unbounded catalog discovery")
+        verifyDiscovery(BackgroundDiscoveryPolicy.shouldResumeForegroundAfterBatch(
+            isSceneActive: true, hasPendingWork: true),
+            "active foreground request resumes after bounded background work releases ownership")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.shouldResumeForegroundAfterBatch(
+            isSceneActive: false, hasPendingWork: true),
+            "background or headless launches never resume unrestricted discovery")
+        verifyDiscovery(!BackgroundDiscoveryPolicy.shouldResumeForegroundAfterBatch(
+            isSceneActive: true, hasPendingWork: false),
+            "completed discovery does not schedule an unnecessary foreground pass")
         verifyDiscovery(BackgroundDiscoveryPolicy.canProcess(
             onWiFi: true, job: backgroundJob, at: backgroundClock),
             "background source discovery can run on Wi-Fi")
