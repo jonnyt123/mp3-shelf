@@ -488,7 +488,7 @@ final class MusicLibrary: ObservableObject {
             // ownership so the pending foreground request is not lost.
             if BackgroundDiscoveryPolicy.shouldResumeForegroundDiscovery(
                 isSceneActive: foregroundDiscoveryEnabled,
-                foregroundRequestPending: foregroundDiscoveryEnabled) {
+                foregroundRequestPending: hasPendingDiscoveryWork) {
                 resumePendingDiscovery()
             }
         }
