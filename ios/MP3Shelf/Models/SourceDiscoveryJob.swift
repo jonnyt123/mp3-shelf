@@ -200,8 +200,9 @@ enum BackgroundDiscoveryPolicy {
     /// may be retried only after that pass releases ownership. Headless
     /// launches must never turn completion into an unrestricted scan.
     static func shouldResumeForegroundDiscovery(isSceneActive: Bool,
-                                                foregroundRequestPending: Bool) -> Bool {
-        isSceneActive && foregroundRequestPending
+                                                foregroundRequestPending: Bool,
+                                                hasBackgroundBatch: Bool) -> Bool {
+        isSceneActive && foregroundRequestPending && !hasBackgroundBatch
     }
 
     static func hasPending(_ jobs: [SourceDiscoveryJob]) -> Bool {
