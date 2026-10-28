@@ -698,8 +698,13 @@ final class MusicLibrary: ObservableObject {
                 } catch {
                     // A network handoff or user pause must not burn through
                     // the catalog's retry budget.
-                    if Task.isCancelled || job.isPaused ||
-                        !networkAllowsDiscovery(for: playlistID) { break }
+                    guard BackgroundDiscoveryPolicy.canRecordLookupFailure(
+                        isCancelled: Task.isCancelled,
+                        isPaused: job.isPaused,
+                        networkAllowed: networkAllowsDiscovery(for: playlistID),
+                        backgroundWiFiOnly: backgroundWiFiOnly,
+                        onWiFi: isOnWiFi
+                    ) else { break }
                     job.recordTransientFailure(error.localizedDescription)
                     // Continue to the NEXT song after five failed attempts,
                     // preserving the .failed outcome and source discovery log.
