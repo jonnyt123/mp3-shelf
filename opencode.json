@@ -19,5 +19,8 @@
       "git reset --hard*": "deny",
       "git clean -fd*": "deny"
     }
-  }
+  },
+  "enabled_providers": [
+    "deepseek"
+  ]
 }
