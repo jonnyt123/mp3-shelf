@@ -162,11 +162,15 @@ async function runOne() {
     // Native iOS compilation is explicitly deferred to the independent Mac worker.
     const testEnv={...process.env};
     for(const k of ['DEEPSEEK_API_KEY','GH_TOKEN','GITHUB_TOKEN','OPENAI_API_KEY','ANTHROPIC_API_KEY'])delete testEnv[k];
-    await exec('node',['--test','tools/deepseek-agents/runner.test.mjs'],cwd,120000,testEnv);
+    await exec('node',['--test','tools/deepseek-agents/runner.test.mjs','tools/deepseek-agents/publish.test.mjs'],cwd,120000,testEnv);
     if(files.some(p=>/^(src\/|tests\/|package\.json$|package-lock\.json$|next\.config\.)/.test(p))) {
       await exec('npm',['test'],cwd,180000,testEnv);
       await exec('npm',['run','typecheck'],cwd,180000,testEnv);
     }
+    const postFiles=pathsFromPorcelain(await exec('git',['status','--porcelain=v1','-z','--untracked-files=all'],cwd));
+    if(postFiles.length!==files.length || postFiles.some(p=>!files.includes(p))) throw Error('Tests changed file inventory; refuse commit');
+    await exec('git',['diff','--check'],cwd);
+    await exec('git',['diff','--cached','--check'],cwd);
     await exec('git',['-c','user.name=MP3 Shelf Agent','-c','user.email=agent@users.noreply.github.com',
       'commit','-m','agent(' + agent.id + '): tested scoped milestone [skip ci]'],cwd);
     const sha = (await exec('git',['rev-parse','HEAD'],cwd)).trim();
