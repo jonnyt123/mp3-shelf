@@ -68,3 +68,47 @@ To inspect or stop:
 
 The worker cannot build signed iPhone apps on Oracle Linux. That verification still requires macOS/Xcode, and the physical-iPhone release gate #6 remains mandatory. Successful first agent activation means a real DeepSeek-driven coding session ran with enough API balance on the actual server; local code edits and test evidence must be checked before anyone claims a shippable result. This first stage deliberately makes local commits only; no remote PRs or automatic releases are enabled.
 
+
+## Q2 — automatic guarded draft PR publishing
+
+A separate publishing broker is provided in tools/deepseek-agents/publish.mjs. The Oracle setup installs a **root-owned copy** under /opt/mp3-shelf-publisher, running as a different Linux user (mp3publisher). The DeepSeek model process has no GitHub token. The broker never executes agent-supplied code.
+
+Obtain a GitHub fine-grained PAT limited to only jonnyt123/mp3-shelf with Contents read/write and Pull requests read/write. Enter it in hidden input on the server:
+
+    sudo bash /srv/mp3-shelf/tools/deepseek-agents/oci/install-publisher-token.sh
+    sudo systemctl enable --now mp3-shelf-publisher.path
+
+The systemd path watcher triggers when the coding supervisor writes approved SHA-bound evidence. The supervisor checks file ownership, Git diff hygiene, Node unit tests, and web tests/typecheck when applicable. The broker double-checks the exact SHA, per-commit file list, expected ancestry, and non-force push semantics. It publishes only agent/mp3-* branches and opens DRAFT PRs against the native PR #4 integration branch.
+
+Agent commits include [skip ci] to avoid consuming exhausted GitHub Actions minutes. GitHub may leave required checks pending; this is intentional and does not bypass or mark them green. Mac QA checks must happen independently before merging and the real iPhone release gate #6 still blocks merging the original stacked native changes to main.
+
+Stop remote publishing (agents may still make local commits):
+
+    sudo systemctl disable --now mp3-shelf-publisher.path
+    sudo systemctl stop mp3-shelf-publisher.service
+
+## Q3 — Mac Xcode QA companion
+
+Use your existing Mac with Xcode as the native build worker. It does not need inbound SSH, an externally exposed port, a DeepSeek API key, or a GitHub Actions runner.
+
+In a clone of the setup branch on your Mac:
+
+    bash tools/deepseek-agents/mac/install-mac.sh
+
+The Mac LaunchAgent fetches updated agent branches from GitHub while the Mac is awake/logged in. For every new SHA it performs an unsigned Simulator Debug build and five Swift regression suites, then writes reports under ~/Library/Application Support/MP3ShelfCloudQA/.
+
+Optional automated GitHub commit statuses use a DIFFERENT, root-only macOS LaunchDaemon:
+
+    sudo bash tools/deepseek-agents/mac/install-status-reporter.sh
+
+It asks for a distinct fine-grained GitHub PAT with Commit statuses write (and Contents read) for only mp3-shelf, stored root-only at /Library/Application Support/MP3ShelfCloudQA/status-token. The test processes never receive that token. The broker publishes mp3/mac-xcode SUCCESS/FAILURE on the exact tested commit. These are unsigned Simulator results, **not physical iPhone evidence**. QA reports are local data and cannot authorize an automatic main merge.
+
+To inspect and stop the Mac worker:
+
+    launchctl list | grep com.mp3shelf.cloudqa
+    tail -n 40 "$HOME/Library/Application Support/MP3ShelfCloudQA/launch-out.log"
+    launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.mp3shelf.cloudqa.plist"
+
+## Activation boundary
+
+No Oracle VM, DeepSeek credentials, actual account balance, GitHub PATs, or user Mac Xcode execution are accessible to this chat. All of these components are PREPARED IN SOURCE but NOT ACTIVATED. Do not claim autonomous paid agent execution, Mac pass evidence, or remote publishing until those external prerequisites exist and a real first end-to-end execution has been observed. These are host-level systemd/launchd services, not ChatGPT scheduled tasks; all Aethermoor ChatGPT tasks remain untouched.
