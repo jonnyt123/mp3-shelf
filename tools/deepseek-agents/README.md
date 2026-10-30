@@ -78,7 +78,7 @@ Obtain a GitHub fine-grained PAT limited to only jonnyt123/mp3-shelf with Conten
     sudo bash /srv/mp3-shelf/tools/deepseek-agents/oci/install-publisher-token.sh
     sudo systemctl enable --now mp3-shelf-publisher.path
 
-The systemd path watcher triggers when the coding supervisor writes approved SHA-bound evidence. The supervisor checks file ownership, Git diff hygiene, Node unit tests, and web tests/typecheck when applicable. The broker double-checks the exact SHA, per-commit file list, expected ancestry, and non-force push semantics. It publishes only agent/mp3-* branches and opens DRAFT PRs against the native PR #4 integration branch.
+The systemd path watcher triggers when the coding supervisor writes approved SHA-bound evidence. The supervisor checks file ownership, Git diff hygiene, Node unit tests, and web tests/typecheck when applicable. The broker double-checks the exact SHA, per-commit file list, expected ancestry, and non-force push semantics. It publishes only agent/mp3-* branches and opens DRAFT PRs against the dedicated agent setup branch (which itself is based on draft native PR #4).
 
 Agent commits include [skip ci] to avoid consuming exhausted GitHub Actions minutes. GitHub may leave required checks pending; this is intentional and does not bypass or mark them green. Mac QA checks must happen independently before merging and the real iPhone release gate #6 still blocks merging the original stacked native changes to main.
 
@@ -112,3 +112,5 @@ To inspect and stop the Mac worker:
 ## Activation boundary
 
 No Oracle VM, DeepSeek credentials, actual account balance, GitHub PATs, or user Mac Xcode execution are accessible to this chat. All of these components are PREPARED IN SOURCE but NOT ACTIVATED. Do not claim autonomous paid agent execution, Mac pass evidence, or remote publishing until those external prerequisites exist and a real first end-to-end execution has been observed. These are host-level systemd/launchd services, not ChatGPT scheduled tasks; all Aethermoor ChatGPT tasks remain untouched.
+
+**Branch topology:** Native draft PR #4 (`feat/ios-premium-visual-refresh`) → agent setup PR (`agent/mp3-deepseek-low-cost-worker`) → five separate agent branches and DRAFT PRs. The GitHub publishing broker targets the agent setup branch, not native PR #4 directly. Integration into native PR #4 waits for separate review and Mac QA; merging native PRs to main still requires issue #6's physical-device gate.
