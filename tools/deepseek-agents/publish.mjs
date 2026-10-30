@@ -36,7 +36,7 @@ function execute(bin,args,{cwd=store,env=process.env,ms=120000}={}) {
     });
   });
 }
-async function git(args){return execute('git',['-c','core.hooksPath=/dev/null','-c','credential.helper=!gh auth git-credential',...args]);}
+async function git(args){return execute('git',['-c','core.hooksPath=/dev/null','-c','safe.directory=/srv/mp3-shelf','-c','credential.helper=!gh auth git-credential',...args]);}
 async function init(){
   await mkdir(path.dirname(store),{recursive:true});
   try{await git(['rev-parse','--is-inside-work-tree']);}
