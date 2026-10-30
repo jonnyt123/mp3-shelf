@@ -57,8 +57,9 @@ async function publish(role){
   if(!commitMessage.includes('[skip ci]'))throw Error('Missing CI-skip marker; prevents exhausting GitHub Actions');
   const ancestors=await git(['merge-base',sha,'origin/'+base]);
   if(ancestors!==(await git(['rev-parse','origin/'+base])))throw Error('Worker no longer descends from integration base');
-  const files=(await git(['diff','--name-only','origin/'+base,sha])).split('\n').filter(Boolean);
-  if(files.some(f=>!evidence.files.includes(f)))throw Error('Unexpected cumulative files beyond approved evidence');
+  const parent=(await git(['rev-parse',sha+'^'])).trim();
+  const files=(await git(['diff','--name-only',parent,sha])).split('\n').filter(Boolean);
+  if(files.length!==evidence.files.length || files.some(f=>!evidence.files.includes(f)))throw Error('Commit files do not match trusted local evidence');
   const remoteHead=await git(['ls-remote','--heads','origin','refs/heads/'+branch]);
   if(remoteHead){
     const old=remoteHead.split(/\s+/)[0];
