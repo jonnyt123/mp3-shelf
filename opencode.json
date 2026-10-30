@@ -1,26 +1,104 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "deepseek/deepseek-flash",
-  "small_model": "deepseek/deepseek-flash",
   "default_agent": "mp3-playback",
-  "permission": {
-    "external_directory": "deny",
-    "question": "deny",
-    "websearch": "deny",
-    "webfetch": "deny",
-    "bash": {
-      "*": "ask",
-      "git push*": "deny",
-      "gh *": "deny",
-      "curl *": "deny",
-      "wget *": "deny",
-      "sudo *": "deny",
-      "rm -rf *": "deny",
-      "git reset --hard*": "deny",
-      "git clean -fd*": "deny"
+  "policies": [
+    {
+      "action": "provider.use",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "provider.use",
+      "resource": "deepseek",
+      "effect": "allow"
     }
-  },
-  "enabled_providers": [
-    "deepseek"
+  ],
+  "permissions": [
+    {
+      "action": "external_directory",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*.env*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "**/.ssh/*",
+      "effect": "deny"
+    },
+    {
+      "action": "question",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "webfetch",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "websearch",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "subagent",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "shell",
+      "resource": "git status *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git diff *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git log *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git show *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "git ls-files *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "node --test *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "npm test *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "npm run typecheck *",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "swiftc *",
+      "effect": "allow"
+    }
   ]
 }
