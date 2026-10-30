@@ -18,7 +18,8 @@ for role in mp3-playback mp3-sources mp3-ui mp3-qa mp3-integration; do
   report="$ROOT/reports/$role.json"
   if [[ -f "$report" ]] && /usr/bin/python3 -c 'import json,sys; a=json.load(open(sys.argv[1])); sys.exit(0 if a.get("sha")==sys.argv[2] else 1)' "$report" "$sha"; then continue; fi
   log="$ROOT/logs/$role-$sha.log"
-  git -C "$REPO" fetch --no-tags origin "$sha"
+  git -C "$REPO" fetch --no-tags origin "refs/heads/$branch"
+  [[ "$(git -C "$REPO" rev-parse FETCH_HEAD)" == "$sha" ]] || { echo "Branch advanced during fetch; retry next cycle"; continue; }
   git -C "$REPO" checkout --detach --force "$sha"
   result=success
   (
