@@ -106,7 +106,7 @@ async function getWorktree(agent) {
     return dir;
   }
   await mkdir(worktrees,{recursive:true});
-  const base = process.env.MP3_AGENT_BASE_REF || 'feat/ios-premium-visual-refresh';
+  const base = process.env.MP3_AGENT_BASE_REF || 'agent/mp3-deepseek-low-cost-worker';
   if (!/^[\w./-]+$/.test(base) || base.startsWith('-') || base.includes('..')) throw Error('Unsafe base branch');
   await exec('git',['fetch','origin','refs/heads/' + base + ':refs/remotes/origin/' + base],root);
   const found = (await exec('git',['branch','--list',branch],root)).trim();
