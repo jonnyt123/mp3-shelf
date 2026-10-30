@@ -100,5 +100,12 @@
       "resource": "swiftc *",
       "effect": "allow"
     }
-  ]
+  ],
+  "providers": {
+    "deepseek": {
+      "settings": {
+        "apiKey": "{env:DEEPSEEK_API_KEY}"
+      }
+    }
+  }
 }
