@@ -18,6 +18,7 @@ const stateDir = path.resolve(root, '../.mp3-shelf-agent-state');
 const worktrees = path.resolve(root, '../mp3-shelf-agent-worktrees');
 const ledgerFile = path.join(stateDir, 'ledger.json');
 const lockFile = path.join(stateDir, 'runner.lock');
+const approvalDir = path.join(stateDir, 'approved');
 
 export function setting(name, fallback, min = 0, max = 100) {
   if (process.env[name] == null || process.env[name] === '') return fallback;
@@ -157,10 +158,26 @@ async function runOne() {
     await exec('git',['diff','--check'],cwd);
     await exec('git',['add','--',...files],cwd);
     await exec('git',['diff','--cached','--check'],cwd);
+    // The trusted supervisor, rather than the model, runs available local checks.
+    // Native iOS compilation is explicitly deferred to the independent Mac worker.
+    const testEnv={...process.env};
+    for(const k of ['DEEPSEEK_API_KEY','GH_TOKEN','GITHUB_TOKEN','OPENAI_API_KEY','ANTHROPIC_API_KEY'])delete testEnv[k];
+    await exec('node',['--test','tools/deepseek-agents/runner.test.mjs'],cwd,120000,testEnv);
+    if(files.some(p=>/^(src\/|tests\/|package\.json$|package-lock\.json$|next\.config\.)/.test(p))) {
+      await exec('npm',['test'],cwd,180000,testEnv);
+      await exec('npm',['run','typecheck'],cwd,180000,testEnv);
+    }
     await exec('git',['-c','user.name=MP3 Shelf Agent','-c','user.email=agent@users.noreply.github.com',
-      'commit','-m','agent(' + agent.id + '): implement bounded development milestone'],cwd);
-    const sha = (await exec('git',['rev-parse','--short','HEAD'],cwd)).trim();
-    console.log('LOCAL commit ' + sha + ' (not pushed or merged). Spend today ' + s.spent.toFixed(4) + ' ' + s.currency);
+      'commit','-m','agent(' + agent.id + '): tested scoped milestone [skip ci]'],cwd);
+    const sha = (await exec('git',['rev-parse','HEAD'],cwd)).trim();
+    const approval={role:agent.id,sha,files,diffCheck:'pass',nodeGuardTests:'pass',
+      webChecks:files.some(p=>/^(src\/|tests\/|package\.json$|package-lock\.json$|next\.config\.)/.test(p))?'pass':'not-applicable',
+      macXcode:'pending',physicalIphone:'not-verified',createdAt:new Date().toISOString()};
+    await mkdir(approvalDir,{recursive:true,mode:0o750});
+    const pending=path.join(approvalDir,agent.id+'.json.tmp');
+    await writeFile(pending,JSON.stringify(approval,null,2)+'\n',{mode:0o640});
+    await rename(pending,path.join(approvalDir,agent.id+'.json'));
+    console.log('VALIDATED LOCAL commit ' + sha + ' (broker may publish draft; Mac QA pending). Spend today ' + s.spent.toFixed(4) + ' ' + s.currency);
   } finally { await unlock(); }
 }
 async function main() {
