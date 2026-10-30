@@ -6,7 +6,7 @@ import path from 'node:path';
 
 const repo='jonnyt123/mp3-shelf';
 const remote='https://github.com/'+repo+'.git';
-const base='feat/ios-premium-visual-refresh';
+const base='agent/mp3-deepseek-low-cost-worker';
 export const agentIds=['mp3-playback','mp3-sources','mp3-ui','mp3-qa','mp3-integration'];
 const evidenceDir=process.env.MP3_APPROVAL_DIR || '/srv/.mp3-shelf-agent-state/approved';
 const store=process.env.MP3_PUBLISHER_CLONE || '/var/lib/mp3publisher/repository';
