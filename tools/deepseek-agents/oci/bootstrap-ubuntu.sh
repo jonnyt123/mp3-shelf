@@ -15,7 +15,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
 node --version
 npm install --global @opencode/cli@2
 id -u mp3agent >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/mp3agent --shell /usr/sbin/nologin mp3agent
-install -d -o mp3agent -g mp3agent -m 0750 /srv/mp3-shelf-agent-worktrees /srv/.mp3-shelf-agent-state
+install -d -o mp3agent -g mp3agent -m 0750 /srv/mp3-shelf /srv/mp3-shelf-agent-worktrees /srv/.mp3-shelf-agent-state
 if [[ ! -d /srv/mp3-shelf/.git ]]; then
   runuser -u mp3agent -- git clone --single-branch --branch agent/mp3-deepseek-low-cost-worker https://github.com/jonnyt123/mp3-shelf.git /srv/mp3-shelf
 else
