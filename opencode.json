@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-flash",
+  "small_model": "deepseek/deepseek-flash",
+  "default_agent": "mp3-playback",
+  "permission": {
+    "external_directory": "deny",
+    "question": "deny",
+    "websearch": "deny",
+    "webfetch": "deny",
+    "bash": {
+      "*": "ask",
+      "git push*": "deny",
+      "gh *": "deny",
+      "curl *": "deny",
+      "wget *": "deny",
+      "sudo *": "deny",
+      "rm -rf *": "deny",
+      "git reset --hard*": "deny",
+      "git clean -fd*": "deny"
+    }
+  }
+}
