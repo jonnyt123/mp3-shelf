@@ -45,3 +45,26 @@ The original native PRs #1 to #4 are stacked draft PRs. Do not ship to main unti
 Run the worker only in a restricted environment. OpenCode's command permissions are not a substitute for OS-level isolation, and the DeepSeek API key remains sensitive. GitHub credentials must be managed separately by the trusted supervisor, not handed to coding children.
 
 The Node test suite covers file ownership, path guards, ledger rollover and mocked balance calls. It does not make paid model requests or claim that native iPhone QA is complete.
+
+## One-time OCI Always Free VM setup (not yet provisioned)
+
+Choose an **Always Free eligible** Ubuntu 24.04 Arm instance, e.g. VM.Standard.A1.Flex with 1 OCPU and 6 GB RAM, and an Always Free eligible boot volume in your Oracle home region. Verify the final console estimate reads $0. Do not select paid capacity or enable billable upgrades. Oracle may have no free capacity available; abort instead of choosing paid capacity. This repository cannot open an Oracle tenant or create a VM; those steps require an authenticated OCI administrator.
+
+On a freshly provisioned VM, in its own SSH terminal (never paste keys into ChatGPT):
+
+    sudo apt-get update && sudo apt-get install -y git
+    git clone --depth 1 --branch agent/mp3-deepseek-low-cost-worker https://github.com/jonnyt123/mp3-shelf.git /tmp/mp3-shelf-bootstrap
+    sudo bash /tmp/mp3-shelf-bootstrap/tools/deepseek-agents/oci/bootstrap-ubuntu.sh
+    sudo bash /srv/mp3-shelf/tools/deepseek-agents/oci/install-secret.sh
+    sudo bash /srv/mp3-shelf/tools/deepseek-agents/oci/check-and-start.sh
+
+The bootstrap installs Node 22, Git, OpenCode 2, a dedicated non-login service user and a hardened systemd service. It does NOT enable that service. The secret installer writes a protected root-only /etc/mp3-shelf/agent.env. The final script verifies the offline guard tests and checks the **real** DeepSeek API balance (read-only) before enabling the persistent worker. It does NOT provide DeepSeek credits.
+
+To inspect or stop:
+
+    sudo systemctl --no-pager status mp3-shelf-agent
+    sudo journalctl -u mp3-shelf-agent --since '1 hour ago' --no-pager
+    sudo systemctl disable --now mp3-shelf-agent
+
+The worker cannot build signed iPhone apps on Oracle Linux. That verification still requires macOS/Xcode, and the physical-iPhone release gate #6 remains mandatory. Successful first agent activation means a real DeepSeek-driven coding session ran with enough API balance on the actual server; local code edits and test evidence must be checked before anyone claims a shippable result. This first stage deliberately makes local commits only; no remote PRs or automatic releases are enabled.
+
