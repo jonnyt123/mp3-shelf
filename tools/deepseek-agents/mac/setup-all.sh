@@ -39,10 +39,9 @@ bash tools/deepseek-agents/mac/install-mac.sh
 echo "[7/7] Installing GitHub QA result reporting (different limited PAT)..."
 sudo bash tools/deepseek-agents/mac/install-status-reporter.sh
 echo ""
-echo "Checking the live Cloudflare queue and read-only DeepSeek API balance..."
-if ! node tools/deepseek-agents/cloudflare/mac-client.mjs --doctor; then
-  echo "The DeepSeek API balance check is not available. All agents stay PAUSED." >&2
-  echo "Check your DeepSeek Console API access before resuming."
+echo "Verifying installed services, coordinator access, and read-only DeepSeek balance..."
+if ! bash tools/deepseek-agents/mac/verify-setup.sh; then
+  echo "Some connection diagnostics need attention. Your existing five-agent queue remains PAUSED." >&2
 fi
 echo ""
 echo "Mac/cloud setup finished. No paid model calls have started."
