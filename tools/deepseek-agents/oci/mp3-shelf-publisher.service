@@ -1,0 +1,29 @@
+[Unit]
+Description=MP3 Shelf isolated GitHub draft PR publisher
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/mp3-shelf/publisher.env
+
+[Service]
+Type=oneshot
+User=mp3publisher
+Group=mp3publisher
+SupplementaryGroups=mp3share
+EnvironmentFile=/etc/mp3-shelf/publisher.env
+Environment=HOME=/var/lib/mp3publisher
+WorkingDirectory=/var/lib/mp3publisher
+ExecStart=/usr/bin/node /opt/mp3-shelf-publisher/publish.mjs --once
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/mp3publisher
+
+[Install]
+WantedBy=multi-user.target

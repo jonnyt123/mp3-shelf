@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090c14">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <title>MP3 Shelf — Agent Control</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="shell" id="app">
+    <header class="topbar">
+      <div class="brand"><span class="brandmark" aria-hidden="true"><span></span><span></span><span></span></span><div><strong>MP3 Shelf</strong><small>Autonomous development</small></div></div>
+      <div class="top-status"><span id="connection-dot" class="status-dot"></span><span id="connection-label">Not connected</span></div>
+    </header>
+
+    <section class="welcome" aria-labelledby="page-title">
+      <p class="eyebrow">DEVELOPMENT CONTROL CENTER</p>
+      <h1 id="page-title">Build smarter.<br><em>Stay in control.</em></h1>
+      <p class="intro">Coordinate five DeepSeek coding agents, monitor the Mac runner and manage the development queue. Draft pull requests only—never automatic production releases.</p>
+    </section>
+
+    <section class="auth card" id="auth-panel" aria-labelledby="auth-title">
+      <div><h2 id="auth-title">Connect your coordinator</h2><p>Enter the 64-character coordinator token created during Cloudflare deployment. It's kept in this tab's memory, never saved in the browser.</p></div>
+      <form id="login-form" autocomplete="off" class="login-row">
+        <label class="sr-only" for="token">Coordinator access token</label>
+        <input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="Paste coordinator token" required minlength="64" maxlength="64">
+        <button class="primary" type="submit">Connect</button>
+      </form>
+    </section>
+
+    <div id="console" hidden>
+      <div class="control-heading">
+        <div><p class="eyebrow">LIVE SYSTEM</p><h2>Agent operations</h2></div>
+        <div class="button-row">
+          <button class="ghost" id="refresh" type="button">Refresh</button>
+          <button class="ghost" id="lock" type="button">Lock dashboard</button>
+        </div>
+      </div>
+
+      <section class="metrics" aria-label="System metrics">
+        <article class="metric card"><span class="metric-label">Coordinator</span><div class="metric-value" id="state-value">—</div><span class="metric-detail" id="state-detail">Awaiting connection</span></article>
+        <article class="metric card"><span class="metric-label">Mac runner</span><div class="metric-value" id="runner-value">—</div><span class="metric-detail" id="runner-detail">No heartbeat</span></article>
+        <article class="metric card"><span class="metric-label">Jobs completed</span><div class="metric-value" id="done-value">0</div><span class="metric-detail" id="done-detail">Across all agent cycles</span></article>
+        <article class="metric card"><span class="metric-label">Waiting / blocked</span><div class="metric-value" id="waiting-value">0 / 0</div><span class="metric-detail">Queues are persisted in Cloudflare D1</span></article>
+      </section>
+
+      <section class="controlbar card" aria-label="Coordinator controls">
+        <div><h3>Execution control</h3><p id="control-message">Resume to let your Mac claim development work.</p></div>
+        <div class="button-row">
+          <button id="seed" type="button" class="ghost">Initialize queue</button>
+          <button id="pause" type="button" class="warning">Pause agents</button>
+          <button id="resume" type="button" class="primary">Resume agents</button>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="agent-title">
+        <div class="section-header"><div><p class="eyebrow">SPECIALIZED WORKERS</p><h2 id="agent-title">Your five agents</h2></div><span class="subtle" id="updated-time">—</span></div>
+        <div class="agent-grid" id="agents"></div>
+      </section>
+
+      <section class="section" aria-labelledby="activity-title">
+        <div class="section-header"><div><p class="eyebrow">DEVELOPMENT HISTORY</p><h2 id="activity-title">Recent activity</h2></div><span class="subtle">Latest 20 jobs</span></div>
+        <div class="card activity"><div id="activity" role="list"><p class="empty">No agent activity recorded yet.</p></div></div>
+      </section>
+
+      <footer><span class="footer-dot"></span>Cloudflare Workers Free controls the queue. Your Mac runs code. <a href="https://github.com/jonnyt123/mp3-shelf/pull/23" rel="noreferrer" target="_blank">Development PR #23</a> · <a href="https://github.com/jonnyt123/mp3-shelf/issues/6" rel="noreferrer" target="_blank">iPhone release gate</a></footer>
+    </div>
+    <p id="notification" role="status" aria-live="polite" class="notice" hidden></p>
+  </main>
+</body>
+</html>

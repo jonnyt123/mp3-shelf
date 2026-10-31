@@ -1,0 +1,33 @@
+[Unit]
+Description=MP3 Shelf DeepSeek sequential development agents
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/mp3-shelf/agent.env
+
+[Service]
+Type=simple
+User=mp3agent
+Group=mp3agent
+WorkingDirectory=/srv/mp3-shelf
+EnvironmentFile=/etc/mp3-shelf/agent.env
+Environment=MP3_AGENT_DAILY_CAP=0.50
+Environment=MP3_AGENT_MIN_BALANCE=0.25
+Environment=MP3_AGENT_MAX_RUN_SECONDS=480
+Environment=MP3_AGENT_IDLE_SECONDS=900
+ExecStart=/usr/bin/node tools/deepseek-agents/runner.mjs --loop
+Restart=on-failure
+RestartSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/srv/mp3-shelf /srv/mp3-shelf-agent-worktrees /srv/.mp3-shelf-agent-state /var/lib/mp3agent
+
+[Install]
+WantedBy=multi-user.target

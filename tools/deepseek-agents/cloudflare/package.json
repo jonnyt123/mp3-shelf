@@ -1,0 +1,14 @@
+{
+  "name": "mp3-shelf-cloudflare-coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.mjs",
+    "deploy": "wrangler deploy",
+    "migrate:remote": "wrangler d1 migrations apply mp3-shelf-agent-jobs --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}
