@@ -4,6 +4,20 @@
 
 ### Simplified one-time activation
 
+**One guided command, no Cloudflare resource creation.** The connected account already has `mp3-shelf-coordinator`, D1 database `mp3-shelf-agent-jobs`, and five paused jobs. This Mac installer reuses them.
+
+On first run, the installer will:
+1. Check Xcode and Git, and install Node.js 22+ / OpenCode V2 via Homebrew when missing (with your permission for Homebrew installation if necessary).
+2. Run all offline regression checks before touching credentials.
+3. Open Cloudflare browser sign-in only if necessary; rotate the Cloudflare coordinator bearer token into a protected local file (or reuse one that already works).
+4. Use the known dashboard URL automatically and request your DeepSeek API key once through hidden terminal input (reuse on future runs).
+5. Install the Mac coordinator, protected draft-PR publisher, unsigned Xcode QA runner and separate GitHub QA status reporter.
+6. Run read-only Cloudflare/DeepSeek diagnostics and print the exact dashboard and pause/resume instructions.
+
+Two limited GitHub fine-grained tokens still need to be entered locally the **first** time: Contents+Pull requests write for PR creation; Commit statuses write for test reporting. They are stored root-only and not supplied to coding agents. Authentication can't be silently bypassed. The installation does **not** run paid model requests or merge changes, and remains paused until you explicitly resume.
+
+
+
 On your Mac, after installing Node.js 22+, Xcode, Git and OpenCode 2, open a clone of branch `agent/mp3-deepseek-low-cost-worker` and run:
 
 ```bash
