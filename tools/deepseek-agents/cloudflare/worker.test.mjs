@@ -5,14 +5,14 @@ import { interpretRun, safeConfig } from "./mac-client.mjs";
 
 // Small deterministic D1 stand-in for coordinator contract tests; no Cloudflare account required.
 class FakeDB {
-  constructor() { this.paused = 1; this.jobs = []; this.nextId = 1; }
+  constructor() { this.paused = 1; this.jobs = []; this.nextId = 1; this.runnerLastSeen = null; this.runnerStage = "offline"; }
   prepare(sql) {
     const db = this;
     let args = [];
     return {
       bind(...values) { args = values; return this; },
       async first() {
-        if (sql.startsWith("SELECT paused")) return { paused: db.paused };
+        if (sql.startsWith("SELECT paused")) return { paused: db.paused, runner_last_seen: db.runnerLastSeen, runner_stage: db.runnerStage };
         if (sql.startsWith("SELECT role,cycle,state,outcome")) {
           const j = db.jobs.find(x => x.id === args[0]);
           return j ? { ...j } : null;
@@ -43,6 +43,10 @@ class FakeDB {
           }
           return { results: [] };
         }
+        if (sql.startsWith("UPDATE control SET runner_last_seen")) {
+          db.runnerLastSeen = args[0]; db.runnerStage = args[1];
+          return { results: [] };
+        }
         if (sql.startsWith("UPDATE control")) {
           db.paused = args[0];
           return { results: [] };
@@ -50,6 +54,13 @@ class FakeDB {
         if (sql.startsWith("UPDATE jobs SET state='blocked'")) {
           for (const j of db.jobs) if (j.state === "leased" && j.lease_expires < args[1] && j.attempts >= args[2]) j.state = "blocked";
           return { results: [] };
+        }
+        if (sql.startsWith("UPDATE jobs SET state='queued', attempts=0")) {
+          const job=db.jobs.find(x=>x.id===args[2] && x.state==="blocked");
+          if (!job) return { results: [] };
+          Object.assign(job,{state:"queued",attempts:0,available_at:args[0],updated_at:args[1],
+            lease_id:null,lease_expires:null});
+          return {results:[{...job}]};
         }
         if (sql.startsWith("UPDATE jobs SET state='queued'")) {
           for (const j of db.jobs) if (j.state === "leased" && j.lease_expires < args[2] && j.attempts < args[3]) {
@@ -162,4 +173,25 @@ test("Mac result parser distinguishes commit, exhaustion, and no-change", () => 
   assert.deepEqual(interpretRun(0,"No code edits; spending recorded"),{outcome:"no-change"});
   assert.deepEqual(interpretRun(1,"failed"),{outcome:"failed"});
   assert.throws(()=>safeConfig({workerUrl:"http://insecure",coordinatorToken:token,deepseekApiKey:"test-secret-123"}));
+});
+
+test("Mac heartbeat reports online state but cannot inject arbitrary stages",async()=>{
+  const db = new FakeDB();
+  assert.equal((await call(db,"POST","/v1/heartbeat",{stage:"working"})).status,400);
+  assert.equal((await call(db,"POST","/v1/heartbeat",{stage:"idle"})).status,200);
+  const data=(await call(db,"GET","/v1/status")).data;
+  assert.equal(data.mac.stage,"idle");
+  assert.equal(typeof data.mac.lastSeen,"number");
+});
+test("blocked job can be deliberately retried by ID only",async()=>{
+  const db = new FakeDB();
+  await call(db,"POST","/v1/seed");
+  await call(db,"POST","/v1/pause",{paused:false});
+  const {job}= (await call(db,"POST","/v1/lease")).data;
+  db.jobs[0].state="blocked";
+  assert.equal((await call(db,"POST","/v1/retry",{jobId:job.id})).status,200);
+  assert.equal(db.jobs[0].state,"queued");
+  assert.equal(db.jobs[0].attempts,0);
+  assert.equal((await call(db,"POST","/v1/retry",{jobId:job.id})).status,409);
+  assert.equal((await call(db,"POST","/v1/retry",{jobId:"not-a-number"})).status,400);
 });
