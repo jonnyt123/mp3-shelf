@@ -3,7 +3,8 @@
 set -euo pipefail
 [[ "$(uname -s)" == Darwin && "$EUID" -eq 0 ]] || { echo 'Run with sudo on macOS'; exit 1; }
 [[ -n "$SUDO_USER" && "$SUDO_USER" != root ]] || { echo 'Run using sudo from your normal Mac login'; exit 1; }
-command -v node >/dev/null || { echo 'Node 22+ required on PATH'; exit 1; }
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+command -v node >/dev/null || { echo 'Node 22+ required; install Homebrew Node first'; exit 1; }
 command -v git >/dev/null || exit 1
 src="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$src/../../.." && pwd)"
@@ -25,11 +26,15 @@ SH
 chown root:wheel "$broker/askpass.sh"
 chmod 0700 "$broker/askpass.sh"
 umask 077
-read -r -s -p 'GitHub fine-grained PAT (mp3-shelf only: Contents RW, Pull requests RW): ' token
-printf '\n'
-if [[ ! "$token" =~ ^[A-Za-z0-9_]{25,}$ ]]; then echo 'Invalid PAT format'; exit 1; fi
-printf '%s' "$token" > "$broker/publisher.token"
-unset token
+if [[ -s "$broker/publisher.token" ]]; then
+  echo 'Using existing root-protected publisher token (no repeated prompt).'
+else
+  read -r -s -p 'GitHub fine-grained PAT (mp3-shelf ONLY: Contents + Pull requests write): ' token
+  printf '\n'
+  if [[ ! "$token" =~ ^[A-Za-z0-9_]{25,}$ ]]; then echo 'Invalid PAT format'; exit 1; fi
+  printf '%s' "$token" > "$broker/publisher.token"
+  unset token
+fi
 chown root:wheel "$broker/publisher.token"
 chmod 0600 "$broker/publisher.token"
 plist="/Library/LaunchDaemons/com.mp3shelf.publisher.plist"
