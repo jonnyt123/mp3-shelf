@@ -13,6 +13,10 @@ class FakeDB {
       bind(...values) { args = values; return this; },
       async first() {
         if (sql.startsWith("SELECT paused")) return { paused: db.paused };
+        if (sql.startsWith("SELECT role,cycle,state,outcome")) {
+          const j = db.jobs.find(x => x.id === args[0]);
+          return j ? { ...j } : null;
+        }
         throw Error("Unexpected first query: " + sql);
       },
       async all() {
@@ -61,12 +65,12 @@ class FakeDB {
           return { results: [{...selected}] };
         }
         if (sql.startsWith("UPDATE jobs SET state=CASE")) {
-          const [outcome, max, fallback, failed, failTime, available, delta, sha, outcomeAgain, now, id, lease, expiresNow] = args;
+          const [outcome, max, fallback, failed, failTime, available, delta, lastLease, sha, outcomeAgain, now, id, lease, expiresNow] = args;
           const job = db.jobs.find(j => j.id === id && j.state === "leased" && j.lease_id === lease && j.lease_expires >= expiresNow);
           if (!job) return { results: [] };
           job.state = outcome === "failed" && job.attempts < max ? "queued" : fallback;
           Object.assign(job, { available_at: failed === "failed" ? failTime : available, attempts: Math.max(0,job.attempts + delta),
-            lease_id: null, lease_expires: null, commit_sha: sha, outcome: outcomeAgain, updated_at: now });
+            lease_id: null, lease_expires: null, last_lease_id: lastLease, commit_sha: sha, outcome: outcomeAgain, updated_at: now });
           return { results: [{ ...job }] };
         }
         throw Error("Unexpected run query: " + sql);
@@ -117,7 +121,9 @@ test("success inserts exactly one next-cycle job; duplicate completion rejected"
   assert.equal((await call(db, "POST", "/v1/complete", payload)).status, 200);
   assert.equal(db.jobs.length, 6);
   assert.equal(db.jobs.find(x=>x.role===job.role&&x.cycle===1).state,"queued");
-  assert.equal((await call(db, "POST", "/v1/complete", payload)).status, 409);
+  const replay = await call(db, "POST", "/v1/complete", payload);
+  assert.equal(replay.status, 200);
+  assert.equal(replay.data.replay, true);
   assert.equal(db.jobs.length, 6);
 });
 test("completed jobs without changes don't waste another DeepSeek session", async () => {
