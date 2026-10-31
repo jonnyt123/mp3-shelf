@@ -21,7 +21,7 @@ export function safeBranch(role) {
 export function validEvidence(e, role, sha, files) {
   return !!e && e.role === role && e.sha === sha &&
     e.diffCheck === "pass" && e.nodeGuardTests === "pass" &&
-    e.macXcode !== "pass" && Array.isArray(e.files) &&
+    Array.isArray(e.files) &&
     files.length > 0 && e.files.length === files.length &&
     files.every(f => typeof f === "string" &&
       !f.startsWith("/") && !f.split("/").includes("..") && e.files.includes(f));
@@ -31,7 +31,7 @@ const filePolicy = {
   "mp3-sources": [/^ios\/MP3Shelf\/Services\/(SpotifyService|AudioSourceFinder|BackgroundAudioDownloader)\.swift$/, /^ios\/MP3Shelf\/Models\/SourceDiscoveryJob\.swift$/, /^ios\/MP3Shelf\/Views\/DownloadManagerView\.swift$/, /^ios\/Tests\/[^/]+\.swift$/],
   "mp3-ui": [/^ios\/MP3Shelf\/Views\/(?!DownloadManagerView\.swift$)[^/]+\.swift$/, /^ios\/DESIGN_SYSTEM\.md$/],
   "mp3-qa": [/^ios\/Tests\/[^/]+\.swift$/, /^ios\/DEVICE_QA\.md$/, /^src\/lib\/[^/]+\.test\.ts$/],
-  "mp3-integration": [/^ios\/MP3Shelf\.xcodeproj\/[^/]+\/.*$/, /^ios\/MP3Shelf\/MP3ShelfApp\.swift$/, /^ios\/README\.md$/, /^ios\/scripts\/(?!run-on-iphone\.sh$)[^/]+$/]
+  "mp3-integration": [/^ios\/MP3Shelf\.xcodeproj\/.+$/, /^ios\/MP3Shelf\/MP3ShelfApp\.swift$/, /^ios\/README\.md$/, /^ios\/scripts\/(?!run-on-iphone\.sh$)[^/]+$/]
 };
 export function ownedFiles(role, files) {
   if (!roles.includes(role) || !files.length) return false;
