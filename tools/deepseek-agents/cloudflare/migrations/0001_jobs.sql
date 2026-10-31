@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
   available_at INTEGER NOT NULL,
   lease_id TEXT,
+  last_lease_id TEXT,
   lease_expires INTEGER,
   commit_sha TEXT,
   outcome TEXT,
