@@ -1,3 +1,17 @@
+## Live Cloudflare deployment — October 31, 2026
+
+The connected Cloudflare account now contains the **mp3-shelf-coordinator** Worker and D1 database **mp3-shelf-agent-jobs** (`ba39ac6b-abef-40ab-95e6-c6cb6ed67039`). Both D1 migrations have been applied and all five roles seeded, in a **PAUSED** state. Worker was uploaded using Cloudflare API with embedded dashboard assets, bound D1, and a temporary cryptographically random server-only `COORDINATOR_TOKEN` secret. The public subdomain was enabled as `mp3shelf-jonny.workers.dev`.
+
+**IMPORTANT for first Mac connection:** Do not run `deploy-free.sh` to recreate this database or reapply the existing migrations. Instead, run:
+
+    bash tools/deepseek-agents/cloudflare/connect-existing.sh
+
+This authenticates through Wrangler on your own Mac, creates a fresh locally private coordinator token, and securely rotates the Cloudflare secret to the matching value. Then run `install-mac-coordinator.sh` and the separate publisher/Xcode setup components, or use the integrated `mac/setup-all.sh` installer. The dashboard is configured at:
+
+    https://mp3-shelf-coordinator.mp3shelf-jonny.workers.dev/
+
+An externally resolvable HTTP check of this URL has **not** yet succeeded from this session; Cloudflare's own API confirms Worker deployment, D1 and secret binding, and subdomain enablement. New domain propagation can take time. The Mac is not connected yet and no paid model calls have started.
+
 # MP3 Shelf — Cloudflare Workers Free coordinator
 
 **Purpose:** Cloudflare Workers Free + D1 is the small, durable *control plane* for five DeepSeek coding roles. The **Mac** does actual repository inspection, model API calls, code edits, tests and local commits. Cloudflare does not run Xcode or an AI model and holds **no DeepSeek or GitHub API keys**.
