@@ -1,5 +1,21 @@
 # MP3 Shelf — DeepSeek low-cost development workers
 
+> **Preferred free/no-card setup:** Cloudflare Workers Free + D1 for the queue and your Mac for coding/Xcode. Oracle is optional and not required. See [Cloudflare setup](cloudflare/README.md) and the [single Mac installer](mac/setup-all.sh). The server and Mac services are **not activated by committing these files**.
+
+### Simplified one-time activation
+
+On your Mac, after installing Node.js 22+, Xcode, Git and OpenCode 2, open a clone of branch `agent/mp3-deepseek-low-cost-worker` and run:
+
+```bash
+bash tools/deepseek-agents/mac/setup-all.sh
+```
+
+The installer checks offline tests, deploys the free Cloudflare Worker + D1, collects keys privately on your Mac, installs a separate root-protected GitHub draft publisher, Mac Xcode QA poller and status-only reporter, and performs a **read-only** DeepSeek account balance check. It starts **paused**. Two narrow GitHub fine-grained PATs are required: one with Contents and Pull requests write for draft publishing; one with Commit statuses write for Mac QA evidence. Keep them out of chat.
+
+After inspecting the dashboard and checking that the DeepSeek API balance is positive, resume the coordinator with `node tools/deepseek-agents/cloudflare/mac-client.mjs --resume`. The user-level launchd agent starts claiming tasks while the Mac is awake. A fully completed *live* cycle still requires a genuine DeepSeek call, local commit, published draft PR, and Xcode result. None of that has been performed in this conversation.
+
+
+
 This directory contains the **prepared** worker. It is NOT a running cloud service yet. It requires a persistent trusted host, a DeepSeek Console API key with available balance, Git and OpenCode. It makes no OpenAI API calls, uses no ChatGPT scheduled tasks, and does not trigger GitHub Actions.
 
 The five profiles in .opencode/agents/ use the same DeepSeek Console account and DeepSeek Flash model. They execute sequentially (one paying agent at a time) in five separate persistent worktrees.
