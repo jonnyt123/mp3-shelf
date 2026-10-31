@@ -85,18 +85,21 @@ async function localBudgetAllows() {
 }
 async function one(config) {
   await flushPending(config);  // Network interruptions never silently lose completion evidence.
+  await request(config, "/v1/heartbeat", { stage: "idle" });
   if (!(await localBudgetAllows())) { console.log("Daily budget reached; leaving cloud jobs queued"); return; }
   const { job } = await request(config, "/v1/lease", {});
   if (!job) { console.log("No available cloud job"); return; }
   if (!roles.includes(job.role) || !Number.isSafeInteger(job.id) ||
       typeof job.lease_id !== "string") throw Error("Invalid cloud job; refusing model call");
   console.log("Claimed", job.role, "cycle", job.cycle);
+  await request(config, "/v1/heartbeat", { stage: "running" });
   const result = await childRun(job.role, config.deepseekApiKey);
   const final = interpretRun(result.code, result.output);
   const report = { jobId: job.id, leaseId: job.lease_id, ...final };
   await mkdir(state, { recursive: true, mode: 0o700 });
   await writeFile(pendingFile, JSON.stringify(report) + "\n", { mode: 0o600 });
   await flushPending(config);
+  await request(config, "/v1/heartbeat", { stage: "idle" });
   console.log(job.role + ": " + final.outcome +
     (final.commitSha ? " local commit " + final.commitSha.slice(0, 12) : ""));
 }
