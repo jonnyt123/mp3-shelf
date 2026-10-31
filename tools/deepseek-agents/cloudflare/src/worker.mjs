@@ -48,16 +48,19 @@ async function seed(env) {
   return response({ seeded: ROLES.length });
 }
 async function status(env) {
-  const [control, rows, recent] = await Promise.all([
-    env.DB.prepare("SELECT paused FROM control WHERE id=1").first(),
+  const [control, rows, recent, roles] = await Promise.all([
+    env.DB.prepare("SELECT paused, runner_last_seen, runner_stage FROM control WHERE id=1").first(),
     env.DB.prepare("SELECT state, COUNT(*) AS count FROM jobs GROUP BY state").all(),
-    env.DB.prepare("SELECT id,role,cycle,state,attempts,commit_sha,updated_at FROM jobs ORDER BY id DESC LIMIT 10").all()
+    env.DB.prepare("SELECT id,role,cycle,state,attempts,commit_sha,updated_at FROM jobs ORDER BY id DESC LIMIT 20").all(),
+    env.DB.prepare("SELECT id,role,cycle,state,attempts,commit_sha,updated_at FROM jobs WHERE id IN (SELECT MAX(id) FROM jobs GROUP BY role) ORDER BY role").all()
   ]);
   return response({
     paused: control?.paused !== 0,
     counts: Object.fromEntries((rows.results || []).map(x => [x.state, x.count])),
     recent: recent.results || [],
-    roles: ROLES
+    roles: ROLES,
+    roleStates: roles.results || [],
+    mac: { lastSeen: control?.runner_last_seen || null, stage: control?.runner_stage || "offline" }
   });
 }
 async function lease(env) {
@@ -131,6 +134,22 @@ async function complete(env, data) {
   }
   return response({ accepted: true, state: updated.state, role: updated.role, cycle: updated.cycle });
 }
+async function heartbeat(env, data) {
+  if (!["idle","running","checking"].includes(data.stage)) return response({ error:"invalid_stage" },400);
+  const now=time();
+  await env.DB.prepare("UPDATE control SET runner_last_seen=?,runner_stage=? WHERE id=1")
+    .bind(now,data.stage).run();
+  return response({ seenAt:now });
+}
+async function retryBlocked(env, data) {
+  if (!Number.isSafeInteger(data.jobId) || data.jobId < 1) return response({error:"invalid_job_id"},400);
+  const now=time();
+  const result=await env.DB.prepare(
+    "UPDATE jobs SET state='queued', attempts=0,available_at=?,updated_at=?,lease_id=NULL,lease_expires=NULL WHERE id=? AND state='blocked' RETURNING id,role,cycle"
+  ).bind(now,now,data.jobId).run();
+  const updated=result.results?.[0];
+  return updated ? response({retried:true,job:updated}) : response({error:"job_not_blocked"},409);
+}
 async function setPause(env, data) {
   if (typeof data.paused !== "boolean") return response({ error: "paused_must_be_boolean" }, 400);
   await env.DB.prepare("UPDATE control SET paused=?, updated_at=? WHERE id=1")
@@ -150,6 +169,8 @@ export default {
       if (url.pathname === "/v1/lease") return await lease(env);
       if (url.pathname === "/v1/complete") return await complete(env, data);
       if (url.pathname === "/v1/pause") return await setPause(env, data);
+      if (url.pathname === "/v1/heartbeat") return await heartbeat(env, data);
+      if (url.pathname === "/v1/retry") return await retryBlocked(env, data);
       return response({ error: "not_found" }, 404);
     } catch (error) {
       if (error instanceof SyntaxError || error?.message === "invalid_body") return response({ error: "invalid_json" }, 400);
