@@ -162,7 +162,7 @@ async function runOne() {
     // Native iOS compilation is explicitly deferred to the independent Mac worker.
     const testEnv={...process.env};
     for(const k of ['DEEPSEEK_API_KEY','GH_TOKEN','GITHUB_TOKEN','OPENAI_API_KEY','ANTHROPIC_API_KEY'])delete testEnv[k];
-    await exec('node',['--test','tools/deepseek-agents/runner.test.mjs','tools/deepseek-agents/publish.test.mjs'],cwd,120000,testEnv);
+    await exec('node',['--test','tools/deepseek-agents/runner.test.mjs','tools/deepseek-agents/publish.test.mjs','tools/deepseek-agents/mac/mac-publisher.test.mjs','tools/deepseek-agents/cloudflare/worker.test.mjs'],cwd,120000,testEnv);
     if(files.some(p=>/^(src\/|tests\/|package\.json$|package-lock\.json$|next\.config\.)/.test(p))) {
       await exec('npm',['test'],cwd,180000,testEnv);
       await exec('npm',['run','typecheck'],cwd,180000,testEnv);
