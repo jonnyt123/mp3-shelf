@@ -22,8 +22,8 @@ node --test tools/deepseek-agents/runner.test.mjs \
   tools/deepseek-agents/publish.test.mjs \
   tools/deepseek-agents/mac/mac-publisher.test.mjs \
   tools/deepseek-agents/cloudflare/worker.test.mjs
-echo "1/5 Cloudflare Workers Free + D1 deployment..."
-bash tools/deepseek-agents/cloudflare/deploy-free.sh
+echo "1/5 Connect to the existing MP3 Shelf Cloudflare Worker and rotate the local token..."
+bash tools/deepseek-agents/cloudflare/connect-existing.sh
 echo "2/5 Connecting Mac (secure local DeepSeek key entry; starts PAUSED)..."
 bash tools/deepseek-agents/cloudflare/install-mac-coordinator.sh
 echo "3/5 Connecting independent GitHub draft publisher..."
