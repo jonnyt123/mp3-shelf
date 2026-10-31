@@ -102,14 +102,26 @@ async function complete(env, data) {
   const result = await env.DB.prepare(
     "UPDATE jobs SET state=CASE WHEN ?='failed' AND attempts<? THEN 'queued' ELSE ? END, " +
     "available_at=CASE WHEN ?='failed' THEN ? ELSE ? END, " +
-    "attempts=MAX(0,attempts+?), lease_id=NULL,lease_expires=NULL,commit_sha=?,outcome=?,updated_at=? " +
+    "attempts=MAX(0,attempts+?), lease_id=NULL,lease_expires=NULL,last_lease_id=?,commit_sha=?,outcome=?,updated_at=? " +
     "WHERE id=? AND state='leased' AND lease_id=? AND lease_expires>=? " +
     "RETURNING id,role,cycle,state,attempts"
   ).bind(data.outcome, MAX_ATTEMPTS, state, data.outcome,
-    now + 10 * 60_000, availableAt, attemptedDelta, data.commitSha || null,
+    now + 10 * 60_000, availableAt, attemptedDelta, data.leaseId, data.commitSha || null,
     data.outcome, now, data.jobId, data.leaseId, now).run();
   const updated = result.results?.[0];
-  if (!updated) return response({ error: "lease_expired_or_mismatch" }, 409);
+  if (!updated) {
+    // The Mac may resend a completion if the response was lost in transit.
+    const prior = await env.DB.prepare(
+      "SELECT role,cycle,state,outcome,commit_sha,last_lease_id FROM jobs WHERE id=?"
+    ).bind(data.jobId).first();
+    if (prior && prior.last_lease_id === data.leaseId &&
+        prior.outcome === data.outcome &&
+        (prior.commit_sha || null) === (data.commitSha || null)) {
+      return response({ accepted: true, replay: true, state: prior.state,
+        role: prior.role, cycle: prior.cycle });
+    }
+    return response({ error: "lease_expired_or_mismatch" }, 409);
+  }
   if (data.outcome === "success") {
     // Successful code milestones automatically advance; no ChatGPT task scheduler.
     await env.DB.prepare(
