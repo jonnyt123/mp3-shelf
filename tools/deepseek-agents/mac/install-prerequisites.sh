@@ -11,10 +11,35 @@ if ! command -v brew >/dev/null 2>&1; then
     eval "$(/usr/local/bin/brew shellenv)"
   fi
 fi
-if ! command -v brew >/dev/null 2>&1; then
-  echo "Homebrew is required to install Node.js and OpenCode safely." >&2
-  echo "Install it from https://brew.sh and rerun this same command. No payment method is needed." >&2
-  exit 1
+# Homebrew is optional when both Node 22+ and OpenCode V2 are already installed.
+needs_node=true
+if command -v node >/dev/null 2>&1; then
+  major_existing="$(node -p 'parseInt(process.versions.node.split(".")[0],10)' 2>/dev/null || printf 0)"
+  if [[ "$major_existing" =~ ^[0-9]+$ ]] && (( major_existing >= 22 )); then needs_node=false; fi
+fi
+needs_opencode=true
+if command -v opencode >/dev/null 2>&1 && [[ "$(opencode --version 2>/dev/null || true)" =~ ^2\. ]]; then
+  needs_opencode=false
+fi
+if ! command -v brew >/dev/null 2>&1 && { [[ "$needs_node" == true ]] || [[ "$needs_opencode" == true ]]; }; then
+  echo "Homebrew can install the missing Node/OpenCode tools (free)." 
+  if [[ ! -t 0 ]]; then
+    echo "Install Homebrew from https://brew.sh, then rerun this command." >&2; exit 1
+  fi
+  read -r -p "Install official Homebrew now? [y/N]: " answer
+  if [[ ! "$answer" =~ ^[Yy]$ ]]; then echo "Installation paused until tools are available."; exit 1; fi
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  curl -fsSL "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh" -o "$tmp"
+  /bin/bash "$tmp"
+  rm -f "$tmp"
+  trap - EXIT
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+  command -v brew >/dev/null || { echo "Homebrew installation didn't finish. Reopen Terminal and rerun." >&2; exit 1; }
 fi
 if ! command -v git >/dev/null 2>&1; then
   echo "Git is missing. Run xcode-select --install once, then rerun." >&2
@@ -30,6 +55,7 @@ if command -v node >/dev/null 2>&1; then
   major="$(node -p 'parseInt(process.versions.node.split(".")[0],10)' 2>/dev/null || printf 0)"
 fi
 if [[ ! "$major" =~ ^[0-9]+$ ]] || (( major < 22 )); then
+  command -v brew >/dev/null || { echo "Node 22+ unavailable and Homebrew isn't installed." >&2; exit 1; }
   echo "Installing current Node.js using Homebrew (requires Node 22+)..."
   if brew list --formula node >/dev/null 2>&1; then
     brew upgrade node
@@ -42,6 +68,7 @@ node -e 'if (parseInt(process.versions.node.split(".")[0],10)<22) process.exit(1
   exit 1
 }
 if ! command -v opencode >/dev/null 2>&1; then
+  command -v brew >/dev/null || { echo "OpenCode V2 unavailable and Homebrew isn't installed." >&2; exit 1; }
   echo "Installing OpenCode V2 with the official Homebrew tap..."
   brew install anomalyco/tap/opencode-v2
 fi
