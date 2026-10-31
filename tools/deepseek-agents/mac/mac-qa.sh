@@ -11,7 +11,8 @@ command -v swiftc >/dev/null
 [[ -d "$REPO/.git" ]] || git clone --no-checkout https://github.com/jonnyt123/mp3-shelf.git "$REPO"
 [[ "$(git -C "$REPO" remote get-url origin)" == "https://github.com/jonnyt123/mp3-shelf.git" ]] || exit 1
 for role in mp3-playback mp3-sources mp3-ui mp3-qa mp3-integration; do
-  line=$(git -C "$REPO" ls-remote --heads origin "refs/heads/agent/$role")
+  branch="agent/$role"
+  line=$(git -C "$REPO" ls-remote --heads origin "refs/heads/$branch")
   [[ -n "$line" ]] || continue
   sha=$(printf '%s' "$line" | cut -f1)
   [[ "$sha" =~ ^[a-f0-9]{40}$ ]] || continue
