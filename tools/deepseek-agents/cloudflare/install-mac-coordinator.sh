@@ -27,6 +27,9 @@ chmod 0600 "$config.tmp"
 mv -f "$config.tmp" "$config"
 unset deepseek token
 node "$src/mac-client.mjs" --status >/dev/null
+# The dashboard may already be resumed. Pause before launchd starts: installing
+# must never silently spend API credits.
+node "$src/mac-client.mjs" --pause >/dev/null
 node "$src/mac-client.mjs" --seed >/dev/null
 plist="$HOME/Library/LaunchAgents/com.mp3shelf.cloud-coordinator.plist"
 nodebin="$(command -v node)"
