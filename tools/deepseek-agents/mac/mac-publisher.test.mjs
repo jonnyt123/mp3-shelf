@@ -9,7 +9,7 @@ test("publishing is limited to five fixed agent branches", () => {
   assert.equal(base, "agent/mp3-deepseek-low-cost-worker");
   assert.equal(roles.length,5);
   for (const role of roles) assert.equal(safeBranch(role), "agent/"+role);
-  for(const forbidden of ["main","master","feat/ios-premium-visual-refresh","../../../main","mp3-ui"]) {
+  for(const forbidden of ["main","master","feat/ios-premium-visual-refresh","../../../main","agent/mp3-ui"]) {
     assert.throws(()=>safeBranch(forbidden));
   }
 });
