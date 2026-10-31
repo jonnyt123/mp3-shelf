@@ -22,14 +22,16 @@ node --test tools/deepseek-agents/runner.test.mjs \
   tools/deepseek-agents/publish.test.mjs \
   tools/deepseek-agents/mac/mac-publisher.test.mjs \
   tools/deepseek-agents/cloudflare/worker.test.mjs
-echo "1/4 Cloudflare Workers Free + D1 deployment..."
+echo "1/5 Cloudflare Workers Free + D1 deployment..."
 bash tools/deepseek-agents/cloudflare/deploy-free.sh
-echo "2/4 Connecting Mac (secure local DeepSeek key entry; starts PAUSED)..."
+echo "2/5 Connecting Mac (secure local DeepSeek key entry; starts PAUSED)..."
 bash tools/deepseek-agents/cloudflare/install-mac-coordinator.sh
-echo "3/4 Connecting independent GitHub draft publisher..."
+echo "3/5 Connecting independent GitHub draft publisher..."
 sudo bash tools/deepseek-agents/mac/install-mac-publisher.sh
-echo "4/4 Installing Mac unsigned Xcode QA poller..."
+echo "4/5 Installing Mac unsigned Xcode QA poller..."
 bash tools/deepseek-agents/mac/install-mac.sh
+echo "5/5 Installing independent, status-only GitHub report daemon..."
+sudo bash tools/deepseek-agents/mac/install-status-reporter.sh
 echo "READ-ONLY verification of Cloudflare and DeepSeek account balance:"
 node tools/deepseek-agents/cloudflare/mac-client.mjs --doctor
 echo "Setup completed but coordinator remains paused. Review balance and dashboard first."
