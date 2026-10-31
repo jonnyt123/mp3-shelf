@@ -11,12 +11,17 @@ root="/Library/Application Support/MP3ShelfCloudQA"
 install -d -o root -g wheel -m 0700 "$root"
 install -o root -g wheel -m 0700 "$src/report-status.py" "$root/report-status.py"
 umask 077
-read -r -s -p "GitHub PAT (mp3-shelf: Commit statuses write, Contents read): " token
-printf '\n'
-[[ "$token" =~ ^[A-Za-z0-9_]+$ ]] && [[ "$token" != "" ]] || { echo "Invalid token"; exit 1; }
-printf '%s' "$token" > "$root/status-token"
+if [[ -s "$root/status-token" ]]; then
+  echo "Using existing protected GitHub status-reporting credential."
+else
+  read -r -s -p "GitHub PAT (mp3-shelf ONLY: Commit statuses write, Contents read): " token
+  printf '\n'
+  [[ "$token" =~ ^[A-Za-z0-9_]{25,}$ ]] || { echo "Invalid token"; exit 1; }
+  printf '%s' "$token" > "$root/status-token"
+  unset token
+fi
+chown root:wheel "$root/status-token"
 chmod 0600 "$root/status-token"
-unset token
 /usr/bin/python3 - "$root/reporter.json" "$home/Library/Application Support/MP3ShelfCloudQA/reports" <<'PY'
 import json,sys
 with open(sys.argv[1],"w") as f: json.dump({"reports":sys.argv[2]},f)
