@@ -1,42 +1,56 @@
 #!/usr/bin/env bash
-# One-time opt-in setup for the no-card Cloudflare + DeepSeek + GitHub + Mac QA stack.
-# Requires the operator to authenticate directly in Cloudflare and enter keys locally.
+# ONE guided command for the connected Cloudflare Free + DeepSeek + Mac + GitHub stack.
+# Safe to rerun; does not create paid infrastructure or resume the development queue.
 set -euo pipefail
-[[ "$(uname -s)" == Darwin ]] || { echo "Requires macOS"; exit 1; }
+[[ "$(uname -s)" == "Darwin" && "$EUID" -ne 0 ]] || {
+  echo "Run as your regular macOS user, not sudo." >&2; exit 1;
+}
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$root"
-[[ -d .git ]] || { echo "Use a full git clone of jonnyt123/mp3-shelf"; exit 1; }
+[[ -d .git ]] || { echo "Please run from a git clone, not a downloaded ZIP." >&2; exit 1; }
 branch="$(git branch --show-current)"
 [[ "$branch" == "agent/mp3-deepseek-low-cost-worker" ]] || {
-  echo "Checkout the agent setup branch first; current branch is: $branch"; exit 1;
+  echo "Wrong branch: $branch. Use agent/mp3-deepseek-low-cost-worker." >&2; exit 1;
 }
-command -v node >/dev/null || { echo "Node.js 22+ required"; exit 1; }
-command -v npm >/dev/null || exit 1
-command -v git >/dev/null || exit 1
-command -v xcodebuild >/dev/null || { echo "Xcode is required for Mac QA"; exit 1; }
-command -v opencode >/dev/null || {
-  echo "OpenCode 2 CLI required before enabling a paid DeepSeek worker"; exit 1;
-}
-echo "MP3 Shelf setup — verifies without running paid model calls."
-node --test tools/deepseek-agents/runner.test.mjs \
+echo "MP3 Shelf — one-time guided connection to your EXISTING Cloudflare Worker."
+echo "No Oracle, no paid hosting, no GitHub Actions, and no ChatGPT scheduled tasks."
+echo "Your 5-agent queue will remain PAUSED throughout this setup."
+echo ""
+echo "[1/7] Checking/installing prerequisites..."
+bash tools/deepseek-agents/mac/install-prerequisites.sh
+# Child shells cannot export new Homebrew environment to their parent.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+command -v node >/dev/null || { echo "Reopen Terminal and rerun to activate Homebrew Node." >&2; exit 1; }
+command -v opencode >/dev/null || { echo "Reopen Terminal and rerun to activate OpenCode." >&2; exit 1; }
+echo "[2/7] Running offline safety tests (no paid model requests)..."
+node --test \
+  tools/deepseek-agents/runner.test.mjs \
   tools/deepseek-agents/publish.test.mjs \
   tools/deepseek-agents/mac/mac-publisher.test.mjs \
   tools/deepseek-agents/cloudflare/worker.test.mjs
-echo "1/5 Connect to the existing MP3 Shelf Cloudflare Worker and rotate the local token..."
+echo "[3/7] Connecting Cloudflare (browser OAuth login may be required once)..."
 bash tools/deepseek-agents/cloudflare/connect-existing.sh
-echo "2/5 Connecting Mac (secure local DeepSeek key entry; starts PAUSED)..."
+echo "[4/7] Connecting the Mac and DeepSeek (hidden key entry only if needed)..."
 bash tools/deepseek-agents/cloudflare/install-mac-coordinator.sh
-echo "3/5 Connecting independent GitHub draft publisher..."
+echo "[5/7] Installing GitHub draft-PR publishing (separate limited PAT)..."
 sudo bash tools/deepseek-agents/mac/install-mac-publisher.sh
-echo "4/5 Installing Mac unsigned Xcode QA poller..."
+echo "[6/7] Installing independent Mac Xcode/simulator QA..."
 bash tools/deepseek-agents/mac/install-mac.sh
-echo "5/5 Installing independent, status-only GitHub report daemon..."
+echo "[7/7] Installing GitHub QA result reporting (different limited PAT)..."
 sudo bash tools/deepseek-agents/mac/install-status-reporter.sh
-echo "READ-ONLY verification of Cloudflare and DeepSeek account balance:"
-node tools/deepseek-agents/cloudflare/mac-client.mjs --doctor
-echo "Setup completed but coordinator remains paused. Review balance and dashboard first."
-echo "Dashboard URL: the workers.dev address printed by Wrangler."
-echo "To begin the FIRST live coding cycle when ready:"
+echo ""
+echo "Checking the live Cloudflare queue and read-only DeepSeek API balance..."
+if ! node tools/deepseek-agents/cloudflare/mac-client.mjs --doctor; then
+  echo "The DeepSeek API balance check is not available. All agents stay PAUSED." >&2
+  echo "Check your DeepSeek Console API access before resuming."
+fi
+echo ""
+echo "Mac/cloud setup finished. No paid model calls have started."
+echo "Dashboard: https://mp3-shelf-coordinator.mp3shelf-jonny.workers.dev/"
+echo "Dashboard token (copies locally without printing):"
+echo '  pbcopy < "$HOME/Library/Application Support/MP3ShelfCloudCoordinator/coordinator-token"'
+echo "When you choose to run a real paid DeepSeek coding session:"
 echo "  node tools/deepseek-agents/cloudflare/mac-client.mjs --resume"
-echo "  node tools/deepseek-agents/cloudflare/mac-client.mjs --once"
-echo "No auto-merge or production release is enabled. Hardware gate #6 remains in force."
+echo "To pause new sessions:"
+echo "  node tools/deepseek-agents/cloudflare/mac-client.mjs --pause"
+echo "Keep your Mac awake and logged in for background work; no production merge is enabled."
