@@ -195,3 +195,28 @@ test("blocked job can be deliberately retried by ID only",async()=>{
   assert.equal((await call(db,"POST","/v1/retry",{jobId:job.id})).status,409);
   assert.equal((await call(db,"POST","/v1/retry",{jobId:"not-a-number"})).status,400);
 });
+
+test("simulated first full cloud-to-Mac coding cycle persists next milestone",async()=>{
+  const db = new FakeDB();
+  assert.equal((await call(db,"POST","/v1/seed")).status,200);
+  assert.equal((await call(db,"POST","/v1/pause",{paused:false})).data.paused,false);
+  assert.equal((await call(db,"POST","/v1/heartbeat",{stage:"running"})).status,200);
+  const {job}=(await call(db,"POST","/v1/lease")).data;
+  assert.equal(job.role,"mp3-playback");
+  // Simulated local agent commits, no paid model call or local machine access.
+  const simulatedLocalCommit="a".repeat(40);
+  const parsed=interpretRun(0,"VALIDATED LOCAL commit "+simulatedLocalCommit);
+  assert.equal(parsed.outcome,"success");
+  const result=await call(db,"POST","/v1/complete",{jobId:job.id,leaseId:job.lease_id,
+    outcome:parsed.outcome,commitSha:parsed.commitSha});
+  assert.equal(result.status,200);
+  assert.equal(result.data.accepted,true);
+  assert.equal((await call(db,"POST","/v1/heartbeat",{stage:"idle"})).status,200);
+  const status=(await call(db,"GET","/v1/status")).data;
+  assert.equal(status.mac.stage,"idle");
+  assert.equal(status.counts.done,1);
+  assert.equal(status.counts.queued,5);
+  assert.equal(status.roleStates.find(x=>x.role==="mp3-playback")?.cycle,1);
+  assert.equal((await call(db,"POST","/v1/complete",{jobId:job.id,leaseId:job.lease_id,
+    outcome:parsed.outcome,commitSha:parsed.commitSha})).data.replay,true);
+});
