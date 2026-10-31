@@ -55,6 +55,12 @@ The service begins **paused**, even after installation. After checking your Deep
 
 Then the Mac claims work sequentially, calls the existing locally guarded DeepSeek/OpenCode runner, and sends completion/deferral/failure back to Cloudflare. No human replies are required for routine continuation while the Mac is running and API balance remains sufficient.
 
+## Premium no-card dashboard
+
+After deploying the Cloudflare Worker, open the **workers.dev URL** displayed by Wrangler in Safari or any modern browser. A mobile-friendly control center is served at the root path. It displays five agent roles, queue counts, last successful Mac heartbeat, recent jobs, completion status, and a pause/resume control. Blocked tasks show a manual retry button. The dashboard does not store the coordinator token in cookies, localStorage or analytics—it lives only in the open tab's memory and must be entered again after reload. Retrieve the token from the locally protected `coordinator-token` file created by deployment. Do not share it publicly; this token authorizes pausing and claiming jobs.
+
+The dashboard starts **paused** until you explicitly click Resume agents. Clicking Pause prevents new jobs from being claimed but does not terminate a model request already in progress. When the Mac is sleeping, the last heartbeat becomes stale, although the Cloudflare queue remains intact.
+
 ## Status, stop, and diagnostic commands
 
     node tools/deepseek-agents/cloudflare/mac-client.mjs --status
@@ -85,7 +91,19 @@ These test worker business logic with a deterministic fake D1 engine; they do **
 
 ## Existing GitHub publishing
 
-The previously prepared GitHub draft publisher is Linux/systemd-oriented and **is not automatically installed on the Mac by the Cloudflare coordinator**. The coordinated Mac worker currently creates safely scoped *local commits*. The separate Mac QA system is already prepared for draft branches once a trusted Mac publishing mechanism is connected; do not claim GitHub publishing or remote Xcode results until that final connection is verified.
+The Mac-specific GitHub draft publisher is now staged as a protected LaunchDaemon. It is **not automatically installed** when the Cloudflare coordinator installs, because it needs a separate GitHub fine-grained token.
+
+On your Mac, after the normal agent/Cloudflare installer has been configured and verified:
+
+    sudo bash tools/deepseek-agents/mac/install-mac-publisher.sh
+
+Use a fine-grained PAT limited to `jonnyt123/mp3-shelf` with repository Contents read/write and Pull requests read/write. This token is stored **root-only** in `/Library/Application Support/MP3ShelfPublisher/publisher.token` (0600); DeepSeek/OpenCode never receives it. The root-owned broker polls for SHA-bound local approvals and pushes only matching `agent/mp3-*` branches without force-pushing. It creates draft PRs against the dedicated setup branch, not `main` or the untested native PR #4. A verified local commit may still fail native Xcode QA: **no automatic merge is performed**.
+
+To disable publishing independently of cloud coordination:
+
+    sudo launchctl bootout system /Library/LaunchDaemons/com.mp3shelf.publisher.plist
+
+A separate Mac QA companion can build newly published branches and report a specific unsigned Simulator result, subject to its own local installation and GitHub status-only credential. Passing unsigned Xcode tests is **not** signed physical iPhone acceptance.
 
 Release gate: https://github.com/jonnyt123/mp3-shelf/issues/6
 
