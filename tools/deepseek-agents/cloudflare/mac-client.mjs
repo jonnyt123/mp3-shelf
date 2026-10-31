@@ -5,6 +5,7 @@ import { readFile, stat, writeFile, unlink, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getBalance, balanceFromResponse } from "../runner.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const state = process.env.MP3_CLOUD_STATE_DIR ||
@@ -106,7 +107,17 @@ async function one(config) {
 export async function main(args = process.argv.slice(2)) {
   const config = safeConfig(await readPrivateJson(secretsFile));
   const command = args[0] || "--status";
-  if (command === "--status") {
+  if (command === "--doctor") {
+    const cloud = await request(config, "/v1/status");
+    const balance = balanceFromResponse(await getBalance(config.deepseekApiKey));
+    const details = { coordinatorConnected: true, paused: cloud.paused,
+      macLastSeen: cloud.mac?.lastSeen || null,
+      roles: cloud.roles?.length || 0,
+      apiAvailable: balance.amount > 0, apiBalance: balance.amount,
+      balanceCurrency: balance.currency,
+      note: "Read-only diagnostics. No DeepSeek model request, GitHub push or Xcode build." };
+    console.log(JSON.stringify(details,null,2));
+  } else if (command === "--status") {
     console.log(JSON.stringify(await request(config, "/v1/status"), null, 2));
   } else if (command === "--seed") {
     console.log(await request(config, "/v1/seed", {}));
@@ -121,7 +132,7 @@ export async function main(args = process.argv.slice(2)) {
       try { await one(config); } catch (e) { console.error(e.message); }
       await new Promise(resolve => setTimeout(resolve, 120_000));
     }
-  } else throw Error("Use --seed, --status, --pause, --resume, --once or --loop");
+  } else throw Error("Use --doctor, --seed, --status, --pause, --resume, --once or --loop");
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(e => { console.error(e.message); process.exitCode = 1; });
