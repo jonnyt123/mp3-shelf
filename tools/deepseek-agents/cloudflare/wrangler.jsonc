@@ -13,6 +13,7 @@
     {
       "binding": "DB",
       "database_name": "mp3-shelf-agent-jobs",
+      "database_id": "ba39ac6b-abef-40ab-95e6-c6cb6ed67039",
       "migrations_dir": "migrations"
     }
   ]
