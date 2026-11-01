@@ -33,13 +33,20 @@ node "$src/mac-client.mjs" --pause >/dev/null
 node "$src/mac-client.mjs" --seed >/dev/null
 plist="$HOME/Library/LaunchAgents/com.mp3shelf.cloud-coordinator.plist"
 nodebin="$(command -v node)"
-# plistlib escapes spaces/special characters in paths safely.
-python3 - "$plist" "$nodebin" "$src/mac-client.mjs" "$root" <<'PY'
-import plistlib,sys
-p,node,script,root=sys.argv[1:]
+opencodebin="$(command -v opencode)"
+[[ -x "$opencodebin" ]] || { echo "OpenCode CLI is not available to the background worker" >&2; exit 1; }
+# GUI launchd sessions often omit Homebrew and version-manager directories.
+# Put exact, preflight-verified executable directories on the LaunchAgent PATH.
+python3 - "$plist" "$nodebin" "$opencodebin" "$src/mac-client.mjs" "$root" <<'PY'
+import os,plistlib,sys
+p,node,opencode,script,root=sys.argv[1:]
+paths=[os.path.dirname(node),os.path.dirname(opencode),"/opt/homebrew/bin",
+       "/usr/local/bin","/usr/bin","/bin","/usr/sbin","/sbin"]
+path=os.pathsep.join(dict.fromkeys(paths))
 data={
  "Label":"com.mp3shelf.cloud-coordinator",
  "ProgramArguments":[node,script,"--loop"],
+ "EnvironmentVariables":{"PATH":path},
  "RunAtLoad":True,"KeepAlive":True,
  "StandardOutPath":root+"/worker.log",
  "StandardErrorPath":root+"/worker-errors.log"
