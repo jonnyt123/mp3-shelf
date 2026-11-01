@@ -10,7 +10,8 @@ cd "$root"
 stage="preflight"
 on_setup_error() {
   local status="$1"
-  trap - ERR
+  trap - EXIT
+  if (( status == 0 )); then return; fi
   printf '\nMP3 Shelf setup failed at stage: %s (exit %s)\n' "$stage" "$status" >&2
   if command -v node >/dev/null 2>&1; then
     MP3_FAILED_STAGE="$stage" node "$root/tools/deepseek-agents/mac/diagnose-install.mjs" || true
@@ -20,7 +21,7 @@ on_setup_error() {
   echo "No jobs were intentionally started by the installer. Fix the checks above and rerun the same setup command." >&2
   exit "$status"
 }
-trap 'on_setup_error "$?"' ERR
+trap 'on_setup_error "$?"' EXIT
 [[ -d .git ]] || { echo "Please run from a git clone, not a downloaded ZIP." >&2; exit 1; }
 branch="$(git branch --show-current)"
 [[ "$branch" == "agent/mp3-deepseek-low-cost-worker" ]] || {
