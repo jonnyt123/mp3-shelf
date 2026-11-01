@@ -102,7 +102,7 @@ async function fetchCode(url,token) {
     signal:AbortSignal.timeout(8500),redirect:"error"});return r; }
   catch { return null; }
 }
-async function snapshot() {
+export async function snapshot() {
   const s={platform:process.platform,services:{},failedStage:process.env.MP3_FAILED_STAGE || null,
     cloudStatus:null,deepSeekStatus:null,deepSeekAvailable:null,macOnline:null,cloudPaused:null};
   const [git,node,code,xcode,branch,codehelp]=await Promise.all([
