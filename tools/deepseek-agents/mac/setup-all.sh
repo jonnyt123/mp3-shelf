@@ -44,6 +44,7 @@ node --test \
   tools/deepseek-agents/publish.test.mjs \
   tools/deepseek-agents/mac/mac-publisher.test.mjs \
   tools/deepseek-agents/mac/verify-first-agent.test.mjs \
+  tools/deepseek-agents/mac/diagnose-install.test.mjs \
   tools/deepseek-agents/cloudflare/worker.test.mjs
 stage="cloudflare"
 echo "[3/7] Connecting Cloudflare (browser OAuth login may be required once)..."
