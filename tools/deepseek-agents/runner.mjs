@@ -138,7 +138,7 @@ async function runOne() {
     let failure = null;
     try {
       await exec('opencode',['run','--auto','--agent',agent.id,
-        '--model','deepseek/deepseek-v4-flash',
+        '--model','deepseek/deepseek-flash',
         'Implement one high-priority safe, testable MP3 Shelf feature or fix within your owned files. Read relevant code and issue #22 as local context permits. Keep output short. Do not commit, push, open PRs or merge. Run focused local tests when available. Release requires physical-iPhone gate #6.'],
         cwd, seconds*1000, env);
     } catch(err) { failure = err; }
@@ -187,7 +187,7 @@ async function runOne() {
 async function main() {
   const mode = process.argv[2] || '--dry-run';
   if (mode === '--dry-run') {
-    console.log(JSON.stringify({provider:'DeepSeek',model:'deepseek-v4-flash',agents:agents.map(x=>x.id),
+    console.log(JSON.stringify({provider:'DeepSeek',model:'deepseek-flash',agents:agents.map(x=>x.id),
       concurrency:1,dailyCapInAccountCurrency:0.50,chatgptScheduledTasks:0,remoteServiceActivated:false},null,2));
   } else if (mode === '--status') {
     const b = balanceFromResponse(await getBalance(process.env.DEEPSEEK_API_KEY));
