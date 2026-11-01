@@ -2,7 +2,7 @@
 // Read-only, offline-first MP3 Shelf Mac setup diagnosis.
 // NEVER claims jobs, starts services, invokes the model, or prints credentials/logs.
 import { spawn } from "node:child_process";
-import { readFile, stat, access } from "node:fs/promises";
+import { readFile, lstat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
@@ -93,7 +93,7 @@ async function run(cmd,args=[],timeout=7000) {
 }
 async function fileState(filename) {
   try {
-    const info=await stat(filename);
+    const info=await lstat(filename);
     return {exists:info.isFile(),safe:info.isFile() && (info.mode&0o077)===0};
   } catch { return {exists:false,safe:false}; }
 }
