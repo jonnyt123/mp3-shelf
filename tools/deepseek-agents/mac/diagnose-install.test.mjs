@@ -59,3 +59,9 @@ test("invalid failed stages are discarded and unknown heartbeat is not treated a
   assert.equal(out.failedStage,null);
   assert.equal(out.ok,true);
 });
+
+test("unsafe token mode is identified without attempting to read token contents",()=>{
+  const result=diagnoseSnapshot(healthy({tokenPermissions:false,tokenFormat:undefined}));
+  assert.ok(result.issues.some(x=>x.code==="TOKEN_PERMISSIONS"));
+  assert.ok(!result.issues.some(x=>x.code==="TOKEN_INVALID"));
+});
