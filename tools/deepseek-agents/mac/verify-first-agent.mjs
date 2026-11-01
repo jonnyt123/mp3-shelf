@@ -17,15 +17,15 @@ export function classifyFirstAgent(status, now = Date.now()) {
   const first = events.find(x => x.cycle === 0);
   const macTime = Number(status?.mac?.lastSeen || 0);
   const macOnline = Number.isFinite(macTime) && macTime > 0 && now - macTime < 10 * 60_000;
+  if (first?.state === "done" && /^[a-f0-9]{40}$/.test(first.commit_sha || "")) {
+    return {code:"committed",message:"Playback agent completed its first locally validated Git commit.",sha:first.commit_sha};
+  }
   if (!macTime) return {code:"mac-not-connected",message:"Cloudflare has never received a Mac heartbeat."};
   if (!macOnline) return {code:"mac-offline",message:"Mac heartbeat is stale; ensure the Mac is awake and launchd is running."};
   if (status.paused) return {code:"queue-paused",message:"Mac is connected but the Cloudflare queue is paused."};
   if (!first) return {code:"not-seeded",message:"The initial Playback agent job is not in the recent queue records."};
   if (first.state === "blocked") return {code:"blocked",message:"Playback job blocked after failed attempts. Inspect local worker-errors.log."};
   if (first.state === "leased") return {code:"running",message:"Playback job is leased to the Mac and coding may be in progress."};
-  if (first.state === "done" && /^[a-f0-9]{40}$/.test(first.commit_sha || "")) {
-    return {code:"committed",message:"Playback agent completed its first locally validated Git commit.",sha:first.commit_sha};
-  }
   if (first.state === "done") return {code:"finished-without-commit",message:"The first cycle completed without a validated code commit."};
   if (first.state === "queued" && Number(first.attempts) > 0) {
     return {code:"retry-queued",message:"The first coding attempt failed or expired and is queued for a retry."};
