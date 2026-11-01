@@ -2,6 +2,21 @@
 
 > **Preferred free/no-card setup:** Cloudflare Workers Free + D1 for the queue and your Mac for coding/Xcode. Oracle is optional and not required. See [Cloudflare setup](cloudflare/README.md) and the [single Mac installer](mac/setup-all.sh). The server and Mac services are **not activated by committing these files**.
 
+### Safe self-repair for installation failures
+
+The one-command Mac installer now attempts **allowlisted local repairs** when a step fails, then prints any remaining problems. Repairs are limited to protecting existing locally owned coordinator files with mode `0600`, or restoring an already-installed **user-level** launchd service only when the Cloudflare coordinator is authenticated and **confirmed paused**. It refuses symlinked, unowned or altered service configurations. It never regenerates/rotates credentials, requests sudo, starts a service while the queue is resumed, makes a paid model call, creates GitHub Actions, or merges code.
+
+You can preview or execute the same safe repairs directly:
+
+```bash
+cd ~/MP3ShelfAgents
+node tools/deepseek-agents/mac/repair-install.mjs
+node tools/deepseek-agents/mac/repair-install.mjs --fix
+node tools/deepseek-agents/mac/diagnose-install.mjs
+```
+
+Missing Xcode, unavailable Node/OpenCode, expired authentication, root-only GitHub daemons and DeepSeek billing problems are intentionally **not** silently repaired; they require explicit local setup or authorization. Following a repair, rerun the original installer. Diagnosis and repair outcomes are not evidence that a paid coding cycle completed.
+
 ### Automatic Mac setup failure diagnosis
 
 **New:** If any step in the Mac installer fails, it identifies the failing stage and runs the read-only diagnostic checks automatically. The report explains the cause and a targeted correction without printing passwords, API keys, coordinator tokens, PATs or raw log lines. It does not start paid DeepSeek calls or resume the cloud queue.
