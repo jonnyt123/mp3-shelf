@@ -29,8 +29,8 @@ export function diagnoseSnapshot(s) {
   if (!s.openCodeOk) issue("OPENCODE_MISSING","prerequisites","OpenCode V2 with --agent support is unavailable.","Install OpenCode V2 using the guided prerequisites step.");
   if (!s.xcodeOk) issue("XCODE_NOT_READY","prerequisites","Full Xcode is missing, unselected or its license is not accepted.","Open Xcode, accept its license and select /Applications/Xcode.app/Contents/Developer with xcode-select.");
   if (!s.tokenFile) issue("TOKEN_NOT_LOCAL","cloudflare","No locally saved coordinator token was found.","Run setup-all.sh; it will securely synchronize a new token to the existing Cloudflare Worker.");
-  else if (!s.tokenFormat) issue("TOKEN_INVALID","cloudflare","The local coordinator token has an invalid format.","Rerun the Cloudflare connection step to generate a valid private token.");
   else if (!s.tokenPermissions) issue("TOKEN_PERMISSIONS","cloudflare","Coordinator token permissions are too broad.","Restrict the private coordinator token to mode 0600.");
+  else if (!s.tokenFormat) issue("TOKEN_INVALID","cloudflare","The local coordinator token has an invalid format.","Rerun the Cloudflare connection step to generate a valid private token.");
   if (!s.credentialFile) issue("DEEPSEEK_SETUP_INCOMPLETE","mac-connection","Mac credentials have not been configured.","Rerun setup-all.sh and enter the DeepSeek key privately when prompted.");
   else if (!s.credentialPermissions) issue("CREDENTIAL_PERMISSIONS","mac-connection","Mac credentials are readable by another user.","Restrict credentials.json to mode 0600; do not share it.");
   else if (!s.credentialFormat) issue("CREDENTIAL_INVALID","mac-connection","Mac credentials failed format validation.","Rerun install-mac-coordinator.sh from setup-all.sh.");
