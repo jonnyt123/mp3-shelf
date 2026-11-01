@@ -2,6 +2,19 @@
 
 > **Preferred free/no-card setup:** Cloudflare Workers Free + D1 for the queue and your Mac for coding/Xcode. Oracle is optional and not required. See [Cloudflare setup](cloudflare/README.md) and the [single Mac installer](mac/setup-all.sh). The server and Mac services are **not activated by committing these files**.
 
+### Automatic Mac setup failure diagnosis
+
+**New:** If any step in the Mac installer fails, it identifies the failing stage and runs the read-only diagnostic checks automatically. The report explains the cause and a targeted correction without printing passwords, API keys, coordinator tokens, PATs or raw log lines. It does not start paid DeepSeek calls or resume the cloud queue.
+
+Run the same diagnostic independently at any time:
+
+```bash
+node tools/deepseek-agents/mac/diagnose-install.mjs
+node tools/deepseek-agents/mac/diagnose-install.mjs --json
+```
+
+Checks: Mac OS/repository branch; Git/Node/OpenCode/Xcode; token and credentials presence, private permissions and local match; authenticated Cloudflare status and Mac heartbeat; read-only DeepSeek balance/auth; installed and loaded launchd services; and safe, pattern-only summaries of local worker/QA log failures. Fix the reported issue and rerun the same \`setup-all.sh\` command. No database recreation, agent job claims, model inference, Git push or production merge is performed by diagnostics.
+
 ### Simplified one-time activation
 
 **One guided command, no Cloudflare resource creation.** The connected account already has `mp3-shelf-coordinator`, D1 database `mp3-shelf-agent-jobs`, and five paused jobs. This Mac installer reuses them.
@@ -24,13 +37,13 @@ On your Mac, after installing Node.js 22+, Xcode, Git and OpenCode 2, open a clo
 bash tools/deepseek-agents/mac/setup-all.sh
 ```
 
-The installer checks offline tests, deploys the free Cloudflare Worker + D1, collects keys privately on your Mac, installs a separate root-protected GitHub draft publisher, Mac Xcode QA poller and status-only reporter, and performs a **read-only** DeepSeek account balance check. It starts **paused**. Two narrow GitHub fine-grained PATs are required: one with Contents and Pull requests write for draft publishing; one with Commit statuses write for Mac QA evidence. Keep them out of chat.
+The installer checks offline tests, connects to the already deployed Cloudflare Worker + D1, collects keys privately on your Mac, installs a separate root-protected GitHub draft publisher, Mac Xcode QA poller and status-only reporter, and performs a **read-only** DeepSeek account balance check. It starts **paused**. Two narrow GitHub fine-grained PATs are required: one with Contents and Pull requests write for draft publishing; one with Commit statuses write for Mac QA evidence. Keep them out of chat.
 
 After inspecting the dashboard and checking that the DeepSeek API balance is positive, resume the coordinator with `node tools/deepseek-agents/cloudflare/mac-client.mjs --resume`. The user-level launchd agent starts claiming tasks while the Mac is awake. A fully completed *live* cycle still requires a genuine DeepSeek call, local commit, published draft PR, and Xcode result. None of that has been performed in this conversation.
 
 
 
-This directory contains the **prepared** worker. It is NOT a running cloud service yet. It requires a persistent trusted host, a DeepSeek Console API key with available balance, Git and OpenCode. It makes no OpenAI API calls, uses no ChatGPT scheduled tasks, and does not trigger GitHub Actions.
+This directory contains the agent runner and a live Cloudflare control-plane integration; the **Mac coding worker** is not activated until locally installed. It requires a persistent trusted host, a DeepSeek Console API key with available balance, Git and OpenCode. It makes no OpenAI API calls, uses no ChatGPT scheduled tasks, and does not trigger GitHub Actions.
 
 The five profiles in .opencode/agents/ use the same DeepSeek Console account and DeepSeek Flash model. They execute sequentially (one paying agent at a time) in five separate persistent worktrees.
 
