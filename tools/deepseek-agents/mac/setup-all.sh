@@ -14,6 +14,8 @@ on_setup_error() {
   if (( status == 0 )); then return; fi
   printf '\nMP3 Shelf setup failed at stage: %s (exit %s)\n' "$stage" "$status" >&2
   if command -v node >/dev/null 2>&1; then
+    echo "Attempting only allowlisted local self-repairs (no credentials, payment or daemon sudo)..."
+    MP3_FAILED_STAGE="$stage" node "$root/tools/deepseek-agents/mac/repair-install.mjs" --fix || true
     MP3_FAILED_STAGE="$stage" node "$root/tools/deepseek-agents/mac/diagnose-install.mjs" || true
   else
     echo "Node is not installed yet; the prerequisites step will install Node 22+." >&2
@@ -46,6 +48,7 @@ node --test \
   tools/deepseek-agents/mac/mac-publisher.test.mjs \
   tools/deepseek-agents/mac/verify-first-agent.test.mjs \
   tools/deepseek-agents/mac/diagnose-install.test.mjs \
+  tools/deepseek-agents/mac/repair-install.test.mjs \
   tools/deepseek-agents/cloudflare/worker.test.mjs
 stage="cloudflare"
 echo "[3/7] Connecting Cloudflare (browser OAuth login may be required once)..."
