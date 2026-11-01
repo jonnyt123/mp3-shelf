@@ -27,6 +27,7 @@ node --test \
   tools/deepseek-agents/runner.test.mjs \
   tools/deepseek-agents/publish.test.mjs \
   tools/deepseek-agents/mac/mac-publisher.test.mjs \
+  tools/deepseek-agents/mac/verify-first-agent.test.mjs \
   tools/deepseek-agents/cloudflare/worker.test.mjs
 echo "[3/7] Connecting Cloudflare (browser OAuth login may be required once)..."
 bash tools/deepseek-agents/cloudflare/connect-existing.sh
