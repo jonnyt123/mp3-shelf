@@ -146,13 +146,11 @@ async function snapshot() {
         const seen=Number(data.mac?.lastSeen || 0);
         s.macOnline=seen>0 && Date.now()-seen<10*60_000;}catch{}
     }
-    const r2=await fetchCode("https://api.deepseek.com/user/balance",cred.deepseekApiKey ? undefined : undefined);
     // Separate, read-only DeepSeek balance call; no model/credit-consuming endpoint.
     let dr=null;
     try{dr=await fetch("https://api.deepseek.com/user/balance",{headers:{Authorization:"Bearer "+cred.deepseekApiKey,Accept:"application/json"},signal:AbortSignal.timeout(8500)});}catch{}
     s.deepSeekStatus=dr?.status??"network";
     if(dr?.ok){try{const j=await dr.json();s.deepSeekAvailable=j.is_available===true;}catch{}}
-    void r2; // Never echo credentials from either provider.
   } else if(s.credentialFile && !s.credentialFormat) {
     s.cloudStatus=null;s.deepSeekStatus=null;
   }
