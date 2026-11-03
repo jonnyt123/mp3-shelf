@@ -6,12 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getBalance, balanceFromResponse } from "../runner.mjs";
+import {canUnlockFollowups,nextBatchAction,readFirstGateProofs} from "../mac/qa-gate.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const state = process.env.MP3_CLOUD_STATE_DIR ||
   path.join(os.homedir(), "Library/Application Support/MP3ShelfCloudCoordinator");
 const secretsFile = path.join(state, "credentials.json");
 const pendingFile = path.join(state, "pending-completion.json");
+const followupsFile=path.join(state,"approved-followups.json");
 const roles = ["mp3-playback", "mp3-sources", "mp3-ui", "mp3-qa", "mp3-integration"];
 
 export function interpretRun(exit, stdout) {
@@ -97,6 +99,67 @@ export function firstCycleDecision(status, balance, budgetOk, minimum = 0.25) {
     return "Insufficient DeepSeek balance for the first agent";
   return null;
 }
+async function writeFollowupState(obj) {
+  await mkdir(state,{recursive:true,mode:0o700});
+  const temp=followupsFile+"."+process.pid+".tmp";
+  await writeFile(temp,JSON.stringify(obj)+"\n",{mode:0o600,flag:"wx"});
+  await rename(temp,followupsFile);
+}
+async function readFollowupState() {
+  try {return await readPrivateJson(followupsFile);}
+  catch(e) {if(e.code==="ENOENT")return null;throw e;}
+}
+async function manageFollowups(config) {
+  const saved=await readFollowupState();
+  if(!saved)return {managed:false};
+  if(saved.schema!==1 || !/^[a-f0-9]{40}$/.test(saved.firstSha||"") ||
+    !["awaiting_qa","active","completed","halted"].includes(saved.state))
+    throw Error("Unsafe follow-up approval record. New agent sessions are disabled");
+  const status=await request(config,"/v1/status");
+  if(saved.state==="completed" || saved.state==="halted") {
+    if(!status.paused) await request(config,"/v1/pause",{paused:true});
+    return {managed:true};
+  }
+  if(saved.state==="awaiting_qa") {
+    if(!status.paused) {
+      await request(config,"/v1/pause",{paused:true});
+      console.log("Follow-up gate disallowed a resumed queue before first Mac QA passed");
+      return {managed:true};
+    }
+    const {publication,qa}=await readFirstGateProofs();
+    const outcome=canUnlockFollowups(status,saved.firstSha,publication,qa);
+    if(!outcome.ok) {console.log("First agent QA gate: "+outcome.reason);return {managed:true};}
+    // This approval is limited to the initial four jobs. Do not unlock cycle 1.
+    await writeFollowupState({...saved,state:"active"});
+    await request(config,"/v1/pause",{paused:false});
+    console.log("Verified first draft PR and independent Mac QA. Four follow-up agents authorized.");
+    return {managed:true,role:"mp3-sources"};
+  }
+  const next=nextBatchAction(status);
+  if(next.action==="run")return {managed:true,role:next.role};
+  if(next.action==="wait")return {managed:true};
+  await request(config,"/v1/pause",{paused:true});
+  await writeFollowupState({...saved,state:next.action==="complete"?"completed":"halted",
+    finishReason:next.reason});
+  console.log("Follow-up batch "+next.action+": "+next.reason+"; cloud queue paused.");
+  return {managed:true};
+}
+async function finishFollowup(config,role,result) {
+  if(result?.outcome==="success" && /^[a-f0-9]{40}$/.test(result.commitSha||"")) {
+    if(role==="mp3-integration") {
+      await request(config,"/v1/pause",{paused:true});
+      const saved=await readFollowupState();
+      if(saved)await writeFollowupState({...saved,state:"completed"});
+      console.log("Four initial follow-up milestones committed locally; cloud queue paused before cycle-1.");
+    }
+    return;
+  }
+  await request(config,"/v1/pause",{paused:true});
+  const saved=await readFollowupState();
+  if(saved)await writeFollowupState({...saved,state:"halted",
+    finishReason:"Follow-up agent did not produce a validated commit: "+role});
+  console.error("Follow-up batch halted after "+role+"; no more paid sessions authorized");
+}
 async function firstOnly(config) {
   if (process.env.MP3_FIRST_CYCLE_EXCLUSIVE !== "1")
     throw Error("Open Start First Agent.command to stop the background worker safely first");
@@ -111,8 +174,13 @@ async function firstOnly(config) {
   await request(config, "/v1/pause", { paused: false });
   try {
     const result = await one(config, { pauseAfterLease: true, expectedRole: "mp3-playback" });
-    if (!result || result.outcome !== "success")
+    if (!result || result.outcome !== "success" || !/^[a-f0-9]{40}$/.test(result.commitSha||""))
       throw Error("First cycle did not produce a validated code commit (outcome: " + (result?.outcome || "none") + ")");
+    if(process.env.MP3_AUTO_FOLLOWUPS_AFTER_QA==="1") {
+      await writeFollowupState({schema:1,state:"awaiting_qa",firstSha:result.commitSha,
+        approvedAt:new Date().toISOString()});
+      console.log("Auto-followups approved: waiting for matching draft PR + independent Mac Xcode QA.");
+    }
     return result;
   } finally {
     await request(config, "/v1/pause", { paused: true });
@@ -177,7 +245,22 @@ export async function main(args = process.argv.slice(2)) {
     // A persistent local process, not a ChatGPT scheduled task or Cloudflare Cron Trigger.
     await request(config, "/v1/seed", {});
     while (true) {
-      try { await one(config); } catch (e) { console.error(e.message); }
+      try {
+        await request(config,"/v1/heartbeat",{stage:"idle"});
+        const control=await manageFollowups(config);
+        if(!control.managed) await one(config);
+        else if(control.role) {
+          const result=await one(config,{expectedRole:control.role});
+          await finishFollowup(config,control.role,result);
+        }
+      } catch (e) {
+        console.error("Coordinator iteration halted: "+e.message);
+        const approved=await readFollowupState().catch(()=>null);
+        if(approved?.state==="active") {
+          await request(config,"/v1/pause",{paused:true}).catch(()=>{});
+          await writeFollowupState({...approved,state:"halted",finishReason:"Runner exception; review required"}).catch(()=>{});
+        }
+      }
       await new Promise(resolve => setTimeout(resolve, 120_000));
     }
   } else throw Error("Use --doctor, --seed, --status, --pause, --resume, --once, --first-only or --loop");
