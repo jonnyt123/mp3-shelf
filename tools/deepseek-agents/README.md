@@ -17,6 +17,18 @@ node tools/deepseek-agents/mac/diagnose-install.mjs
 
 Missing Xcode, unavailable Node/OpenCode, expired authentication, root-only GitHub daemons and DeepSeek billing problems are intentionally **not** silently repaired; they require explicit local setup or authorization. Following a repair, rerun the original installer. Diagnosis and repair outcomes are not evidence that a paid coding cycle completed.
 
+### First paid coding agent: balance-checked one-click start
+
+The updated ZIP also includes **Start First Agent.command**. On your Mac, first double-click **Install MP3 Shelf.command** and complete account authorization. Then double-click **Start First Agent.command**. It:
+
+1. Queries DeepSeek's **read-only balance endpoint** using the key in your private Mac credentials, and requires at least 0.25 USD/CNY available.
+2. Checks that the **initial Playback role (cycle 0)** is queued with zero attempts, no competing jobs are leased, and the local daily budget is not exhausted.
+3. Displays an explicit macOS **Run One Agent** approval dialog showing the verified balance and warning that the default 0.50/day observed spending cap is soft.
+4. Pauses the queue, temporarily unloads the user launchd coordinator to avoid competing leases, enables one job lease, and **pauses Cloudflare immediately after that lease** before issuing any paid model request.
+5. Runs a single session and restores the paused queue and background coordinator on exit. On success, a locally validated commit may be published as a **draft PR only**.
+
+No API credits are charged for the balance check. If the account is underfunded or the Mac has not been installed, the command does not start any paid model request. The agent execution itself is chargeable. This flow is for exactly **one initial** Playback job, not an indefinite automation loop. It has not yet been exercised on the user's actual Mac. Use the standard dashboard to resume the five-agent sequence only after the first cycle is verified.
+
 ### Finder one-click installer
 
 For Mac owners who do not want to type Terminal commands, use the downloadable **MP3-Shelf-One-Click-Installer.zip**: unzip and double-click **Install MP3 Shelf.command** in Finder. It automatically clones or safely fast-forwards the agent setup branch, invokes the guarded installer, and offers to copy the coordinator token and open the dashboard. Terminal opens itself for secure sign-in and administrator prompts; no shell commands need to be typed. Initial Xcode/Git tooling and account credentials may still need authorization.
