@@ -25,6 +25,7 @@ final class MusicLibrary: ObservableObject {
     @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
+    private var isProcessingBackgroundBatch = false
     private var catalogRetryTask: Task<Void, Never>?
     private var scheduledCatalogRetryAt: Date?
     @Published private(set) var discoveryJobs: [SourceDiscoveryJob] = []
@@ -444,7 +445,9 @@ final class MusicLibrary: ObservableObject {
     /// window. Its requests are forced to Wi-Fi-only, regardless of any
     /// foreground cellular opt-in that may have been granted earlier.
     func runBackgroundDiscoveryBatch() async -> Bool {
-        guard automaticDownloadTask == nil else { return true }
+        guard automaticDownloadTask == nil, !isProcessingBackgroundBatch else { return true }
+        isProcessingBackgroundBatch = true
+        defer { isProcessingBackgroundBatch = false }
         // A headless launch starts NWPathMonitor asynchronously. Wait briefly
         // for its first update rather than treating an unknown path as cellular.
         for _ in 0..<16 where !networkStatusKnown && !Task.isCancelled {
@@ -472,7 +475,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func resumePendingDiscovery() {
-        guard automaticDownloadTask == nil else { return }
+        guard automaticDownloadTask == nil, !isProcessingBackgroundBatch else { return }
         // Large Spotify playlists must not flood background URLSession or
         // exhaust device storage/network resources by queuing every MP3 at once.
         // The transfer manager wakes discovery whenever a ticket finishes.
