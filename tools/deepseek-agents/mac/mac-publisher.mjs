@@ -22,6 +22,7 @@ export function safeBranch(role) {
 export function validEvidence(e, role, sha, files) {
   return !!e && e.role === role && e.sha === sha &&
     e.diffCheck === "pass" && e.nodeGuardTests === "pass" &&
+    (e.webChecks === "pass" || e.webChecks === "not-applicable") &&
     Array.isArray(e.files) &&
     files.length > 0 && e.files.length === files.length &&
     files.every(f => typeof f === "string" &&
