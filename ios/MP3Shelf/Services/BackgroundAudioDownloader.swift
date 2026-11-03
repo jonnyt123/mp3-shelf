@@ -269,9 +269,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private func updatePending() {
         library?.pendingBackgroundDownloads = pendingCount()
         revision += 1
-        // A queued download has imported, failed, or been cancelled. If a
-        // transfer slot opened, let the persisted discovery cursor advance.
-        library?.resumePendingDiscovery()
     }
 
     /// Reconcile queue tickets against the authoritative on-device library.
