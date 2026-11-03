@@ -1,5 +1,33 @@
 # MP3 Shelf — Native iPhone App
 
+## Reliable shuffle and queue navigation
+
+The native player now uses a **shuffle bag** instead of choosing a fresh random
+song on every skip. Each track in the current playlist plays at most once per
+shuffle cycle, unless you explicitly choose a track yourself. **Repeat Off**
+stops at the end of the shuffle cycle; **Repeat All** shuffles a new cycle;
+**Repeat One** replays the current track when it ends.
+
+**Back** returns through the actual listening history in shuffle mode, and
+**Next** after Back restores the song you just left. The Now Playing **Up Next**
+preview reads the real pending order rather than displaying the original
+playlist sequence. Playback does not alter the user's saved playlist order;
+files deleted from the library are skipped gracefully. Shuffle and repeat
+continue to work with lock-screen controls and crossfade transitions.
+
+The shuffle order is intentionally session-only (not persisted after force-quit
+or app relaunch). Run the Foundation-only queue regression suite without any
+GitHub Actions minutes:
+
+```bash
+bash ios/scripts/test-playback-order.sh
+```
+
+This test checks the queue logic only. Xcode simulator builds, actual audio
+transitions, AirPlay and physical-iPhone behavior still require native QA.
+
+
+
 A standalone **SwiftUI** iOS application that can be opened directly in Xcode and installed on a physical iPhone. It complements the existing MP3 Shelf Next.js web app, without replacing or altering the web app.
 
 ## Wi-Fi-only background source-discovery batches

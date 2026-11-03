@@ -15,7 +15,9 @@ final class PlaybackController: NSObject, ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
-    @Published var isShuffled = false
+    @Published var isShuffled = false {
+        didSet { playbackOrder.setShuffle(isShuffled) }
+    }
     @Published var repeatMode: RepeatMode = .off
     @Published var crossfadeSeconds: Double = UserDefaults.standard.double(forKey: "mp3shelf.crossfadeSeconds") {
         didSet { UserDefaults.standard.set(crossfadeSeconds, forKey: "mp3shelf.crossfadeSeconds") }
@@ -26,14 +28,21 @@ final class PlaybackController: NSObject, ObservableObject {
     private var positionTimer: Timer?
     private var fadeTimer: Timer?
     private var outgoingPlayer: AVAudioPlayer?
-    private var queue: [UUID] = []
+    private var playbackOrder = PlaybackOrder()
+
+    private var loopMode: PlaybackLoopMode {
+        switch repeatMode {
+        case .off: return .off
+        case .all: return .all
+        case .one: return .one
+        }
+    }
 
     /// Read-only queue preview for the native Now Playing screen.
     /// Uses the active playback order and never mutates the playlist.
     var upcomingTracks: [MusicTrack] {
-        guard let library, let currentTrackID,
-              let index = queue.firstIndex(of: currentTrackID) else { return [] }
-        return queue.dropFirst(index + 1).prefix(3)
+        guard let library else { return [] }
+        return playbackOrder.upcomingIDs(limit: 3, loop: loopMode)
             .compactMap { library.song(with: $0) }
     }
 
@@ -58,10 +67,23 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func play(_ track: MusicTrack, queue songs: [MusicTrack]? = nil, transition: TimeInterval = 0) {
         guard let library else { return }
-        if let songs { queue = songs.map(\.id) }
-        if queue.isEmpty { queue = library.tracks.map(\.id) }
-        if !queue.contains(track.id) { queue.append(track.id) }
+        var nextOrder = playbackOrder
+        if let songs {
+            nextOrder.reset(queue: songs.map(\.id), current: track.id, shuffled: isShuffled)
+        } else if nextOrder.queueIDs.isEmpty || !nextOrder.queueIDs.contains(track.id) {
+            nextOrder.reset(queue: library.tracks.map(\.id), current: track.id, shuffled: isShuffled)
+        } else {
+            nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
+            nextOrder.select(track.id)
+        }
+        beginPlayback(track, using: nextOrder, transition: transition)
+    }
 
+    /// Playback order commits only after AVAudioPlayer successfully starts.
+    /// A corrupted or missing file cannot consume shuffle history.
+    private func beginPlayback(_ track: MusicTrack, using nextOrder: PlaybackOrder,
+                               transition: TimeInterval = 0) {
+        guard let library else { return }
         do {
             try activateAudio()
             let player = try AVAudioPlayer(contentsOf: library.fileURL(for: track))
@@ -82,6 +104,7 @@ final class PlaybackController: NSObject, ObservableObject {
                 audioPlayer?.stop()
                 audioPlayer = player
             }
+            playbackOrder = nextOrder
             currentTrackID = track.id
             duration = player.duration
             currentTime = 0
@@ -90,7 +113,8 @@ final class PlaybackController: NSObject, ObservableObject {
             updateNowPlaying()
         } catch {
             print("MP3 Shelf playback failed: \(error)")
-            isPlaying = false
+            // Keep the previous playing track and queue when a new file fails.
+            isPlaying = audioPlayer?.isPlaying ?? false
         }
     }
 
@@ -125,6 +149,7 @@ final class PlaybackController: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         isPlaying = false
+        playbackOrder = PlaybackOrder()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
@@ -140,30 +165,32 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func previous() {
         if currentTime > 3 { seek(to: 0); return }
-        guard let library, let id = currentTrackID else { return }
-        let playable = queue.filter { library.song(with: $0) != nil }
-        guard let index = playable.firstIndex(of: id), !playable.isEmpty else { return }
-        let previousIndex = index > 0 ? index - 1 : (repeatMode == .all ? playable.count - 1 : 0)
-        if let target = library.song(with: playable[previousIndex]) { play(target) }
+        guard let library else { return }
+        var nextOrder = playbackOrder
+        nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
+        guard let id = nextOrder.previous(loop: loopMode),
+              let target = library.song(with: id) else { return }
+        if id == currentTrackID { seek(to: 0); return }
+        beginPlayback(target, using: nextOrder)
     }
 
     private func advance(automatically: Bool, crossfading: Bool = false) {
-        guard let library, let id = currentTrackID else { return }
-        if automatically && repeatMode == .one { seek(to: 0); resume(); return }
-        let playable = queue.filter { library.song(with: $0) != nil }
-        guard let index = playable.firstIndex(of: id), !playable.isEmpty else { stop(); return }
-        let nextID: UUID?
-        if isShuffled, playable.count > 1 {
-            nextID = playable.filter { $0 != id }.randomElement()
-        } else if index + 1 < playable.count {
-            nextID = playable[index + 1]
-        } else if repeatMode == .all || !automatically {
-            nextID = playable.first
-        } else {
-            nextID = nil
+        guard let library else { return }
+        if automatically && repeatMode == .one {
+            seek(to: 0)
+            resume()
+            return
         }
-        if let nextID, let target = library.song(with: nextID) { play(target, transition: crossfading ? crossfadeSeconds : 0) }
-        else { stop() }
+        var nextOrder = playbackOrder
+        nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
+        guard let nextID = nextOrder.next(automatic: automatically, loop: loopMode),
+              let target = library.song(with: nextID) else {
+            stop()
+            return
+        }
+        if nextID == currentTrackID { seek(to: 0); resume(); return }
+        beginPlayback(target, using: nextOrder,
+                      transition: crossfading ? crossfadeSeconds : 0)
     }
 
     func cycleRepeat() {
@@ -175,10 +202,10 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     private func canCrossfade() -> Bool {
-        guard let library, let id = currentTrackID else { return false }
-        let playable = queue.filter { library.song(with: $0) != nil }
-        guard let index = playable.firstIndex(of: id) else { return false }
-        return (isShuffled && playable.count > 1) || index + 1 < playable.count || repeatMode == .all
+        guard let library else { return false }
+        var nextOrder = playbackOrder
+        nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
+        return nextOrder.canAdvanceAutomatically(loop: loopMode)
     }
 
     private func cancelFade() {
