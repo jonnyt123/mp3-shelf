@@ -25,7 +25,6 @@ final class MusicLibrary: ObservableObject {
     @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
-    private var isProcessingBackgroundBatch = false
     private var catalogRetryTask: Task<Void, Never>?
     private var scheduledCatalogRetryAt: Date?
     @Published private(set) var discoveryJobs: [SourceDiscoveryJob] = []
@@ -445,9 +444,7 @@ final class MusicLibrary: ObservableObject {
     /// window. Its requests are forced to Wi-Fi-only, regardless of any
     /// foreground cellular opt-in that may have been granted earlier.
     func runBackgroundDiscoveryBatch() async -> Bool {
-        guard automaticDownloadTask == nil, !isProcessingBackgroundBatch else { return true }
-        isProcessingBackgroundBatch = true
-        defer { isProcessingBackgroundBatch = false }
+        guard automaticDownloadTask == nil else { return true }
         // A headless launch starts NWPathMonitor asynchronously. Wait briefly
         // for its first update rather than treating an unknown path as cellular.
         for _ in 0..<16 where !networkStatusKnown && !Task.isCancelled {
@@ -475,13 +472,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func resumePendingDiscovery() {
-        guard automaticDownloadTask == nil, !isProcessingBackgroundBatch else { return }
-        // Large Spotify playlists must not flood background URLSession or
-        // exhaust device storage/network resources by queuing every MP3 at once.
-        // The transfer manager wakes discovery whenever a ticket finishes.
-        guard BackgroundDownloadBackpressure.mayEnqueue(
-            outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
-        ) else { return }
+        guard automaticDownloadTask == nil else { return }
         let eligible = discoveryJobs.filter {
             !$0.isPaused && !$0.isComplete &&
             networkAllowsDiscovery(for: $0.playlistID)
@@ -553,9 +544,6 @@ final class MusicLibrary: ObservableObject {
     }
 
     func stopBackgroundTransfers(for playlistID: UUID) {
-        // Explicit Cancel All must not immediately queue replacements when a
-        // transfer slot opens; pause discovery before cancelling any task.
-        pauseSourceDiscovery(for: playlistID)
         BackgroundAudioDownloader.shared.stopTransfers(for: playlistID)
     }
 
@@ -619,12 +607,6 @@ final class MusicLibrary: ObservableObject {
             if Task.isCancelled || job.isPaused || job.isComplete ||
                 !networkAllowsDiscovery(for: playlistID) ||
                 (backgroundWiFiOnly && !isOnWiFi) { break }
-            // Keep the original playlist cursor untouched while all four
-            // transfer slots are occupied. A completed/cancelled transfer
-            // triggers resumePendingDiscovery via updatePending().
-            if !BackgroundDownloadBackpressure.mayEnqueue(
-                outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
-            ) { break }
             guard let wish = job.currentWish else { break }
             if var progress = automaticDownloadProgress {
                 progress.currentSong = "\(wish.artist) — \(wish.title)"
