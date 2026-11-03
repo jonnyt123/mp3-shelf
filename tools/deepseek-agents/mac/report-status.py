@@ -32,7 +32,7 @@ def record_qa_result(role, sha, status):
     fd, temp = tempfile.mkstemp(prefix=".qa-" + role + "-", dir=GATE)
     try:
         with os.fdopen(fd, "w") as stream:
-            stream.write(json.dumps(evidence, sort_keys=True) + "\\n")
+            stream.write(json.dumps(evidence, sort_keys=True) + "\n")
         os.chmod(temp, 0o644)
         os.replace(temp, GATE / ("qa-" + role + ".json"))
     finally:
