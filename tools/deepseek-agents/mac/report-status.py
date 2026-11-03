@@ -23,6 +23,7 @@ def record_qa_result(role, sha, status):
     st = GATE.lstat()
     if not GATE.is_dir() or GATE.is_symlink() or st.st_uid != 0 or (st.st_mode & 0o022):
         raise RuntimeError("Unsafe root QA evidence directory")
+    GATE.chmod(0o755)  # Nonsecret QA receipts are readable to the unprivileged coordinator.
     evidence = {
         "schema": 1, "role": role, "sha": sha, "status": status,
         "githubContext": "mp3/mac-xcode",
