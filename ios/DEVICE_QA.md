@@ -24,6 +24,26 @@ simulator build is a separate, useful check and does not replace these tests.
 6. For network transfer tests, use an independent audio source whose creator
    explicitly authorized downloading. Do not use Spotify audio or unknown files.
 
+## Large-library performance and data-integrity acceptance
+
+1. Import 3,000+ locally owned audio files and a large Spotify metadata list.
+   Measure Listen first load, search latency, sort switching, and playlist
+   scrolling on the actual iPhone before and after this change.
+2. Start local playback and leave Listen open for a full song; progress
+   updates must not repeatedly sort the complete library or cause visible
+   frame drops when navigating the library.
+3. Import a playlist containing multiple versions of the same song name.
+   Only the exact matching artist/duration recording should be linked;
+   ambiguous candidates must remain unmatched.
+4. Toggle favorites and edit title/artist. Search, title sort, artist sort,
+   saved playlist rows, Now Playing and Up Next must reflect the changes
+   immediately, not stale cached metadata.
+5. Import a portable archive with artwork, then replace its artwork. Verify
+   the image refreshes; remove a song and verify stale covers are not shown.
+6. Load a 5,000-track library, scroll rapidly and check memory pressure.
+   Verify that the artwork cache remains bounded and iOS does not terminate
+   the app. Check library save/restore after a force-quit and relaunch.
+
 ## Shuffle and Up Next regression (PR: playback queue reliability)
 
 1. Import six distinct local audio tracks; turn on Shuffle and Repeat Off.
