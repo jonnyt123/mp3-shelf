@@ -84,14 +84,59 @@ async function localBudgetAllows() {
     throw e;
   }
 }
-async function one(config) {
+export function firstCycleDecision(status, balance, budgetOk, minimum = 0.25) {
+  if (!status || status.paused !== true) return "Pause the queue before starting a one-shot cycle";
+  if (Number(status.counts?.leased || 0) > 0) return "Another job is already leased; refusing parallel work";
+  const first = (status.roleStates || []).find(x => x.role === "mp3-playback" && Number(x.cycle) === 0);
+  if (!first || first.state !== "queued" || Number(first.attempts) !== 0)
+    return "First Playback job is not a fresh queued cycle; refusing a different role";
+  if (!budgetOk) return "Local daily budget exhausted; no model request";
+  if (!Number.isFinite(minimum) || minimum < 0.25 || minimum > 100)
+    return "Invalid minimum DeepSeek balance threshold";
+  if (!balance || !Number.isFinite(balance.amount) || balance.amount < minimum)
+    return "Insufficient DeepSeek balance for the first agent";
+  return null;
+}
+async function firstOnly(config) {
+  if (process.env.MP3_FIRST_CYCLE_EXCLUSIVE !== "1")
+    throw Error("Open Start First Agent.command to stop the background worker safely first");
+  const cloud = await request(config, "/v1/status");
+  const balance = balanceFromResponse(await getBalance(config.deepseekApiKey));
+  const budgetOk = await localBudgetAllows();
+  const minimum = Number(process.env.MP3_AGENT_MIN_BALANCE || 0.25);
+  const blocker = firstCycleDecision(cloud, balance, budgetOk, minimum);
+  if (blocker) throw Error(blocker);
+  console.log("DeepSeek read-only balance check: " + balance.amount.toFixed(2) + " " + balance.currency);
+  console.log("Authorizing precisely one initial Playback coding cycle; queue is paused after lease");
+  await request(config, "/v1/pause", { paused: false });
+  try {
+    const result = await one(config, { pauseAfterLease: true, expectedRole: "mp3-playback" });
+    if (!result || result.outcome !== "success")
+      throw Error("First cycle did not produce a validated code commit (outcome: " + (result?.outcome || "none") + ")");
+    return result;
+  } finally {
+    await request(config, "/v1/pause", { paused: true });
+  }
+}
+async function one(config, options = {}) {
   await flushPending(config);  // Network interruptions never silently lose completion evidence.
   await request(config, "/v1/heartbeat", { stage: "idle" });
   if (!(await localBudgetAllows())) { console.log("Daily budget reached; leaving cloud jobs queued"); return; }
   const { job } = await request(config, "/v1/lease", {});
-  if (!job) { console.log("No available cloud job"); return; }
+  if (!job) {
+    if (options.expectedRole) throw Error("First agent was not available for leasing");
+    console.log("No available cloud job"); return;
+  }
   if (!roles.includes(job.role) || !Number.isSafeInteger(job.id) ||
       typeof job.lease_id !== "string") throw Error("Invalid cloud job; refusing model call");
+  if (options.pauseAfterLease) {
+    // Fail closed BEFORE any paid model request; even a Mac crash leaves new work paused.
+    await request(config, "/v1/pause", { paused: true });
+  }
+  if (options.expectedRole && (job.role !== options.expectedRole || Number(job.cycle) !== 0)) {
+    await request(config, "/v1/complete", {jobId:job.id, leaseId:job.lease_id, outcome:"deferred"});
+    throw Error("Different role was leased; no DeepSeek request was made");
+  }
   console.log("Claimed", job.role, "cycle", job.cycle);
   await request(config, "/v1/heartbeat", { stage: "running" });
   const result = await childRun(job.role, config.deepseekApiKey);
@@ -103,6 +148,7 @@ async function one(config) {
   await request(config, "/v1/heartbeat", { stage: "idle" });
   console.log(job.role + ": " + final.outcome +
     (final.commitSha ? " local commit " + final.commitSha.slice(0, 12) : ""));
+  return final;
 }
 export async function main(args = process.argv.slice(2)) {
   const config = safeConfig(await readPrivateJson(secretsFile));
@@ -125,6 +171,8 @@ export async function main(args = process.argv.slice(2)) {
     console.log(await request(config, "/v1/pause", { paused: command === "--pause" }));
   } else if (command === "--once") {
     await one(config);
+  } else if (command === "--first-only") {
+    await firstOnly(config);
   } else if (command === "--loop") {
     // A persistent local process, not a ChatGPT scheduled task or Cloudflare Cron Trigger.
     await request(config, "/v1/seed", {});
@@ -132,7 +180,7 @@ export async function main(args = process.argv.slice(2)) {
       try { await one(config); } catch (e) { console.error(e.message); }
       await new Promise(resolve => setTimeout(resolve, 120_000));
     }
-  } else throw Error("Use --doctor, --seed, --status, --pause, --resume, --once or --loop");
+  } else throw Error("Use --doctor, --seed, --status, --pause, --resume, --once, --first-only or --loop");
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(e => { console.error(e.message); process.exitCode = 1; });
