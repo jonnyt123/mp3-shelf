@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { roles, safeBranch, validEvidence, ownedFiles, repository, base } from "./mac-publisher.mjs";
 const sha = "a".repeat(40);
 const approved = { role:"mp3-ui", sha, diffCheck:"pass", nodeGuardTests:"pass",
- files:["ios/MP3Shelf/Views/MainView.swift"] };
+ files:["ios/MP3Shelf/Views/MainView.swift"], webChecks:"not-applicable" };
 test("publishing is limited to five fixed agent branches", () => {
   assert.equal(repository, "jonnyt123/mp3-shelf");
   assert.equal(base, "agent/mp3-deepseek-low-cost-worker");
@@ -18,6 +18,8 @@ test("commit evidence must match role, full SHA, file set and local checks", () 
   assert.equal(validEvidence(approved,"mp3-ui","b".repeat(40),approved.files),false);
   assert.equal(validEvidence(approved,"mp3-qa",sha,approved.files),false);
   assert.equal(validEvidence({...approved,diffCheck:"fail"},"mp3-ui",sha,approved.files),false);
+  assert.equal(validEvidence({...approved,webChecks:"fail"},"mp3-ui",sha,approved.files),false);
+  assert.equal(validEvidence({...approved,webChecks:undefined},"mp3-ui",sha,approved.files),false);
   assert.equal(validEvidence(approved,"mp3-ui",sha,[]),false);
   assert.equal(validEvidence(approved,"mp3-ui",sha,["../secret"]),false);
   assert.equal(validEvidence(approved,"mp3-ui",sha,["ios/MP3Shelf/Views/OtherView.swift"]),false);
