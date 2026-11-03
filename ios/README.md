@@ -1,5 +1,26 @@
 # MP3 Shelf — Native iPhone App
 
+## Large music library and Spotify import performance
+
+The app maintains a revision-aware in-memory index of local recordings:
+UUID lookup and playlist song resolution no longer scan the entire song
+collection for every row. Title-bucketed Spotify matching avoids repeating
+full-library scans while preserving strict artist, title, edit-duration and
+ambiguity protections. Existing playlist order and stable track IDs are
+unchanged.
+
+The Listen screen now reuses **Title**, **Artist** and **Recently added** sorted
+snapshots until the library actually changes. This avoids re-sorting thousands
+of recordings on each playback progress update or view refresh. Embedded
+artwork decoding uses an evictable **32 MiB NSCache** rather than reopening
+the same cover file for every visible row. The cache is invalidated when an
+existing artwork file is overwritten or removed.
+
+`ios/Tests/PlaylistCSVTests.swift` includes a 3,000-track matching regression
+against the original exhaustive matching algorithm, checking exact results,
+versioned durations and ambiguous duplicates. Full Xcode, on-device memory
+pressure and scrolling QA are still required before release.
+
 ## Reliable shuffle and queue navigation
 
 The native player now uses a **shuffle bag** instead of choosing a fresh random
