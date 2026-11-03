@@ -151,6 +151,45 @@ enum PlaylistCSVTests {
                                          album: "", spotifyURL: nil, durationSeconds: 20)
         check(SpotifyPlaylistSync.merge(previous: [oldNoLink], latest: [alternateCut]).first?.id != oldNoLink.id,
               "preview-length alternate recordings cannot impersonate full track IDs")
+        // A large imported Spotify playlist must match exactly the same
+        // recordings as the old strict full-library scan, without repeatedly
+        // walking every unrelated title for each entry.
+        let largeLibrary: [MusicTrack] = (0..<3_000).map { number in
+            MusicTrack(title: "Offline Song \(number)",
+                       artist: "Performer \(number % 31)",
+                       album: "Collection", fileName: "track-\(number).mp3",
+                       originalFileName: "track-\(number).mp3",
+                       duration: Double(175 + number % 40))
+        }
+        let largeIndex = OfflineTrackIndex(tracks: largeLibrary)
+        for number in stride(from: 0, to: 3_000, by: 137) {
+            let wish = PlaylistWish(title: "Offline Song \(number)",
+                                    artist: "Performer \(number % 31)",
+                                    album: "", spotifyURL: nil,
+                                    durationSeconds: Double(175 + number % 40))
+            check(largeIndex.reusableTrack(for: wish)?.id ==
+                  MusicMatching.reusableOfflineTrack(for: wish, in: largeLibrary)?.id,
+                  "indexed large-library match exactly preserves strict metadata rules")
+        }
+        let twoCuts = [
+            MusicTrack(title: "Same Song", artist: "One Band", album: "",
+                       fileName: "long.mp3", originalFileName: "long.mp3", duration: 240),
+            MusicTrack(title: "Same Song", artist: "One Band", album: "",
+                       fileName: "short.mp3", originalFileName: "short.mp3", duration: 90)
+        ]
+        let versioned = OfflineTrackIndex(tracks: twoCuts)
+        let longWish = PlaylistWish(title: "Same Song", artist: "One Band",
+                                    album: "", spotifyURL: nil, durationSeconds: 241)
+        check(versioned.reusableTrack(for: longWish)?.id == twoCuts[0].id,
+              "index rejects a different-duration cut rather than picking either")
+        let unknownDuration = PlaylistWish(title: "Same Song", artist: "One Band",
+                                           album: "", spotifyURL: nil)
+        check(versioned.reusableTrack(for: unknownDuration) == nil,
+              "ambiguous same-name recordings remain unmatched")
+        let missingWish = PlaylistWish(title: "Absent track", artist: "One Band",
+                                       album: "", spotifyURL: nil)
+        check(largeIndex.reusableTrack(for: missingWish) == nil,
+              "unknown tracks never get guessed from another artist/title")
         print("Playlist parser & matcher tests passed")
     }
 }
