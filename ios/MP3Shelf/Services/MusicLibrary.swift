@@ -315,8 +315,11 @@ final class MusicLibrary: ObservableObject {
               let image = UIImage(data: data) else { return nil }
         // Cache is automatically evicted under memory pressure. Decoding the
         // same cover on every library row render would be unnecessarily costly.
-        let cost = min(32 * 1024 * 1024, Int(image.size.width * image.size.height * 4))
-        artworkCache.setObject(image, forKey: key, cost: max(cost, 1))
+        let estimatedBytes = image.size.width * image.size.height * 4
+        let cost = estimatedBytes.isFinite
+            ? Int(min(CGFloat(32 * 1024 * 1024), max(1, estimatedBytes)))
+            : 32 * 1024 * 1024
+        artworkCache.setObject(image, forKey: key, cost: cost)
         return image
     }
 
