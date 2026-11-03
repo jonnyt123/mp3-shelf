@@ -94,6 +94,62 @@ struct PlaybackOrder {
         return previousID
     }
 
+    /// Expose only the current cycle's distinct pending songs for editing.
+    /// Editing the queue never modifies MusicPlaylist.trackIDs.
+    func editableUpcomingIDs(limit: Int = 200) -> [UUID] {
+        guard limit > 0, let currentID else { return [] }
+        if isShuffled { return Array(remainingShuffle.prefix(limit)) }
+        guard let position = queueIDs.firstIndex(of: currentID) else { return [] }
+        return Array(queueIDs.dropFirst(position + 1).prefix(limit))
+    }
+
+    /// Reorder the currently pending queue without resetting listening history.
+    @discardableResult
+    mutating func moveUpcoming(_ id: UUID, earlier: Bool) -> Bool {
+        if isShuffled {
+            guard let index = remainingShuffle.firstIndex(of: id) else { return false }
+            let destination = earlier ? index - 1 : index + 1
+            guard remainingShuffle.indices.contains(destination) else { return false }
+            remainingShuffle.swapAt(index, destination)
+            return true
+        }
+        guard let currentID, let currentIndex = queueIDs.firstIndex(of: currentID),
+              let index = queueIDs.firstIndex(of: id), index > currentIndex else { return false }
+        let destination = earlier ? index - 1 : index + 1
+        guard destination > currentIndex, queueIDs.indices.contains(destination) else { return false }
+        queueIDs.swapAt(index, destination)
+        return true
+    }
+
+    /// Removing an item from the listening queue leaves its library file,
+    /// favorite flag and all persisted playlists completely unchanged.
+    @discardableResult
+    mutating func removeUpcoming(_ id: UUID) -> Bool {
+        guard id != currentID, let index = queueIDs.firstIndex(of: id) else { return false }
+        queueIDs.remove(at: index)
+        remainingShuffle.removeAll { $0 == id }
+        playHistory.removeAll { $0 == id }
+        return true
+    }
+
+    /// Place an already queued recording immediately after the current song.
+    @discardableResult
+    mutating func playNext(_ id: UUID) -> Bool {
+        guard let currentID, id != currentID,
+              let currentIndex = queueIDs.firstIndex(of: currentID),
+              let index = queueIDs.firstIndex(of: id) else { return false }
+        if isShuffled {
+            guard let pending = remainingShuffle.firstIndex(of: id) else { return false }
+            remainingShuffle.remove(at: pending)
+            remainingShuffle.insert(id, at: 0)
+            return true
+        }
+        queueIDs.remove(at: index)
+        let target = queueIDs.firstIndex(of: currentID) ?? currentIndex
+        queueIDs.insert(id, at: min(target + 1, queueIDs.count))
+        return true
+    }
+
     func canAdvanceAutomatically(loop: PlaybackLoopMode) -> Bool {
         guard let currentID, !queueIDs.isEmpty, loop != .one else { return false }
         if isShuffled {
