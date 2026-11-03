@@ -6,6 +6,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A9E6F2461B4C4F19A8D0C271 /* PlaybackOrder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */; };
 		DBA001A001A001A001A001A1 /* PortableShelfArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */; };
 		888888888888888888888888 /* LyricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 777777777777777777777777 /* LyricsView.swift */; };
 		666666666666666666666666 /* LyricsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 555555555555555555555555 /* LyricsParser.swift */; };
@@ -28,6 +29,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackOrder.swift; sourceTree = "<group>"; };
 		DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortableShelfArchive.swift; sourceTree = "<group>"; };
 		777777777777777777777777 /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsView.swift; sourceTree = "<group>"; };
 		555555555555555555555555 /* LyricsParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsParser.swift; sourceTree = "<group>"; };
@@ -72,6 +74,7 @@
 			); path = MP3Shelf; sourceTree = "<group>"; };
 		E9CF4F9355D0A5E1275010D6 /* Models */ = {isa = PBXGroup; children = (
 				3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */,
+				A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */,
 				ABCA09110000000000000006 /* SourceDiscoveryJob.swift */,
 			); path = Models; sourceTree = "<group>"; };
 		F30B052890FF09AC06846E94 /* Services */ = {isa = PBXGroup; children = (
@@ -115,6 +118,7 @@
 		12573461486BCB4FF9F39CD6 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
 				628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */,
 				58F35F17B0B426557F7C6BFE /* MusicModels.swift in Sources */,
+				A9E6F2461B4C4F19A8D0C271 /* PlaybackOrder.swift in Sources */,
 				23F82C0DAB44C8D8C5F26241 /* MusicLibrary.swift in Sources */,
 				DBA001A001A001A001A001A1 /* PortableShelfArchive.swift in Sources */,
 				A400AF7B34CFD773219453FF /* PlaybackController.swift in Sources */,
