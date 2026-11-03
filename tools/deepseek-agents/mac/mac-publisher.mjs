@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Immutable, root-installed macOS GitHub broker. DeepSeek/OpenCode never sees this token.
 import { spawn } from "node:child_process";
-import { readFile, lstat } from "node:fs/promises";
+import { readFile, lstat, mkdir, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 export const roles = Object.freeze(["mp3-playback","mp3-sources","mp3-ui","mp3-qa","mp3-integration"]);
@@ -11,6 +11,7 @@ const remote = "https://github.com/" + repository + ".git";
 const root = "/Library/Application Support/MP3ShelfPublisher";
 const tokenPath = path.join(root, "publisher.token");
 const askpass = path.join(root, "askpass.sh");
+export const receiptRoot = "/Library/Application Support/MP3ShelfGate";
 const source = process.env.MP3_SOURCE_REPO;
 const evidencePath = process.env.MP3_EVIDENCE_DIR;
 
@@ -68,6 +69,28 @@ async function github(endpoint,method="GET",body) {
   if (!r.ok) throw Error("GitHub API "+method+" "+endpoint+" returned "+r.status);
   return r.json();
 }
+export function publishProof(role, sha, pr, evidence) {
+  if (!roles.includes(role) || !/^[a-f0-9]{40}$/.test(sha) ||
+      !pr || pr.draft !== true || pr.state !== "open" ||
+      pr.head?.ref !== safeBranch(role) || pr.head?.sha !== sha ||
+      pr.base?.ref !== base || !Number.isSafeInteger(pr.number) ||
+      !validEvidence(evidence, role, sha, evidence?.files || [])) {
+    throw Error("Refusing to certify unpublished/non-draft PR or unverified commit");
+  }
+  return {schema:1,role,sha,prNumber:pr.number,
+    prUrl:"https://github.com/"+repository+"/pull/"+pr.number,
+    draft:true,localChecks:"pass",macXcode:"pending",physicalIphone:"NOT_TESTED"};
+}
+async function recordPublished(proof) {
+  await mkdir(receiptRoot,{recursive:true,mode:0o755});
+  const stat=await lstat(receiptRoot);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== 0 ||
+      (stat.mode & 0o022) !== 0) throw Error("Unsafe publisher evidence directory");
+  const target=path.join(receiptRoot,"published-"+proof.role+".json");
+  const tmp=target+"."+process.pid+".tmp";
+  await writeFile(tmp,JSON.stringify(proof)+"\n",{mode:0o644,flag:"wx"});
+  await rename(tmp,target);
+}
 async function publish(role) {
   const branch=safeBranch(role);
   const evidenceFile=path.join(evidencePath,role+".json");
@@ -90,24 +113,38 @@ async function publish(role) {
   const currentBase=await git(["rev-parse","FETCH_HEAD"]);
   await git(["merge-base","--is-ancestor",currentBase,sha]);
   const heads=await git(["ls-remote","--heads",remote,"refs/heads/"+branch]);
+  let alreadyPublished=false;
   if(heads) {
     const old=heads.split(/\s+/)[0];
-    if(old===sha) return {role,sha,alreadyPublished:true};
-    await git(["fetch","--no-tags",remote,"refs/heads/"+branch]);
-    if ((await git(["rev-parse","FETCH_HEAD"]))!==old) throw Error("Remote moved; retry");
-    await git(["merge-base","--is-ancestor",old,sha]);
+    if(old===sha) alreadyPublished=true;
+    else {
+      await git(["fetch","--no-tags",remote,"refs/heads/"+branch]);
+      if ((await git(["rev-parse","FETCH_HEAD"]))!==old) throw Error("Remote moved; retry");
+      await git(["merge-base","--is-ancestor",old,sha]);
+    }
   }
-  await git(["push",remote,sha+":refs/heads/"+branch],true); // Non-force, one allowlisted ref.
+  if(!alreadyPublished) await git(["push",remote,sha+":refs/heads/"+branch],true);
   const prs=await github("/pulls?state=open&head=jonnyt123:"+encodeURIComponent(branch)+"&base="+encodeURIComponent(base));
   if(!Array.isArray(prs)) throw Error("Unexpected PR search result");
-  if (!prs.length) {
-    await github("/pulls","POST",{
-      title:"MP3 Shelf agent: "+role+" (native Mac QA pending)",
+  let pr=prs[0];
+  if (!pr) {
+    pr=await github("/pulls","POST",{
+      title:"MP3 Shelf agent: "+role+" — tested source, Mac QA pending",
       head:branch,base,draft:true,
-      body:"Automatically published a locally guard-tested source change. Unsigned macOS Xcode verification and independent review are pending. Physical iPhone gate #6 NOT satisfied. No automatic merge into main. Coordination issue #22."
+      body:"## Automated agent milestone\n\n" +
+        "- Agent: `"+role+"`\n" +
+        "- Verified commit: `"+sha+"`\n" +
+        "- Changed files: "+files.map(x=>"`"+x+"`").join(", ")+"\n" +
+        "- Trusted local checks: git diff formatting **PASS**, Node guard tests **PASS**.\n" +
+        "- Web tests/typecheck: **"+approval.webChecks+"**.\n" +
+        "- Independent Mac simulator build and Swift tests: **PENDING** (posted as `mp3/mac-xcode` commit status).\n" +
+        "- Signed physical iPhone gate #6: **NOT VERIFIED**.\n\n" +
+        "Draft only: never automatically merge or release. Coordination issue #22."
     });
   }
-  return {role,sha,uploaded:true};
+  const proof=publishProof(role,sha,pr,approval);
+  await recordPublished(proof);
+  return {role,sha,uploaded:!alreadyPublished,draftPr:proof.prUrl,receipt:true};
 }
 export async function run() {
   if (typeof process.getuid === "function" && process.getuid()!==0) throw Error("Root-only separate broker");
