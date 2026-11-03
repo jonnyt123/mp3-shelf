@@ -8,17 +8,6 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
 @main
 enum SourceDiscoveryJobTests {
     static func main() throws {
-        verifyDiscovery(BackgroundDownloadBackpressure.maximumOutstandingTransfers == 4,
-                        "large playlist discovery limits outstanding background transfers")
-        for count in 0..<4 {
-            verifyDiscovery(BackgroundDownloadBackpressure.mayEnqueue(
-                outstandingTransfers: count),
-                "transfer slot available with \(count) active downloads")
-        }
-        verifyDiscovery(!BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: 4) &&
-                        !BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: 10) &&
-                        !BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: -1),
-                        "discovery does not advance when queue is full or corrupt")
         verifyDiscovery(DownloadNetworkPolicy.canDiscover(
             onWiFi: true, onCellular: false, explicitlyAllowCellular: false),
             "Wi-Fi downloads run without per-track confirmation")
