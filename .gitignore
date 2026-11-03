@@ -6,3 +6,8 @@ node_modules/
 .env.local
 .env.*.local
 mp3-shelf-source.zip
+
+.wrangler/
+.dev.vars
+.dev.vars.*
+tools/deepseek-agents/cloudflare/.env*

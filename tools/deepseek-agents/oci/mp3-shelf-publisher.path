@@ -1,0 +1,9 @@
+[Unit]
+Description=Publish MP3 Shelf agent updates when trusted approval evidence is written
+
+[Path]
+PathChanged=/srv/.mp3-shelf-agent-state/approved
+Unit=mp3-shelf-publisher.service
+
+[Install]
+WantedBy=multi-user.target
