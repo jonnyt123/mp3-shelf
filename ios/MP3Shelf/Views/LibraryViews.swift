@@ -2,14 +2,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct LibraryView: View {
-    private enum SortMode: String, CaseIterable, Identifiable {
-        case title = "Title"
-        case recent = "Recently added"
-        case artist = "Artist"
-
-        var id: String { rawValue }
-    }
-
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var showFilePicker = false
@@ -22,13 +14,13 @@ struct LibraryView: View {
         return ""
     }()
     @State private var favoritesOnly = false
-    @State private var sortMode: SortMode = .title
+    @State private var sortMode: LibraryTrackSort = .title
     @State private var message: String?
     @State private var renaming: MusicTrack?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var recentlyAdded: [MusicTrack] {
-        Array(library.tracks.sorted { $0.addedAt > $1.addedAt }.prefix(8))
+        library.recentlyAddedTracks(limit: 8)
     }
 
     private var isSearching: Bool {
@@ -36,34 +28,14 @@ struct LibraryView: View {
     }
 
     private var displayed: [MusicTrack] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return library.tracks.filter { track in
-            (!favoritesOnly || track.isFavorite) && (query.isEmpty ||
-                [track.title, track.artist, track.album].contains(where: {
-                    $0.localizedCaseInsensitiveContains(query)
-                }))
-        }
-        .sorted { lhs, rhs in
-            switch sortMode {
-            case .title:
-                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-            case .recent:
-                return lhs.addedAt == rhs.addedAt
-                    ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-                    : lhs.addedAt > rhs.addedAt
-            case .artist:
-                let order = lhs.artist.localizedStandardCompare(rhs.artist)
-                return order == .orderedSame
-                    ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-                    : order == .orderedAscending
-            }
-        }
+        library.browseTracks(query: searchText, favoritesOnly: favoritesOnly,
+                             order: sortMode)
     }
 
     private var sortMenu: some View {
         Menu {
             Picker("Sort songs", selection: $sortMode) {
-                ForEach(SortMode.allCases) { mode in
+                ForEach(LibraryTrackSort.allCases) { mode in
                     Text(mode.rawValue).tag(mode)
                 }
             }
