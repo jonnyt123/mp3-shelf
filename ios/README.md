@@ -56,9 +56,10 @@ are downloaded.
 
 ## Local native release verification (no GitHub Actions minutes)
 
-The current native iOS development code lives in the newest **stacked iOS PR**
-branch, not in the default `main` PWA. To test the complete latest stack,
-check out `feat/ios-local-release-gate-no-actions` in your local clone. You can
+The download and playback recovery candidate is on
+`fix/ios-download-finalization-and-conversion` (draft PR #28), separate from
+the default `main` PWA and the playback queue/large-library PRs #24–#27.
+Check out this candidate branch in your local clone. You can
 also use GitHub's **Code → Download ZIP** after choosing that branch. Opening
 `ios/MP3Shelf.xcodeproj` on default `main` will not include these new features.
 
@@ -68,7 +69,7 @@ On a Mac with full Xcode selected, run:
 bash ios/scripts/verify-local-release.sh
 ```
 
-This executes all five native Swift regression suites, unsigned Simulator
+This executes all seven native Swift regression suites, unsigned Simulator
 Debug and Release builds, and an unsigned physical-iPhone architecture Release
 build **locally**. It never queues a GitHub Actions workflow. Add `--smoke` to
 install and launch the Debug app on a locally installed iPhone Simulator and
@@ -590,3 +591,9 @@ swiftc MP3Shelf/Models/MusicModels.swift MP3Shelf/Services/PlaylistCSV.swift MP3
 - `Views/`: SwiftUI library, playlists, full player, downloads, settings and Spotify playlist import.
 
 No API secrets, ad SDKs, cloud services or external dependencies are bundled.
+
+## Download and playback review branch
+
+Use branch `fix/ios-download-finalization-and-conversion` (draft PR #28) for these changes. In Finder, double-click **Verify MP3 Shelf.command** inside `ios`. It runs seven Swift regression suites, three unsigned native builds and the existing eight-screen Simulator smoke capture. It uses no GitHub Actions. macOS may require Open from the context menu for a downloaded script.
+
+Reports and logs appear in `ios/build/local-release`. Missing Swift/Xcode now also creates a failed report. A successful Simulator launch still requires screenshot review and the physical iPhone scenarios in DEVICE_QA.md. The new interruption suite exercises resume intent; real calls, Siri and Bluetooth events require device testing.

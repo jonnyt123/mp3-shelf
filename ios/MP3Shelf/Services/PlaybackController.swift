@@ -39,6 +39,12 @@ final class PlaybackController: NSObject, ObservableObject {
 
     private let relay = AudioCompletionRelay()
     private var remoteControlsConfigured = false
+    private var interruptionState = PlaybackInterruptionState()
+    private var audioSessionObservers: [NSObjectProtocol] = []
+
+    deinit {
+        for observer in audioSessionObservers { NotificationCenter.default.removeObserver(observer) }
+    }
 
     func connect(to library: MusicLibrary) {
         self.library = library
@@ -48,6 +54,7 @@ final class PlaybackController: NSObject, ObservableObject {
             Task { @MainActor in self?.advance(automatically: true) }
         }
         configureRemoteControls()
+        observeAudioSession()
     }
 
     private func activateAudio() throws {
@@ -82,6 +89,7 @@ final class PlaybackController: NSObject, ObservableObject {
                 audioPlayer?.stop()
                 audioPlayer = player
             }
+            interruptionState.cancelResume()
             currentTrackID = track.id
             duration = player.duration
             currentTime = 0
@@ -97,6 +105,7 @@ final class PlaybackController: NSObject, ObservableObject {
     func togglePlayback() { isPlaying ? pause() : resume() }
 
     func pause() {
+        interruptionState.cancelResume()
         if outgoingPlayer != nil { cancelFade(); audioPlayer?.volume = 1 }
         audioPlayer?.pause()
         isPlaying = false
@@ -104,6 +113,7 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func resume() {
+        interruptionState.cancelResume()
         guard let audioPlayer else { return }
         do {
             try activateAudio()
@@ -116,6 +126,7 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func stop() {
+        interruptionState.cancelResume()
         audioPlayer?.stop()
         audioPlayer = nil
         cancelFade()
@@ -238,6 +249,35 @@ final class PlaybackController: NSObject, ObservableObject {
             info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: artwork.size) { _ in artwork }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func observeAudioSession() {
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        audioSessionObservers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: session, queue: .main
+        ) { [weak self] notification in
+            let type = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
+            let options = (notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
+            Task { @MainActor [weak self] in
+                guard let self, let type else { return }
+                if type == AVAudioSession.InterruptionType.began.rawValue {
+                    let wasPlaying = self.isPlaying || self.interruptionState.wantsResume
+                    self.pause()
+                    self.interruptionState.began(wasPlaying: wasPlaying)
+                } else if type == AVAudioSession.InterruptionType.ended.rawValue {
+                    let allowed = AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)
+                    if self.interruptionState.ended(systemAllowsResume: allowed) { self.resume() }
+                }
+            }
+        })
+        audioSessionObservers.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: session, queue: .main
+        ) { [weak self] notification in
+            let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
+            guard reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else { return }
+            Task { @MainActor [weak self] in self?.pause() }
+        })
     }
 
     private func configureRemoteControls() {

@@ -159,3 +159,20 @@ enum DownloadedAudioFormat {
     }
 }
 #endif
+
+/// A manual pause, stop or route loss cancels any pending automatic resume.
+struct PlaybackInterruptionState {
+    private(set) var wantsResume = false
+
+    mutating func began(wasPlaying: Bool) {
+        wantsResume = wantsResume || wasPlaying
+    }
+
+    mutating func ended(systemAllowsResume: Bool) -> Bool {
+        let resume = wantsResume && systemAllowsResume
+        wantsResume = false
+        return resume
+    }
+
+    mutating func cancelResume() { wantsResume = false }
+}
