@@ -17,6 +17,12 @@ node tools/deepseek-agents/mac/diagnose-install.mjs
 
 Missing Xcode, unavailable Node/OpenCode, expired authentication, root-only GitHub daemons and DeepSeek billing problems are intentionally **not** silently repaired; they require explicit local setup or authorization. Following a repair, rerun the original installer. Diagnosis and repair outcomes are not evidence that a paid coding cycle completed.
 
+### Finder one-click installer
+
+For Mac owners who do not want to type Terminal commands, use the downloadable **MP3-Shelf-One-Click-Installer.zip**: unzip and double-click **Install MP3 Shelf.command** in Finder. It automatically clones or safely fast-forwards the agent setup branch, invokes the guarded installer, and offers to copy the coordinator token and open the dashboard. Terminal opens itself for secure sign-in and administrator prompts; no shell commands need to be typed. Initial Xcode/Git tooling and account credentials may still need authorization.
+
+Source: [one-click-installer.command](mac/one-click-installer.command). Usage and signing limitations: [one-click-README.md](mac/one-click-README.md). To build the Finder ZIP locally, run `python3 tools/deepseek-agents/mac/package-one-click.py`. The installer is unsigned; macOS may require a one-time Privacy & Security > Open Anyway approval. It never resumes the DeepSeek queue automatically.
+
 ### Automatic Mac setup failure diagnosis
 
 **New:** If any step in the Mac installer fails, it identifies the failing stage and runs the read-only diagnostic checks automatically. The report explains the cause and a targeted correction without printing passwords, API keys, coordinator tokens, PATs or raw log lines. It does not start paid DeepSeek calls or resume the cloud queue.
