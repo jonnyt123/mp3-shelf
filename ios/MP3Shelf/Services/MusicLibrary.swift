@@ -17,6 +17,14 @@ struct AutomaticDownloadProgress {
     var wasCancelled: Bool = false
 }
 
+enum LibraryTrackSort: String, CaseIterable, Identifiable {
+    case title = "Title"
+    case recent = "Recently added"
+    case artist = "Artist"
+
+    var id: String { rawValue }
+}
+
 @MainActor
 final class MusicLibrary: ObservableObject {
     @Published private(set) var tracks: [MusicTrack] = [] {
@@ -29,6 +37,9 @@ final class MusicLibrary: ObservableObject {
     private var indexedRevision: UInt64 = .max
     private var indexedTracksByID: [UUID: MusicTrack] = [:]
     private var indexedByTitle = OfflineTrackIndex(tracks: [])
+    private var sortedByTitle: [MusicTrack] = []
+    private var sortedByRecent: [MusicTrack] = []
+    private var sortedByArtist: [MusicTrack] = []
     private let artworkCache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.totalCostLimit = 32 * 1024 * 1024
@@ -334,7 +345,47 @@ final class MusicLibrary: ObservableObject {
         indexedTracksByID = Dictionary(tracks.map { ($0.id, $0) },
                                        uniquingKeysWith: { first, _ in first })
         indexedByTitle = OfflineTrackIndex(tracks: tracks)
+        sortedByTitle = tracks.sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+        sortedByRecent = tracks.sorted {
+            $0.addedAt == $1.addedAt
+                ? $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                : $0.addedAt > $1.addedAt
+        }
+        sortedByArtist = tracks.sorted {
+            let comparison = $0.artist.localizedStandardCompare($1.artist)
+            return comparison == .orderedSame
+                ? $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                : comparison == .orderedAscending
+        }
         indexedRevision = trackRevision
+    }
+
+    /// Pre-sorted revision snapshots avoid sorting the full collection on
+    /// every playback tick while searching thousands of local recordings.
+    func browseTracks(query rawQuery: String, favoritesOnly: Bool,
+                      order: LibraryTrackSort) -> [MusicTrack] {
+        refreshTrackIndexIfNeeded()
+        let source: [MusicTrack]
+        switch order {
+        case .title: source = sortedByTitle
+        case .recent: source = sortedByRecent
+        case .artist: source = sortedByArtist
+        }
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty && !favoritesOnly { return source }
+        return source.filter { track in
+            (!favoritesOnly || track.isFavorite) && (query.isEmpty ||
+                [track.title, track.artist, track.album].contains {
+                    $0.localizedCaseInsensitiveContains(query)
+                })
+        }
+    }
+
+    func recentlyAddedTracks(limit: Int = 8) -> [MusicTrack] {
+        refreshTrackIndexIfNeeded()
+        return Array(sortedByRecent.prefix(max(0, limit)))
     }
 
     func song(with id: UUID?) -> MusicTrack? {
