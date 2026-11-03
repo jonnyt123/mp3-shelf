@@ -186,6 +186,29 @@ enum MusicMatching {
 }
 
 
+/// Single-pass title index for very large imported Spotify playlists.
+/// Matching delegates to the existing strict artist/duration policy, so
+/// same-name remixes and ambiguous tracks are never silently substituted.
+struct OfflineTrackIndex {
+    private let tracksByTitle: [String: [MusicTrack]]
+
+    init(tracks: [MusicTrack]) {
+        var lookup: [String: [MusicTrack]] = [:]
+        lookup.reserveCapacity(tracks.count)
+        for track in tracks {
+            let title = MusicMatching.key(track.title)
+            if !title.isEmpty { lookup[title, default: []].append(track) }
+        }
+        tracksByTitle = lookup
+    }
+
+    func reusableTrack(for wish: PlaylistWish) -> MusicTrack? {
+        let key = MusicMatching.key(wish.title)
+        guard !key.isEmpty, let candidates = tracksByTitle[key] else { return nil }
+        return MusicMatching.reusableOfflineTrack(for: wish, in: candidates)
+    }
+}
+
 /// Verify identity evidence inside imported audio before assigning playlist
 /// metadata. Missing tags are inconclusive; contradictory tags are a mismatch.
 /// The caller separately validates playable media and Spotify's duration.
