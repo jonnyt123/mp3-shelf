@@ -60,17 +60,6 @@ enum BackgroundTransferRecoveryPolicy {
     }
 }
 
-/// Avoid filling iOS's background URLSession with an unbounded number of
-/// simultaneous downloads when importing a large Spotify playlist.
-/// The discovery cursor is never consumed while transfer slots are full.
-enum BackgroundDownloadBackpressure {
-    static let maximumOutstandingTransfers = 4
-
-    static func mayEnqueue(outstandingTransfers: Int) -> Bool {
-        outstandingTransfers >= 0 && outstandingTransfers < maximumOutstandingTransfers
-    }
-}
-
 /// Pure, testable eligibility for bounded system-scheduled catalog work.
 /// The foreground queue continues to use the normal user-approved policy.
 enum BackgroundDiscoveryPolicy {
