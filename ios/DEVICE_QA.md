@@ -24,6 +24,27 @@ simulator build is a separate, useful check and does not replace these tests.
 6. For network transfer tests, use an independent audio source whose creator
    explicitly authorized downloading. Do not use Spotify audio or unknown files.
 
+## Playback queue editor and automatic download cap acceptance
+
+1. Import a Spotify playlist with at least 15 qualifying, explicitly
+   authorized independent recordings. On Wi-Fi, start auto discovery and
+   verify at most **four** background transfer tickets remain queued at once.
+   As each ticket finishes, the next discovery lookup should resume without
+   losing the saved per-song cursor or creating duplicate downloads.
+2. Use **Cancel All** while four tickets are active. The playlist's source
+   discovery must stay paused, with no automatic replacement tasks until
+   explicitly resumed. Restart the app and confirm the pause is preserved.
+3. Interrupt Wi-Fi, restore connectivity, and verify existing bounded
+   retries, alternative verified sources and iOS background completion still
+   work. Explicit cellular permission must remain session-only.
+4. From Now Playing, open **Manage playing queue**. Move an upcoming track
+   earlier/later, choose Play next, play a selected item, then remove an
+   upcoming item. Confirm the next playback order matches the visible sheet.
+5. Reopen the saved playlist after editing the queue; its persisted order,
+   favorites, local file count and downloaded files must be unchanged.
+6. Test the queue sheet at large Dynamic Type sizes and with VoiceOver,
+   including accessible action menus and medium/large sheet presentation.
+
 ## Large-library performance and data-integrity acceptance
 
 1. Import 3,000+ locally owned audio files and a large Spotify metadata list.
