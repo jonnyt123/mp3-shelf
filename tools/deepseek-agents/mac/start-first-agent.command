@@ -79,19 +79,22 @@ if(!first||first.state!=="queued"||Number(first.attempts)!==0) {
 unset STATUS
 
 # Explicit payment consent immediately before any resume or lease.
-if ! /usr/bin/osascript - "$AMOUNT" "$CURRENCY" <<'OSA'
+# Second choice arms four future one-shot jobs, but ONLY AFTER trusted PR and Mac QA proof.
+FOLLOWUP_CHOICE="$(/usr/bin/osascript - "$AMOUNT" "$CURRENCY" <<'OSA'
 on run argv
   set balance to item 1 of argv
   set currency to item 2 of argv
-  set explanation to "DeepSeek reports " & balance & " " & currency & " available. Run ONE paid MP3 Shelf Playback coding session? The local observed spend limit defaults to 0.50 account-currency units per day, but this is a soft cap, not a guarantee. The Cloudflare queue will return to PAUSED after claiming the job. No production merge will be performed."
-  set answer to display dialog explanation with title "MP3 Shelf — Authorize First Agent" buttons {"Cancel", "Run One Agent"} default button "Cancel" with icon caution
-  if button returned of answer is not "Run One Agent" then error number -128
+  set explanation to "DeepSeek reports " & balance & " " & currency & " available. Start ONE chargeable Playback coding session? You may also authorize the other FOUR agents to run automatically, sequentially, ONLY after a draft PR and independent Mac simulator/Swift QA pass for the first commit. The default 0.50/day spending ledger is SOFT, not a guaranteed cap; follow-up sessions may use additional credits across days. No production merge will happen."
+  set answer to display dialog explanation with title "MP3 Shelf — Paid Coding Authorization" buttons {"Cancel", "Run One Agent", "One + Four After QA"} default button "Cancel" with icon caution
+  return button returned of answer
 end run
 OSA
-then
-  echo "No paid request approved. Nothing started."
-  exit 0
-fi
+)" || true
+case "$FOLLOWUP_CHOICE" in
+  "Run One Agent") MP3_AUTO_FOLLOWUPS_AFTER_QA=0 ;;
+  "One + Four After QA") MP3_AUTO_FOLLOWUPS_AFTER_QA=1 ;;
+  *) echo "No paid request approved. Nothing started."; exit 0 ;;
+esac
 
 printf '\n[3/5] Pausing the multi-agent queue before isolating the first run...\n'
 node "$CLIENT" --pause >/dev/null
@@ -110,6 +113,10 @@ if /bin/launchctl print "$LAUNCH_DOMAIN/com.mp3shelf.cloud-coordinator" >/dev/nu
 fi
 
 printf '\n[4/5] Starting exactly one Playback coding cycle; the queue will pause after lease...\n'
-MP3_FIRST_CYCLE_EXCLUSIVE=1 node "$CLIENT" --first-only
-printf '\n[5/5] First cycle returned; Cloudflare will remain paused.\n'
-dialog "MP3 Shelf — First Run Finished" "The first agent returned from its coding session. See the Terminal window for its result and the Cloudflare dashboard for the recorded job. The queue stays paused until you choose otherwise."
+MP3_AUTO_FOLLOWUPS_AFTER_QA="$MP3_AUTO_FOLLOWUPS_AFTER_QA" MP3_FIRST_CYCLE_EXCLUSIVE=1 node "$CLIENT" --first-only
+printf '\n[5/5] First cycle returned; Cloudflare will remain paused until PR and QA evidence are accepted.\n'
+if [[ "${MP3_AUTO_FOLLOWUPS_AFTER_QA}" == "1" ]]; then
+  dialog "MP3 Shelf — Automatic Follow-ups Armed" "The Playback agent recorded a validated local commit. Its draft PR and independent Mac simulator/Swift QA must both pass before the other four agents run sequentially. No cycle-1 jobs or production merges are authorized. You can pause the process in the Cloudflare dashboard."
+else
+  dialog "MP3 Shelf — First Run Finished" "The first agent returned from its coding session. See the Terminal window and dashboard for the commit. The queue remains paused; no additional paid agent sessions were approved."
+fi
