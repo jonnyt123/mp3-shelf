@@ -17,6 +17,16 @@ node tools/deepseek-agents/mac/diagnose-install.mjs
 
 Missing Xcode, unavailable Node/OpenCode, expired authentication, root-only GitHub daemons and DeepSeek billing problems are intentionally **not** silently repaired; they require explicit local setup or authorization. Following a repair, rerun the original installer. Diagnosis and repair outcomes are not evidence that a paid coding cycle completed.
 
+### Q1 + Q3 — verified draft publication and four-agent continuation
+
+The trusted, root-installed **Mac publisher** automatically pushes an agent's locally guard-tested commit onto its allowlisted `agent/mp3-*` branch and opens a **DRAFT** GitHub pull request against `agent/mp3-deepseek-low-cost-worker`. Its PR description includes the exact commit SHA, changed files, Node/diff/web checks, pending independent Mac QA and the outstanding signed physical-iPhone gate. A root-owned, **publicly readable but nonsecret** receipt at `/Library/Application Support/MP3ShelfGate/published-<role>.json` is created only after GitHub confirms the draft PR and matching SHA. The unprivileged AI worker never receives GitHub tokens. Existing protected publishing authorization is still required on the user's Mac.
+
+The separate Xcode/Swift QA service tests the **published SHA** on the local Mac; a root-only status reporter verifies the remote branch HEAD, posts the `mp3/mac-xcode` GitHub commit status, and only then writes `qa-<role>.json` to the root-owned evidence directory. A failed build/status cannot unlock the next agent. The publisher/QA/status pollers run every ~5 minutes; no GitHub Actions minutes are used.
+
+In **Start First Agent.command**, select **Run One Agent** to stop after one validated Playback milestone, or **One + Four After QA** to preapprove at most four additional sequential paid coding sessions. The latter creates a local 0600 follow-up approval bound to the first commit SHA. The background Mac coordinator remains PAUSED until the exact first draft PR receipt, QA-success receipt and Cloudflare completed-cycle SHA all agree. It then runs Sources, UI, QA and Integration **once each, cycle 0 only**; unexpected/previously attempted work, failed local checks, manual pause, stale lease, or mismatched evidence stops the batch. Once Integration completes, the queue is paused before cycle 1 can start. No automatic merge or production deployment takes place.
+
+The default observed DeepSeek spend guard is a **soft limit**, not a billing guarantee. Additional sessions may need balance beyond the first; insufficient funds or exhausted local budget stop further activity. All Mac installation, key entry, model execution, simulator QA and first draft publication remain **unverified until the owner runs the Finder installer on their actual Mac**.
+
 ### First paid coding agent: balance-checked one-click start
 
 The updated ZIP also includes **Start First Agent.command**. On your Mac, first double-click **Install MP3 Shelf.command** and complete account authorization. Then double-click **Start First Agent.command**. It:
