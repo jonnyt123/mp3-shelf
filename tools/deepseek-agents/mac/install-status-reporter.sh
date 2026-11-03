@@ -38,7 +38,7 @@ cat > "$plist" <<PLIST
 <string>/Library/Application Support/MP3ShelfCloudQA/report-status.py</string>
 </array>
 <key>RunAtLoad</key><true/>
-<key>StartInterval</key><integer>900</integer>
+<key>StartInterval</key><integer>300</integer>
 <key>StandardOutPath</key><string>/Library/Application Support/MP3ShelfCloudQA/reporter-out.log</string>
 <key>StandardErrorPath</key><string>/Library/Application Support/MP3ShelfCloudQA/reporter-error.log</string>
 </dict></plist>
