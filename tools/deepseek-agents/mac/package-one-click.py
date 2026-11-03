@@ -12,20 +12,26 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 OUT = ROOT / "dist" / "MP3-Shelf-One-Click-Installer.zip"
 SCRIPT = HERE / "one-click-installer.command"
+FIRST = HERE / "start-first-agent.command"
 DOC = HERE / "one-click-README.md"
 
 
 def build() -> Path:
     script = SCRIPT.read_bytes()
-    assert script.startswith(b"#!/bin/bash\n"), "Installer needs a Bash shebang"
-    validation = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True, text=True)
-    if validation.returncode:
-        raise RuntimeError(f"Bash syntax validation failed: {validation.stderr}")
+    first = FIRST.read_bytes()
+    for filename, data in [(SCRIPT, script), (FIRST, first)]:
+        assert data.startswith(b"#!/bin/bash\n"), f"Missing Bash shebang: {filename}"
+        validation = subprocess.run(["bash", "-n", str(filename)], capture_output=True, text=True)
+        if validation.returncode:
+            raise RuntimeError(f"Bash syntax validation failed: {filename}: {validation.stderr}")
     readme = (
         "MP3 SHELF — ONE-CLICK MAC INSTALLER\n\n"
         "1. Unzip this file on your Mac.\n"
         "2. Double-click 'Install MP3 Shelf.command' in Finder.\n"
-        "3. Click Install and answer the secure account prompts as needed.\n\n"
+        "3. Click Install and answer the secure account prompts as needed.\n"
+        "4. After successful setup, double-click 'Start First Agent.command'.\n"
+        "   It reads your REAL DeepSeek balance, asks approval for ONE paid\n"
+        "   Playback coding cycle, and leaves the queue paused afterward.\n\n"
         "There are NO Terminal commands to type. Terminal opens automatically\n"
         "for installation progress, browser sign-in and private credential entry.\n\n"
         "IMPORTANT: This installer is not Apple Developer ID signed/notarized.\n"
@@ -46,11 +52,13 @@ def build() -> Path:
     ).encode("utf8")
     manifest = (
         f"Install MP3 Shelf.command  SHA-256  {hashlib.sha256(script).hexdigest()}\n"
+        f"Start First Agent.command  SHA-256  {hashlib.sha256(first).hexdigest()}\n"
         f"README - Open First.txt  SHA-256  {hashlib.sha256(readme).hexdigest()}\n"
     ).encode("ascii")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     payloads = [
         ("Install MP3 Shelf.command", script, 0o755),
+        ("Start First Agent.command", first, 0o755),
         ("README - Open First.txt", readme, 0o644),
         ("CHECKSUMS.txt", manifest, 0o644),
     ]
@@ -66,6 +74,7 @@ def build() -> Path:
         assert verify.testzip() is None
         assert all(verify.read(name) == contents for name, contents, _ in payloads)
         assert (verify.getinfo("Install MP3 Shelf.command").external_attr >> 16) & 0o111
+        assert (verify.getinfo("Start First Agent.command").external_attr >> 16) & 0o111
     print(f"Created {OUT} ({OUT.stat().st_size} bytes)")
     print(f"Package SHA-256: {hashlib.sha256(OUT.read_bytes()).hexdigest()}")
     return OUT
