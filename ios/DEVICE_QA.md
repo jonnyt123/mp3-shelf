@@ -24,6 +24,29 @@ simulator build is a separate, useful check and does not replace these tests.
 6. For network transfer tests, use an independent audio source whose creator
    explicitly authorized downloading. Do not use Spotify audio or unknown files.
 
+## Shuffle and Up Next regression (PR: playback queue reliability)
+
+1. Import six distinct local audio tracks; turn on Shuffle and Repeat Off.
+   Play the first song, then press Next until the library finishes. Each track
+   must play only once; the player must stop after the sixth song.
+2. Enable Shuffle and Repeat All, then skip through another full cycle.
+   A fresh cycle should be prepared without an immediate duplicate when more
+   than one track is available.
+3. In shuffle mode, play A → B → C. Press Previous within the first three
+   seconds of C: the player should return to B, then to A. Press Next and
+   confirm B is next (Back/Next history must be reversible).
+4. Inspect the three Up Next entries before each skip. The next playable song
+   must match the first preview entry when there is a pending shuffled song.
+5. Toggle Shuffle while playback is active; verify the queue remains playable,
+   the Now Playing preview changes, and the stored playlist order is unmodified.
+6. Test Repeat One on a single song, crossfade near end of a two-song queue,
+   lock-screen Previous/Next, Bluetooth playback and remote seek controls.
+7. Delete a future queued song and skip forward. The player must ignore missing
+   files instead of crashing or repeatedly choosing an invalid queue entry.
+
+Foundation-only queue regression: `bash ios/scripts/test-playback-order.sh`.
+Passing this script does not replace listening and navigation tests on iPhone.
+
 ## Source-search recovery (Q2)
 
 1. Import a CSV with several authorized catalog-matching songs. Start discovery.
