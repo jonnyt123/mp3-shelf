@@ -47,8 +47,22 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 if ! command -v xcodebuild >/dev/null 2>&1 || ! xcodebuild -version >/dev/null 2>&1; then
   echo "Full Xcode must be installed and selected for iOS builds." >&2
-  echo "Open Xcode at least once to accept its license, then run sudo xcode-select -s /Applications/Xcode.app/Contents/Developer if needed." >&2
-  exit 1
+  if [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
+    echo "Xcode exists in Applications but is not ready for command-line builds."
+    read -r -p "Select the installed Xcode automatically? [Y/n]: " select_xcode
+    if [[ ! "$select_xcode" =~ ^[Nn]$ ]]; then
+      sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+    fi
+  else
+    echo "Opening Xcode in the Mac App Store. Install it, then double-click the installer again."
+    /usr/bin/open "macappstore://apps.apple.com/app/xcode/id497799835" >/dev/null 2>&1 || true
+    exit 1
+  fi
+  if ! xcodebuild -version >/dev/null 2>&1; then
+    echo "Open the Xcode app once and accept the license / first-launch components, then double-click the installer again." >&2
+    /usr/bin/open -a Xcode >/dev/null 2>&1 || true
+    exit 1
+  fi
 fi
 major=0
 if command -v node >/dev/null 2>&1; then
