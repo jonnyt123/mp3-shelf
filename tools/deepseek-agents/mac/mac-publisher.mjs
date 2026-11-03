@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Immutable, root-installed macOS GitHub broker. DeepSeek/OpenCode never sees this token.
 import { spawn } from "node:child_process";
-import { readFile, lstat, mkdir, writeFile, rename } from "node:fs/promises";
+import { readFile, lstat, mkdir, writeFile, rename, chmod } from "node:fs/promises";
 import path from "node:path";
 
 export const roles = Object.freeze(["mp3-playback","mp3-sources","mp3-ui","mp3-qa","mp3-integration"]);
@@ -86,9 +86,11 @@ async function recordPublished(proof) {
   const stat=await lstat(receiptRoot);
   if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== 0 ||
       (stat.mode & 0o022) !== 0) throw Error("Unsafe publisher evidence directory");
+  await chmod(receiptRoot,0o755); // Allow the unprivileged Mac coordinator to read proof only.
   const target=path.join(receiptRoot,"published-"+proof.role+".json");
   const tmp=target+"."+process.pid+".tmp";
   await writeFile(tmp,JSON.stringify(proof)+"\n",{mode:0o644,flag:"wx"});
+  await chmod(tmp,0o644); // Explicit even with restrictive root launchd umask.
   await rename(tmp,target);
 }
 async function publish(role) {
