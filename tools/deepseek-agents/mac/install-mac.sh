@@ -16,7 +16,7 @@ cat >"$plist" <<PLIST
 <string>/bin/bash</string><string>$HOME/.local/bin/mp3-shelf-mac-qa</string>
 </array>
 <key>RunAtLoad</key><true/>
-<key>StartInterval</key><integer>900</integer>
+<key>StartInterval</key><integer>300</integer>
 <key>StandardOutPath</key><string>$HOME/Library/Application Support/MP3ShelfCloudQA/launch-out.log</string>
 <key>StandardErrorPath</key><string>$HOME/Library/Application Support/MP3ShelfCloudQA/launch-error.log</string>
 </dict></plist>
