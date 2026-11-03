@@ -473,6 +473,12 @@ final class MusicLibrary: ObservableObject {
 
     func resumePendingDiscovery() {
         guard automaticDownloadTask == nil else { return }
+        // Large Spotify playlists must not flood background URLSession or
+        // exhaust device storage/network resources by queuing every MP3 at once.
+        // The transfer manager wakes discovery whenever a ticket finishes.
+        guard BackgroundDownloadBackpressure.mayEnqueue(
+            outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
+        ) else { return }
         let eligible = discoveryJobs.filter {
             !$0.isPaused && !$0.isComplete &&
             networkAllowsDiscovery(for: $0.playlistID)
@@ -607,6 +613,12 @@ final class MusicLibrary: ObservableObject {
             if Task.isCancelled || job.isPaused || job.isComplete ||
                 !networkAllowsDiscovery(for: playlistID) ||
                 (backgroundWiFiOnly && !isOnWiFi) { break }
+            // Keep the original playlist cursor untouched while all four
+            // transfer slots are occupied. A completed/cancelled transfer
+            // triggers resumePendingDiscovery via updatePending().
+            if !BackgroundDownloadBackpressure.mayEnqueue(
+                outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
+            ) { break }
             guard let wish = job.currentWish else { break }
             if var progress = automaticDownloadProgress {
                 progress.currentSong = "\(wish.artist) — \(wish.title)"
