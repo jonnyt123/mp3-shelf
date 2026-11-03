@@ -281,6 +281,12 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         (transientFailureCount ?? 0) >= Self.automaticRetryLimit
     }
 
+    /// Network lookups suspend while playlists and checkpoints can change.
+    /// Only the unchanged snapshot may write back to its original array slot.
+    func isCurrent(in jobs: [SourceDiscoveryJob], at index: Int) -> Bool {
+        jobs.indices.contains(index) && jobs[index] == self
+    }
+
     var id: UUID { playlistID }
     var isComplete: Bool { nextIndex >= wishes.count }
     var remaining: Int { max(0, wishes.count - max(0, nextIndex)) }
@@ -350,7 +356,9 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     @discardableResult
     mutating func finishExhaustedRetriesIfNeeded() -> Bool {
         guard hasExhaustedAutomaticRetries && !isComplete else { return false }
+        let finalError = lastError
         record(.failed)
+        lastError = finalError
         return true
     }
 

@@ -557,6 +557,33 @@ enum SourceDiscoveryJobTests {
             id: { $0.id }, startedAt: { $0.startedAt })
         verifyDiscovery(legacyCollision[collisionID]?.title == "legacy first",
                         "legacy manifest duplicates without timestamps are stable and deterministic")
+        let snapshot = SourceDiscoveryJob(playlistID: UUID(), wishes: [])
+        verifyDiscovery(snapshot.isCurrent(in: [snapshot], at: 0),
+                        "unchanged lookup snapshot can be applied")
+        verifyDiscovery(!snapshot.isCurrent(in: [], at: 0),
+                        "deleted lookup job cannot access its old index")
+        let unrelatedJob = SourceDiscoveryJob(playlistID: UUID(), wishes: [])
+        verifyDiscovery(!snapshot.isCurrent(in: [unrelatedJob], at: 0),
+                        "shifted playlist cannot be overwritten by another lookup")
+        var pausedSnapshot = snapshot
+        pausedSnapshot.isPaused = true
+        verifyDiscovery(!snapshot.isCurrent(in: [pausedSnapshot], at: 0),
+                        "in-flight result cannot overwrite a user pause")
+        var retriedSnapshot = snapshot
+        retriedSnapshot.lastError = "Newer lookup state"
+        verifyDiscovery(!snapshot.isCurrent(in: [retriedSnapshot], at: 0),
+                        "in-flight result cannot overwrite newer checkpoint state")
+        var exhausted = SourceDiscoveryJob(playlistID: UUID(), wishes: [
+            PlaylistWish(title: "Song", artist: "Artist", album: "Album", spotifyURL: nil)
+        ])
+        for _ in 0..<SourceDiscoveryJob.automaticRetryLimit {
+            exhausted.recordTransientFailure("Catalog request failed")
+        }
+        verifyDiscovery(exhausted.finishExhaustedRetriesIfNeeded(),
+                        "exhausted search advances beyond the failing song")
+        verifyDiscovery(exhausted.lastError == "Catalog request failed" &&
+                        exhausted.nextRetryAt == nil && exhausted.failed == 1,
+                        "exhausted search retains the error without scheduling another retry")
         print("Persistent discovery checkpoint tests passed")
     }
 }

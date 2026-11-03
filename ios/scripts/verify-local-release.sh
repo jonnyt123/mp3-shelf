@@ -12,7 +12,7 @@ MP3 Shelf — local native verification without GitHub Actions
   bash ios/scripts/verify-local-release.sh --builds-only
   bash ios/scripts/verify-local-release.sh --smoke
 
-Default: all five Swift regression suites plus unsigned simulator Debug,
+Default: all six Swift regression suites plus unsigned simulator Debug,
 simulator Release and physical-iPhone arm64 Release builds.
 --tests-only: run the Foundation-based Swift regression suites (no Xcode build).
 --builds-only: compile all three native configurations, skip Swift suites.
@@ -107,6 +107,9 @@ run_suite() {
 }
 
 if [[ "$MODE" != builds ]]; then
+  run_suite downloaded-audio-format \
+    ios/MP3Shelf/Models/MusicModels.swift \
+    ios/Tests/DownloadedAudioFormatTests.swift
   run_suite playlist-parser \
     ios/MP3Shelf/Models/MusicModels.swift \
     ios/MP3Shelf/Services/PlaylistCSV.swift \

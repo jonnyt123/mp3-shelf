@@ -41,6 +41,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private let manifestURL: URL
     private var tickets: [UUID: BackgroundAudioTicket] = [:]
     private var processing: Set<UUID> = []
+    private var conversions: [UUID: Progress] = [:]
     private var reconcilingOrphans = false
     private weak var library: MusicLibrary?
     private var cellularApprovedPlaylists = Set<UUID>()
@@ -215,8 +216,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func retry(_ id: UUID) {
         guard let previous = tickets[id],
-              previous.status == .failed || previous.status == .cancelled,
-              Self.allowedDownloadURL(previous.downloadURL),
+              previous.status == .failed || previous.status == .cancelled else { return }
+        if let library, library.hasOfflineRecording(matching: previous.requested) {
+            var fulfilled = previous
+            fulfilled.status = .imported
+            fulfilled.failureReason = "This recording is already saved offline"
+            fulfilled.nextRetryAt = nil
+            fulfilled.alternativeSources = nil
+            tickets[id] = fulfilled
+            persist()
+            library.finishedBackgroundDownload(for: previous.playlistID, succeeded: true)
+            reconcileAlreadyStoredDownloads()
+            updatePending()
+            return
+        }
+        guard Self.allowedDownloadURL(previous.downloadURL),
               !isQueued(previous.requested, for: previous.playlistID) else { return }
         // Use a new identifier. A late didComplete callback from the old
         // cancelled task must never change the state of the new transfer.
@@ -248,6 +262,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func cancelTransfer(_ id: UUID) {
         guard var ticket = tickets[id], ticket.status == .queued else { return }
+        conversions[id]?.cancel()
         ticket.status = .cancelled
         ticket.failureReason = "Cancelled"
         tickets[id] = ticket
@@ -264,6 +279,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func pendingCount(for playlistID: UUID? = nil) -> Int {
         tickets.values.filter { $0.status == .queued && (playlistID == nil || $0.playlistID == playlistID) }.count
+    }
+
+    func isFinalizing(_ id: UUID) -> Bool {
+        processing.contains(id)
     }
 
     func stopTransfers(for playlistID: UUID) {
@@ -308,6 +327,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         for ticket in tickets.values where ticket.status == .queued && ticket.id != excluded {
             guard library.hasOfflineRecording(matching: ticket.requested),
                   var current = tickets[ticket.id], current.status == .queued else { continue }
+            conversions[ticket.id]?.cancel()
             current.status = .imported
             current.failureReason = "This recording is already saved offline"
             current.alternativeSources = nil
@@ -477,7 +497,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // Never import a ticket that was cancelled or already satisfied.
             guard tickets[ticket.id]?.status == .queued,
                   processing.insert(ticket.id).inserted else { continue }
-            defer { processing.remove(ticket.id) }
+            let conversion = Progress()
+            conversions[ticket.id] = conversion
+            revision += 1
+            defer {
+                processing.remove(ticket.id)
+                conversions.removeValue(forKey: ticket.id)
+                revision += 1
+            }
             let stagedURL = Self.stagingURL(ticket.id)
             do {
                 let attribution = AudioSourceAttribution(
@@ -485,7 +512,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                     licenseURL: ticket.licensePage.absoluteString,
                     providerName: ticket.provider)
                 let imported = try await library.importStagedAudio(
-                    from: stagedURL, matching: ticket.requested, attribution: attribution)
+                    from: stagedURL, matching: ticket.requested, attribution: attribution, conversionProgress: conversion)
                 if imported {
                     if var current = tickets[ticket.id], current.status == .queued {
                         current.status = .imported

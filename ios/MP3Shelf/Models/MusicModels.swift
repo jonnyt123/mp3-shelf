@@ -146,3 +146,16 @@ struct PlaylistImportReport {
     var matched: Int
     var missing: Int
 }
+
+#if canImport(AVFoundation)
+import AVFoundation
+import AudioToolbox
+
+/// Inspect actual compressed file format; a suffix is not codec evidence.
+enum DownloadedAudioFormat {
+    static func isMP3(_ url: URL) throws -> Bool {
+        let audio = try AVAudioFile(forReading: url)
+        return audio.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatMPEGLayer3
+    }
+}
+#endif

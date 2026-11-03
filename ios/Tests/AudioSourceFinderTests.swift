@@ -160,6 +160,20 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.ccMixterCandidates(
             in: Data(ccMixterWrongHost.utf8), matching: wish)?.isEmpty == true,
                "untrusted MP3 host is rejected even when RSS claims a valid license")
+        verify(AudioSourceFinder.catalogFileTitle("File:The Song.MP3") == "The Song",
+               "catalog file extension matching ignores capitalization")
+        verify(AudioSourceFinder.catalogFileTitle("The.mp3 Song") == "The.mp3 Song",
+               "catalog title cleanup preserves internal extension-like text")
+        for title in ["File:The Song.MP3", "The Song.Mp3"] {
+            verify(AudioSourceFinder.openverseCandidate(
+                title: title, creator: "The Artist",
+                download: "https://upload.wikimedia.org/file.mp3",
+                landing: "https://commons.wikimedia.org/wiki/File:test",
+                license: "https://creativecommons.org/licenses/by/4.0/",
+                filetype: "mp3", duration: 212000,
+                source: "wikimedia", filesize: nil, wish: wish) != nil,
+                "Openverse accepts exact recording with mixed-case extension")
+        }
         let openverse = AudioSourceFinder.openverseCandidate(
             title: "The Song", creator: "The Artist",
             download: "https://upload.wikimedia.org/wikipedia/commons/1/12/the-song.mp3",
@@ -226,6 +240,20 @@ enum AudioSourceFinderTests {
             license: nil, filetype: "mp3", duration: 212000,
             source: "wikimedia", filesize: nil, wish: wish) == nil,
             "missing license rejected")
+        for name in ["01 - The Song.mp3", "02. The Song.mp3", "003_The_Song.mp3"] {
+            verify(AudioSourceFinder.archiveFileCandidate(
+                name: name, source: "original", lengthBytes: "5421879",
+                itemTitle: "The Album", itemCreator: wish.artist,
+                audioFileCount: 3, wish: wish),
+                "numbered album track matches: \(name)")
+        }
+        for name in ["01 - The Song (Live).mp3", "99 The Song.mp3", "01 - Other Song.mp3"] {
+            verify(!AudioSourceFinder.archiveFileCandidate(
+                name: name, source: "original", lengthBytes: "5421879",
+                itemTitle: "The Album", itemCreator: wish.artist,
+                audioFileCount: 3, wish: wish),
+                "number stripping preserves recording identity: \(name)")
+        }
         verify(AudioSourceFinder.archiveFileCandidate(
             name: "The Song.mp3", source: "original", lengthBytes: "5421879",
             itemTitle: "The Album", itemCreator: "The Artist",
@@ -524,6 +552,51 @@ enum AudioSourceFinderTests {
             [textOnly], for: wish, limit: 0).isEmpty,
                "zero page-inspection budget makes no network candidates")
 
+        verify(AudioSourceFinder.audiusPermalink("/the-artist/the-song")?.absoluteString ==
+               "https://audius.co/the-artist/the-song",
+               "relative Audius track permalink resolves to trusted origin")
+        verify(AudioSourceFinder.audiusPermalink("https://audius.co/the-artist/the-song") != nil,
+               "absolute Audius track permalink remains supported")
+        for raw in ["//evil.example/song", "https://audius.co.evil.example/a/b",
+                    "https://user@audius.co/a/b", "/artist", "/artist/../song",
+                    "/artist/song?next=evil", "http://audius.co/a/b"] {
+            verify(AudioSourceFinder.audiusPermalink(raw) == nil,
+                   "untrusted or malformed Audius permalink rejected: \(raw)")
+        }
+        // Relevant fields captured from the public /v1/tracks/D7KyD response.
+        // This real recording is NOT downloadable; never turn it into a candidate.
+        let liveAudiusJSON = #"""
+        {"id": "D7KyD", "title": "Paauer | Baauer B2B Party Favor | B&L Block Party LA (Live Set)", "permalink": "/TeamBandL/paauer-|-baauer-b2b-party-favor-|-bl-block-party-la-live-set-725", "duration": 5265, "is_downloadable": false, "download_conditions": null, "is_download_gated": false, "is_stream_gated": false, "is_unlisted": false, "user": {"name": "Brownies & Lemonade", "handle": "TeamBandL"}}
+        """#
+        let liveAudius = try? JSONDecoder().decode(
+            AudioSourceFinder.AudiusTrack.self, from: Data(liveAudiusJSON.utf8))
+        verify(liveAudius != nil, "real Audius response fields decode")
+        verify(liveAudius.flatMap { AudioSourceFinder.audiusPermalink($0.permalink) }?.host == "audius.co",
+               "real relative Audius permalink resolves to trusted host")
+        if let liveAudius {
+            let liveWish = PlaylistWish(title: liveAudius.title,
+                artist: liveAudius.user?.name ?? "", album: "", spotifyURL: nil,
+                durationSeconds: liveAudius.duration)
+            verify(AudioSourceFinder.audiusCandidate(liveAudius, for: liveWish) == nil,
+                   "real non-downloadable recording remains excluded")
+        }
+        // Relevant fields from a real ungated, download-enabled search result.
+        let eligibleAudiusJSON = #"""
+        {"id": "dloY13J", "title": "ohnoitsdoug x diskade - Sound System Check [FREE DOWNLOAD]", "permalink": "/diskadebass/ohnoitsdoug-x-diskade-sound-system-check-free-download", "duration": 192, "is_downloadable": true, "download_conditions": null, "is_download_gated": false, "is_stream_gated": false, "is_unlisted": false, "user": {"name": "DISKADE", "handle": "diskadebass"}}
+        """#
+        let eligibleAudius = try? JSONDecoder().decode(
+            AudioSourceFinder.AudiusTrack.self, from: Data(eligibleAudiusJSON.utf8))
+        verify(eligibleAudius != nil, "real downloadable Audius result decodes")
+        if let track = eligibleAudius {
+            let requested = PlaylistWish(title: track.title, artist: track.user?.name ?? "",
+                album: "", spotifyURL: nil, durationSeconds: track.duration)
+            let candidate = AudioSourceFinder.audiusCandidate(track, for: requested)
+            verify(candidate?.downloadURL.absoluteString ==
+                   "https://api.audius.co/v1/tracks/dloY13J/download",
+                   "real downloadable relative permalink creates expected MP3 candidate")
+            verify(candidate?.itemURL.host == "audius.co",
+                   "real download candidate retains trusted attribution")
+        }
         let audiusArtist = AudioSourceFinder.AudiusTrack.User(
             name: "The Artist", handle: "the-artist")
         let audiusOK = AudioSourceFinder.AudiusTrack(
@@ -532,12 +605,24 @@ enum AudioSourceFinderTests {
             is_stream_gated: false, is_unlisted: false,
             download_conditions: nil, permalink: "https://audius.co/the-artist/the-song",
             license: nil)
+        var conflictingAudius = audiusOK
+        conflictingAudius.downloadable = false
+        verify(AudioSourceFinder.audiusCandidate(conflictingAudius, for: wish) == nil,
+               "explicit false alternate Audius flag prevents automatic download")
+        let fallbackAudius = AudioSourceFinder.AudiusTrack(
+            id: "D7KyD", title: "The Song", user: audiusArtist,
+            duration: 212, is_downloadable: nil, is_download_gated: false,
+            is_stream_gated: false, is_unlisted: false,
+            download_conditions: nil, permalink: "https://audius.co/the-artist/the-song",
+            license: nil, downloadable: true)
+        verify(AudioSourceFinder.audiusCandidate(fallbackAudius, for: wish) != nil,
+               "alternate Audius download flag works when primary flag is absent")
         let audiusMatch = AudioSourceFinder.audiusCandidate(audiusOK, for: wish)
         verify(audiusMatch?.downloadURL.host == "api.audius.co",
                "Audius artist-enabled direct-download endpoint is recognized")
         verify(audiusMatch?.sourceName.contains("Audius") == true,
                "Audius attribution is retained")
-        verify(audiusMatch?.downloadURL.absoluteString.contains("/download?original=false") == true,
+        verify(audiusMatch?.downloadURL.absoluteString.contains("/download") == true,
                "Audius requires real download endpoint, not streaming playback")
         verify(AudioSourceFinder.audiusSearchURL(for: wish).absoluteString.contains(
             "only_downloadable=true"), "Audius search filters to downloadable tracks")
@@ -549,6 +634,10 @@ enum AudioSourceFinderTests {
             license: nil)
         verify(AudioSourceFinder.audiusCandidate(audiusNonDownload, for: wish) == nil,
                "Audius stream-only recordings cannot auto-download")
+        var conflictingPrimary = audiusNonDownload
+        conflictingPrimary.downloadable = true
+        verify(AudioSourceFinder.audiusCandidate(conflictingPrimary, for: wish) == nil,
+               "alternate true cannot override explicit primary false")
         let audiusGated = AudioSourceFinder.AudiusTrack(
             id: "D7KyD", title: "The Song", user: audiusArtist,
             duration: 212, is_downloadable: true, is_download_gated: true,
