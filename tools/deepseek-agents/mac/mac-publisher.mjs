@@ -109,16 +109,16 @@ async function publish(role) {
   if(entries.some(row=>row[0]!=="M"&&row[0]!=="A")) throw Error("Deleted/renamed/unexpected files");
   const files=entries.map(row=>row[1]);
   if(!validEvidence(approval,role,sha,files)||!ownedFiles(role,files)) throw Error("Unapproved file set or commit");
-  await git(["fetch","--no-tags",remote,"refs/heads/"+base]);
+  await git(["fetch","--no-tags",remote,"refs/heads/"+base],true);
   const currentBase=await git(["rev-parse","FETCH_HEAD"]);
   await git(["merge-base","--is-ancestor",currentBase,sha]);
-  const heads=await git(["ls-remote","--heads",remote,"refs/heads/"+branch]);
+  const heads=await git(["ls-remote","--heads",remote,"refs/heads/"+branch],true);
   let alreadyPublished=false;
   if(heads) {
     const old=heads.split(/\s+/)[0];
     if(old===sha) alreadyPublished=true;
     else {
-      await git(["fetch","--no-tags",remote,"refs/heads/"+branch]);
+      await git(["fetch","--no-tags",remote,"refs/heads/"+branch],true);
       if ((await git(["rev-parse","FETCH_HEAD"]))!==old) throw Error("Remote moved; retry");
       await git(["merge-base","--is-ancestor",old,sha]);
     }
