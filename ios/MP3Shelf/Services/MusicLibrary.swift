@@ -19,7 +19,21 @@ struct AutomaticDownloadProgress {
 
 @MainActor
 final class MusicLibrary: ObservableObject {
-    @Published private(set) var tracks: [MusicTrack] = []
+    @Published private(set) var tracks: [MusicTrack] = [] {
+        didSet { trackRevision &+= 1 }
+    }
+    // Do not rebuild thousands of lookup entries on each single-track edit.
+    // The next read refreshes both indexes once and then uses O(1) UUID lookup
+    // or normalized-title buckets for exact-match Spotify reconciliation.
+    private var trackRevision: UInt64 = 0
+    private var indexedRevision: UInt64 = .max
+    private var indexedTracksByID: [UUID: MusicTrack] = [:]
+    private var indexedByTitle = OfflineTrackIndex(tracks: [])
+    private let artworkCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.totalCostLimit = 32 * 1024 * 1024
+        return cache
+    }()
     @Published private(set) var playlists: [MusicPlaylist] = []
     @Published var isImporting = false
     @Published var pendingBackgroundDownloads = 0
@@ -231,6 +245,7 @@ final class MusicLibrary: ObservableObject {
                         try bytes.write(to: artworkDirectory.appendingPathComponent(filename),
                                         options: .atomic)
                         tracks[index].artworkFileName = filename
+                        artworkCache.removeObject(forKey: filename as NSString)
                     }
                 }
                 if let lyrics = archived.lyrics, !lyrics.isEmpty {
@@ -282,9 +297,16 @@ final class MusicLibrary: ObservableObject {
     func fileURL(for track: MusicTrack) -> URL { musicDirectory.appendingPathComponent(track.fileName) }
 
     func artwork(for track: MusicTrack) -> UIImage? {
-        guard let name = track.artworkFileName,
-              let data = try? Data(contentsOf: artworkDirectory.appendingPathComponent(name)) else { return nil }
-        return UIImage(data: data)
+        guard let name = track.artworkFileName else { return nil }
+        let key = name as NSString
+        if let cached = artworkCache.object(forKey: key) { return cached }
+        guard let data = try? Data(contentsOf: artworkDirectory.appendingPathComponent(name)),
+              let image = UIImage(data: data) else { return nil }
+        // Cache is automatically evicted under memory pressure. Decoding the
+        // same cover on every library row render would be unnecessarily costly.
+        let cost = min(32 * 1024 * 1024, Int(image.size.width * image.size.height * 4))
+        artworkCache.setObject(image, forKey: key, cost: max(cost, 1))
+        return image
     }
 
     func lyrics(for track: MusicTrack) -> [LyricLine] {
@@ -307,13 +329,23 @@ final class MusicLibrary: ObservableObject {
         save()
     }
 
+    private func refreshTrackIndexIfNeeded() {
+        guard indexedRevision != trackRevision else { return }
+        indexedTracksByID = Dictionary(tracks.map { ($0.id, $0) },
+                                       uniquingKeysWith: { first, _ in first })
+        indexedByTitle = OfflineTrackIndex(tracks: tracks)
+        indexedRevision = trackRevision
+    }
+
     func song(with id: UUID?) -> MusicTrack? {
         guard let id else { return nil }
-        return tracks.first { $0.id == id }
+        refreshTrackIndexIfNeeded()
+        return indexedTracksByID[id]
     }
 
     func songs(in playlist: MusicPlaylist) -> [MusicTrack] {
-        playlist.trackIDs.compactMap(song(with:))
+        refreshTrackIndexIfNeeded()
+        return playlist.trackIDs.compactMap { indexedTracksByID[$0] }
     }
 
     func save() {
@@ -539,7 +571,8 @@ final class MusicLibrary: ObservableObject {
     /// falling back to another provider or importing a staged duplicate.
     /// Check that the file still exists as well as its metadata/duration.
     func hasOfflineRecording(matching wish: PlaylistWish) -> Bool {
-        guard let track = MusicMatching.reusableOfflineTrack(for: wish, in: tracks) else {
+        refreshTrackIndexIfNeeded()
+        guard let track = indexedByTitle.reusableTrack(for: wish) else {
             return false
         }
         return manager.fileExists(atPath: fileURL(for: track).path)
@@ -636,7 +669,7 @@ final class MusicLibrary: ObservableObject {
                 // Deleted Spotify entries stay in historical discovery results
                 // but do not trigger new catalog requests or MP3 transfers.
                 job.record(.removed)
-            } else if MusicMatching.reusableOfflineTrack(for: wish, in: tracks) != nil ||
+            } else if hasOfflineRecording(matching: wish) ||
                 BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
                 job.record(.alreadyPresent)
             } else {
@@ -766,6 +799,7 @@ final class MusicLibrary: ObservableObject {
         guard let track = song(with: id) else { return }
         try? manager.removeItem(at: fileURL(for: track))
         if let artwork = track.artworkFileName {
+            artworkCache.removeObject(forKey: artwork as NSString)
             try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artwork))
         }
         if let lyrics = track.lyricsFileName {
@@ -824,6 +858,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func importPlaylist(wishes: [PlaylistWish], name: String, sourceURL: String? = nil) -> PlaylistImportReport {
+        refreshTrackIndexIfNeeded()
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = trimmed.isEmpty ? "Imported Playlist" : trimmed
         let spotifyID = sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:))
@@ -851,7 +886,7 @@ final class MusicLibrary: ObservableObject {
                 // Distinguish manually added local files from tracks that
                 // belonged to the previous Spotify source-order mapping.
                 let formerlySourced = Set(old.sourceOrder.compactMap {
-                    MusicMatching.reusableOfflineTrack(for: $0, in: tracks)?.id
+                    indexedByTitle.reusableTrack(for: $0)?.id
                 })
                 playlists[index].trackIDs.removeAll { formerlySourced.contains($0) }
                 playlists[index].sourceOrder = updated
@@ -887,7 +922,7 @@ final class MusicLibrary: ObservableObject {
         if spotifyID != nil { playlist.sourceURL = sourceURL }
         playlist.sourceOrder = wishes
         for wish in wishes {
-            if let track = MusicMatching.reusableOfflineTrack(for: wish, in: tracks) {
+            if let track = indexedByTitle.reusableTrack(for: wish) {
                 playlist.trackIDs.append(track.id)
             } else {
                 playlist.missingTracks.append(wish)
@@ -901,19 +936,22 @@ final class MusicLibrary: ObservableObject {
     }
 
     private func reconcileMissingSongs() {
+        refreshTrackIndexIfNeeded()
         for index in playlists.indices where !playlists[index].sourceOrder.isEmpty {
             let existing = playlists[index].trackIDs
             var ordered: [UUID] = []
             var missing: [PlaylistWish] = []
             for wish in playlists[index].sourceOrder {
-                if let track = MusicMatching.reusableOfflineTrack(for: wish, in: tracks) {
+                if let track = indexedByTitle.reusableTrack(for: wish) {
                     ordered.append(track.id)
                 } else {
                     missing.append(wish)
                 }
             }
-            // Retain songs the user manually added to the imported playlist.
-            ordered.append(contentsOf: existing.filter { !ordered.contains($0) })
+            // Retain user-added songs with O(1) membership checks rather than
+            // O(n²) repeated scans on multi-thousand-track playlists.
+            var recorded = Set(ordered)
+            ordered.append(contentsOf: existing.filter { recorded.insert($0).inserted })
             playlists[index].trackIDs = ordered
             playlists[index].missingTracks = missing
         }
