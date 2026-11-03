@@ -550,6 +550,9 @@ final class MusicLibrary: ObservableObject {
     }
 
     func stopBackgroundTransfers(for playlistID: UUID) {
+        // Explicit Cancel All must not immediately queue replacements when a
+        // transfer slot opens; pause discovery before cancelling any task.
+        pauseSourceDiscovery(for: playlistID)
         BackgroundAudioDownloader.shared.stopTransfers(for: playlistID)
     }
 
