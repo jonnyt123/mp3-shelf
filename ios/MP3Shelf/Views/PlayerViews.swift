@@ -82,6 +82,7 @@ struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draggingTime: Double?
     @State private var showLyrics = false
+    @State private var showQueue = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -233,6 +234,29 @@ struct NowPlayingView: View {
                                 }
                                 .foregroundStyle(.white)
 
+                                Button { showQueue = true } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "list.bullet.rectangle.portrait")
+                                            .font(.system(size: 19, weight: .semibold))
+                                            .foregroundStyle(ShelfTheme.mint)
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text("Manage playing queue")
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.white)
+                                            Text("\(playback.queuedTracks.count) songs lined up")
+                                                .font(.caption)
+                                                .foregroundStyle(ShelfTheme.subdued)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .foregroundStyle(ShelfTheme.subdued)
+                                    }
+                                    .padding(15)
+                                    .premiumCard(radius: 17)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Manage playing queue")
+
                                 if !playback.upcomingTracks.isEmpty {
                                     VStack(alignment: .leading, spacing: 12) {
                                         PremiumSectionHeading(title: "Up next",
@@ -319,6 +343,13 @@ struct NowPlayingView: View {
             .navigationDestination(isPresented: $showLyrics) {
                 if let id = playback.currentTrackID { LyricsView(songID: id) }
             }
+            .sheet(isPresented: $showQueue) {
+                PlaybackQueueSheet()
+                    .environmentObject(library)
+                    .environmentObject(playback)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -331,5 +362,146 @@ struct NowPlayingView: View {
                 .foregroundStyle(active ? ShelfTheme.mint : ShelfTheme.subdued)
                 .frame(width: 44, height: 48)
         }
+    }
+}
+
+
+/// A separate, bounded and lazy queue editor. All controls affect only the
+/// current in-memory play order; they never delete files or modify playlists.
+struct PlaybackQueueSheet: View {
+    @EnvironmentObject private var playback: PlaybackController
+    @EnvironmentObject private var library: MusicLibrary
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                PremiumBackdrop()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if let playing = library.song(with: playback.currentTrackID) {
+                            PremiumEyebrow(title: "PLAYING NOW")
+                            HStack(spacing: 13) {
+                                ArtworkTile(track: playing, size: 58)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(playing.title)
+                                        .font(.headline.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(1)
+                                    Text(playing.artist)
+                                        .font(.subheadline)
+                                        .foregroundStyle(ShelfTheme.subdued)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: "waveform")
+                                    .foregroundStyle(ShelfTheme.mint)
+                                    .accessibilityHidden(true)
+                            }
+                            .padding(14)
+                            .premiumCard(radius: 18)
+                        }
+
+                        PremiumSectionHeading(
+                            title: "Up next",
+                            detail: "\(playback.queuedTracks.count) in queue"
+                        )
+                        .padding(.top, 14)
+
+                        if playback.queuedTracks.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Image(systemName: "music.note.list")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(ShelfTheme.accent)
+                                Text("You're all caught up")
+                                    .font(.headline)
+                                    .foregroundStyle(.white)
+                                Text("Pick more songs from Listen to build your queue.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(ShelfTheme.subdued)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(22)
+                            .premiumCard()
+                        } else {
+                            ForEach(Array(playback.queuedTracks.enumerated()), id: \.element.id) { index, track in
+                                HStack(spacing: 12) {
+                                    ArtworkTile(track: track, size: 48)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(track.title)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.white)
+                                            .lineLimit(1)
+                                        Text(track.artist)
+                                            .font(.caption)
+                                            .foregroundStyle(ShelfTheme.subdued)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer(minLength: 6)
+                                    Menu {
+                                        Button {
+                                            playback.play(track)
+                                        } label: {
+                                            Label("Play now", systemImage: "play.fill")
+                                        }
+                                        Button {
+                                            playback.playQueuedTrackNext(track.id)
+                                        } label: {
+                                            Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                                        }
+                                        if index > 0 {
+                                            Button {
+                                                playback.moveQueuedTrack(track.id, earlier: true)
+                                            } label: {
+                                                Label("Move earlier", systemImage: "arrow.up")
+                                            }
+                                        }
+                                        if index < playback.queuedTracks.count - 1 {
+                                            Button {
+                                                playback.moveQueuedTrack(track.id, earlier: false)
+                                            } label: {
+                                                Label("Move later", systemImage: "arrow.down")
+                                            }
+                                        }
+                                        Divider()
+                                        Button(role: .destructive) {
+                                            playback.removeQueuedTrack(track.id)
+                                        } label: {
+                                            Label("Remove from queue", systemImage: "minus.circle")
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                            .font(.body.weight(.bold))
+                                            .foregroundStyle(ShelfTheme.accent)
+                                            .frame(width: 44, height: 44)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .accessibilityLabel("Queue options for \(track.title)")
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .premiumCard(radius: 17)
+                                .accessibilityElement(children: .contain)
+                            }
+                        }
+
+                        Text("Queue edits do not change your saved playlists or remove music.")
+                            .font(.caption)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .padding(.top, 12)
+                    }
+                    .padding(20)
+                }
+            }
+            .navigationTitle("Your queue")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(ShelfTheme.accent)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }
