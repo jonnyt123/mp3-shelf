@@ -12,6 +12,16 @@ The command checks the trusted \`jonnyt123/mp3-shelf\` GitHub origin and \`agent
 
 On success, the installer offers to copy the **local** coordinator token to the clipboard and open the dashboard. The token is never displayed in Terminal or committed to GitHub.
 
+## Run exactly one agent after checking your DeepSeek balance
+
+The ZIP now also contains **Start First Agent.command**. Only use it AFTER the installer has completed on your Mac. Double-click from Finder — no Terminal commands to type.
+
+The starter reads your DeepSeek Console balance from your locally protected key using the **read-only** balance endpoint. It refuses to start if available credit is below 0.25 in the account currency, if the local daily budget is exhausted, if any job is already leased, or if the first Playback cycle has previously been attempted. It shows a separate approval dialog explaining that **one real paid model call may cost money** and that the default 0.50 per-day ledger is only a soft observed limit.
+
+After your approval, it pauses the cloud queue, stops the existing background coordinator in your user session, temporarily permits just the first Playback job lease, immediately pauses Cloudflare once leased, then runs one coding session. A cleanup handler restores the paused state and your normal login background service. If the Mac crashes hard, the queue should already be paused after the lease; note that a very brief pre-lease window cannot be made completely race-free without additional server-side one-shot APIs.
+
+On success, a verified local commit is recorded and may be published as a draft PR by the separate GitHub broker. The first cycle is not automatically merged or treated as a signed iPhone test.
+
 ### Requirements and safeguards
 
 - macOS, an Internet connection, and **full Xcode** installed/selected. The command can initiate the macOS Command Line Tools installer when Git is missing.
