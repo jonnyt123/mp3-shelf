@@ -28,7 +28,7 @@ final class PlaybackController: NSObject, ObservableObject {
     private var positionTimer: Timer?
     private var fadeTimer: Timer?
     private var outgoingPlayer: AVAudioPlayer?
-    private var playbackOrder = PlaybackOrder()
+    @Published private var playbackOrder = PlaybackOrder()
 
     private var loopMode: PlaybackLoopMode {
         switch repeatMode {
@@ -44,6 +44,26 @@ final class PlaybackController: NSObject, ObservableObject {
         guard let library else { return [] }
         return playbackOrder.upcomingIDs(limit: 3, loop: loopMode)
             .compactMap { library.song(with: $0) }
+    }
+
+    /// Bounded, distinct current-cycle queue for a responsive edit sheet.
+    /// This is playback-only state and never rewrites a saved playlist.
+    var queuedTracks: [MusicTrack] {
+        guard let library else { return [] }
+        return playbackOrder.editableUpcomingIDs()
+            .compactMap { library.song(with: $0) }
+    }
+
+    func moveQueuedTrack(_ id: UUID, earlier: Bool) {
+        _ = playbackOrder.moveUpcoming(id, earlier: earlier)
+    }
+
+    func playQueuedTrackNext(_ id: UUID) {
+        _ = playbackOrder.playNext(id)
+    }
+
+    func removeQueuedTrack(_ id: UUID) {
+        _ = playbackOrder.removeUpcoming(id)
     }
 
     private let relay = AudioCompletionRelay()

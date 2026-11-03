@@ -57,6 +57,31 @@ struct PlaybackOrderTests {
         assert(order.next(automatic: true, loop: .off) == nil)
         assert(order.next(automatic: true, loop: .all) == songs[0])
         assert(order.upcomingIDs(limit: 3, loop: .all).isEmpty)
+        // Editing Up Next is playback-only state. Saved source order remains intact.
+        order.reset(queue: songs, current: songs[0], shuffled: false)
+        assert(order.editableUpcomingIDs() == Array(songs.dropFirst()))
+        assert(order.moveUpcoming(songs[3], earlier: true))
+        assert(order.editableUpcomingIDs()[1] == songs[3])
+        assert(!order.moveUpcoming(songs[1], earlier: true))
+        assert(order.playNext(songs[5]))
+        assert(order.editableUpcomingIDs().first == songs[5])
+        assert(order.removeUpcoming(songs[2]))
+        assert(!order.queueIDs.contains(songs[2]))
+        assert(!order.removeUpcoming(songs[0]), "Never remove the playing song")
+        assert(order.currentID == songs[0])
+
+        order.reset(queue: songs, current: songs[0], shuffled: true)
+        let shuffledPending = order.editableUpcomingIDs()
+        assert(shuffledPending.count == songs.count - 1)
+        assert(order.moveUpcoming(shuffledPending[1], earlier: true))
+        assert(order.editableUpcomingIDs().first == shuffledPending[1])
+        assert(order.playNext(shuffledPending[3]))
+        assert(order.editableUpcomingIDs().first == shuffledPending[3])
+        assert(order.removeUpcoming(shuffledPending[2]))
+        assert(!order.editableUpcomingIDs().contains(shuffledPending[2]))
+        assert(order.next(automatic: true, loop: .off) == shuffledPending[3])
+        assert(order.queueIDs.count == songs.count - 1)
+
         print("PASS PlaybackOrder: shuffle exhaustion, previews, history, repeat, manual controls, pruning, single-song")
     }
 }
