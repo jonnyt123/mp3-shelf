@@ -245,3 +245,5 @@ and provider/platform compliance checks have been performed.
 Native compilation, notification delivery order and physical audio behavior remain NOT VERIFIED until recorded on a Mac/iPhone.
 
 Playback failure checks: move a test song file out of the app Music directory, attempt to play it while another song is playing, and confirm the existing song/queue remain active and an error is visible. Restore the file and use Retry. Repeat from Now Playing and during crossfade; a failed crossfade must not retry every timer tick. Never delete your only copy of a recording for this test.
+
+Consolidation follow-up: fill the download slots during an in-flight catalog lookup and confirm the discovery cursor does not advance. Check that a retry changes from Retrying to Downloading when bytes arrive; unknown-size transfers must show received bytes. Interrupt finalization, relaunch, and use Finish saving if staging remains. Verify resume failure displays a retryable error.

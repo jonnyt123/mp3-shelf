@@ -180,11 +180,17 @@ final class PlaybackController: NSObject, ObservableObject {
         guard let audioPlayer else { return }
         do {
             try activateAudio()
-            isPlaying = audioPlayer.play()
-            if isPlaying { startTimer() }
+            guard audioPlayer.play() else { throw CocoaError(.fileReadCorruptFile) }
+            isPlaying = true
+            playbackError = nil
+            failedTrackID = nil
+            startTimer()
             updateNowPlaying()
         } catch {
-            print("MP3 Shelf could not resume audio: \(error)")
+            isPlaying = audioPlayer.isPlaying
+            failedTrackID = currentTrackID
+            playbackError = "Could not resume this song. Retry playback or choose another song."
+            updateNowPlaying()
         }
     }
 

@@ -803,6 +803,11 @@ final class MusicLibrary: ObservableObject {
                     guard job.isCurrent(in: discoveryJobs, at: index) else { break }
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
                         (backgroundWiFiOnly && !isOnWiFi) { break }
+                    // Capacity can change during the awaited catalog request.
+                    // Keep this wish pending until a transfer slot opens.
+                    guard BackgroundDownloadBackpressure.mayEnqueue(
+                        outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
+                    ) else { break }
                     if let source = sources.first {
                         if BackgroundAudioDownloader.shared.enqueue(
                             source: source, requested: wish, playlistID: playlistID,

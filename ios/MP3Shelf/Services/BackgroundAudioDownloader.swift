@@ -285,6 +285,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         processing.contains(id)
     }
 
+    func hasStagedAudio(_ id: UUID) -> Bool {
+        tickets[id]?.status == .queued && fm.fileExists(atPath: Self.stagingURL(id).path)
+    }
+
+    func finishSavingStagedAudio() {
+        Task { await recoverStagedDownloads() }
+    }
+
     func stopTransfers(for playlistID: UUID) {
         let ids = tickets.values.filter { $0.playlistID == playlistID && $0.status == .queued }.map(\.id)
         for id in ids { cancelTransfer(id) }
@@ -461,9 +469,17 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         guard BackgroundTransferProgressPolicy.shouldPublish(
             received: received, total: total, previousReceived: ticket.bytesReceived
         ) || (knownTotal != nil && ticket.totalBytes != knownTotal) else { return }
+        // Actual bytes prove the scheduled retry has begun. Persist this
+        // transition once; subsequent byte updates remain coalesced in memory.
+        let resumedRetry = received > 0 && ticket.nextRetryAt != nil
+        if resumedRetry {
+            ticket.nextRetryAt = nil
+            ticket.failureReason = nil
+        }
         ticket.bytesReceived = received
         ticket.totalBytes = knownTotal
         tickets[id] = ticket
+        if resumedRetry { persist() }
         revision += 1
         // Byte-level progress is intentionally not flushed to disk for each callback;
         // the OS restores actual task progress after process reattachment.

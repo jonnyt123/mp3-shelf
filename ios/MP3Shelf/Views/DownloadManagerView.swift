@@ -189,6 +189,8 @@ private struct DownloadTicketRow: View {
         switch ticket.status {
         case .queued:
             if transfers.isFinalizing(ticket.id) { return "Finalizing" }
+            if transfers.hasStagedAudio(ticket.id) { return "Ready to save" }
+            if ticket.nextRetryAt != nil { return "Retrying" }
             return (ticket.bytesReceived ?? 0) > 0 ? "Downloading" : "Queued"
         case .imported: return "Saved Offline"
         case .failed: return "Failed"
@@ -237,7 +239,7 @@ private struct DownloadTicketRow: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(ShelfTheme.mint)
                 }
-                if let retry = ticket.nextRetryAt {
+                if !transfers.hasStagedAudio(ticket.id), let retry = ticket.nextRetryAt {
                     Label("Temporary interruption · automatic retry \(ticket.automaticRetryCount ?? 0)/\(BackgroundTransferRetryPolicy.maxRetries)",
                           systemImage: "arrow.clockwise")
                         .font(.caption.weight(.medium)).foregroundStyle(ShelfTheme.mint)
@@ -247,6 +249,10 @@ private struct DownloadTicketRow: View {
                 if transfers.isFinalizing(ticket.id) {
                     ProgressView().tint(ShelfTheme.mint)
                         .accessibilityLabel("Finalizing audio for \(ticket.requested.title)")
+                } else if transfers.hasStagedAudio(ticket.id) {
+                    Text("Audio is downloaded and waiting to be checked and saved.")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    Button("Finish saving") { transfers.finishSavingStagedAudio() }
                 } else if let size = ticket.totalBytes, size > 0 {
                     ProgressView(value: Double(ticket.bytesReceived ?? 0), total: Double(size))
                         .tint(ShelfTheme.mint)
@@ -255,7 +261,9 @@ private struct DownloadTicketRow: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(ShelfTheme.subdued)
                 } else {
                     ProgressView().tint(ShelfTheme.mint)
-                    Text("Waiting for network or starting transfer")
+                    Text((ticket.bytesReceived ?? 0) > 0
+                         ? "\(ByteCountFormatter.string(fromByteCount: ticket.bytesReceived ?? 0, countStyle: .file)) received · total size unknown"
+                         : "Waiting for network or starting transfer")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }
                 Button("Cancel", role: .destructive) { transfers.cancelTransfer(ticket.id) }
