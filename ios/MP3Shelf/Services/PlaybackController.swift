@@ -15,6 +15,7 @@ final class PlaybackController: NSObject, ObservableObject {
     @Published private(set) var currentTrackID: UUID?
     @Published var playbackError: String?
     private var failedTrackID: UUID?
+    private var failedPlaybackOrder: PlaybackOrder?
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
@@ -90,6 +91,7 @@ final class PlaybackController: NSObject, ObservableObject {
                     self.isPlaying = false
                     self.playbackError = "Audio playback stopped unexpectedly. Choose another song or try playing again."
                     self.failedTrackID = self.currentTrackID
+                    self.failedPlaybackOrder = self.playbackOrder
                     self.updateNowPlaying()
                 }
             }
@@ -127,7 +129,9 @@ final class PlaybackController: NSObject, ObservableObject {
             try activateAudio()
             let player = try AVAudioPlayer(contentsOf: library.fileURL(for: track))
             player.delegate = relay
-            player.prepareToPlay()
+            guard player.prepareToPlay(), player.duration.isFinite, player.duration > 0 else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
             if transition > 0, let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
                 guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
@@ -145,6 +149,7 @@ final class PlaybackController: NSObject, ObservableObject {
             }
             playbackError = nil
             failedTrackID = nil
+            failedPlaybackOrder = nil
             interruptionState.cancelResume()
             playbackOrder = nextOrder
             currentTrackID = track.id
@@ -155,6 +160,7 @@ final class PlaybackController: NSObject, ObservableObject {
             updateNowPlaying()
         } catch {
             failedTrackID = track.id
+            failedPlaybackOrder = nextOrder
             playbackError = "Could not play \(track.title). Check that its audio file is still available, then retry or choose another song."
             isPlaying = audioPlayer?.isPlaying ?? false
             updateNowPlaying()
@@ -162,8 +168,16 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func retryFailedPlayback() {
-        guard let track = library?.song(with: failedTrackID) else { return }
-        play(track)
+        guard let library, let track = library.song(with: failedTrackID) else {
+            playbackError = "This song is no longer in your library. Choose another song."
+            return
+        }
+        if var order = failedPlaybackOrder {
+            order.retainAvailable(Set(library.tracks.map(\.id)))
+            order.setShuffle(isShuffled)
+            order.select(track.id)
+            beginPlayback(track, using: order)
+        } else { play(track) }
     }
 
     func togglePlayback() { isPlaying ? pause() : resume() }
@@ -185,11 +199,13 @@ final class PlaybackController: NSObject, ObservableObject {
             isPlaying = true
             playbackError = nil
             failedTrackID = nil
+            failedPlaybackOrder = nil
             startTimer()
             updateNowPlaying()
         } catch {
             isPlaying = audioPlayer.isPlaying
             failedTrackID = currentTrackID
+            failedPlaybackOrder = playbackOrder
             playbackError = "Could not resume this song. Retry playback or choose another song."
             updateNowPlaying()
         }
@@ -198,6 +214,7 @@ final class PlaybackController: NSObject, ObservableObject {
     func stop() {
         playbackError = nil
         failedTrackID = nil
+        failedPlaybackOrder = nil
         interruptionState.cancelResume()
         audioPlayer?.stop()
         audioPlayer = nil

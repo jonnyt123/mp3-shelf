@@ -83,11 +83,19 @@ struct DownloadManagerView: View {
                             } label: {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(playlist.name).font(.headline)
-                                    Text("\(playlist.missingTracks.count) songs not saved offline")
-                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                    let activeCount = transfers.pendingCount(for: playlist.id)
-                                    let failedCount = transfers.ticketsForPlaylist(playlist.id).filter { $0.status == .failed }.count
-                                    Text("\(activeCount) queued or finalizing · \(failedCount) failed transfers")
+                                    let total = playlist.sourceOrder.count
+                                    let saved = playlist.sourceOrder.filter { library.hasOfflineRecording(matching: $0) }.count
+                                    Text("\(saved) of \(total) playlist entries saved offline")
+                                        .font(.caption.monospacedDigit()).foregroundStyle(ShelfTheme.subdued)
+                                    ProgressView(value: Double(saved), total: Double(max(1, total)))
+                                        .tint(ShelfTheme.mint)
+                                        .accessibilityLabel("Offline playlist progress")
+                                        .accessibilityValue("\(saved) of \(total) saved")
+                                    let playlistTickets = transfers.ticketsForPlaylist(playlist.id)
+                                    let activeCount = playlistTickets.filter { $0.status == .queued }.count
+                                    let failedCount = playlistTickets.filter { $0.status == .failed }.count
+                                    let cancelledCount = playlistTickets.filter { $0.status == .cancelled }.count
+                                    Text("\(activeCount) active · \(failedCount) failed · \(cancelledCount) cancelled transfers")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                     if let job = library.discoveryJob(for: playlist.id) {
                                         Text(job.isComplete ? "Source search finished" :
