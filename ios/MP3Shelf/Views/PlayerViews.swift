@@ -172,9 +172,13 @@ struct NowPlayingView: View {
                                     .accessibilityValue("\((draggingTime ?? playback.currentTime).shelfClock) of \(playback.duration.shelfClock)")
                                     HStack {
                                         Text((draggingTime ?? playback.currentTime).shelfClock)
+                                            .accessibilityLabel("Elapsed time")
+                                            .accessibilityValue((draggingTime ?? playback.currentTime).shelfClock)
                                         Spacer()
                                         Text("−" + max(0, playback.duration -
                                             (draggingTime ?? playback.currentTime)).shelfClock)
+                                            .accessibilityLabel("Time remaining")
+                                            .accessibilityValue(max(0, playback.duration - (draggingTime ?? playback.currentTime)).shelfClock)
                                     }
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(ShelfTheme.subdued)

@@ -40,7 +40,7 @@ struct LibraryView: View {
                 }
             }
         } label: {
-            Label("Sort", systemImage: "arrow.up.arrow.down")
+            Label(sortMode.rawValue, systemImage: "arrow.up.arrow.down")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(ShelfTheme.accent)
         }
@@ -48,17 +48,25 @@ struct LibraryView: View {
     }
 
     private var browsingPlaybackControls: some View {
-        HStack {
-            Button { playDisplayed(shuffled: false) } label: {
-                Label("Play results", systemImage: "play.fill").frame(minHeight: 44)
-            }
-            Button { playDisplayed(shuffled: true) } label: {
-                Label("Shuffle results", systemImage: "shuffle").frame(minHeight: 44)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading) { browsingActions }
+            } else {
+                HStack { browsingActions }
             }
         }
         .buttonStyle(.bordered)
         .tint(ShelfTheme.accent)
         .disabled(displayed.isEmpty)
+    }
+
+    @ViewBuilder private var browsingActions: some View {
+        Button { playDisplayed(shuffled: false) } label: {
+            Label("Play results", systemImage: "play.fill").frame(minHeight: 44)
+        }
+        Button { playDisplayed(shuffled: true) } label: {
+            Label("Shuffle results", systemImage: "shuffle").frame(minHeight: 44)
+        }
     }
 
     private func playDisplayed(shuffled: Bool) {
@@ -111,6 +119,12 @@ struct LibraryView: View {
                                      : "Try a different song, artist or album.")
                                     .font(.subheadline)
                                     .foregroundStyle(ShelfTheme.subdued)
+                                Button("Show all music") {
+                                    searchText = ""
+                                    favoritesOnly = false
+                                }
+                                .buttonStyle(.bordered)
+                                .frame(minHeight: 44)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(22)
@@ -694,14 +708,14 @@ struct PlaylistDetailView: View {
     private var offlineSourceCount: Int {
         guard let playlist else { return 0 }
         return playlist.sourceOrder.filter {
-            MusicMatching.reusableOfflineTrack(for: $0, in: library.tracks) != nil
+            library.hasOfflineRecording(matching: $0)
         }.count
     }
 
     /// Report the real, persisted outcome for each song in the imported
     /// Spotify playlist. Downloading is not the same as already saved offline.
     private func mp3Status(for wish: PlaylistWish) -> (text: String, symbol: String) {
-        if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) != nil {
+        if library.hasOfflineRecording(matching: wish) {
             return ("Saved offline as an audio file", "checkmark.circle.fill")
         }
         if let ticket = transfers.ticketsForPlaylist(playlistID).first(where: {
@@ -709,11 +723,14 @@ struct PlaylistDetailView: View {
         }) {
             switch ticket.status {
             case .queued:
+                if transfers.isFinalizing(ticket.id) { return ("Checking and saving audio…", "gearshape") }
+                if transfers.hasStagedAudio(ticket.id) { return ("Downloaded — waiting to save", "tray.and.arrow.down") }
+                if ticket.nextRetryAt != nil { return ("Automatic retry scheduled", "arrow.clockwise") }
                 return (ticket.bytesReceived ?? 0) > 0
                     ? ("Downloading MP3…", "arrow.down.circle.fill")
                     : ("MP3 download queued", "clock.arrow.circlepath")
             case .imported:
-                return ("MP3 saved offline", "checkmark.circle.fill")
+                return ("No matching offline audio — recheck in Downloads", "exclamationmark.triangle")
             case .failed:
                 return ("MP3 download failed — retry in Downloads", "exclamationmark.triangle")
             case .cancelled:
@@ -799,16 +816,17 @@ struct PlaylistDetailView: View {
                     library.automaticDownloadProgress?.playlistID == playlistID ||
                     BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
                     Section("FIND YOUR MUSIC") {
+                        let savedSourceCount = offlineSourceCount
                         VStack(alignment: .leading, spacing: 9) {
                             PremiumEyebrow(title: "OFFLINE SOURCE MATCHING", color: ShelfTheme.mint)
-                            Text("\(offlineSourceCount) of \(playlist.sourceOrder.count) songs saved offline")
+                            Text("\(savedSourceCount) of \(playlist.sourceOrder.count) songs saved offline")
                                 .font(.headline.monospacedDigit())
                                 .foregroundStyle(.white)
-                            ProgressView(value: Double(offlineSourceCount),
+                            ProgressView(value: Double(savedSourceCount),
                                          total: Double(max(1, playlist.sourceOrder.count)))
                                 .tint(ShelfTheme.mint)
                                 .accessibilityLabel("Downloaded audio files")
-                                .accessibilityValue("\(offlineSourceCount) of \(playlist.sourceOrder.count) songs saved")
+                                .accessibilityValue("\(savedSourceCount) of \(playlist.sourceOrder.count) songs saved")
                             let active = transfers.pendingCount(for: playlistID)
                             if active > 0 {
                                 Label("\(active) file transfer\(active == 1 ? "" : "s") underway",

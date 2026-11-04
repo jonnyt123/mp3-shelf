@@ -85,6 +85,10 @@ struct DownloadManagerView: View {
                                     Text(playlist.name).font(.headline)
                                     Text("\(playlist.missingTracks.count) songs not saved offline")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    let activeCount = transfers.pendingCount(for: playlist.id)
+                                    let failedCount = transfers.ticketsForPlaylist(playlist.id).filter { $0.status == .failed }.count
+                                    Text("\(activeCount) queued or finalizing · \(failedCount) failed transfers")
+                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                     if let job = library.discoveryJob(for: playlist.id) {
                                         Text(job.isComplete ? "Source search finished" :
                                              job.isPaused ? "Source search paused" :
