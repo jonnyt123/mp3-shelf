@@ -465,6 +465,10 @@ struct RenameTrackView: View {
 
 struct PlaylistsView: View {
     @EnvironmentObject private var library: MusicLibrary
+    @State private var playlistQuery = ""
+    @State private var sortAlphabetically = false
+    @State private var pendingRename: MusicPlaylist?
+    @State private var renamedName = ""
     @State private var showCreate = false
     @State private var newName = ""
     @State private var pendingDelete: MusicPlaylist?
@@ -476,6 +480,12 @@ struct PlaylistsView: View {
         dynamicTypeSize.isAccessibilitySize
             ? [GridItem(.flexible(), spacing: 13)]
             : [GridItem(.flexible(), spacing: 13), GridItem(.flexible(), spacing: 13)]
+    }
+
+    private var visiblePlaylists: [MusicPlaylist] {
+        let query = playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lists = library.playlists.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+        return sortAlphabetically ? lists.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } : lists
     }
 
     var body: some View {
@@ -513,6 +523,11 @@ struct PlaylistsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     PremiumSectionHeading(title: "Your playlists",
                                           detail: "\(library.playlists.count) collections")
+                    Toggle("Sort alphabetically", isOn: $sortAlphabetically)
+                        .tint(ShelfTheme.accent)
+                    if !library.playlists.isEmpty && visiblePlaylists.isEmpty {
+                        Text("No playlists match your search.").foregroundStyle(ShelfTheme.subdued)
+                    }
                     if library.playlists.isEmpty {
                         VStack(alignment: .leading, spacing: 13) {
                             PremiumIcon(symbol: "square.stack.3d.up",
@@ -542,14 +557,17 @@ struct PlaylistsView: View {
                         .premiumCard(radius: 24)
                     } else {
                         LazyVGrid(columns: columns, spacing: 13) {
-                            ForEach(library.playlists.indices, id: \.self) { index in
-                                let list = library.playlists[index]
+                            ForEach(Array(visiblePlaylists.enumerated()), id: \.element.id) { index, list in
                                 NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
                                     playlistCard(list, index: index)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("\(list.name), \(list.trackIDs.count) songs offline, \(list.missingTracks.count) still to find")
                                 .contextMenu {
+                                    Button {
+                                        renamedName = list.name
+                                        pendingRename = list
+                                    } label: { Label("Rename Playlist", systemImage: "pencil") }
                                     Button(role: .destructive) {
                                         pendingDelete = list
                                     } label: { Label("Delete Playlist", systemImage: "trash") }
@@ -564,6 +582,7 @@ struct PlaylistsView: View {
         }
         .scrollIndicators(.hidden)
         .background(PremiumBackdrop())
+        .searchable(text: $playlistQuery, prompt: "Find playlists")
         .navigationTitle("Playlists")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -580,6 +599,18 @@ struct PlaylistsView: View {
             Button("Create") { library.createPlaylist(newName); newName = "" }
             Button("Cancel", role: .cancel) { newName = "" }
         } message: { Text("Songs stay on your device.") }
+        .alert("Rename Playlist", isPresented: Binding(
+            get: { pendingRename != nil },
+            set: { if !$0 { pendingRename = nil } }
+        )) {
+            TextField("Playlist name", text: $renamedName)
+            Button("Save") {
+                if let playlist = pendingRename { library.renamePlaylist(playlist.id, to: renamedName) }
+                pendingRename = nil
+            }
+            .disabled(renamedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) { pendingRename = nil }
+        }
         .confirmationDialog(
             "Delete \(pendingDelete?.name ?? "playlist")?",
             isPresented: Binding(

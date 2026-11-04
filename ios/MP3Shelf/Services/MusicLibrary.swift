@@ -961,7 +961,15 @@ final class MusicLibrary: ObservableObject {
         save()
     }
 
+    func renamePlaylist(_ id: UUID, to name: String) {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, let index = playlists.firstIndex(where: { $0.id == id }) else { return }
+        playlists[index].name = clean
+        save()
+    }
+
     func deletePlaylist(_ id: UUID) {
+        stopBackgroundTransfers(for: id)
         playlists.removeAll { $0.id == id }
         discoveryJobs.removeAll { $0.playlistID == id }
         persistDiscovery()

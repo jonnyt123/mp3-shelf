@@ -729,9 +729,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             return
         }
-        guard let mime = http.mimeType?.lowercased(),
-              ["audio/mpeg", "audio/mp3", "application/octet-stream", "audio/x-mpeg"].contains(mime)
-        else {
+        guard DownloadedAudioContentType.allows(http.mimeType) else {
             Task { @MainActor in self.setFailed(id, reason: "Source returned non-audio content") }
             return
         }

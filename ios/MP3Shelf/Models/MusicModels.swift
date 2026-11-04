@@ -176,3 +176,16 @@ struct PlaybackInterruptionState {
 
     mutating func cancelResume() { wantsResume = false }
 }
+
+/// Response admission only; decoding, identity and duration still determine import.
+enum DownloadedAudioContentType {
+    static func allows(_ raw: String?) -> Bool {
+        guard let raw else { return false }
+        let mime = raw.split(separator: ";", maxSplits: 1).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return ["audio/mpeg", "audio/mp3", "audio/x-mpeg", "application/octet-stream",
+                "audio/mp4", "audio/m4a", "audio/x-m4a", "audio/aac", "audio/x-aac",
+                "audio/wav", "audio/wave", "audio/x-wav", "audio/aiff", "audio/x-aiff",
+                "audio/flac", "audio/x-flac"].contains(mime)
+    }
+}

@@ -8,6 +8,13 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
 @main
 enum SourceDiscoveryJobTests {
     @MainActor static func main() async throws {
+        for mime in ["audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-aiff", "audio/flac", "Audio/X-FLAC; charset=binary"] {
+            verifyDiscovery(DownloadedAudioContentType.allows(mime), "supported audio response reaches decoding: \(mime)")
+        }
+        for mime in ["text/html", "application/json", "audio/ogg", "", "audio/mpeg-unsafe"] {
+            verifyDiscovery(!DownloadedAudioContentType.allows(mime), "non-supported response is rejected: \(mime)")
+        }
+        verifyDiscovery(!DownloadedAudioContentType.allows(nil), "missing response type is rejected")
         verifyDiscovery(BackgroundDownloadBackpressure.maximumOutstandingTransfers == 4,
                         "large playlist discovery limits outstanding background transfers")
         for count in 0..<4 {
