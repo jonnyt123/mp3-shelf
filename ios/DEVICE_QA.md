@@ -24,6 +24,70 @@ simulator build is a separate, useful check and does not replace these tests.
 6. For network transfer tests, use an independent audio source whose creator
    explicitly authorized downloading. Do not use Spotify audio or unknown files.
 
+## Playback queue editor and automatic download cap acceptance
+
+1. Import a Spotify playlist with at least 15 qualifying, explicitly
+   authorized independent recordings. On Wi-Fi, start auto discovery and
+   verify at most **four** background transfer tickets remain queued at once.
+   As each ticket finishes, the next discovery lookup should resume without
+   losing the saved per-song cursor or creating duplicate downloads.
+2. Use **Cancel All** while four tickets are active. The playlist's source
+   discovery must stay paused, with no automatic replacement tasks until
+   explicitly resumed. Restart the app and confirm the pause is preserved.
+3. Interrupt Wi-Fi, restore connectivity, and verify existing bounded
+   retries, alternative verified sources and iOS background completion still
+   work. Explicit cellular permission must remain session-only.
+4. From Now Playing, open **Manage playing queue**. Move an upcoming track
+   earlier/later, choose Play next, play a selected item, then remove an
+   upcoming item. Confirm the next playback order matches the visible sheet.
+5. Reopen the saved playlist after editing the queue; its persisted order,
+   favorites, local file count and downloaded files must be unchanged.
+6. Test the queue sheet at large Dynamic Type sizes and with VoiceOver,
+   including accessible action menus and medium/large sheet presentation.
+
+## Large-library performance and data-integrity acceptance
+
+1. Import 3,000+ locally owned audio files and a large Spotify metadata list.
+   Measure Listen first load, search latency, sort switching, and playlist
+   scrolling on the actual iPhone before and after this change.
+2. Start local playback and leave Listen open for a full song; progress
+   updates must not repeatedly sort the complete library or cause visible
+   frame drops when navigating the library.
+3. Import a playlist containing multiple versions of the same song name.
+   Only the exact matching artist/duration recording should be linked;
+   ambiguous candidates must remain unmatched.
+4. Toggle favorites and edit title/artist. Search, title sort, artist sort,
+   saved playlist rows, Now Playing and Up Next must reflect the changes
+   immediately, not stale cached metadata.
+5. Import a portable archive with artwork, then replace its artwork. Verify
+   the image refreshes; remove a song and verify stale covers are not shown.
+6. Load a 5,000-track library, scroll rapidly and check memory pressure.
+   Verify that the artwork cache remains bounded and iOS does not terminate
+   the app. Check library save/restore after a force-quit and relaunch.
+
+## Shuffle and Up Next regression (PR: playback queue reliability)
+
+1. Import six distinct local audio tracks; turn on Shuffle and Repeat Off.
+   Play the first song, then press Next until the library finishes. Each track
+   must play only once; the player must stop after the sixth song.
+2. Enable Shuffle and Repeat All, then skip through another full cycle.
+   A fresh cycle should be prepared without an immediate duplicate when more
+   than one track is available.
+3. In shuffle mode, play A → B → C. Press Previous within the first three
+   seconds of C: the player should return to B, then to A. Press Next and
+   confirm B is next (Back/Next history must be reversible).
+4. Inspect the three Up Next entries before each skip. The next playable song
+   must match the first preview entry when there is a pending shuffled song.
+5. Toggle Shuffle while playback is active; verify the queue remains playable,
+   the Now Playing preview changes, and the stored playlist order is unmodified.
+6. Test Repeat One on a single song, crossfade near end of a two-song queue,
+   lock-screen Previous/Next, Bluetooth playback and remote seek controls.
+7. Delete a future queued song and skip forward. The player must ignore missing
+   files instead of crashing or repeatedly choosing an invalid queue entry.
+
+Foundation-only queue regression: `bash ios/scripts/test-playback-order.sh`.
+Passing this script does not replace listening and navigation tests on iPhone.
+
 ## Source-search recovery (Q2)
 
 1. Import a CSV with several authorized catalog-matching songs. Start discovery.

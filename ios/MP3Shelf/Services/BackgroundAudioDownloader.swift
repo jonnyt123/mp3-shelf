@@ -315,6 +315,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private func updatePending() {
         library?.pendingBackgroundDownloads = pendingCount()
         revision += 1
+        // A queued download has imported, failed, or been cancelled. If a
+        // transfer slot opened, let the persisted discovery cursor advance.
+        library?.resumePendingDiscovery()
     }
 
     /// Reconcile queue tickets against the authoritative on-device library.
@@ -493,6 +496,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             $0.status == .queued && fm.fileExists(atPath: Self.stagingURL($0.id).path)
         }
         for ticket in candidates {
+            if Task.isCancelled { break }
             // The candidate snapshot can become stale across earlier awaits.
             // Never import a ticket that was cancelled or already satisfied.
             guard tickets[ticket.id]?.status == .queued,
@@ -536,6 +540,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                     setFailed(ticket.id, reason: "Audio already stored or could not be imported")
                 }
                 try? fm.removeItem(at: stagedURL)
+            } catch is CancellationError {
+                // A system-expired import can resume from its staged audio.
+                // User-cancelled/satisfied tickets no longer need that copy.
+                if tickets[ticket.id]?.status != .queued {
+                    try? fm.removeItem(at: stagedURL)
+                }
             } catch {
                 // Leave failed transfers retryable via the playlist's retry button.
                 setFailed(ticket.id, reason: error.localizedDescription)

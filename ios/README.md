@@ -1,5 +1,54 @@
 # MP3 Shelf — Native iPhone App
 
+## Large music library and Spotify import performance
+
+The app maintains a revision-aware in-memory index of local recordings:
+UUID lookup and playlist song resolution no longer scan the entire song
+collection for every row. Title-bucketed Spotify matching avoids repeating
+full-library scans while preserving strict artist, title, edit-duration and
+ambiguity protections. Existing playlist order and stable track IDs are
+unchanged.
+
+The Listen screen now reuses **Title**, **Artist** and **Recently added** sorted
+snapshots until the library actually changes. This avoids re-sorting thousands
+of recordings on each playback progress update or view refresh. Embedded
+artwork decoding uses an evictable **32 MiB NSCache** rather than reopening
+the same cover file for every visible row. The cache is invalidated when an
+existing artwork file is overwritten or removed.
+
+`ios/Tests/PlaylistCSVTests.swift` includes a 3,000-track matching regression
+against the original exhaustive matching algorithm, checking exact results,
+versioned durations and ambiguous duplicates. Full Xcode, on-device memory
+pressure and scrolling QA are still required before release.
+
+## Reliable shuffle and queue navigation
+
+The native player now uses a **shuffle bag** instead of choosing a fresh random
+song on every skip. Each track in the current playlist plays at most once per
+shuffle cycle, unless you explicitly choose a track yourself. **Repeat Off**
+stops at the end of the shuffle cycle; **Repeat All** shuffles a new cycle;
+**Repeat One** replays the current track when it ends.
+
+**Back** returns through the actual listening history in shuffle mode, and
+**Next** after Back restores the song you just left. The Now Playing **Up Next**
+preview reads the real pending order rather than displaying the original
+playlist sequence. Playback does not alter the user's saved playlist order;
+files deleted from the library are skipped gracefully. Shuffle and repeat
+continue to work with lock-screen controls and crossfade transitions.
+
+The shuffle order is intentionally session-only (not persisted after force-quit
+or app relaunch). Run the Foundation-only queue regression suite without any
+GitHub Actions minutes:
+
+```bash
+bash ios/scripts/test-playback-order.sh
+```
+
+This test checks the queue logic only. Xcode simulator builds, actual audio
+transitions, AirPlay and physical-iPhone behavior still require native QA.
+
+
+
 A standalone **SwiftUI** iOS application that can be opened directly in Xcode and installed on a physical iPhone. It complements the existing MP3 Shelf Next.js web app, without replacing or altering the web app.
 
 ## Wi-Fi-only background source-discovery batches
@@ -69,7 +118,7 @@ On a Mac with full Xcode selected, run:
 bash ios/scripts/verify-local-release.sh
 ```
 
-This executes all seven native Swift regression suites, unsigned Simulator
+This executes all eight native Swift regression suites, unsigned Simulator
 Debug and Release builds, and an unsigned physical-iPhone architecture Release
 build **locally**. It never queues a GitHub Actions workflow. Add `--smoke` to
 install and launch the Debug app on a locally installed iPhone Simulator and
@@ -594,8 +643,12 @@ No API secrets, ad SDKs, cloud services or external dependencies are bundled.
 
 ## Download and playback review branch
 
-Use branch `fix/ios-download-finalization-and-conversion` (draft PR #28) for these changes. In Finder, double-click **Verify MP3 Shelf.command** inside `ios`. It runs seven Swift regression suites, three unsigned native builds and the existing eight-screen Simulator smoke capture. It uses no GitHub Actions. macOS may require Open from the context menu for a downloaded script.
+Use branch `fix/ios-download-finalization-and-conversion` (draft PR #28) for these changes. In Finder, double-click **Verify MP3 Shelf.command** inside `ios`. It runs eight Swift regression suites, three unsigned native builds and the existing eight-screen Simulator smoke capture. It uses no GitHub Actions. macOS may require Open from the context menu for a downloaded script.
 
 Reports and logs appear in `ios/build/local-release`. Missing Swift/Xcode now also creates a failed report. A successful Simulator launch still requires screenshot review and the physical iPhone scenarios in DEVICE_QA.md. The new interruption suite exercises resume intent; real calls, Siri and Bluetooth events require device testing.
 
 For installation, double-click **Install on iPhone.command** inside `ios`. It lists devices and asks for your iPhone identifier and Apple Team ID, then invokes the existing signing/install helper. Xcode account sign-in, device trust and Developer Mode must already be configured. It does not bypass provisioning or perform device acceptance tests.
+
+## Consolidated integration candidate
+
+Branch `feat/ios-consolidated-candidate` combines the PR #28 download/conversion/playback work with PRs #24–#27 (shuffle history, queue editing, four-transfer backpressure and library indexes). Its Finder verification launcher includes eight regression suites. Conflict resolution preserves scene-gated discovery and bounded background ownership alongside the capacity check. Native compilation and device QA remain required before release.
