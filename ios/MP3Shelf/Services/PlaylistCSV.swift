@@ -202,10 +202,12 @@ struct OfflineTrackIndex {
         tracksByTitle = lookup
     }
 
-    func reusableTrack(for wish: PlaylistWish) -> MusicTrack? {
+    func reusableTrack(for wish: PlaylistWish,
+                       isAvailable: ((MusicTrack) -> Bool)? = nil) -> MusicTrack? {
         let key = MusicMatching.key(wish.title)
         guard !key.isEmpty, let candidates = tracksByTitle[key] else { return nil }
-        return MusicMatching.reusableOfflineTrack(for: wish, in: candidates)
+        let usable = isAvailable.map { candidates.filter($0) } ?? candidates
+        return MusicMatching.reusableOfflineTrack(for: wish, in: usable)
     }
 }
 

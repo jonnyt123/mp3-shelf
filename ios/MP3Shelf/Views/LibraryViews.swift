@@ -47,6 +47,27 @@ struct LibraryView: View {
         .accessibilityLabel("Sort songs by \(sortMode.rawValue)")
     }
 
+    private var browsingPlaybackControls: some View {
+        HStack {
+            Button { playDisplayed(shuffled: false) } label: {
+                Label("Play results", systemImage: "play.fill").frame(minHeight: 44)
+            }
+            Button { playDisplayed(shuffled: true) } label: {
+                Label("Shuffle results", systemImage: "shuffle").frame(minHeight: 44)
+            }
+        }
+        .buttonStyle(.bordered)
+        .tint(ShelfTheme.accent)
+        .disabled(displayed.isEmpty)
+    }
+
+    private func playDisplayed(shuffled: Bool) {
+        let songs = displayed
+        guard let first = shuffled ? songs.randomElement() : songs.first else { return }
+        playback.isShuffled = shuffled
+        playback.play(first, queue: songs)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
@@ -77,6 +98,7 @@ struct LibraryView: View {
                             }
                             Spacer()
                         }
+                        browsingPlaybackControls
                         if displayed.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 PremiumIcon(symbol: "magnifyingglass", color: ShelfTheme.accent,
@@ -255,6 +277,7 @@ struct LibraryView: View {
                                                   detail: "\(displayed.count) songs")
                             sortMenu
                         }
+                        browsingPlaybackControls
                         if displayed.isEmpty {
                             EmptyShelfView(
                                 title: "No favorites yet",

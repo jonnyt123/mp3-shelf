@@ -182,6 +182,10 @@ enum PlaylistCSVTests {
                                     album: "", spotifyURL: nil, durationSeconds: 241)
         check(versioned.reusableTrack(for: longWish)?.id == twoCuts[0].id,
               "index rejects a different-duration cut rather than picking either")
+        check(versioned.reusableTrack(for: longWish, isAvailable: { $0.id != twoCuts[0].id }) == nil,
+              "missing long recording cannot be replaced by an available short cut")
+        check(versioned.reusableTrack(for: longWish, isAvailable: { _ in true })?.id == twoCuts[0].id,
+              "available exact recording retains the expected match")
         let unknownDuration = PlaylistWish(title: "Same Song", artist: "One Band",
                                            album: "", spotifyURL: nil)
         check(versioned.reusableTrack(for: unknownDuration) == nil,

@@ -57,6 +57,9 @@ struct DownloadManagerView: View {
                     ? "0 MB"
                     : ByteCountFormatter.string(
                         fromByteCount: library.totalStorageBytes, countStyle: .file))
+                Button("Recheck saved audio") { library.recheckSavedAudio() }
+                Text("Refresh playlist matches if audio files were moved or removed in Files.")
+                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 NavigationLink {
                     MusicStorageView()
                 } label: {

@@ -22,6 +22,7 @@ enum LibraryTrackSort: String, CaseIterable, Identifiable {
     case title = "Title"
     case recent = "Recently added"
     case artist = "Artist"
+    case album = "Album"
 
     var id: String { rawValue }
 }
@@ -41,6 +42,7 @@ final class MusicLibrary: ObservableObject {
     private var sortedByTitle: [MusicTrack] = []
     private var sortedByRecent: [MusicTrack] = []
     private var sortedByArtist: [MusicTrack] = []
+    private var sortedByAlbum: [MusicTrack] = []
     private let artworkCache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.totalCostLimit = 32 * 1024 * 1024
@@ -391,6 +393,14 @@ final class MusicLibrary: ObservableObject {
                 ? $0.title.localizedStandardCompare($1.title) == .orderedAscending
                 : comparison == .orderedAscending
         }
+        sortedByAlbum = tracks.sorted {
+            let album = $0.album.localizedStandardCompare($1.album)
+            if album != .orderedSame { return album == .orderedAscending }
+            let artist = $0.artist.localizedStandardCompare($1.artist)
+            return artist == .orderedSame
+                ? $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                : artist == .orderedAscending
+        }
         indexedRevision = trackRevision
     }
 
@@ -404,6 +414,7 @@ final class MusicLibrary: ObservableObject {
         case .title: source = sortedByTitle
         case .recent: source = sortedByRecent
         case .artist: source = sortedByArtist
+        case .album: source = sortedByAlbum
         }
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty && !favoritesOnly { return source }
@@ -677,10 +688,9 @@ final class MusicLibrary: ObservableObject {
     /// Check that the file still exists as well as its metadata/duration.
     func hasOfflineRecording(matching wish: PlaylistWish) -> Bool {
         refreshTrackIndexIfNeeded()
-        guard let track = indexedByTitle.reusableTrack(for: wish) else {
-            return false
-        }
-        return manager.fileExists(atPath: fileURL(for: track).path)
+        return indexedByTitle.reusableTrack(for: wish, isAvailable: {
+            self.manager.fileExists(atPath: self.fileURL(for: $0).path)
+        }) != nil
     }
 
     func finishedBackgroundDownload(for playlistID: UUID, succeeded: Bool) {
@@ -1069,14 +1079,22 @@ final class MusicLibrary: ObservableObject {
                                     missing: playlist.missingTracks.count)
     }
 
+    func recheckSavedAudio() { reconcileMissingSongs() }
+
     private func reconcileMissingSongs() {
         refreshTrackIndexIfNeeded()
+        let available = tracks.filter { manager.fileExists(atPath: fileURL(for: $0).path) }
+        let availableIndex = OfflineTrackIndex(tracks: available)
         for index in playlists.indices where !playlists[index].sourceOrder.isEmpty {
             let existing = playlists[index].trackIDs
             var ordered: [UUID] = []
             var missing: [PlaylistWish] = []
+            var sourcedTrackIDs = Set<UUID>()
             for wish in playlists[index].sourceOrder {
-                if let track = indexedByTitle.reusableTrack(for: wish) {
+                if let previous = indexedByTitle.reusableTrack(for: wish) {
+                    sourcedTrackIDs.insert(previous.id)
+                }
+                if let track = availableIndex.reusableTrack(for: wish) {
                     ordered.append(track.id)
                 } else {
                     missing.append(wish)
@@ -1085,7 +1103,9 @@ final class MusicLibrary: ObservableObject {
             // Retain user-added songs with O(1) membership checks rather than
             // O(n²) repeated scans on multi-thousand-track playlists.
             var recorded = Set(ordered)
-            ordered.append(contentsOf: existing.filter { recorded.insert($0).inserted })
+            ordered.append(contentsOf: existing.filter {
+                !sourcedTrackIDs.contains($0) && recorded.insert($0).inserted
+            })
             playlists[index].trackIDs = ordered
             playlists[index].missingTracks = missing
         }
