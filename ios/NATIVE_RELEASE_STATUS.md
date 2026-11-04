@@ -6,7 +6,7 @@ The candidate now handles audio interruptions and route loss, and includes a dou
 | --- | --- |
 | Playback recovery | Resume-intent regression suite added and wired into local runner; Swift execution and real notification behavior NOT VERIFIED. |
 | Converter | Exact bundled C encoder harness and full MP3 decode passed on Linux in the prior development step. Swift bridge, codec support and native package linking NOT VERIFIED. |
-| Upstream source | GCC reports deprecation and VBR array-size diagnostics; strict warnings-as-errors failed. Review these before release. Vendored whitespace is retained. |
+| Upstream source | The deprecated include and VBR helper array-bound declarations are corrected with provenance notes. Bundled compilation passed with these diagnostic categories treated as errors, then encoder assertions and full MP3 decode passed. This is not a pass under all -Wall/-Wextra warnings or an Apple compiler build. Vendored whitespace is retained. |
 | Local verification | Bash syntax and missing-Swift failure-report path checked here. Seven Swift suites, three native builds and eight Simulator captures require a Mac. |
 | iPhone | Calls/Siri, wired and Bluetooth route loss, crossfade interruption, background conversion/cancellation, locked playback and Wi-Fi/cellular acceptance remain required in DEVICE_QA.md. |
 | Release | Draft only; no signing, merge, deployment or device acceptance demonstrated. |

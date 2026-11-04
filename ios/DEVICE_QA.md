@@ -179,3 +179,5 @@ and provider/platform compliance checks have been performed.
 - Repeat with the app backgrounded; check Lock Screen elapsed time and playback state.
 
 Native compilation, notification delivery order and physical audio behavior remain NOT VERIFIED until recorded on a Mac/iPhone.
+
+Playback failure checks: move a test song file out of the app Music directory, attempt to play it while another song is playing, and confirm the existing song/queue remain active and an error is visible. Restore the file and use Retry. Repeat from Now Playing and during crossfade; a failed crossfade must not retry every timer tick. Never delete your only copy of a recording for this test.

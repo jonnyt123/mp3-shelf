@@ -1391,7 +1391,7 @@ VBR_old_prepare(lame_internal_flags * gfc,
                 const FLOAT pe[2][2], FLOAT const ms_ener_ratio[2],
                 const III_psy_ratio ratio[2][2],
                 FLOAT l3_xmin[2][2][SFBMAX],
-                int frameBits[16], int min_bits[2][2], int max_bits[2][2], int bands[2][2])
+                int frameBits[15], int min_bits[2][2], int max_bits[2][2], int bands[2][2])
 {
     SessionConfig_t const *const cfg = &gfc->cfg;
     EncResult_t *const eov = &gfc->ov_enc;
@@ -1582,7 +1582,7 @@ VBR_old_iteration_loop(lame_internal_flags * gfc, const FLOAT pe[2][2],
 static int
 VBR_new_prepare(lame_internal_flags * gfc,
                 const FLOAT pe[2][2], const III_psy_ratio ratio[2][2],
-                FLOAT l3_xmin[2][2][SFBMAX], int frameBits[16], int max_bits[2][2],
+                FLOAT l3_xmin[2][2][SFBMAX], int frameBits[15], int max_bits[2][2],
                 int* max_resv)
 {
     SessionConfig_t const *const cfg = &gfc->cfg;

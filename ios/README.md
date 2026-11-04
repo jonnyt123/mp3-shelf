@@ -597,3 +597,5 @@ No API secrets, ad SDKs, cloud services or external dependencies are bundled.
 Use branch `fix/ios-download-finalization-and-conversion` (draft PR #28) for these changes. In Finder, double-click **Verify MP3 Shelf.command** inside `ios`. It runs seven Swift regression suites, three unsigned native builds and the existing eight-screen Simulator smoke capture. It uses no GitHub Actions. macOS may require Open from the context menu for a downloaded script.
 
 Reports and logs appear in `ios/build/local-release`. Missing Swift/Xcode now also creates a failed report. A successful Simulator launch still requires screenshot review and the physical iPhone scenarios in DEVICE_QA.md. The new interruption suite exercises resume intent; real calls, Siri and Bluetooth events require device testing.
+
+For installation, double-click **Install on iPhone.command** inside `ios`. It lists devices and asks for your iPhone identifier and Apple Team ID, then invokes the existing signing/install helper. Xcode account sign-in, device trust and Developer Mode must already be configured. It does not bypass provisioning or perform device acceptance tests.

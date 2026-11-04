@@ -12,6 +12,8 @@ private final class AudioCompletionRelay: NSObject, AVAudioPlayerDelegate {
 @MainActor
 final class PlaybackController: NSObject, ObservableObject {
     @Published private(set) var currentTrackID: UUID?
+    @Published var playbackError: String?
+    private var failedTrackID: UUID?
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
@@ -65,6 +67,7 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func play(_ track: MusicTrack, queue songs: [MusicTrack]? = nil, transition: TimeInterval = 0) {
         guard let library else { return }
+        let previousQueue = queue
         if let songs { queue = songs.map(\.id) }
         if queue.isEmpty { queue = library.tracks.map(\.id) }
         if !queue.contains(track.id) { queue.append(track.id) }
@@ -76,7 +79,7 @@ final class PlaybackController: NSObject, ObservableObject {
             player.prepareToPlay()
             if transition > 0, let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
-                guard player.play() else { return }
+                guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
                 cancelFade()
                 outgoingPlayer = previous
                 previous.delegate = nil
@@ -84,11 +87,13 @@ final class PlaybackController: NSObject, ObservableObject {
                 startFade(duration: transition, from: previous, to: player)
             } else {
                 player.volume = 1
-                guard player.play() else { return }
+                guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
                 cancelFade()
                 audioPlayer?.stop()
                 audioPlayer = player
             }
+            playbackError = nil
+            failedTrackID = nil
             interruptionState.cancelResume()
             currentTrackID = track.id
             duration = player.duration
@@ -97,9 +102,17 @@ final class PlaybackController: NSObject, ObservableObject {
             startTimer()
             updateNowPlaying()
         } catch {
-            print("MP3 Shelf playback failed: \(error)")
-            isPlaying = false
+            queue = previousQueue
+            failedTrackID = track.id
+            playbackError = "Could not play \(track.title). Check that its audio file is still available, then retry or choose another song."
+            isPlaying = audioPlayer?.isPlaying ?? false
+            updateNowPlaying()
         }
+    }
+
+    func retryFailedPlayback() {
+        guard let track = library?.song(with: failedTrackID) else { return }
+        play(track)
     }
 
     func togglePlayback() { isPlaying ? pause() : resume() }
@@ -126,6 +139,8 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func stop() {
+        playbackError = nil
+        failedTrackID = nil
         interruptionState.cancelResume()
         audioPlayer?.stop()
         audioPlayer = nil
@@ -226,7 +241,7 @@ final class PlaybackController: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self, let player = self.audioPlayer else { return }
                 self.currentTime = player.currentTime
-                if self.isPlaying && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
+                if self.isPlaying && self.playbackError == nil && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
                    self.outgoingPlayer == nil && self.canCrossfade() && player.duration > self.crossfadeSeconds + 1 &&
                    player.duration - player.currentTime <= self.crossfadeSeconds {
                     self.advance(automatically: true, crossfading: true)

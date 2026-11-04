@@ -9,3 +9,5 @@ Passed here: the exact bundled LAME sources and package adapter compiled on Linu
 Downloads display a transient Finalizing state during validation/conversion/import; cancellation still signals the conversion worker. This state is reconstructed from staged-file recovery after relaunch rather than persisted as a separate ticket status.
 
 NOT RUN: Swift compilation, local package resolution, iOS simulator/device build, FLAC decode through AVAudioFile, UI cancellation, background execution, or complete playlist download. This branch is an integration candidate, not a verified release.
+
+Follow-up: standard C include and matching VBR parameter-bound declarations remove the observed deprecation/array-size warnings. The exact bundled sources compile with `-Werror=stringop-overflow -Werror=deprecated`; the encoder harness and full MP3 decode pass. General strict -Wall/-Wextra and Apple platform validation remain open.
