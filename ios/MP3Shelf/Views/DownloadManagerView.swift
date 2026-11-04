@@ -57,6 +57,10 @@ struct DownloadManagerView: View {
                     ? "0 MB"
                     : ByteCountFormatter.string(
                         fromByteCount: library.totalStorageBytes, countStyle: .file))
+                Button("Retry failed downloads") { transfers.retryFailedDownloads() }
+                    .disabled(!transfers.canRetryFailedDownloads)
+                Text("Retries fill available transfer slots. Cancelled downloads stay cancelled; source search stays paused if you paused it.")
+                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 Button("Recheck saved audio") { library.recheckSavedAudio() }
                 Text("Refresh playlist matches if audio files were moved or removed in Files.")
                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
@@ -284,6 +288,11 @@ private struct DownloadTicketRow: View {
                     Label("Retry MP3", systemImage: "arrow.clockwise")
                 }
                 .font(.subheadline)
+                .disabled(!transfers.canRetry(ticket.id))
+                if !transfers.canRetry(ticket.id) {
+                    Text("Retry becomes available when a slot opens, or in the playlist that still contains this download.")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                }
             }
             HStack(spacing: 16) {
                 Link(destination: ticket.sourcePage) {

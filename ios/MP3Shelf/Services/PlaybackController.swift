@@ -5,8 +5,9 @@ import Foundation
 import Combine
 
 private final class AudioCompletionRelay: NSObject, AVAudioPlayerDelegate {
-    var finished: ((Bool) -> Void)?
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finished?(flag) }
+    var finished: ((AVAudioPlayer, Bool) -> Void)?
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finished?(player, flag) }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { finished?(player, false) }
 }
 
 @MainActor
@@ -81,9 +82,9 @@ final class PlaybackController: NSObject, ObservableObject {
         self.library = library
         guard !remoteControlsConfigured else { return }
         remoteControlsConfigured = true
-        relay.finished = { [weak self] succeeded in
-            Task { @MainActor in
-                guard let self else { return }
+        relay.finished = { [weak self] player, succeeded in
+            Task { @MainActor [weak player] in
+                guard let self, let player, self.audioPlayer === player else { return }
                 if succeeded { self.advance(automatically: true) }
                 else {
                     self.isPlaying = false

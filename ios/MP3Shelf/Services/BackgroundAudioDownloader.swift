@@ -201,6 +201,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             (playlistID == nil || $0.playlistID == playlistID) &&
             $0.failureReason != "Replaced with a cellular-authorized transfer" &&
             $0.failureReason != "Replaced by automatic retry" &&
+            $0.failureReason != "Replaced by manual retry" &&
             $0.failureReason != "Replaced by alternate verified source" &&
             $0.failureReason != "Recovered missing background task"
         }
@@ -214,8 +215,30 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
     }
 
+    func canRetry(_ id: UUID) -> Bool {
+        guard let ticket = tickets[id], let library,
+              ticket.status == .failed || ticket.status == .cancelled,
+              library.playlists.contains(where: {
+                  $0.id == ticket.playlistID && $0.sourceOrder.contains(where: { $0.id == ticket.requested.id })
+              }) else { return false }
+        if library.hasOfflineRecording(matching: ticket.requested) { return true }
+        return Self.allowedDownloadURL(ticket.downloadURL) &&
+            !isQueued(ticket.requested, for: ticket.playlistID) &&
+            BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount())
+    }
+
+    var canRetryFailedDownloads: Bool {
+        tickets.values.contains { $0.status == .failed && canRetry($0.id) }
+    }
+
+    func retryFailedDownloads() {
+        // User-cancelled tickets require individual consent to restart.
+        let failed = ticketsForPlaylist().filter { $0.status == .failed }.map(\.id)
+        for id in failed where canRetry(id) { retry(id) }
+    }
+
     func retry(_ id: UUID) {
-        guard let previous = tickets[id],
+        guard canRetry(id), let previous = tickets[id],
               previous.status == .failed || previous.status == .cancelled else { return }
         if let library, library.hasOfflineRecording(matching: previous.requested) {
             var fulfilled = previous
@@ -241,6 +264,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             licensePage: previous.licensePage, provider: previous.provider)
         ticket.startedAt = .now
         ticket.alternativeSources = previous.alternativeSources
+        var retired = previous
+        retired.status = .cancelled
+        retired.failureReason = "Replaced by manual retry"
+        tickets[id] = retired
         tickets[newID] = ticket
         persist()
         let task = session.downloadTask(
