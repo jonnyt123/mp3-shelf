@@ -81,8 +81,10 @@ struct NowPlayingView: View {
     @EnvironmentObject private var playback: PlaybackController
     @Environment(\.dismiss) private var dismiss
     @State private var draggingTime: Double?
+    @State private var scrubbingTrackID: UUID?
     @State private var showLyrics = false
     @State private var showQueue = false
+    private let seekStep: TimeInterval = 15
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -155,9 +157,14 @@ struct NowPlayingView: View {
                                         get: { draggingTime ?? playback.currentTime },
                                         set: { draggingTime = $0 }
                                     ), in: 0...max(playback.duration, 1), onEditingChanged: { editing in
-                                        if !editing, let draggingTime {
-                                            playback.seek(to: draggingTime)
+                                        if editing {
+                                            scrubbingTrackID = playback.currentTrackID
+                                        } else {
+                                            if scrubbingTrackID == playback.currentTrackID, let draggingTime {
+                                                playback.seek(to: draggingTime)
+                                            }
                                             self.draggingTime = nil
+                                            scrubbingTrackID = nil
                                         }
                                     })
                                     .tint(ShelfTheme.mint)
@@ -173,6 +180,31 @@ struct NowPlayingView: View {
                                     .foregroundStyle(ShelfTheme.subdued)
                                 }
                                 .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 15 : 25)
+
+                                HStack {
+                                    Button {
+                                        draggingTime = nil
+                                        scrubbingTrackID = nil
+                                        playback.seek(to: playback.currentTime - seekStep)
+                                    } label: {
+                                        Label("Back 15 seconds", systemImage: "gobackward.15")
+                                            .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                                    }
+                                    Spacer()
+                                    Text(playback.isPlaying ? "Playing" : "Paused")
+                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    Spacer()
+                                    Button {
+                                        draggingTime = nil
+                                        scrubbingTrackID = nil
+                                        playback.seek(to: playback.currentTime + seekStep)
+                                    } label: {
+                                        Label("Forward 15 seconds", systemImage: "goforward.15")
+                                            .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                                    }
+                                }
+                                .tint(ShelfTheme.mint)
+                                .padding(.bottom, 8)
 
                                 HStack(spacing: 0) {
                                     playerButton("shuffle", active: playback.isShuffled,
@@ -344,6 +376,7 @@ struct NowPlayingView: View {
             .navigationDestination(isPresented: $showLyrics) {
                 if let id = playback.currentTrackID { LyricsView(songID: id) }
             }
+            .onChange(of: playback.currentTrackID) { _, _ in draggingTime = nil }
             .sheet(isPresented: $showQueue) {
                 PlaybackQueueSheet()
                     .environmentObject(library)

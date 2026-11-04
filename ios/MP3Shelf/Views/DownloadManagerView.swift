@@ -70,44 +70,47 @@ struct DownloadManagerView: View {
                     Text("A playlist link supplies song details. An MP3 transfer starts only after a downloadable recording is found; some songs have no matching source.")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                     ForEach(incompletePlaylists) { playlist in
-                        NavigationLink {
-                            PlaylistDetailView(playlistID: playlist.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(playlist.name).font(.headline)
-                                Text("\(playlist.missingTracks.count) songs not saved offline")
-                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                if let job = library.discoveryJob(for: playlist.id) {
-                                    Text(job.isComplete ? "Source search finished" :
-                                         job.isPaused ? "Source search paused" :
-                                         "Source search: \(job.nextIndex)/\(job.wishes.count) checked")
-                                        .font(.caption)
-                                    if job.unavailable > 0 {
-                                        Text("\(job.unavailable) songs had no qualifying MP3 source")
-                                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                    }
-                                    if job.failed > 0 {
-                                        Text("\(job.failed) song lookups failed")
-                                            .font(.caption).foregroundStyle(ShelfTheme.coral)
-                                    }
-                                    if let reason = job.lastError {
-                                        Text(reason).font(.caption)
-                                            .foregroundStyle(ShelfTheme.coral)
-                                    }
-                                    if !job.isComplete {
-                                        if !job.isPaused, let retry = job.nextRetryAt {
-                                            Text("Search retry scheduled: \(retry.formatted(date: .omitted, time: .shortened))")
+                        VStack(alignment: .leading, spacing: 12) {
+                            NavigationLink {
+                                PlaylistDetailView(playlistID: playlist.id)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(playlist.name).font(.headline)
+                                    Text("\(playlist.missingTracks.count) songs not saved offline")
+                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    if let job = library.discoveryJob(for: playlist.id) {
+                                        Text(job.isComplete ? "Source search finished" :
+                                             job.isPaused ? "Source search paused" :
+                                             "Source search: \(job.nextIndex)/\(job.wishes.count) checked")
+                                            .font(.caption)
+                                        if job.unavailable > 0 {
+                                            Text("\(job.unavailable) songs had no qualifying MP3 source")
                                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                         }
+                                        if job.failed > 0 {
+                                            Text("\(job.failed) song lookups failed")
+                                                .font(.caption).foregroundStyle(ShelfTheme.coral)
+                                        }
+                                        if let reason = job.lastError {
+                                            Text(reason).font(.caption)
+                                                .foregroundStyle(ShelfTheme.coral)
+                                        }
+                                        if !job.isComplete {
+                                            if !job.isPaused, let retry = job.nextRetryAt {
+                                                Text("Search retry scheduled: \(retry.formatted(date: .omitted, time: .shortened))")
+                                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                            }
+                                        }
+                                    } else {
+                                        Text("Source search has not started")
+                                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                     }
-                                } else {
-                                    Text("Source search has not started")
-                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    Text("View song status and download options")
+                                        .font(.caption).foregroundStyle(ShelfTheme.accent)
                                 }
-                                Text("View song status and download options")
-                                    .font(.caption).foregroundStyle(ShelfTheme.accent)
+                                .padding(.vertical, 6)
                             }
-                            .padding(.vertical, 6)
+                        PlaylistDownloadControls(playlist: playlist)
                         }
                     }
                 } header: { Text("PLAYLIST SOURCE SEARCHES") }
@@ -363,5 +366,43 @@ struct MusicStorageView: View {
             } message: {
                 Text("The MP3 copy will be deleted from this iPhone. Your imported playlist track list will be preserved.")
             }
+    }
+}
+
+private struct PlaylistDownloadControls: View {
+    let playlist: MusicPlaylist
+    @EnvironmentObject private var library: MusicLibrary
+    @ObservedObject private var transfers = BackgroundAudioDownloader.shared
+    @State private var confirmCancel = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let job = library.discoveryJob(for: playlist.id), !job.isComplete {
+                Button(job.isPaused ? "Resume search" : "Pause search") {
+                    if job.isPaused { library.resumeSourceDiscovery(for: playlist.id) }
+                    else { library.pauseSourceDiscovery(for: playlist.id) }
+                }
+                .frame(minHeight: 44)
+                Text("Pausing search lets already queued transfers continue.")
+                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+            } else {
+                Button(library.discoveryJob(for: playlist.id) == nil ? "Find missing songs" : "Search missing songs again") {
+                    library.startAutomaticDownloads(for: playlist.id)
+                }
+                .frame(minHeight: 44)
+            }
+            if transfers.pendingCount(for: playlist.id) > 0 {
+                Button("Cancel transfers", role: .destructive) { confirmCancel = true }
+                    .frame(minHeight: 44)
+            }
+        }
+        .buttonStyle(.bordered)
+        .confirmationDialog("Cancel transfers for \(playlist.name)?", isPresented: $confirmCancel) {
+            Button("Cancel transfers", role: .destructive) {
+                library.stopBackgroundTransfers(for: playlist.id)
+            }
+        } message: {
+            Text("This also pauses source search. Songs already saved offline stay in your library.")
+        }
     }
 }
