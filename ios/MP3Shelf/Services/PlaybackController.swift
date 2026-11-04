@@ -12,6 +12,8 @@ private final class AudioCompletionRelay: NSObject, AVAudioPlayerDelegate {
 @MainActor
 final class PlaybackController: NSObject, ObservableObject {
     @Published private(set) var currentTrackID: UUID?
+    @Published var playbackError: String?
+    private var failedTrackID: UUID?
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
@@ -39,6 +41,12 @@ final class PlaybackController: NSObject, ObservableObject {
 
     private let relay = AudioCompletionRelay()
     private var remoteControlsConfigured = false
+    private var interruptionState = PlaybackInterruptionState()
+    private var audioSessionObservers: [NSObjectProtocol] = []
+
+    deinit {
+        for observer in audioSessionObservers { NotificationCenter.default.removeObserver(observer) }
+    }
 
     func connect(to library: MusicLibrary) {
         self.library = library
@@ -48,6 +56,7 @@ final class PlaybackController: NSObject, ObservableObject {
             Task { @MainActor in self?.advance(automatically: true) }
         }
         configureRemoteControls()
+        observeAudioSession()
     }
 
     private func activateAudio() throws {
@@ -58,6 +67,7 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func play(_ track: MusicTrack, queue songs: [MusicTrack]? = nil, transition: TimeInterval = 0) {
         guard let library else { return }
+        let previousQueue = queue
         if let songs { queue = songs.map(\.id) }
         if queue.isEmpty { queue = library.tracks.map(\.id) }
         if !queue.contains(track.id) { queue.append(track.id) }
@@ -69,7 +79,7 @@ final class PlaybackController: NSObject, ObservableObject {
             player.prepareToPlay()
             if transition > 0, let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
-                guard player.play() else { return }
+                guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
                 cancelFade()
                 outgoingPlayer = previous
                 previous.delegate = nil
@@ -77,11 +87,14 @@ final class PlaybackController: NSObject, ObservableObject {
                 startFade(duration: transition, from: previous, to: player)
             } else {
                 player.volume = 1
-                guard player.play() else { return }
+                guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
                 cancelFade()
                 audioPlayer?.stop()
                 audioPlayer = player
             }
+            playbackError = nil
+            failedTrackID = nil
+            interruptionState.cancelResume()
             currentTrackID = track.id
             duration = player.duration
             currentTime = 0
@@ -89,14 +102,23 @@ final class PlaybackController: NSObject, ObservableObject {
             startTimer()
             updateNowPlaying()
         } catch {
-            print("MP3 Shelf playback failed: \(error)")
-            isPlaying = false
+            queue = previousQueue
+            failedTrackID = track.id
+            playbackError = "Could not play \(track.title). Check that its audio file is still available, then retry or choose another song."
+            isPlaying = audioPlayer?.isPlaying ?? false
+            updateNowPlaying()
         }
+    }
+
+    func retryFailedPlayback() {
+        guard let track = library?.song(with: failedTrackID) else { return }
+        play(track)
     }
 
     func togglePlayback() { isPlaying ? pause() : resume() }
 
     func pause() {
+        interruptionState.cancelResume()
         if outgoingPlayer != nil { cancelFade(); audioPlayer?.volume = 1 }
         audioPlayer?.pause()
         isPlaying = false
@@ -104,6 +126,7 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func resume() {
+        interruptionState.cancelResume()
         guard let audioPlayer else { return }
         do {
             try activateAudio()
@@ -116,6 +139,9 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func stop() {
+        playbackError = nil
+        failedTrackID = nil
+        interruptionState.cancelResume()
         audioPlayer?.stop()
         audioPlayer = nil
         cancelFade()
@@ -215,7 +241,7 @@ final class PlaybackController: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self, let player = self.audioPlayer else { return }
                 self.currentTime = player.currentTime
-                if self.isPlaying && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
+                if self.isPlaying && self.playbackError == nil && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
                    self.outgoingPlayer == nil && self.canCrossfade() && player.duration > self.crossfadeSeconds + 1 &&
                    player.duration - player.currentTime <= self.crossfadeSeconds {
                     self.advance(automatically: true, crossfading: true)
@@ -238,6 +264,35 @@ final class PlaybackController: NSObject, ObservableObject {
             info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: artwork.size) { _ in artwork }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func observeAudioSession() {
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        audioSessionObservers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: session, queue: .main
+        ) { [weak self] notification in
+            let type = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
+            let options = (notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
+            Task { @MainActor [weak self] in
+                guard let self, let type else { return }
+                if type == AVAudioSession.InterruptionType.began.rawValue {
+                    let wasPlaying = self.isPlaying || self.interruptionState.wantsResume
+                    self.pause()
+                    self.interruptionState.began(wasPlaying: wasPlaying)
+                } else if type == AVAudioSession.InterruptionType.ended.rawValue {
+                    let allowed = AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)
+                    if self.interruptionState.ended(systemAllowsResume: allowed) { self.resume() }
+                }
+            }
+        })
+        audioSessionObservers.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: session, queue: .main
+        ) { [weak self] notification in
+            let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
+            guard reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else { return }
+            Task { @MainActor [weak self] in self?.pause() }
+        })
     }
 
     private func configureRemoteControls() {

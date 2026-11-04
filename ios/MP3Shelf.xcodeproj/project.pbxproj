@@ -25,6 +25,7 @@
 		AFBCAD821E0B88FA3FCC9208 /* LibraryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA0F0640481B59038E57A0F /* LibraryViews.swift */; };
 		F53D677CCFFAA563526F33C2 /* ImportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AD92D136E4ED96ECEC7F6FF /* ImportViews.swift */; };
 		DC20160521FD84E15D0C86DE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3D98AD6443220BBB0E7A9295 /* Assets.xcassets */; };
+		EEAA00000000000000000001 = {isa = PBXBuildFile; productRef = EEAA00000000000000000002; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,7 +53,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		F7573E4B8ACF1A7CD256E3D0 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		F7573E4B8ACF1A7CD256E3D0 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (EEAA00000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -100,11 +101,11 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		F9EC5056513716979962B814 /* MP3Shelf */ = {isa = PBXNativeTarget; buildConfigurationList = F2DF70F068A3EB3BC1C38478 /* Build configuration list for PBXNativeTarget "MP3Shelf" */; buildPhases = (12573461486BCB4FF9F39CD6 /* Sources */, F7573E4B8ACF1A7CD256E3D0 /* Frameworks */, AD47DB6BC4D863C12FECBD2B /* Resources */,); buildRules = (); dependencies = (); name = MP3Shelf; productName = MP3Shelf; productReference = 638E866708182CE02BFCE157 /* MP3Shelf.app */; productType = "com.apple.product-type.application"; };
+		F9EC5056513716979962B814 /* MP3Shelf */ = {isa = PBXNativeTarget; buildConfigurationList = F2DF70F068A3EB3BC1C38478 /* Build configuration list for PBXNativeTarget "MP3Shelf" */; buildPhases = (12573461486BCB4FF9F39CD6 /* Sources */, F7573E4B8ACF1A7CD256E3D0 /* Frameworks */, AD47DB6BC4D863C12FECBD2B /* Resources */,); buildRules = (); dependencies = (); packageProductDependencies = (EEAA00000000000000000002,); name = MP3Shelf; productName = MP3Shelf; productReference = 638E866708182CE02BFCE157 /* MP3Shelf.app */; productType = "com.apple.product-type.application"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		0D9744D2873722A5CBFEB5E9 /* Project object */ = {isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1540; TargetAttributes = { F9EC5056513716979962B814 = { CreatedOnToolsVersion = 15.4; }; }; }; buildConfigurationList = 0BA07DF954ED8853E2F29237 /* Build configuration list for PBXProject "MP3Shelf" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = F649D734EC0812A9975C277B; productRefGroup = 470BE65A2412F72452221511 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (F9EC5056513716979962B814 /* MP3Shelf */,); };
+		0D9744D2873722A5CBFEB5E9 /* Project object */ = {isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1540; TargetAttributes = { F9EC5056513716979962B814 = { CreatedOnToolsVersion = 15.4; }; }; }; buildConfigurationList = 0BA07DF954ED8853E2F29237 /* Build configuration list for PBXProject "MP3Shelf" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = F649D734EC0812A9975C277B; productRefGroup = 470BE65A2412F72452221511 /* Products */; packageReferences = (EEAA00000000000000000003,); projectDirPath = ""; projectRoot = ""; targets = (F9EC5056513716979962B814 /* MP3Shelf */,); };
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
@@ -199,6 +200,12 @@
 			}; name = Release; };
 /* End XCBuildConfiguration section */
 
+/* Begin XCLocalSwiftPackageReference section */
+        EEAA00000000000000000003 = {isa = XCLocalSwiftPackageReference; relativePath = Packages/ShelfMP3Encoder; };
+/* End XCLocalSwiftPackageReference section */
+/* Begin XCSwiftPackageProductDependency section */
+        EEAA00000000000000000002 = {isa = XCSwiftPackageProductDependency; productName = ShelfEncoder; };
+/* End XCSwiftPackageProductDependency section */
 /* Begin XCConfigurationList section */
 		0BA07DF954ED8853E2F29237 /* Build configuration list for PBXProject "MP3Shelf" */ = {isa = XCConfigurationList; buildConfigurations = (CD0BAC0D4691772CB53C29C3 /* Debug */, DC0017D7D076762EF4B82B56 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		F2DF70F068A3EB3BC1C38478 /* Build configuration list for PBXNativeTarget "MP3Shelf" */ = {isa = XCConfigurationList; buildConfigurations = (A2EE51AAB05BE1AB1D3643CD /* Debug */, 59D4407F2309516DFD1E7196 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };

@@ -32,6 +32,10 @@ struct DownloadManagerView: View {
         allTickets.filter { selectedFilter.includes($0) }
     }
 
+    private var incompletePlaylists: [MusicPlaylist] {
+        library.playlists.filter { !$0.missingTracks.isEmpty }
+    }
+
     var body: some View {
         List {
             Section {
@@ -61,6 +65,55 @@ struct DownloadManagerView: View {
             } header: { Text("OVERVIEW") }
             .listRowBackground(ShelfTheme.surface)
 
+            if !incompletePlaylists.isEmpty {
+                Section {
+                    Text("A playlist link supplies song details. An MP3 transfer starts only after a downloadable recording is found; some songs have no matching source.")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    ForEach(incompletePlaylists) { playlist in
+                        NavigationLink {
+                            PlaylistDetailView(playlistID: playlist.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(playlist.name).font(.headline)
+                                Text("\(playlist.missingTracks.count) songs not saved offline")
+                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                if let job = library.discoveryJob(for: playlist.id) {
+                                    Text(job.isComplete ? "Source search finished" :
+                                         job.isPaused ? "Source search paused" :
+                                         "Source search: \(job.nextIndex)/\(job.wishes.count) checked")
+                                        .font(.caption)
+                                    if job.unavailable > 0 {
+                                        Text("\(job.unavailable) songs had no qualifying MP3 source")
+                                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    }
+                                    if job.failed > 0 {
+                                        Text("\(job.failed) song lookups failed")
+                                            .font(.caption).foregroundStyle(ShelfTheme.coral)
+                                    }
+                                    if let reason = job.lastError {
+                                        Text(reason).font(.caption)
+                                            .foregroundStyle(ShelfTheme.coral)
+                                    }
+                                    if !job.isComplete {
+                                        if !job.isPaused, let retry = job.nextRetryAt {
+                                            Text("Search retry scheduled: \(retry.formatted(date: .omitted, time: .shortened))")
+                                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                        }
+                                    }
+                                } else {
+                                    Text("Source search has not started")
+                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                }
+                                Text("View song status and download options")
+                                    .font(.caption).foregroundStyle(ShelfTheme.accent)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                } header: { Text("PLAYLIST SOURCE SEARCHES") }
+                .listRowBackground(ShelfTheme.surface)
+            }
+
             Section("YOUR DOWNLOADS") {
                 Picker("Show transfers", selection: $selectedFilter) {
                     ForEach(TransferFilter.allCases) { filter in
@@ -80,7 +133,7 @@ struct DownloadManagerView: View {
                                         ? ShelfTheme.mint : ShelfTheme.accent,
                                     size: 49)
                         Text(selectedFilter == .issues
-                             ? "No downloads need attention"
+                             ? "No failed or cancelled transfers"
                              : selectedFilter == .saved
                                 ? "No saved downloads yet"
                                 : selectedFilter == .active
@@ -134,7 +187,9 @@ private struct DownloadTicketRow: View {
 
     private var statusText: String {
         switch ticket.status {
-        case .queued: return (ticket.bytesReceived ?? 0) > 0 ? "Downloading" : "Queued"
+        case .queued:
+            if transfers.isFinalizing(ticket.id) { return "Finalizing" }
+            return (ticket.bytesReceived ?? 0) > 0 ? "Downloading" : "Queued"
         case .imported: return "Saved Offline"
         case .failed: return "Failed"
         case .cancelled: return "Cancelled"
@@ -173,7 +228,10 @@ private struct DownloadTicketRow: View {
                     .background(statusColor.opacity(0.12), in: Capsule())
             }
             if ticket.status == .queued {
-                if let alternatives = ticket.alternativeSources, !alternatives.isEmpty {
+                if transfers.isFinalizing(ticket.id) {
+                    Text("Checking audio format and saving to your library")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                } else if let alternatives = ticket.alternativeSources, !alternatives.isEmpty {
                     Label("\(alternatives.count) alternate verified source\(alternatives.count == 1 ? "" : "s") ready if this one fails",
                           systemImage: "arrow.triangle.branch")
                         .font(.caption.weight(.medium))
@@ -186,7 +244,10 @@ private struct DownloadTicketRow: View {
                     Text("Scheduled no earlier than \(retry.formatted(date: .omitted, time: .shortened)) · Wi-Fi unless cellular was explicitly approved")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }
-                if let size = ticket.totalBytes, size > 0 {
+                if transfers.isFinalizing(ticket.id) {
+                    ProgressView().tint(ShelfTheme.mint)
+                        .accessibilityLabel("Finalizing audio for \(ticket.requested.title)")
+                } else if let size = ticket.totalBytes, size > 0 {
                     ProgressView(value: Double(ticket.bytesReceived ?? 0), total: Double(size))
                         .tint(ShelfTheme.mint)
                         .accessibilityLabel("Download progress for \(ticket.requested.title)")

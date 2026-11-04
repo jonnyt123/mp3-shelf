@@ -1,4 +1,5 @@
 import AVFoundation
+import ShelfEncoder
 import Foundation
 import Combine
 import UIKit
@@ -620,14 +621,30 @@ final class MusicLibrary: ObservableObject {
     }
 
     func importStagedAudio(from fileURL: URL, matching wish: PlaylistWish,
-                           attribution: AudioSourceAttribution) async throws -> Bool {
+                           attribution: AudioSourceAttribution, conversionProgress: Progress = Progress()) async throws -> Bool {
         let bytes = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         guard bytes > 0 && bytes <= 100 * 1024 * 1024 else {
             throw MusicLibraryError.downloadFailed
         }
         try validateEmbeddedIdentity(fileURL: fileURL, matching: wish)
+        let temporary = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp3")
+        defer { try? manager.removeItem(at: temporary) }
+        var importURL = fileURL
+        if try !DownloadedAudioFormat.isMP3(fileURL) {
+            try await withTaskCancellationHandler(operation: {
+                try await Task.detached(priority: .utility) {
+                    try ShelfPCMConversion.encode(fileURL, to: temporary, expectedDuration: wish.durationSeconds, progress: conversionProgress)
+                }.value
+            }, onCancel: { conversionProgress.cancel() })
+            guard try DownloadedAudioFormat.isMP3(temporary) else {
+                throw MusicLibraryError.downloadedFormatIsNotMP3
+            }
+            importURL = temporary
+        }
+        try Task.checkCancellation()
+        guard !conversionProgress.isCancelled else { throw CancellationError() }
         let original = "\(wish.artist) - \(wish.title).mp3"
-        let imported = try await addLocalAudio(sourceURL: fileURL,
+        let imported = try await addLocalAudio(sourceURL: importURL,
                                                originalName: original,
                                                expectedDuration: wish.durationSeconds)
         if imported {
@@ -684,6 +701,7 @@ final class MusicLibrary: ObservableObject {
                             for: wish,
                             allowsCellular: !backgroundWiFiOnly &&
                                 cellularApprovedPlaylists.contains(playlistID)))
+                    guard job.isCurrent(in: discoveryJobs, at: index) else { break }
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
                         (backgroundWiFiOnly && !isOnWiFi) { break }
                     if let source = sources.first {
@@ -696,6 +714,7 @@ final class MusicLibrary: ObservableObject {
                 } catch is CancellationError {
                     break
                 } catch {
+                    guard job.isCurrent(in: discoveryJobs, at: index) else { break }
                     // A network handoff or user pause must not burn through
                     // the catalog's retry budget.
                     guard BackgroundDiscoveryPolicy.canRecordLookupFailure(
@@ -976,10 +995,14 @@ final class MusicLibrary: ObservableObject {
 
 enum MusicLibraryError: LocalizedError {
     case unsupportedFormat, invalidDownloadURL, downloadFailed, recordingDurationMismatch
+    case downloadedFormatIsNotMP3, conversionUnsupportedFormat, conversionTooLong
     case recordingMetadataMismatch(String)
 
     var errorDescription: String? {
         switch self {
+        case .conversionUnsupportedFormat: return "MP3 conversion supports mono or stereo audio at 32, 44.1 or 48 kHz."
+        case .conversionTooLong: return "MP3 conversion supports recordings up to one hour long."
+        case .downloadedFormatIsNotMP3: return "The downloaded audio could not be converted to a valid MP3."
         case .unsupportedFormat: return "Only supported audio files (MP3, M4A, AAC, WAV, AIFF) can be imported."
         case .invalidDownloadURL: return "Enter a direct HTTPS audio URL. Spotify streaming links cannot be downloaded."
         case .downloadFailed: return "The audio download did not complete successfully."
@@ -987,5 +1010,60 @@ enum MusicLibraryError: LocalizedError {
         case .recordingMetadataMismatch(let field):
             return "The downloaded audio's embedded \(field) does not match the requested song. It was not added to your playlist."
         }
+    }
+}
+
+
+/// C callbacks run synchronously on a utility task; context lives until encode returns.
+private final class ShelfPCMConversion {
+    let file: AVAudioFile
+    let progress: Progress
+    let buffer: AVAudioPCMBuffer
+    var readError: Error?
+    init(_ url: URL, progress: Progress) throws {
+        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatInt16, interleaved: true)
+        self.file = file
+        self.progress = progress
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096) else {
+            throw MusicLibraryError.downloadFailed
+        }
+        self.buffer = buffer
+    }
+    static func encode(_ source: URL, to destination: URL, expectedDuration: TimeInterval?, progress: Progress) throws {
+        guard !progress.isCancelled else { throw CancellationError() }
+        let context = try ShelfPCMConversion(source, progress: progress)
+        let format = context.file.processingFormat
+        guard [32000.0, 44100.0, 48000.0].contains(format.sampleRate),
+              [1, 2].contains(Int(format.channelCount)) else {
+            throw MusicLibraryError.conversionUnsupportedFormat
+        }
+        let duration = Double(context.file.length) / format.sampleRate
+        guard duration.isFinite, duration > 0 else { throw MusicLibraryError.downloadFailed }
+        guard duration <= 3600 else { throw MusicLibraryError.conversionTooLong }
+        if let expectedDuration, abs(duration - expectedDuration) > 4 {
+            throw MusicLibraryError.recordingDurationMismatch
+        }
+        let pointer = Unmanaged.passUnretained(context).toOpaque()
+        let result = shelf_encode(destination.path, Int32(format.sampleRate), Int32(format.channelCount),
+            { raw, output, capacity in
+                guard let raw, let output else { return -1 }
+                let state = Unmanaged<ShelfPCMConversion>.fromOpaque(raw).takeUnretainedValue()
+                let buffer = state.buffer
+                guard capacity > 0, capacity <= Int(buffer.frameCapacity) else { return -1 }
+                do {
+                    try state.file.read(into: buffer, frameCount: AVAudioFrameCount(capacity))
+                    if buffer.frameLength == 0 { return 0 }
+                    guard let data = buffer.int16ChannelData else { return -1 }
+                    output.update(from: data.pointee,
+                        count: Int(buffer.frameLength * buffer.format.channelCount))
+                    return Int(buffer.frameLength)
+                } catch { state.readError = error; return -1 }
+            }, { raw in
+                guard let raw else { return 1 }
+                return Unmanaged<ShelfPCMConversion>.fromOpaque(raw).takeUnretainedValue().progress.isCancelled ? 1 : 0
+            }, pointer)
+        if result == SHELF_CANCELLED { throw CancellationError() }
+        if let error = context.readError { throw error }
+        guard result == SHELF_OK else { throw MusicLibraryError.downloadFailed }
     }
 }

@@ -128,9 +128,15 @@ enum AudioSourceFinder {
         guard source == "original" else { return false }
         let title = MusicMatching.key(wish.title)
         let stem = (name as NSString).deletingPathExtension.replacingOccurrences(of: "_", with: " ")
-        let key = MusicMatching.key(stem)
-        return !title.isEmpty &&
-            (key == title || key == MusicMatching.key("\(wish.artist) - \(wish.title)"))
+        // Preserve exact numeric titles first; only strip explicit track-number
+        // separators, never arbitrary leading digits (e.g. "99 Red Balloons").
+        let withoutTrackNumber = (name as NSString).deletingPathExtension.replacingOccurrences(
+            of: #"^\s*[0-9]{1,3}\s*[._-]\s*"#, with: "", options: .regularExpression).replacingOccurrences(of: "_", with: " ")
+        let artistTitle = MusicMatching.key("\(wish.artist) - \(wish.title)")
+        return !title.isEmpty && [stem, withoutTrackNumber].contains { candidate in
+            let key = MusicMatching.key(candidate)
+            return key == title || key == artistTitle
+        }
     }
 
     // Avoid spending an entire iOS background processing window on up to
@@ -185,6 +191,7 @@ enum AudioSourceFinder {
         // budget prioritize likely exact title/artist entries before probing
         // Archive item metadata. All files still require full verification.
         let lookupStartedAt = Date()
+        var detailLookupFailed = false
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
             guard ArchiveLookupBudget.stillWithinWindow(
@@ -212,9 +219,17 @@ enum AudioSourceFinder {
                 detailRequests += 1
                 let metadataURL = URL(string: "https://archive.org/metadata/")!
                     .appendingPathComponent(result.identifier)
-                guard let item: ArchiveItem = try? await requestJSON(
-                    metadataURL, allowsCellular: allowsCellular),
-                      let metadata = item.metadata,
+                let item: ArchiveItem
+                do {
+                    item = try await requestJSON(metadataURL, allowsCellular: allowsCellular)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    try Task.checkCancellation()
+                    detailLookupFailed = true
+                    continue
+                }
+                guard let metadata = item.metadata,
                       let license = licensedURL(metadata.licenseurl?.value) else { continue }
 
                 let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
@@ -240,6 +255,9 @@ enum AudioSourceFinder {
                 !ArchiveLookupBudget.stillWithinWindow(
                     startedAt: lookupStartedAt, now: Date()) { break }
         }
+        // An unreadable item may contain the requested recording. Allow the
+        // caller's bounded retries instead of persisting a false no-match.
+        if detailLookupFailed { throw SourceError.unavailable }
         return nil
     }
 }
@@ -266,6 +284,13 @@ extension AudioSourceFinder {
         let filesize: Int?
     }
 
+    static func catalogFileTitle(_ value: String) -> String {
+        var title = value
+        if title.hasPrefix("File:") { title = String(title.dropFirst(5)) }
+        if title.lowercased().hasSuffix(".mp3") { title = String(title.dropLast(4)) }
+        return title
+    }
+
     static func openverseCandidate(
         title: String?, creator: String?, download: String?, landing: String?,
         license: String?, filetype: String?, duration: Double?, source: String?,
@@ -273,8 +298,7 @@ extension AudioSourceFinder {
     ) -> AudioCatalogMatch? {
         guard let title, let creator, let source,
               ["wikimedia", "ccmixter", "fma"].contains(source.lowercased()),
-              exactMetadataMatch(title: title.replacingOccurrences(of: "File:", with: "")
-                                                  .replacingOccurrences(of: ".mp3", with: ""),
+              exactMetadataMatch(title: catalogFileTitle(title),
                                  creator: creator, wish: wish),
               let licenseURL = licensedURL(license),
               let download, let downloadURL = URL(string: download),
@@ -604,8 +628,27 @@ extension AudioSourceFinder {
         return parts.url!
     }
 
+    static func audiusPermalink(_ raw: String?) -> URL? {
+        guard let raw, !raw.isEmpty, !raw.contains("\\"),
+              !raw.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) })
+        else { return nil }
+        let value: String
+        if raw.hasPrefix("/"), !raw.hasPrefix("//") {
+            value = "https://audius.co" + raw
+        } else { value = raw }
+        guard let url = URL(string: value), url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(),
+              ["audius.co", "www.audius.co"].contains(host),
+              url.user == nil, url.password == nil, url.port == nil,
+              url.query == nil, url.fragment == nil else { return nil }
+        let segments = url.path.split(separator: "/")
+        guard segments.count == 2, !segments.contains("."), !segments.contains("..") else { return nil }
+        return url
+    }
+
     static func audiusCandidate(_ track: AudiusTrack, for wish: PlaylistWish) -> AudioCatalogMatch? {
-        guard (track.is_downloadable ?? track.downloadable) == true,
+        guard (track.is_downloadable == true || track.downloadable == true),
+              track.is_downloadable != false, track.downloadable != false,
               track.is_download_gated != true,
               track.download_conditions == nil,
               track.is_stream_gated != true,
@@ -618,23 +661,12 @@ extension AudioSourceFinder {
               wish.durationSeconds.map({ abs($0 - duration) <= 4.0 }) ?? true
         else { return nil }
 
-        // A permalink must identify a normal public Audius music page.
-        let page: URL
-        if let raw = track.permalink, let url = URL(string: raw),
-           url.scheme?.lowercased() == "https",
-           let host = url.host?.lowercased(),
-           host == "audius.co" || host == "www.audius.co" {
-            page = url
-        } else {
-            // The canonical track page cannot be derived reliably from an
-            // API id alone: skip items without trustworthy attribution.
-            return nil
-        }
-        // The public download endpoint serves MP3 by default; original=false
-        // specifically avoids requesting an original file of unknown format.
-        var download = URLComponents(string:
+        // Resolve only an explicit track path on the trusted Audius origin.
+        guard let page = audiusPermalink(track.permalink) else { return nil }
+        // Download can return the original format. The importer must check
+        // the actual codec; the download API does not document original=false.
+        let download = URLComponents(string:
             "https://api.audius.co/v1/tracks/\(track.id)/download")!
-        download.queryItems = [URLQueryItem(name: "original", value: "false")]
         guard let fileURL = download.url else { return nil }
         return AudioCatalogMatch(
             downloadURL: fileURL, itemURL: page,

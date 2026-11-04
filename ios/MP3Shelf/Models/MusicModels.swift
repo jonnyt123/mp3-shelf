@@ -146,3 +146,33 @@ struct PlaylistImportReport {
     var matched: Int
     var missing: Int
 }
+
+#if canImport(AVFoundation)
+import AVFoundation
+import AudioToolbox
+
+/// Inspect actual compressed file format; a suffix is not codec evidence.
+enum DownloadedAudioFormat {
+    static func isMP3(_ url: URL) throws -> Bool {
+        let audio = try AVAudioFile(forReading: url)
+        return audio.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatMPEGLayer3
+    }
+}
+#endif
+
+/// A manual pause, stop or route loss cancels any pending automatic resume.
+struct PlaybackInterruptionState {
+    private(set) var wantsResume = false
+
+    mutating func began(wasPlaying: Bool) {
+        wantsResume = wantsResume || wasPlaying
+    }
+
+    mutating func ended(systemAllowsResume: Bool) -> Bool {
+        let resume = wantsResume && systemAllowsResume
+        wantsResume = false
+        return resume
+    }
+
+    mutating func cancelResume() { wantsResume = false }
+}

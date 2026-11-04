@@ -155,6 +155,7 @@ struct MainView: View {
                 .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
                 .tag(3)
         }
+        .safeAreaInset(edge: .top) { PlaybackErrorBanner() }
         .tint(ShelfTheme.accent)
         .toolbarBackground(ShelfTheme.surface, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
@@ -254,5 +255,23 @@ extension TimeInterval {
         guard isFinite, self >= 0 else { return "0:00" }
         let seconds = Int(self)
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+struct PlaybackErrorBanner: View {
+    @EnvironmentObject private var playback: PlaybackController
+    var body: some View {
+        if let message = playback.playbackError {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message).font(.callout).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Retry") { playback.retryFailedPlayback() }
+                    Spacer()
+                    Button("Dismiss") { playback.playbackError = nil }
+                }
+            }
+            .padding().background(ShelfTheme.surface)
+            .foregroundStyle(.white)
+        }
     }
 }

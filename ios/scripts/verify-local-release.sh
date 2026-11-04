@@ -12,7 +12,7 @@ MP3 Shelf — local native verification without GitHub Actions
   bash ios/scripts/verify-local-release.sh --builds-only
   bash ios/scripts/verify-local-release.sh --smoke
 
-Default: all five Swift regression suites plus unsigned simulator Debug,
+Default: all seven Swift regression suites plus unsigned simulator Debug,
 simulator Release and physical-iPhone arm64 Release builds.
 --tests-only: run the Foundation-based Swift regression suites (no Xcode build).
 --builds-only: compile all three native configurations, skip Swift suites.
@@ -47,20 +47,6 @@ DERIVED="$OUT/DerivedData"
 mkdir -p "$OUT"
 cd "$ROOT"
 
-if ! command -v swiftc >/dev/null 2>&1; then
-  echo "ERROR: Swift compiler not found." >&2
-  exit 2
-fi
-if [[ "$MODE" != tests ]]; then
-  if [[ "$(uname -s)" != Darwin ]] || ! command -v xcodebuild >/dev/null 2>&1; then
-    echo "ERROR: Native builds require macOS with full Xcode selected." >&2
-    exit 2
-  fi
-  if ! xcodebuild -version > "$OUT/xcode-version.txt" 2>&1; then
-    echo "ERROR: Select full Xcode using xcode-select, not Command Line Tools." >&2
-    exit 2
-  fi
-fi
 
 COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 DIRTY=no
@@ -69,6 +55,7 @@ if [[ -n "$(git status --porcelain --untracked-files=normal 2>/dev/null || true)
 fi
 STARTED="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 COMPLETED_STEPS=()
+FAILURE_REASON=""
 on_exit() {
   local status=$?
   {
@@ -80,6 +67,8 @@ on_exit() {
     echo "- Mode: $MODE"
     echo "- Simulator smoke requested: $SMOKE"
     echo "- Overall execution: $([[ $status -eq 0 ]] && echo PASS || echo FAIL)"
+    echo "- Exit status: $status"
+    echo "- Failure reason: ${FAILURE_REASON:-see step logs if execution failed}"
     echo "- Completed checks: ${COMPLETED_STEPS[*]:-none}"
     echo "- Apple signing / physical iPhone acceptance: NOT TESTED"
     echo "- GitHub Actions used: NO"
@@ -92,6 +81,25 @@ on_exit() {
   fi
 }
 trap on_exit EXIT
+
+if ! command -v swiftc >/dev/null 2>&1; then
+  FAILURE_REASON="Swift compiler not found"
+  echo "ERROR: $FAILURE_REASON." >&2
+  exit 2
+fi
+if [[ "$MODE" != tests ]]; then
+  if [[ "$(uname -s)" != Darwin ]] || ! command -v xcodebuild >/dev/null 2>&1; then
+    FAILURE_REASON="Native builds require macOS with full Xcode selected"
+    echo "ERROR: $FAILURE_REASON." >&2
+    exit 2
+  fi
+  if ! xcodebuild -version > "$OUT/xcode-version.txt" 2>&1; then
+    FAILURE_REASON="Full Xcode is not selected or cannot run"
+    echo "ERROR: $FAILURE_REASON." >&2
+    exit 2
+  fi
+fi
+
 
 run_step() {
   local name="$1"; shift
@@ -107,6 +115,12 @@ run_suite() {
 }
 
 if [[ "$MODE" != builds ]]; then
+  run_suite playback-interruptions \
+    ios/MP3Shelf/Models/MusicModels.swift \
+    ios/Tests/PlaybackInterruptionTests.swift
+  run_suite downloaded-audio-format \
+    ios/MP3Shelf/Models/MusicModels.swift \
+    ios/Tests/DownloadedAudioFormatTests.swift
   run_suite playlist-parser \
     ios/MP3Shelf/Models/MusicModels.swift \
     ios/MP3Shelf/Services/PlaylistCSV.swift \

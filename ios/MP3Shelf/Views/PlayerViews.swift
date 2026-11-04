@@ -96,6 +96,7 @@ struct NowPlayingView: View {
                                             330)
                         ScrollView {
                             VStack(spacing: 0) {
+                                PlaybackErrorBanner()
                                 HStack {
                                     Spacer()
                                     VStack(spacing: 5) {
