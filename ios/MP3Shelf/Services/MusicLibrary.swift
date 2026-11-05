@@ -805,14 +805,85 @@ final class MusicLibrary: ObservableObject {
                 job.record(.alreadyPresent)
             } else {
                 do {
-                    let report = try await AudioSourceFinder.discover(
-                            for: wish,
-                            allowsCellular: !backgroundWiFiOnly &&
-                                cellularApprovedPlaylists.contains(playlistID))
-                    let sources = BackgroundAudioDownloader.shared.prioritize(report.candidates)
+                    let allowsCellular = !backgroundWiFiOnly && cellularApprovedPlaylists.contains(playlistID)
+                    let report: AudioSourceFinder.CatalogSearchReport
+                    var catalogError: Error?
+                    do {
+                        report = try await AudioSourceFinder.discover(for: wish, allowsCellular: allowsCellular)
+                    } catch is CancellationError { throw CancellationError() }
+                    catch {
+                        catalogError = error
+                        report = .init(candidates: [], warnings: [error.localizedDescription],
+                                       details: [error.localizedDescription])
+                    }
                     guard job.isCurrent(in: discoveryJobs, at: index) else { break }
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
                         (backgroundWiFiOnly && !isOnWiFi) { break }
+                    guard BackgroundDownloadBackpressure.mayEnqueue(
+                        outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
+                    ) else { break }
+                    let failedTickets = BackgroundAudioDownloader.shared.failedSourceTickets(for: wish,
+                                                                                              playlistID: playlistID)
+                    let failedURLs = Set(failedTickets.map(\.downloadURL))
+                    var candidates = report.candidates.filter { !failedURLs.contains($0.downloadURL) }
+                    var details = report.details
+                    for ticket in failedTickets.prefix(2) {
+                        details.append("Previous file \(ticket.downloadURL.host ?? "source"): \(ticket.failureReason ?? "failed"); looking for another source")
+                    }
+                    var healthyLookup = catalogError == nil
+                    if candidates.isEmpty {
+                        if let cached = job.webSources?[wish.id.uuidString] {
+                            candidates = cached.filter { !failedURLs.contains($0.downloadURL) }
+                            healthyLookup = true
+                            details += (job.lookupDetails?[wish.id.uuidString] ?? []).filter { $0.hasPrefix("Web") }
+                            details.append("Web fallback: using saved result; no additional search credit")
+                        } else if !WebAudioSearch.automaticFallbackEnabled {
+                            details.append("Web fallback: disabled in Web Search settings")
+                        } else if let key = WebAudioSearch.loadKey(), !key.isEmpty {
+                            if job.reserveWebSearch(for: wish.id) {
+                                details.append("Web search: request \(job.webSearchWishIDs?.count ?? 0)/\(SourceDiscoveryJob.maxAutomaticWebSearches) reserved")
+                                job.saveLookupDetails(details, for: wish.id)
+                                discoveryJobs[index] = job
+                                persistDiscovery()
+                                do {
+                                    let web = try await AutomaticWebAudioFinder.find(for: wish, apiKey: key,
+                                        allowsCellular: allowsCellular, excluding: failedURLs)
+                                    guard job.isCurrent(in: discoveryJobs, at: index) else { break }
+                                    candidates = web.sources
+                                    healthyLookup = true
+                                    details.append(contentsOf: web.details)
+                                    if job.webSources == nil { job.webSources = [:] }
+                                    job.webSources?[wish.id.uuidString] = web.sources
+                                } catch is CancellationError { throw CancellationError() }
+                                catch {
+                                    guard job.isCurrent(in: discoveryJobs, at: index) else { break }
+                                    try Task.checkCancellation()
+                                    details.append("Web search failed: \(error.localizedDescription)")
+                                    if let failure = error as? WebAudioSearch.SearchFailure {
+                                        switch failure {
+                                        case .rejectedKey, .rateLimited:
+                                            job.webSearchStoppedReason = error.localizedDescription
+                                        default: break
+                                        }
+                                    }
+                                }
+                            } else {
+                                details.append("Web fallback: " + (job.webSearchStoppedReason ??
+                                    ((job.webSearchWishIDs ?? []).contains(wish.id)
+                                     ? "already attempted for this song; retry unmatched songs to start a new run"
+                                     : "20-request budget reached; retry unmatched songs to start a new run")))
+                            }
+                        } else {
+                            details.append("Web fallback: add and save a Brave API key in Web Search, then retry unmatched songs")
+                        }
+                    }
+                    job.saveLookupDetails(details, for: wish.id)
+                    discoveryJobs[index] = job
+                    persistDiscovery()
+                    if let catalogError, candidates.isEmpty && !healthyLookup { throw catalogError }
+                    if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
+                        (backgroundWiFiOnly && !isOnWiFi) { break }
+                    let sources = BackgroundAudioDownloader.shared.prioritize(candidates)
                     // Capacity can change during the awaited catalog request.
                     // Keep this wish pending until a transfer slot opens.
                     guard BackgroundDownloadBackpressure.mayEnqueue(

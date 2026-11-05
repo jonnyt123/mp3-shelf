@@ -1013,6 +1013,10 @@ struct PlaylistDetailView: View {
                                             .foregroundStyle(ShelfTheme.subdued)
                                     }
                                 }
+                                if let details = library.discoveryJob(for: playlistID)?.lookupDetails?[wish.id.uuidString],
+                                   !details.isEmpty {
+                                    SongSourceDiagnosticsView(wish: wish, details: details)
+                                }
                                 if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) == nil {
                                     Button { manuallyAdding = wish } label: {
                                         Label("Attach an audio-file link",
@@ -1053,6 +1057,26 @@ struct PlaylistDetailView: View {
         .sheet(isPresented: $showWebDiscovery) {
             WebAudioDiscoveryView(wishes: playlist?.missingTracks ?? [])
         }
+    }
+}
+
+private struct SongSourceDiagnosticsView: View {
+    let wish: PlaylistWish
+    let details: [String]
+
+    var body: some View {
+        DisclosureGroup("Source search details") {
+            ForEach(Array(details.enumerated()), id: \.offset) { entry in
+                Text(entry.element)
+                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ShareLink(item: "\(wish.artist) — \(wish.title)\n" + details.joined(separator: "\n")) {
+                Label("Share search diagnostics", systemImage: "square.and.arrow.up")
+            }
+            .font(.caption)
+        }
+        .font(.caption.weight(.semibold))
     }
 }
 
@@ -1155,12 +1179,12 @@ private struct WebAudioSelection: Identifiable {
 }
 
 /// Optional broad web search for download *pages* and direct audio links.
-/// Only a URL explicitly chosen by the user is submitted to the local
-/// audio importer; a search result is never silently treated as an MP3.
+/// Manual result browsing and setup for the bounded automatic playlist fallback.
 struct WebAudioDiscoveryView: View {
     let wishes: [PlaylistWish]
     @Environment(\.dismiss) private var dismiss
     @State private var apiKey = WebAudioSearch.loadKey() ?? ""
+    @AppStorage("MP3Shelf.automaticWebFallback") private var automaticWebFallback = true
     @State private var searchDepth: WebAudioSearch.SearchDepth = .quick
     @State private var inspectPagesDuringSearch = false
     @State private var inspectedDuringSearch = 0
@@ -1198,6 +1222,18 @@ struct WebAudioDiscoveryView: View {
                     Text("Brave offers a separate web-search API. Enter your own key once; it stays in this iPhone's Keychain and is sent only to Brave. Searches consume your account's API credits.")
                         .font(.caption).foregroundStyle(.secondary)
                     Link("Get an API key from Brave Search", destination: URL(string: "https://brave.com/search/api/")!)
+                    Toggle("Automatically search when catalogs find no match", isOn: $automaticWebFallback)
+                    Text("With a saved key, playlist downloads can search the web and save matching files automatically. Each playlist run uses at most 20 API searches, one per unmatched song. Automatic searches use Wi-Fi unless you allow cellular for that playlist. Search limits or a rejected key stop further automatic API calls for that run.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Save search key") {
+                        if !WebAudioSearch.saveKey(apiKey) {
+                            message = "Could not securely save the search key to Keychain."
+                        } else if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            message = "Search key removed. Automatic web fallback needs a saved API key."
+                        } else {
+                            message = "Search key saved. Return to your playlist and choose Retry unmatched songs to use automatic fallback."
+                        }
+                    }
                     Picker("Search coverage", selection: $searchDepth) {
                         ForEach(WebAudioSearch.SearchDepth.allCases) { depth in
                             Text(depth.label).tag(depth)

@@ -6,15 +6,6 @@ import FoundationXML
 import FoundationNetworking
 #endif
 
-/// An independently hosted audio file matching the requested recording.
-/// License metadata is optional attribution, never a download requirement.
-struct AudioCatalogMatch: Codable, Sendable {
-    let downloadURL: URL
-    let itemURL: URL
-    let licenseURL: URL?
-    let sourceName: String
-}
-
 /// Catalog discovery uses actual public file listings and recording metadata.
 enum AudioSourceFinder {
     struct FlexibleText: Decodable {
@@ -501,6 +492,7 @@ extension AudioSourceFinder {
     struct CatalogSearchReport: Sendable {
         let candidates: [AudioCatalogMatch]
         let warnings: [String]
+        let details: [String]
     }
 
     static func catalogReport(from results: [CatalogLookup]) throws -> CatalogSearchReport {
@@ -514,7 +506,11 @@ extension AudioSourceFinder {
         if candidates.isEmpty && !ordered.isEmpty && warnings.count == ordered.count {
             throw SourceError.catalogsUnavailable(warnings)
         }
-        return CatalogSearchReport(candidates: candidates, warnings: warnings)
+        let details = ordered.map { result in
+            "\(result.provider): " + (result.candidate != nil ? "matching file found" :
+                result.failure.map { "lookup failed — \($0)" } ?? "no matching file found")
+        }
+        return CatalogSearchReport(candidates: candidates, warnings: warnings, details: details)
     }
 
     static func uniqueDownloadSources(_ ordered: [AudioCatalogMatch]) -> [AudioCatalogMatch] {
@@ -922,8 +918,29 @@ enum WebAudioSearch {
         return parts?.url?.absoluteString ?? url.absoluteString
     }
 
+    static var automaticFallbackEnabled: Bool {
+        UserDefaults.standard.object(forKey: "MP3Shelf.automaticWebFallback") as? Bool ?? true
+    }
+
+    static func searchRequest(query: String, apiKey: String,
+                              allowsCellular: Bool) -> URLRequest {
+        var parts = URLComponents(string: "https://api.search.brave.com/res/v1/web/search")!
+        parts.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "count", value: "20"),
+            URLQueryItem(name: "search_lang", value: "en"),
+            URLQueryItem(name: "result_filter", value: "web")
+        ]
+        var request = AudioSourceFinder.catalogRequest(for: parts.url!, allowsCellular: allowsCellular)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(apiKey, forHTTPHeaderField: "X-Subscription-Token")
+        request.timeoutInterval = 20
+        return request
+    }
+
     static func search(for wish: PlaylistWish, using apiKey: String,
-                       depth: SearchDepth = .quick) async throws -> [WebAudioSearchResult] {
+                       depth: SearchDepth = .quick,
+                       allowsCellular: Bool = true) async throws -> [WebAudioSearchResult] {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { throw SearchFailure.missingKey }
         var merged: [WebAudioSearchResult] = []
@@ -933,17 +950,7 @@ enum WebAudioSearch {
         // usage explicit and user-selectable. Never download search hits here.
         for query in searchQueries(for: wish, depth: depth) {
             try Task.checkCancellation()
-            var parts = URLComponents(string: "https://api.search.brave.com/res/v1/web/search")!
-            parts.queryItems = [
-                URLQueryItem(name: "q", value: query),
-                URLQueryItem(name: "count", value: "20"),
-                URLQueryItem(name: "search_lang", value: "en"),
-                URLQueryItem(name: "result_filter", value: "web")
-            ]
-            var request = URLRequest(url: parts.url!)
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue(key, forHTTPHeaderField: "X-Subscription-Token")
-            request.timeoutInterval = 20
+            let request = searchRequest(query: query, apiKey: key, allowsCellular: allowsCellular)
             do {
                 let (bytes, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
@@ -1037,7 +1044,8 @@ enum WebAudioSearch {
 // A conservative, read-only landing-page inspector. It finds direct audio URLs
 // explicitly advertised in HTML or AudioObject metadata; it does not run
 // JavaScript, follow streaming manifests, scrape media players or bypass DRM.
-// Candidates still require user approval and normal download validation.
+// Manual links remain reviewable; automatic matching also checks recording
+// identity before handing a source to normal download validation.
 enum AudioLandingPageInspector {
     enum InspectionError: LocalizedError {
         case invalidURL, unsupportedPage, oversizedPage, redirect, network
@@ -1208,17 +1216,16 @@ enum AudioLandingPageInspector {
         }
     }
 
-    static func inspect(_ pageURL: URL, maxProbes: Int = 8) async throws -> [URL] {
+    private static func readHTML(_ pageURL: URL, allowsCellular: Bool,
+                                  session: URLSession) async throws -> String {
         guard WebAudioSearch.sanitizedResultURL(pageURL.absoluteString) != nil,
               pageURL.port == nil || pageURL.port == 443 else {
             throw InspectionError.invalidURL
         }
-        var request = URLRequest(url: pageURL)
+        var request = AudioSourceFinder.catalogRequest(for: pageURL, allowsCellular: allowsCellular)
         request.timeoutInterval = 12
         request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
         request.setValue("bytes=0-999999", forHTTPHeaderField: "Range")
-        let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
         // Stream only bounded HTML into memory. The Range header is a hint,
         // not a guarantee: servers can ignore it and return gigabytes.
         let (stream, response) = try await session.bytes(for: request)
@@ -1242,6 +1249,14 @@ enum AudioLandingPageInspector {
         guard let html = String(data: data, encoding: .utf8) else {
             throw InspectionError.unsupportedPage
         }
+        return html
+    }
+
+    static func inspect(_ pageURL: URL, maxProbes: Int = 8,
+                        allowsCellular: Bool = true) async throws -> [URL] {
+        let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let html = try await readHTML(pageURL, allowsCellular: allowsCellular, session: session)
         let links = candidates(in: html, pageURL: pageURL)
         var accepted: [URL] = []
         var probed = 0
@@ -1256,7 +1271,7 @@ enum AudioLandingPageInspector {
             // downloadable audio before offering it to the user.
             guard probed < max(0, min(maxProbes, 8)) else { continue }
             probed += 1
-            var probe = URLRequest(url: link)
+            var probe = AudioSourceFinder.catalogRequest(for: link, allowsCellular: allowsCellular)
             probe.httpMethod = "HEAD"
             probe.timeoutInterval = 8
             probe.setValue("audio/*", forHTTPHeaderField: "Accept")
@@ -1268,8 +1283,212 @@ enum AudioLandingPageInspector {
         }
         return accepted
     }
+
+    static func matchingSources(on pageURL: URL, for wish: PlaylistWish,
+                                allowsCellular: Bool) async throws -> [AudioCatalogMatch] {
+        let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let html = try await readHTML(pageURL, allowsCellular: allowsCellular, session: session)
+        return AutomaticWebAudioFinder.matches(in: html, pageURL: pageURL, wish: wish)
+    }
+
+    static func verifyAutomaticSources(_ sources: [AudioCatalogMatch],
+                                       allowsCellular: Bool) async throws
+        -> (sources: [AudioCatalogMatch], details: [String]) {
+        let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        var accepted: [AudioCatalogMatch] = []
+        var details: [String] = []
+        for source in AudioSourceFinder.uniqueDownloadSources(sources).prefix(6) {
+            try Task.checkCancellation()
+            var request = AudioSourceFinder.catalogRequest(for: source.downloadURL,
+                                                             allowsCellular: allowsCellular)
+            request.httpMethod = "HEAD"
+            request.timeoutInterval = 8
+            request.setValue("audio/*", forHTTPHeaderField: "Accept")
+            do {
+                let (_, response) = try await session.data(for: request)
+                if let http = response as? HTTPURLResponse, isVerifiedAudioResponse(http) {
+                    accepted.append(source)
+                    details.append("Web file \(source.downloadURL.host ?? "source"): audio response confirmed")
+                } else {
+                    let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    details.append("Web file \(source.downloadURL.host ?? "source"): skipped (HTTP \(code), no supported direct audio response)")
+                }
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                try Task.checkCancellation()
+                details.append("Web file \(source.downloadURL.host ?? "source"): \(error.localizedDescription)")
+            }
+        }
+        return (Array(accepted.prefix(3)), details)
+    }
 }
 
+
+/// Web fallback submits only independently identifiable audio files to the
+/// existing checked importer. Search snippets alone never identify a recording.
+enum AutomaticWebAudioFinder {
+    struct Result: Sendable {
+        let sources: [AudioCatalogMatch]
+        let details: [String]
+    }
+
+    static func automaticURL(_ url: URL) -> URL? {
+        guard let safe = WebAudioSearch.sanitizedResultURL(url.absoluteString),
+              let host = safe.host?.lowercased(),
+              !["spotify.com", "spotifycdn.com", "scdn.co", "jamendo.com", "youtube.com", "googlevideo.com"]
+                .contains(where: { host == $0 || host.hasSuffix("." + $0) }) else { return nil }
+        return safe
+    }
+
+    static func fileMatches(_ url: URL, wish: PlaylistWish) -> Bool {
+        guard automaticURL(url) != nil,
+              ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(url.pathExtension.lowercased()),
+              !MusicMatching.key(wish.title).isEmpty,
+              !MusicMatching.key(wish.artist).isEmpty else { return false }
+        let stem = MusicMatching.key(url.deletingPathExtension().lastPathComponent)
+        return stem == MusicMatching.key(wish.artist + " " + wish.title) ||
+            stem == MusicMatching.key(wish.title + " " + wish.artist)
+    }
+
+    private static func durationMatches(_ value: Any?, wish: PlaylistWish) -> Bool {
+        guard let value else { return true }
+        let seconds: Double
+        if let number = value as? Double { seconds = number }
+        else if let raw = value as? String {
+            let pattern = #"^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$"#
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: raw.uppercased(),
+                    range: NSRange(location: 0, length: (raw as NSString).length)) else { return false }
+            let string = raw as NSString
+            func number(_ index: Int) -> Double {
+                let range = match.range(at: index)
+                return range.location == NSNotFound ? 0 : Double(string.substring(with: range)) ?? 0
+            }
+            seconds = number(1) * 3600 + number(2) * 60 + number(3)
+        } else { return false }
+        guard seconds.isFinite, seconds > 0 else { return false }
+        return wish.durationSeconds.map { abs($0 - seconds) <= 4 } ?? true
+    }
+
+    static func matches(in html: String, pageURL: URL,
+                        wish: PlaylistWish) -> [AudioCatalogMatch] {
+        guard automaticURL(pageURL) != nil, html.utf8.count <= 1_000_000 else { return [] }
+        var sources: [AudioCatalogMatch] = []
+        func add(_ raw: String) {
+            guard let url = AudioLandingPageInspector.candidateURL(raw, relativeTo: pageURL,
+                                                                   explicitlyDownloadable: true),
+                  let safe = automaticURL(url) else { return }
+            sources.append(AudioCatalogMatch(downloadURL: safe, itemURL: pageURL,
+                licenseURL: nil, sourceName: "Web: \(pageURL.host ?? "audio source")"))
+        }
+        // A generic page may still expose a file whose own filename identifies
+        // both artist and title. Title-only album links are never auto-assigned.
+        for url in AudioLandingPageInspector.candidates(in: html, pageURL: pageURL)
+            where fileMatches(url, wish: wish) { add(url.absoluteString) }
+
+        let pattern = #"<script\b[^>]*\btype\s*=\s*["']application/ld\+json["'][^>]*>(.*?)</script\s*>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]) else { return sources }
+        let text = html as NSString
+        var nodes: [[String: Any]] = []
+        var identifiers: [String: [String: Any]] = [:]
+        func collect(_ value: Any, depth: Int) {
+            guard depth < 12, nodes.count < 2000 else { return }
+            if let object = value as? [String: Any] {
+                nodes.append(object)
+                if let id = object["@id"] as? String,
+                   object.count > (identifiers[id]?.count ?? 0) { identifiers[id] = object }
+                for child in object.values { collect(child, depth: depth + 1) }
+            } else if let array = value as? [Any] {
+                for child in array { collect(child, depth: depth + 1) }
+            }
+        }
+        for script in regex.matches(in: html, range: NSRange(location: 0, length: text.length)) {
+            let raw = text.substring(with: script.range(at: 1))
+            if let root = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) {
+                collect(root, depth: 0)
+            }
+        }
+        func resolved(_ value: [String: Any]) -> [String: Any] {
+            guard let id = value["@id"] as? String, let target = identifiers[id] else { return value }
+            return target.merging(value) { _, explicit in explicit }
+        }
+        func names(_ value: Any?) -> [String] {
+            if let string = value as? String { return [string] }
+            if let object = value as? [String: Any], let name = resolved(object)["name"] as? String { return [name] }
+            if let array = value as? [Any] { return array.flatMap { names($0) } }
+            return []
+        }
+        func types(_ object: [String: Any]) -> Set<String> {
+            let raw = (object["@type"] as? [String]) ?? (object["@type"] as? String).map { [$0] } ?? []
+            return Set(raw.map { ($0.components(separatedBy: CharacterSet(charactersIn: "/#")).last ?? $0).lowercased() })
+        }
+        for raw in nodes {
+            let node = resolved(raw)
+            let kind = types(node)
+            guard kind.contains("musicrecording") || kind.contains("audioobject"),
+                  let title = node["name"] as? String,
+                  names(node["byArtist"] ?? node["creator"]).contains(where: {
+                    AudioSourceFinder.exactMetadataMatch(title: title, creator: $0, wish: wish)
+                  }), durationMatches(node["duration"], wish: wish) else { continue }
+            var media: [Any] = kind.contains("audioobject") ? [node] : []
+            for key in ["audio", "associatedMedia", "encoding"] {
+                if let array = node[key] as? [Any] { media.append(contentsOf: array) }
+                else if let object = node[key] { media.append(object) }
+            }
+            for value in media {
+                guard let rawAudio = value as? [String: Any] else { continue }
+                let audio = resolved(rawAudio)
+                guard !types(audio).contains("videoobject"),
+                      durationMatches(audio["duration"], wish: wish),
+                      let url = audio["contentUrl"] as? String else { continue }
+                if let title = audio["name"] as? String,
+                   MusicMatching.key(title) != MusicMatching.key(wish.title) { continue }
+                let credits = names(audio["byArtist"] ?? audio["creator"])
+                if !credits.isEmpty && !credits.contains(where: {
+                    MusicMatching.key($0) == MusicMatching.key(wish.artist)
+                }) { continue }
+                add(url)
+            }
+        }
+        return AudioSourceFinder.uniqueDownloadSources(sources)
+    }
+
+    static func find(for wish: PlaylistWish, apiKey: String,
+                     allowsCellular: Bool, excluding failedURLs: Set<URL> = []) async throws -> Result {
+        let hits = try await WebAudioSearch.search(for: wish, using: apiKey,
+                                                   depth: .quick, allowsCellular: allowsCellular)
+        var candidates = hits.filter { fileMatches($0.url, wish: wish) }.prefix(3).map {
+            AudioCatalogMatch(downloadURL: $0.url, itemURL: $0.url, licenseURL: nil,
+                              sourceName: "Web: \($0.url.host ?? "audio source")")
+        }
+        var details = ["Web search: \(hits.count) results returned"]
+        let pages = WebAudioSearch.pagesWorthInspecting(hits, for: wish, limit: 2)
+            .filter { WebAudioSearch.resultScore($0, for: wish) >= 80 && automaticURL($0.url) != nil }
+        for page in pages {
+            try Task.checkCancellation()
+            do {
+                let found = try await AudioLandingPageInspector.matchingSources(on: page.url,
+                    for: wish, allowsCellular: allowsCellular)
+                candidates.append(contentsOf: found)
+                details.append("Web page \(page.url.host ?? "source"): \(found.count) identifiable audio links")
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                try Task.checkCancellation()
+                details.append("Web page \(page.url.host ?? "source"): \(error.localizedDescription)")
+            }
+        }
+        candidates.removeAll { failedURLs.contains($0.downloadURL) }
+        let checked = try await AudioLandingPageInspector.verifyAutomaticSources(candidates,
+                                                                                 allowsCellular: allowsCellular)
+        try Task.checkCancellation()
+        details.append(contentsOf: checked.details)
+        details.append("Web fallback: \(checked.sources.count) matching direct audio files confirmed")
+        return Result(sources: checked.sources, details: details)
+    }
+}
 
 // Official ccMixter ccHost Query API exposes an RSS feed without an API key.
 // Exact metadata and a directly hosted MP3 enclosure are still

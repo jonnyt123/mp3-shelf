@@ -8,6 +8,14 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
 @main
 enum SourceDiscoveryJobTests {
     @MainActor static func main() async throws {
+        verifyDiscovery(AudioDownloadDiagnostics.maySearchForAnotherSource(
+            reason: AudioDownloadDiagnostics.http(403), recordedAdvice: nil),
+                        "legacy source refusals can trigger a different source during playlist retry")
+        verifyDiscovery(!AudioDownloadDiagnostics.maySearchForAnotherSource(
+            reason: "Not enough space on this iPhone. Free storage and retry.", recordedAdvice: nil) &&
+                        !AudioDownloadDiagnostics.maySearchForAnotherSource(
+            reason: AudioDownloadDiagnostics.http(403), recordedAdvice: false),
+                        "local storage failures do not cause paid web fallback")
         verifyDiscovery(AudioDownloadDiagnostics.http(403).contains("source refused"),
                         "access refusal explains source permissions instead of generic failure")
         verifyDiscovery(AudioDownloadDiagnostics.http(404).contains("no longer available") &&
@@ -102,6 +110,10 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(job.outcome(for: wishes[1]) == nil,
                         "unprocessed songs do not claim a result")
         job.isPaused = true
+        verifyDiscovery(job.reserveWebSearch(for: wishes[0].id),
+                        "first automatic web request reserves its budget before network access")
+        verifyDiscovery(!job.reserveWebSearch(for: wishes[0].id),
+                        "resuming the same song cannot spend another automatic search credit")
         job.catalogWarnings = ["Openverse: HTTP 429"]
         let encoded = try JSONEncoder().encode([job])
         let restored = try JSONDecoder().decode([SourceDiscoveryJob].self, from: encoded)
@@ -109,6 +121,28 @@ enum SourceDiscoveryJobTests {
                         "pause and incomplete position survive restart")
         verifyDiscovery(restored[0].catalogWarnings == ["Openverse: HTTP 429"],
                         "partial provider failures survive checkpoint persistence")
+        verifyDiscovery(restored[0].webSearchWishIDs == [wishes[0].id],
+                        "web request reservations survive process restart")
+        var budgetJob = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        for _ in 0..<SourceDiscoveryJob.maxAutomaticWebSearches {
+            verifyDiscovery(budgetJob.reserveWebSearch(for: UUID()), "reserve bounded web search")
+        }
+        verifyDiscovery(!budgetJob.reserveWebSearch(for: UUID()),
+                        "a playlist cannot exceed its persisted automatic web request limit")
+        var stoppedJob = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        stoppedJob.webSearchStoppedReason = "Search credit limit reached"
+        verifyDiscovery(!stoppedJob.reserveWebSearch(for: wishes[0].id),
+                        "a search credit or authentication failure stops further paid calls")
+        let cachedSource = AudioCatalogMatch(
+            downloadURL: URL(string: "https://artist.example/Artist-Song.mp3")!,
+            itemURL: URL(string: "https://artist.example/song")!, licenseURL: nil, sourceName: "Web: artist.example")
+        stoppedJob.webSources = [wishes[0].id.uuidString: [cachedSource]]
+        stoppedJob.saveLookupDetails(["Web file: audio confirmed"], for: wishes[0].id)
+        let restoredWeb = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(stoppedJob))
+        verifyDiscovery(restoredWeb.webSources?[wishes[0].id.uuidString] == [cachedSource] &&
+                        restoredWeb.lookupDetails?[wishes[0].id.uuidString] == ["Web file: audio confirmed"],
+                        "verified web sources and song diagnostics survive a capacity pause or restart")
         job = restored[0]
         job.isPaused = false
         job.record(.unavailable)
@@ -130,6 +164,7 @@ enum SourceDiscoveryJobTests {
             as! [String: Any]
         legacy.removeValue(forKey: "outcomes")
         legacy.removeValue(forKey: "catalogWarnings")
+        legacy.removeValue(forKey: "webSearchWishIDs")
         var migrated = try JSONDecoder().decode(SourceDiscoveryJob.self,
                          from: JSONSerialization.data(withJSONObject: legacy))
         verifyDiscovery(migrated.catalogWarnings == nil,

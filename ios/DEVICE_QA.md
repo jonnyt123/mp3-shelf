@@ -270,3 +270,12 @@ Diagnostic/refresh checks: exercise 403, 404/410, rate limiting, HTML instead of
 - Return 403/429 from one catalog while another responds: the playlist must advance, keep valid matches and show named partial-search warnings after relaunch. Return failures from every provider: bounded retry and specific failure details must remain.
 - Save a matching file without a license link, suspend/relaunch during its queued transfer, and verify playback, source attribution and no blank License action. Restore its native backup in the browser and back to iOS.
 - Rebuild and install this candidate before retrying the reported playlist. Record one failing song, provider and exact error if the recording remains unavailable; a catalog no-match is distinct from a network or file-import failure.
+
+## Automatic web fallback acceptance
+
+- Save a Brave key once from a playlist's wider-web search screen, leave automatic fallback enabled and retry unmatched songs. Verify an exact artist/title file or matching structured page enters the background queue without selecting a web hit. Disable the toggle and remove the key separately; the per-song trace must explain each skipped state.
+- Reject wrong artist, live/remix title, short preview, contradictory child audio metadata, private-network URLs, manifests, HTML and oversized responses. Check graph-based artist/audio references and extensionless audio endpoints.
+- Observe network traffic during a Wi-Fi-to-cellular handoff: automatic search, HTML reads, HEAD probes and final transfers must not move to cellular without that playlist's explicit consent.
+- Pause/kill/resume around request reservation and after a web result is saved. A saved match must be reusable after backpressure clears; no wish may spend twice in one run. After 20 calls, further wishes must show the budget reason. 401/403 key refusal or 429 must stop further automatic API calls for the run.
+- Retry a song with a prior source refusal: the same failed URL must not be selected again. A local storage failure must not initiate a paid web search. Check the persisted Source search details and user-initiated Share search diagnostics; neither may contain credentials.
+- Complete native suites, Xcode builds and an actual iPhone playlist download before treating this candidate as verified.

@@ -196,6 +196,20 @@ Connect Spotify, choose a playlist or paste its Spotify share link, then press *
 
 **Automatic reliability ranking:** Verified imports increase a provider's priority, while terminal failures decrease it using the most recent 200 outcomes. Alternate sources are retained in the background ticket. Local storage failures do not start alternative network downloads.
 
+## Automatic web fallback and song diagnostics
+
+After catalog lookup, a song with no usable catalog file now enters automatic web search when a Brave API key is saved and **Automatically search when catalogs find no match** is enabled. Open the playlist's wider-web search screen, save the key once, return and use **Retry unmatched songs**. No individual result selection is required for files admitted by the automatic matcher. Without a key, catalog discovery still works and the song's diagnostic explains that web fallback was skipped.
+
+Automatic fallback makes one Brave query per unmatched song and at most 20 per playlist discovery run. Reservations are persisted before the API request, so resuming the same job does not repeat a charged query. Completed web results, including empty results, survive a capacity pause or restart. A rejected key or rate/credit limit stops further automatic API calls for that run. A request interrupted before its result is saved is not repeated within that run; **Retry unmatched songs**, after that run finishes, starts a new bounded run. Manual web-search batches retain their separately displayed request budgets.
+
+A direct result must independently identify both artist and song in its filename. Source pages may instead identify the recording through Schema.org MusicRecording/AudioObject metadata, including artist references and duration where provided. At most two relevant pages are read and six file responses probed per song. Only supported audio responses enter the existing background importer, which still checks embedded identity and decoded duration. Page reads are bounded to 1 MB, redirects are refused, and automatic search, page reads and file probes all inherit the playlist's Wi-Fi/cellular policy. There is no license-label requirement.
+
+On a new search, stored failures for the same recording exclude previously failed source URLs before choosing catalog or web candidates. Local storage failures do not trigger another-source search. Thus **Retry unmatched songs** can seek a new web source instead of repeatedly queuing the same refused catalog URL. A source that fails after a transfer is queued remains visible in Downloads; retry initiates the next source search.
+
+Each playlist song now has expandable **Source search details** and **Share search diagnostics**. The trace names provider outcomes, prior file refusals, missing-key/disabled/budget states and web page/file response checks. It contains no API key. These details persist with the discovery checkpoint.
+
+A live public-source trace from the development host used **Jazz Backing Track — Stefan Kartenberg**: ccMixter RSS returned the matching metadata and direct MP3 URL (HTTP 200), while both HEAD and a bounded GET for that file returned HTTP 403. This demonstrates a source-access refusal rather than an absent license label. It is a representative probe, not a reproduction of an unspecified song from the user's playlist or an iPhone runtime test.
+
 ## When a playlist has missing songs
 
 Spotify supplies the song list, artist, album and duration, not MP3 files. Removing the license-label requirement broadens eligible catalog matches; it does not create downloadable files for recordings absent from those catalogs.

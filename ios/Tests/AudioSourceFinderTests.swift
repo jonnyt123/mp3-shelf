@@ -10,6 +10,49 @@ enum AudioSourceFinderTests {
     static func main() throws {
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        let fallbackRequest = WebAudioSearch.searchRequest(
+            query: "The Artist The Song", apiKey: "test-token", allowsCellular: false)
+        verify(!fallbackRequest.allowsCellularAccess &&
+               !fallbackRequest.allowsExpensiveNetworkAccess &&
+               !fallbackRequest.allowsConstrainedNetworkAccess,
+               "automatic web requests cannot switch from Wi-Fi to cellular")
+        verify(fallbackRequest.url?.host == "api.search.brave.com" &&
+               fallbackRequest.value(forHTTPHeaderField: "X-Subscription-Token") == "test-token" &&
+               !(fallbackRequest.url?.absoluteString.contains("test-token") ?? true),
+               "Brave credential is sent as a header only to the search endpoint")
+        let exactWebFile = URL(string: "https://artist.example/The_Artist-The_Song.mp3")!
+        verify(AutomaticWebAudioFinder.fileMatches(exactWebFile, wish: wish),
+               "automatic fallback accepts an exact artist-title audio filename")
+        verify(!AutomaticWebAudioFinder.fileMatches(
+            URL(string: "https://artist.example/The_Song.mp3")!, wish: wish) &&
+               !AutomaticWebAudioFinder.fileMatches(
+            URL(string: "https://artist.example/The_Artist-The_Song_Live.mp3")!, wish: wish),
+               "title-only links and alternate performances cannot enter automatic fallback")
+        let structuredPage = #"<script type="application/ld+json">{"@type":"MusicRecording","name":"The Song","byArtist":{"@type":"MusicGroup","name":"The Artist"},"duration":"PT3M32S","audio":{"@type":"AudioObject","contentUrl":"/download?id=7"}}</script>"#
+        let pageURL = URL(string: "https://artist.example/song")!
+        let structuredMatches = AutomaticWebAudioFinder.matches(in: structuredPage,
+            pageURL: pageURL, wish: wish)
+        verify(structuredMatches.first?.downloadURL.absoluteString == "https://artist.example/download?id=7",
+               "exact structured recording metadata can identify an extensionless audio download")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(
+            of: "The Artist", with: "Other Artist"), pageURL: pageURL, wish: wish).isEmpty,
+               "page audio from another artist is not substituted")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(
+            of: "PT3M32S", with: "PT30S"), pageURL: pageURL, wish: wish).isEmpty,
+               "structured preview duration cannot replace a full song")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(
+            of: "/download?id=7", with: "https://localhost/song.mp3"),
+            pageURL: pageURL, wish: wish).isEmpty,
+               "structured audio links still reject local network targets")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(
+            of: #""@type":"AudioObject","contentUrl""#,
+            with: #""@type":"AudioObject","name":"Another Song","contentUrl""#),
+            pageURL: pageURL, wish: wish).isEmpty,
+               "contradictory child audio metadata cannot borrow the parent song identity")
+        let graphPage = ##"<script type="application/ld+json">{"@graph":[{"@type":"MusicRecording","name":"The Song","byArtist":{"@id":"#artist"},"audio":{"@id":"#file"}},{"@id":"#artist","@type":"MusicGroup","name":"The Artist"},{"@id":"#file","@type":"AudioObject","contentUrl":"/song.mp3"}]}</script>"##
+        verify(AutomaticWebAudioFinder.matches(in: graphPage, pageURL: pageURL, wish: wish)
+            .first?.downloadURL.absoluteString == "https://artist.example/song.mp3",
+               "structured artist and audio references resolve within the same page graph")
         let testURL = URL(string: "https://api.audius.co/v1/tracks/search")!
         let wifiCatalogRequest = AudioSourceFinder.catalogRequest(for: testURL)
         verify(wifiCatalogRequest.allowsCellularAccess == false,

@@ -2,6 +2,12 @@ import Foundation
 
 /// User-facing diagnostics do not change transport retry budgets or validation.
 enum AudioDownloadDiagnostics {
+    static func maySearchForAnotherSource(reason: String?, recordedAdvice: Bool?) -> Bool {
+        if let recordedAdvice { return recordedAdvice }
+        // Old tickets predate explicit source/storage classification.
+        return reason?.hasPrefix("The source") == true || reason?.hasPrefix("This audio link") == true
+    }
+
     static func http(_ status: Int) -> String {
         switch status {
         case 401, 403: return "The source refused this download. Check its source page or try another source."
@@ -353,10 +359,31 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     var lastError: String? = nil
     // Optional so older persisted checkpoints remain decodable.
     var catalogWarnings: [String]? = nil
+    var lookupDetails: [String: [String]]? = nil
+    var webSearchWishIDs: [UUID]? = nil
+    var webSources: [String: [AudioCatalogMatch]]? = nil
+    var webSearchStoppedReason: String? = nil
     var outcomes: [Outcome]? = nil
     // Optional fields preserve decoding of checkpoints created by older builds.
     var transientFailureCount: Int? = nil
     var nextRetryAt: Date? = nil
+
+    static let maxAutomaticWebSearches = 20
+
+    /// Persist this reservation before calling the paid API. A resume or
+    /// retry within the same job must never spend twice for the same wish.
+    mutating func reserveWebSearch(for wishID: UUID) -> Bool {
+        guard webSearchStoppedReason == nil,
+              !(webSearchWishIDs ?? []).contains(wishID),
+              (webSearchWishIDs?.count ?? 0) < Self.maxAutomaticWebSearches else { return false }
+        webSearchWishIDs = (webSearchWishIDs ?? []) + [wishID]
+        return true
+    }
+
+    mutating func saveLookupDetails(_ details: [String], for wishID: UUID) {
+        if lookupDetails == nil { lookupDetails = [:] }
+        lookupDetails?[wishID.uuidString] = Array(details.prefix(16)).map { String($0.prefix(500)) }
+    }
 
     /// Exhaust a bounded retry budget instead of blocking this playlist
     /// indefinitely when a remote catalog cannot answer. An exhausted song

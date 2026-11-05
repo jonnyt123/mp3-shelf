@@ -26,6 +26,8 @@ struct BackgroundAudioTicket: Codable, Identifiable {
     // Preverified source alternatives survive app termination, so iOS can
     // switch providers even after the phone is locked. Legacy manifests omit it.
     var alternativeSources: [AudioCatalogMatch]? = nil
+    // False for local storage failures, which another source cannot fix.
+    var mayTryAnotherSource: Bool? = nil
 }
 
 /// URLSession's background transfer daemon survives ordinary app suspension
@@ -213,6 +215,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             $0.status == .queued && $0.playlistID == playlistID &&
             MusicMatching.sameRequestedRecording($0.requested, wish)
         }
+    }
+
+    func failedSourceTickets(for wish: PlaylistWish, playlistID: UUID) -> [BackgroundAudioTicket] {
+        tickets.values.filter { ticket in
+            guard ticket.playlistID == playlistID,
+                  MusicMatching.sameRequestedRecording(ticket.requested, wish) else { return false }
+            // Hidden predecessor rows still identify a failed URL when the
+            // downloader already tried another catalog source for this wish.
+            if ticket.status == .cancelled,
+               ticket.failureReason == "Replaced by alternate verified source" { return true }
+            return ticket.status == .failed && AudioDownloadDiagnostics.maySearchForAnotherSource(
+                reason: ticket.failureReason, recordedAdvice: ticket.mayTryAnotherSource)
+        }.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
     }
 
     func canRetry(_ id: UUID) -> Bool {
@@ -488,6 +503,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         if allowAlternative && tryNextDownloadSource(after: id) { return }
         ticket.status = .failed
         ticket.failureReason = reason
+        ticket.mayTryAnotherSource = allowAlternative
         tickets[id] = ticket
         persist()
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)

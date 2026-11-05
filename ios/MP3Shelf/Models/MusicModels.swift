@@ -96,6 +96,14 @@ struct AudioSourceAttribution: Codable, Hashable {
     var providerName: String
 }
 
+/// A direct file matching the requested recording. License metadata is optional.
+struct AudioCatalogMatch: Codable, Sendable, Equatable {
+    let downloadURL: URL
+    let itemURL: URL
+    let licenseURL: URL?
+    let sourceName: String
+}
+
 struct MusicPlaylist: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var name: String
