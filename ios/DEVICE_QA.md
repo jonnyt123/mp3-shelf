@@ -279,3 +279,7 @@ Diagnostic/refresh checks: exercise 403, 404/410, rate limiting, HTML instead of
 - Pause/kill/resume around request reservation and after a web result is saved. A saved match must be reusable after backpressure clears; no wish may spend twice in one run. After 20 calls, further wishes must show the budget reason. 401/403 key refusal or 429 must stop further automatic API calls for the run.
 - Retry a song with a prior source refusal: the same failed URL must not be selected again. A local storage failure must not initiate a paid web search. Check the persisted Source search details and user-initiated Share search diagnostics; neither may contain credentials.
 - Complete native suites, Xcode builds and an actual iPhone playlist download before treating this candidate as verified.
+
+## Signing failure reports
+
+For a direct Xcode CodeSign failure, select your Apple Team in this exact project and run **ios/Diagnose Signing.command**. Verify the report names the failed stage and includes the underlying error. Diagnostic mode must not install or launch. For the installer, confirm build, signature, install and launch failures each replace the latest report and preserve a separate run directory; a failed attempt must never leave an old PASS as its current result. Capture the real Mac signing error before considering a certificate/profile or metadata repair.

@@ -14,5 +14,8 @@ if MP3SHELF_TEAM_ID="$team" /bin/bash "$SCRIPT_DIR/scripts/run-on-iphone.sh" "$d
 else
     result=$?
 fi
+if [[ "$result" -ne 0 && -f "$SCRIPT_DIR/build/iphone-device/QA_RECORD.md" ]]; then
+    open "$SCRIPT_DIR/build/iphone-device/QA_RECORD.md"
+fi
 read -r -p "Press Return to close. " _ || true
 exit "$result"

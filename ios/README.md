@@ -647,3 +647,11 @@ The latest report remains at `ios/build/local-release/QA_RECORD.md`; logs and Si
 `python3 ios/scripts/test-release-workflow.py` exercises the real runner with a fake toolchain in temporary directories. It verifies reporting/control flow only and does not compile Swift, build iOS, sign or install apps. The eight native regression suites and actual Xcode/device gates remain separate.
 
 Long-press a playlist and choose **Make local copy** to preserve its song order and missing entries as a separate local playlist. Audio files are shared. The copy has fresh playlist/wish IDs and does not inherit Spotify-refresh or portable-restore identity; it does not automatically begin downloads.
+
+## Diagnosing a CodeSign failure
+
+In the same project folder you opened in Xcode, double-click **ios/Diagnose Signing.command**. This builds/signs Debug for an iOS device using the Apple team and bundle identifier selected in that project; it never installs or launches the app. Xcode may perform its normal automatic provisioning. Select your own Team in Xcode first. The optional MP3SHELF_TEAM_ID environment override still works.
+
+The diagnostic opens **ios/build/iphone-device/QA_RECORD.md**, which records the current step, result, exit code and relevant log context. Share the error section above the generic CodeSign summary. Each attempt preserves its own report and build/signature logs in **ios/build/iphone-device/runs/**. The install launcher also opens the report on failure. Failed builds/signature checks/installations/launches replace the latest report, so an older PASS cannot be mistaken for the new result.
+
+The generic exit summary does not establish whether the cause is a development-team/profile mismatch, unavailable certificate/private key, keychain access or rejected Finder/resource-fork metadata. No signing credentials are exported or manually changed by these helpers. See the exact error in the report before choosing a repair. Apple documents the distinct cases in [signing errors](https://help.apple.com/xcode/mac/current/en.lproj/dev01865b392.html) and [resource-fork/Finder metadata rejection](https://developer.apple.com/library/archive/qa/qa1940/_index.html).
