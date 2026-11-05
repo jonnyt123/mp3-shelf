@@ -78,6 +78,16 @@ fi
         self.assertNotIn("STALE PASS", report)
         self.assertNotIn("install", Path(self.env["CALL_LOG"]).read_text())
 
+    def test_invalid_team_does_not_leave_an_old_pass_report(self):
+        path = self.root / "ios/build/iphone-device/QA_RECORD.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("STALE PASS")
+        self.env["MP3SHELF_TEAM_ID"] = "invalid"
+        result = self.run_script("device-1")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("FAIL", self.report())
+        self.assertIn("10-character Apple team ID", self.report())
+
     def test_diagnostic_mode_does_not_install_or_launch(self):
         result = self.run_script("--diagnose")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

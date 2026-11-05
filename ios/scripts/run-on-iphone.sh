@@ -27,11 +27,6 @@ if [[ "$1" == --diagnose ]]; then MODE=diagnose; shift; fi
 if [[ "$#" -gt 1 || ( "$MODE" == install && "${1:-}" == -* ) ]]; then usage >&2; exit 2; fi
 DEVICE_ID="${1:-}"
 TEAM_ID="$(printenv MP3SHELF_TEAM_ID 2>/dev/null || true)"
-if [[ ( "$MODE" == install && ( -z "$DEVICE_ID" || -z "$TEAM_ID" ) ) ||
-      ( -n "$TEAM_ID" && ! "$TEAM_ID" =~ ^[A-Za-z0-9]{10}$ ) ]]; then
-  echo "ERROR: Installation requires a device identifier and 10-character Apple team ID." >&2
-  exit 2
-fi
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTPUT="$ROOT/ios/build/iphone-device"
 RUN_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
@@ -103,12 +98,18 @@ finish() {
 }
 trap finish EXIT
 
+ACTIVE_LOG="$RUN_DIR/preflight.log"
+if [[ ( "$MODE" == install && ( -z "$DEVICE_ID" || -z "$TEAM_ID" ) ) ||
+      ( -n "$TEAM_ID" && ! "$TEAM_ID" =~ ^[A-Za-z0-9]{10}$ ) ]]; then
+  echo "ERROR: Installation requires a device identifier and 10-character Apple team ID." | tee "$ACTIVE_LOG" >&2
+  exit 2
+fi
 if [[ "$(uname -s)" != Darwin ]]; then
-  echo "ERROR: A Mac with full Xcode is required." >&2; exit 2
+  echo "ERROR: A Mac with full Xcode is required." | tee "$ACTIVE_LOG" >&2; exit 2
 fi
 for executable in xcodebuild xcrun codesign git; do
   if ! command -v "$executable" >/dev/null 2>&1; then
-    echo "ERROR: Missing executable: $executable" >&2; exit 2
+    echo "ERROR: Missing executable: $executable" | tee "$ACTIVE_LOG" >&2; exit 2
   fi
 done
 DESTINATION="generic/platform=iOS"
