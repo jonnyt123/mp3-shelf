@@ -1,5 +1,77 @@
 import Foundation
 
+/// User-facing diagnostics do not change transport retry budgets or validation.
+enum AudioDownloadDiagnostics {
+    static func http(_ status: Int) -> String {
+        switch status {
+        case 401, 403: return "The source refused this download. Check its source page or try another source."
+        case 404, 410: return "This audio link is no longer available. Search again or provide a new audio link."
+        case 429: return "The source is limiting requests. Wait before retrying."
+        case 500...599: return "The source server is temporarily unavailable (HTTP \(status))."
+        default: return "The source rejected the download (HTTP \(status)). Check the source page."
+        }
+    }
+
+    static func contentType(_ raw: String?) -> String {
+        guard let mime = raw?.lowercased() else {
+            return "The source did not identify its response as supported audio."
+        }
+        if mime.contains("html") || mime.hasPrefix("text/") {
+            return "The source returned a webpage or text instead of an audio file. Use a direct audio link."
+        }
+        return "The source returned an unsupported response. Check its source page for a downloadable audio file."
+    }
+
+    private static func storageMessage(_ error: Error) -> String? {
+        var current = error as NSError
+        // Bound traversal even if an unusual error has cyclic underlying data.
+        for _ in 0..<4 {
+            if current.domain == NSCocoaErrorDomain {
+                if current.code == CocoaError.Code.fileWriteOutOfSpace.rawValue {
+                    return "Not enough space on this iPhone. Free storage and retry."
+                }
+                if current.code == CocoaError.Code.fileWriteNoPermission.rawValue {
+                    return "Audio could not be saved on this iPhone. Check local storage access and retry."
+                }
+            }
+            if current.domain == NSPOSIXErrorDomain && current.code == Int(POSIXErrorCode.ENOSPC.rawValue) {
+                return "Not enough space on this iPhone. Free storage and retry."
+            }
+            guard let underlying = current.userInfo[NSUnderlyingErrorKey] as? NSError else { break }
+            current = underlying
+        }
+        return nil
+    }
+
+    static func shouldTryAlternateSource(for error: Error) -> Bool {
+        // Another network download cannot resolve local disk/access failures.
+        storageMessage(error) == nil
+    }
+
+    static func message(for error: Error) -> String {
+        if let message = storageMessage(error) { return message }
+        let failure = error as NSError
+        if failure.domain == NSURLErrorDomain {
+            switch failure.code {
+            case URLError.Code.notConnectedToInternet.rawValue, URLError.Code.dataNotAllowed.rawValue:
+                return "Network unavailable. Connect to Wi-Fi, or approve cellular for this playlist."
+            case URLError.Code.networkConnectionLost.rawValue: return "The connection was interrupted before the download finished."
+            case URLError.Code.timedOut.rawValue: return "The source did not respond in time. Retry when it is available."
+            case URLError.Code.cannotFindHost.rawValue, URLError.Code.cannotConnectToHost.rawValue, URLError.Code.dnsLookupFailed.rawValue:
+                return "The source server could not be reached. Check your connection or try another source."
+            case URLError.Code.secureConnectionFailed.rawValue, URLError.Code.serverCertificateUntrusted.rawValue, URLError.Code.serverCertificateHasBadDate.rawValue, URLError.Code.serverCertificateNotYetValid.rawValue:
+                return "The source's secure connection could not be verified. Try another source."
+            case URLError.Code.cancelled.rawValue: return "The transfer stopped before completion. Retry when ready."
+            default: break
+            }
+        }
+        if failure.domain == NSCocoaErrorDomain && failure.code == CocoaError.Code.fileReadTooLarge.rawValue {
+            return "The audio file exceeds the 100 MB download limit. Try a smaller source."
+        }
+        return error.localizedDescription
+    }
+}
+
 /// Checkpoint for foreground catalog lookups. Written atomically after each
 /// processed song, allowing discovery to resume after app suspension or exit.
 /// Pure policy used by the foreground discovery queue and regression tests.

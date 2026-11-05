@@ -8,6 +8,29 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
 @main
 enum SourceDiscoveryJobTests {
     @MainActor static func main() async throws {
+        verifyDiscovery(AudioDownloadDiagnostics.http(403).contains("source refused"),
+                        "access refusal explains source permissions instead of generic failure")
+        verifyDiscovery(AudioDownloadDiagnostics.http(404).contains("no longer available") &&
+                        AudioDownloadDiagnostics.http(410).contains("new audio link"),
+                        "expired source links offer a recovery action")
+        verifyDiscovery(AudioDownloadDiagnostics.contentType("text/html").contains("webpage"),
+                        "HTML source response is distinguished from actual audio")
+        let fullDisk = NSError(domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileWriteOutOfSpace.rawValue)
+        let wrappedFullDisk = NSError(domain: "Conversion", code: 1,
+            userInfo: [NSUnderlyingErrorKey: fullDisk])
+        verifyDiscovery(AudioDownloadDiagnostics.message(for: wrappedFullDisk).contains("Free storage") &&
+                        !AudioDownloadDiagnostics.shouldTryAlternateSource(for: wrappedFullDisk),
+                        "local disk-full errors do not start more provider downloads")
+        let deniedStorage = NSError(domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileWriteNoPermission.rawValue)
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: deniedStorage),
+                        "local write-access failure does not switch network source")
+        let timedOut = URLError(.timedOut)
+        verifyDiscovery(AudioDownloadDiagnostics.shouldTryAlternateSource(for: timedOut) &&
+                        AudioDownloadDiagnostics.message(for: timedOut).contains("did not respond"),
+                        "network timeout retains source-fallback eligibility")
+
         for mime in ["audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-aiff", "audio/flac", "Audio/X-FLAC; charset=binary"] {
             verifyDiscovery(DownloadedAudioContentType.allows(mime), "supported audio response reaches decoding: \(mime)")
         }
@@ -332,6 +355,12 @@ enum SourceDiscoveryJobTests {
                         refreshedJob.wishes[1].durationSeconds == 213 &&
                         refreshedJob.nextIndex == 1,
                         "refresh updates unprocessed song metadata without resetting cursor")
+        let persistedMetadataEdit = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(refreshedJob))
+        verifyDiscovery(persistedMetadataEdit.wishes[1].title == "Second (renamed)" &&
+                        persistedMetadataEdit.wishes[1].durationSeconds == 213 &&
+                        persistedMetadataEdit.nextIndex == 1 && persistedMetadataEdit.queued == 1,
+                        "metadata-only pending refresh survives serialization without resetting history")
         refreshedJob.record(.removed)
         verifyDiscovery(refreshedJob.outcome(for: wishes[1]) == .removed &&
                         refreshedJob.nextIndex == 2,

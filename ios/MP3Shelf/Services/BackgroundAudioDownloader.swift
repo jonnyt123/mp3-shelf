@@ -481,10 +481,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return true
     }
 
-    private func setFailed(_ id: UUID, reason: String = "Download or validation failed") {
+    private func setFailed(_ id: UUID, reason: String = "Download or validation failed",
+                           allowAlternative: Bool = true) {
         reconcileAlreadyStoredDownloads()
         guard var ticket = tickets[id], ticket.status == .queued else { return }
-        if tryNextDownloadSource(after: id) { return }
+        if allowAlternative && tryNextDownloadSource(after: id) { return }
         ticket.status = .failed
         ticket.failureReason = reason
         tickets[id] = ticket
@@ -594,7 +595,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 }
             } catch {
                 // Leave failed transfers retryable via the playlist's retry button.
-                setFailed(ticket.id, reason: error.localizedDescription)
+                setFailed(ticket.id, reason: AudioDownloadDiagnostics.message(for: error),
+                          allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
                 try? fm.removeItem(at: stagedURL)
             }
         }
@@ -752,15 +754,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         guard (200...299).contains(http.statusCode) else {
             if BackgroundTransferRetryPolicy.isTemporaryHTTP(http.statusCode) {
                 Task { @MainActor in
-                    self.retryTemporaryTransfer(id, reason: "Source server returned HTTP \(http.statusCode)")
+                    self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.http(http.statusCode))
                 }
             } else {
-                Task { @MainActor in self.setFailed(id, reason: "Source server returned HTTP \(http.statusCode)") }
+                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.http(http.statusCode)) }
             }
             return
         }
         guard DownloadedAudioContentType.allows(http.mimeType) else {
-            Task { @MainActor in self.setFailed(id, reason: "Source returned non-audio content") }
+            Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.contentType(http.mimeType)) }
             return
         }
         // Copy/move BEFORE returning: URLSession deletes location at delegate return.
@@ -785,7 +787,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 await self.recoverStagedDownloads()
             }
         } catch {
-            Task { @MainActor in self.setFailed(id) }
+            Task { @MainActor in
+                self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
+                               allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
+            }
         }
     }
 
@@ -818,10 +823,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             BackgroundTransferRetryPolicy.isConnectivityInterruption(systemError.code)
         Task { @MainActor in
             if shouldRetry {
-                self.retryTemporaryTransfer(id, reason: error.localizedDescription,
+                self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.message(for: error),
                                             connectivityInterruption: connectionLost)
             } else {
-                self.setFailed(id, reason: error.localizedDescription)
+                self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
+                               allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
             }
         }
     }

@@ -1059,12 +1059,13 @@ final class MusicLibrary: ObservableObject {
             // A finished job stays complete when Spotify has not added songs;
             // a refresh should NOT rescan all old unavailable songs.
             if let jobIndex = discoveryJobs.firstIndex(where: { $0.playlistID == old.id }) {
+                let previousJob = discoveryJobs[jobIndex]
                 let newTracks = discoveryJobs[jobIndex].appendNewMissingWishes(
                     playlists[index].missingTracks)
-                if newTracks > 0 {
-                    persistDiscovery()
-                    resumePendingDiscovery()
-                }
+                // Metadata can change without appending IDs. Keep pending
+                // duration/title corrections after the next app relaunch too.
+                if discoveryJobs[jobIndex] != previousJob { persistDiscovery() }
+                if newTracks > 0 { resumePendingDiscovery() }
             } else if !playlists[index].missingTracks.isEmpty {
                 discoveryJobs.append(SourceDiscoveryJob(
                     playlistID: old.id, wishes: playlists[index].missingTracks))
@@ -1080,7 +1081,9 @@ final class MusicLibrary: ObservableObject {
         if spotifyID != nil { playlist.sourceURL = sourceURL }
         playlist.sourceOrder = wishes
         for wish in wishes {
-            if let track = indexedByTitle.reusableTrack(for: wish) {
+            if let track = indexedByTitle.reusableTrack(for: wish, isAvailable: {
+                self.manager.fileExists(atPath: self.fileURL(for: $0).path)
+            }) {
                 playlist.trackIDs.append(track.id)
             } else {
                 playlist.missingTracks.append(wish)
