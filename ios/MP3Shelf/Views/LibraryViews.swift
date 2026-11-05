@@ -417,7 +417,7 @@ struct MusicTrackRow: View {
                             Label("View Audio Source", systemImage: "link")
                         }
                     }
-                    if let licenseURL = URL(string: attribution.licenseURL) {
+                    if let licenseURL = URL(string: attribution.licenseURL), licenseURL.scheme == "https" {
                         Link(destination: licenseURL) {
                             Label("View Source License", systemImage: "doc.text")
                         }
@@ -873,6 +873,13 @@ struct PlaylistDetailView: View {
                             Label("Search the wider web for missing songs", systemImage: "globe")
                         }
                         .buttonStyle(.bordered)
+                        if let warnings = library.discoveryJob(for: playlistID)?.catalogWarnings,
+                           !warnings.isEmpty {
+                            Label("Search incomplete: " + warnings.joined(separator: " • ") +
+                                  " Retry unmatched songs to check these catalogs again.",
+                                  systemImage: "exclamationmark.circle")
+                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        }
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Catalog search: \(job.nextIndex)/\(job.wishes.count) processed")
@@ -926,7 +933,7 @@ struct PlaylistDetailView: View {
                                      : "Source lookup finished. Background downloads may still be running.")
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 if jobHasNoMatches {
-                                    Label("No authorized matching MP3s found in the connected catalogs. You can attach a legally obtained file link to each missing song below.", systemImage: "info.circle")
+                                    Label("No matching audio files found in the connected catalogs. Retry the search or attach a direct audio-file link to a missing song below.", systemImage: "info.circle")
                                         .font(.caption)
                                         .foregroundStyle(ShelfTheme.subdued)
                                 }
@@ -955,7 +962,7 @@ struct PlaylistDetailView: View {
                             Text("Downloads can continue after you lock your iPhone. Source discovery resumes only when MP3 Shelf is open.")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
-                        Text("Every successful match downloads an actual .mp3 to this iPhone (Files → On My iPhone → MP3 Shelf → Music). If a recording has no qualifying source, it stays missing instead of being replaced with a different version. Source licenses are uploader-declared.")
+                        Text("Successful matches save an MP3 to this iPhone (Files → On My iPhone → MP3 Shelf → Music). Songs without a matching downloadable file stay listed for retry or a direct file link.")
                             .font(.caption2).foregroundStyle(ShelfTheme.subdued)
                     }
                     .listRowBackground(ShelfTheme.surface)
@@ -1008,11 +1015,11 @@ struct PlaylistDetailView: View {
                                 }
                                 if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) == nil {
                                     Button { manuallyAdding = wish } label: {
-                                        Label("I have an authorized audio link",
+                                        Label("Attach an audio-file link",
                                               systemImage: "link.badge.plus")
                                     }
                                     .font(.caption.weight(.semibold))
-                                    .accessibilityHint("Download a recording you have permission to save and attach it to this missing song.")
+                                    .accessibilityHint("Download a matching audio file and attach it to this missing song.")
                                 }
                                 if let url = wish.spotifyURL, let link = URL(string: url) {
                                     Link("View original on Spotify", destination: link)
@@ -1049,7 +1056,7 @@ struct PlaylistDetailView: View {
     }
 }
 
-/// Recovery path when an independent catalog cannot locate a licensed recording.
+/// Recovery path when a catalog cannot locate a matching audio file.
 /// The supplied direct HTTPS audio URL must be provided by the user, not
 /// derived from Spotify streams or an unverified download search engine.
 struct AuthorizedPlaylistAudioView: View {
@@ -1077,7 +1084,7 @@ struct AuthorizedPlaylistAudioView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Text("Paste a direct HTTPS file URL only when the rights holder permits downloading. MP3 Shelf checks that the file can play and matches Spotify's duration when available. It will then link the saved recording to this playlist.")
+                    Text("Paste a direct HTTPS audio-file URL. MP3 Shelf checks that the file can play and matches the song's duration when available, then attaches it to this playlist.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
                         guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -1113,7 +1120,7 @@ struct AuthorizedPlaylistAudioView: View {
                     .disabled(isDownloading || link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Section {
-                    Text("A Spotify playlist link is not a direct MP3 file. Commercial music usually requires a separate legal purchase or download from the rightsholder.")
+                    Text("Spotify playlist links contain the song list. Use a direct audio-file link here to save the recording.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -1297,7 +1304,7 @@ struct WebAudioDiscoveryView: View {
                             }
                         }
                     }
-                    Text("Web results may be unrelated, behind a purchase, or unauthorized. This feature does not extract Spotify streams, bypass DRM, or automatically download unverified search hits.")
+                    Text("Web search finds pages and possible audio links. Choose a matching file to download; a search result or player page alone is not an audio file.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(batch) { wish in

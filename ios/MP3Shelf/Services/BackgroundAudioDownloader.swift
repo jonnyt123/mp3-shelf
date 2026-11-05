@@ -3,7 +3,7 @@ import Combine
 import UIKit
 
 /// A persisted download ticket is independent of Spotify's OAuth session.
-/// Only the authorized, direct audio file URL is transferred by iOS.
+/// The direct audio file URL is transferred by iOS.
 struct BackgroundAudioTicket: Codable, Identifiable {
     enum Status: String, Codable { case queued, imported, failed, cancelled }
     let id: UUID
@@ -11,7 +11,7 @@ struct BackgroundAudioTicket: Codable, Identifiable {
     let requested: PlaylistWish
     let downloadURL: URL
     let sourcePage: URL
-    let licensePage: URL
+    let licensePage: URL?
     let provider: String
     var status: Status = .queued
     var bytesReceived: Int64? = nil
@@ -560,7 +560,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             do {
                 let attribution = AudioSourceAttribution(
                     pageURL: ticket.sourcePage.absoluteString,
-                    licenseURL: ticket.licensePage.absoluteString,
+                    licenseURL: ticket.licensePage?.absoluteString ?? "",
                     providerName: ticket.provider)
                 let imported = try await library.importStagedAudio(
                     from: stagedURL, matching: ticket.requested, attribution: attribution, conversionProgress: conversion)

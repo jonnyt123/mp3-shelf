@@ -180,57 +180,32 @@ Spotify sign-in uses OAuth Authorization Code **with PKCE** and iOS `ASWebAuthen
 2. In Spotify's Development Mode, the app owner currently needs Spotify Premium and the app is limited to up to five allowlisted testers. Add each user in the Spotify dashboard before sign-in.
 3. Open MP3 Shelf → Import → **Connect Spotify Account**. Enter the **Client ID**, sign in, and select a playlist.
 4. Only playlists owned by or collaborative with the signed-in user can expose their items under Spotify's 2026 API rules. Other followed playlists can return HTTP 403; use the CSV fallback for track lists you are permitted to export.
-5. Track metadata is matched against local MP3s. Missing songs require independent, legitimately acquired audio. There is **no unrestricted Spotify-to-MP3 converter**; only qualifying independent licensed sources can be downloaded.
+5. Track metadata is matched against local MP3s. Missing songs are searched in public audio catalogs or can be filled with direct audio-file links. License labels are not required for matching files.
 
 Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow), [Spotify playlist-items API](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items), [Spotify redirect URIs](https://developer.spotify.com/documentation/web-api/concepts/apps), [Spotify Development Mode](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
 
 ## One-tap downloads for imported Spotify playlists
 
-Connect Spotify, select a permitted playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. The app automatically opens the song-by-song download dashboard and checks missing songs against independent authorized audio sources, downloading only qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
+Connect Spotify, choose a playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. MP3 Shelf imports the song list and searches independent public audio catalogs for matching files. Saved recordings are attached in playlist order. Keep the app open for discovery; queued files can continue through iOS background transfers after locking the phone.
 
-**Automatic reliability ranking:** Verified MP3 imports increase a provider's priority, while terminal failures decrease it; the most recent 200 outcomes are used with neutral smoothing so unfamiliar sources remain eligible. Cancellations, temporary retries and already-stored duplicates are excluded. A recording successfully imported after a Wi-Fi or server retry clears its previous transient error so it counts as a real success, not an unresolved failure. Verified alternate URLs remain queued in priority order for background fallback.
+**Matching requirements:** Normalized song title and artist must match, and the result must identify one downloadable recording. HTTPS, a supported audio format, the 100 MiB transfer limit and actual decoded duration checks remain. Album items can qualify when exactly one original MP3 filename identifies the song. License metadata is optional attribution: a missing or non-Creative-Commons label does not exclude an otherwise matching file. Source links remain available even when there is no license link.
 
-**Bounded Internet Archive discovery:** The Archive search now includes indexed title/creator metadata and checks the most relevant records first. Item-detail lookups are capped at eight per page, no new requests start after a 45-second search window, and at most two result pages are considered. An HTTP request already in flight may finish after that deadline, subject to its separate request timeout. Each selected recording still requires an original/direct MP3, exact artist/title identity, an uploader-declared Creative Commons/public-domain license and downloaded duration validation. This favors completing more playlist songs in each system-granted background window instead of spending minutes probing dozens of lower-quality Archive records. The trade-off is that valid uploads deeper in the result pages might require manual discovery; no unverified recording is imported automatically.
+**Current catalogs:** Internet Archive, Openverse-backed supported publishers, Wikimedia Commons, Audius download endpoints and ccMixter RSS. Search is bounded for battery life and provider rate limits. Archive detail reads are capped at eight per page and two pages; no new request starts after its 45-second lookup window. Archive file sizes come from `files[].size`, not `files[].length` (which can contain decimal duration). Openverse checks up to two pages per focused or broader query. Audius downloads still require an actual available download endpoint; login-gated or unavailable files cannot be retrieved by changing a license label.
 
-**Current catalog adapters:** Internet Archive, Openverse-backed eligible publishers, direct Wikimedia Commons, artist-enabled Audius downloads, and a conservative ccMixter RSS adapter. ccMixter’s public Query API is consulted for uploads with a matching title, matching credited creator, explicit Creative Commons license and directly hosted HTTPS MP3 enclosure; ambiguous results are not automatically selected. If ccMixter’s older RSS endpoint is temporarily unavailable, the other catalogs continue normally instead of retrying the whole playlist. The source browser also opens ccMixter’s own search page. Openverse now checks up to two result pages for each focused or broader query only when no eligible candidate appeared earlier. Search remains bounded, follows the catalog's pagination metadata, and still requires an exact recording and a supported direct MP3 host. Before importing a result, the app requires:
-- Strict normalized *song title and artist* match; no intentional covers/remixes/other artists.
-- A single MP3 file for the matching archive item, to reject album/concert downloads.
-- A Creative Commons or public-domain license URL declared in the archive item's metadata.
-- When Spotify supplied duration, audio-file duration metadata within four seconds.
-- HTTPS download, decodable local audio, and a maximum 100 MB transfer.
+**Provider failures:** A failed catalog does not discard another provider's match or block the rest of a playlist. If healthy catalogs find no match, discovery advances and saves named provider warnings with the checkpoint. The playlist and Downloads screens show **Search incomplete** and a retry action. If every catalog fails, the existing bounded retry policy applies, with named provider/HTTP details. This avoids repeating every lookup five times merely because one optional catalog is down.
 
-Catalog licenses are declared by uploaders, **not independently verified by MP3 Shelf**. MP3 Shelf stores attribution links for discovered sources. Catalog metadata can be wrong; compare suspect recordings with their source page. Most commercial Spotify recordings do **not** have a legitimate freely downloadable match, and will remain unmatched. The app never bypasses paywalls or DRM, downloads Spotify streams, scrapes arbitrary converter sites, or silently replaces a requested song with a different recording. Spotify developer terms may impose additional restrictions on apps combining Spotify metadata and other audio services; obtain approval before a public production release.
+**Automatic reliability ranking:** Verified imports increase a provider's priority, while terminal failures decrease it using the most recent 200 outcomes. Alternate sources are retained in the background ticket. Local storage failures do not start alternative network downloads.
 
-## If a Spotify playlist says "No qualifying MP3 source found"
+## When a playlist has missing songs
 
-This is normally a **catalog availability limit**, not a Spotify sign-in failure. Spotify
-provides **song title, artist, album and duration metadata**, not downloadable MP3
-recordings. MP3 Shelf searches Internet Archive, Openverse and Wikimedia Commons;
-their openly licensed inventories do not include most mainstream commercial releases.
-It will not guess a YouTube converter, replace a song with a cover, or bypass DRM.
+Spotify supplies the song list, artist, album and duration, not MP3 files. Removing the license-label requirement broadens eligible catalog matches; it does not create downloadable files for recordings absent from those catalogs.
 
-To tell an unavailable recording apart from a temporary lookup problem:
-
-1. Open **Playlists → your imported playlist → Song-by-song MP3 results**.
-2. **No qualifying MP3 source found** means the checked catalogs returned no
-   eligible exact recording; repeatedly retrying a commercial track will not
-   make a licensed download appear.
-3. **Searching** or **Awaiting** means discovery has not finished; keep the app
-   open. **Source lookup failed** or **Paused by network error** means retry
-   on a working connection. Downloads already queued are shown under
-   **Add Music → Your downloads**.
-4. To fill an unmatched slot, use **I have an authorized audio link** beside
-   that song and supply a *direct HTTPS URL* to a legally downloadable MP3
-   (or other supported audio file) provided by its rights holder. The app
-   validates the audio and, where Spotify supplied duration, checks the
-   recording's length before assigning the original playlist metadata.
-5. Alternatively import legally acquired MP3/M4A files from **Add Music**.
-   Correct title and artist metadata allow the existing offline files to match
-   imported playlists; edit local metadata from the song menu if necessary.
-
-Automatic discovery may still return zero results even while all three catalog
-APIs are operating correctly. The direct-link option is not a stream ripper and
-must only be used for recordings you have permission to download.
+1. Open **Playlists → your playlist → Song-by-song MP3 results**.
+2. A no-match result means the catalogs that answered did not identify a matching file. **Search incomplete** names providers that could not answer. **Source lookup failed** means every provider failed after bounded retries.
+3. Use **Retry unmatched songs** to search again. Keep the app open during source discovery. Transfers already queued appear in **Add Music → Your downloads**.
+4. Use **Attach an audio-file link** to supply a direct HTTPS MP3 or another supported audio format. File decoding and duration checks run before attaching it to the song.
+5. **Search the wider web for missing songs** opens broader manual discovery. In-app web search uses the optional Brave API key; browser search does not require that key. Search results are pages and possible links, and are not automatically treated as matching audio files.
+6. Local files imported from **Add Music** also match playlists by title/artist metadata.
 
 ## Automatic Wi-Fi playlist downloads
 
@@ -342,7 +317,7 @@ Every newly imported playlist song is looked up across all four supported
 independent catalog APIs concurrently (Audius, Openverse, Wikimedia Commons,
 Internet Archive). The first exact, permitted downloadable recording starts
 as the primary background transfer; up to three other unique verified URLs,
-along with each source's attribution and license, are saved in that ticket's
+along with each source's attribution and optional license, are saved in that ticket's
 Codable manifest. Searching sources concurrently avoids having to wait for four
 catalogs in serial, but does add catalog requests when the first one already
 would have found the song.
@@ -507,12 +482,10 @@ links directly to a supported audio file, **Check and save this audio file**
 passes the URL to the existing user-confirmed downloader, which validates
 HTTPS, audio decoding, file size, and expected track duration. An ordinary
 web page is never silently treated as an MP3, and the app doesn't acquire
-Spotify streams or bypass DRM. You can also use **I have an authorized audio
-link** and import previously purchased audio through Files.
+Spotify streams or bypass DRM. You can also use **Attach an audio-file link** or import audio through Files.
 
-This expands *finding links* well beyond the three strict CC/public-domain
-catalogs. A web result does not establish that the file is legally available
-or that it matches the intended recording.
+This expands finding links beyond the connected catalogs. A search result
+alone does not establish that a link contains audio or matches the intended recording.
 
 ### Read a publisher page to locate direct audio files
 
@@ -579,9 +552,9 @@ cursor is retained and search is retried on the next foreground activation.
 Already queued background transfers are not duplicated on recovery.
 
 **Download Manager:** Open **Settings → Download Manager**, or the download
-icon inside a playlist, to view each authorized catalog MP3 transfer:
+icon inside a playlist, to view each catalog audio transfer:
 queued/downloading, saved offline, failed and cancelled; byte progress where
-available; source/license links; individual Cancel and Retry; and
+available; source links and any supplied license links; individual Cancel and Retry; and
 clear-finished-history without deleting audio. Retried transfers get new
 identifiers so a late callback from a cancelled task cannot corrupt the new one.
 Open **Settings → Manage Music Storage** for song-level sizes, total library
@@ -634,7 +607,7 @@ swiftc MP3Shelf/Models/MusicModels.swift MP3Shelf/Services/PlaylistCSV.swift MP3
 - `Services/PlaybackController.swift`: audio session, queue, playback, remote commands, Now Playing data.
 - `Services/PlaylistCSV.swift`: independently testable CSV/TSV parsing and metadata matching.
 - `Services/SpotifyService.swift`: Spotify PKCE/Keychain and playlist metadata requests.
-- `Services/AudioSourceFinder.swift`: strict independent Archive.org license-declared MP3 matching and lookup.
+- `Services/AudioSourceFinder.swift`: public audio-catalog matching, provider diagnostics and direct-file lookup.
 - `Services/LyricsParser.swift`: independent LRC / plain-text parsing.
 - `Views/SpotifyViews.swift`, `Views/LyricsView.swift`: playlist importer and offline lyrics.
 - `Views/`: SwiftUI library, playlists, full player, downloads, settings and Spotify playlist import.

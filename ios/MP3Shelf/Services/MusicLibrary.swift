@@ -273,7 +273,7 @@ final class MusicLibrary: ObservableObject {
                 }
                 if let attribution = archived.attribution,
                    attribution.sourceURL.hasPrefix("https://"),
-                   attribution.licenseURL.hasPrefix("https://") {
+                   (attribution.licenseURL.isEmpty || attribution.licenseURL.hasPrefix("https://")) {
                     tracks[index].sourceAttribution = AudioSourceAttribution(
                         pageURL: attribution.sourceURL,
                         licenseURL: attribution.licenseURL,
@@ -805,11 +805,11 @@ final class MusicLibrary: ObservableObject {
                 job.record(.alreadyPresent)
             } else {
                 do {
-                    let sources = BackgroundAudioDownloader.shared.prioritize(
-                        try await AudioSourceFinder.findDownloadCandidates(
+                    let report = try await AudioSourceFinder.discover(
                             for: wish,
                             allowsCellular: !backgroundWiFiOnly &&
-                                cellularApprovedPlaylists.contains(playlistID)))
+                                cellularApprovedPlaylists.contains(playlistID))
+                    let sources = BackgroundAudioDownloader.shared.prioritize(report.candidates)
                     guard job.isCurrent(in: discoveryJobs, at: index) else { break }
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
                         (backgroundWiFiOnly && !isOnWiFi) { break }
@@ -824,7 +824,10 @@ final class MusicLibrary: ObservableObject {
                             alternatives: Array(sources.dropFirst())) {
                             job.record(.queued)
                         } else { job.record(.failed) }
-                    } else { job.record(.unavailable) }
+                    } else {
+                        job.record(.unavailable)
+                        job.catalogWarnings = Array(Set((job.catalogWarnings ?? []) + report.warnings)).sorted()
+                    }
                 } catch is CancellationError {
                     break
                 } catch {

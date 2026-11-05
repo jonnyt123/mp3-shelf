@@ -102,10 +102,13 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(job.outcome(for: wishes[1]) == nil,
                         "unprocessed songs do not claim a result")
         job.isPaused = true
+        job.catalogWarnings = ["Openverse: HTTP 429"]
         let encoded = try JSONEncoder().encode([job])
         let restored = try JSONDecoder().decode([SourceDiscoveryJob].self, from: encoded)
         verifyDiscovery(restored[0].isPaused && restored[0].nextIndex == 1,
                         "pause and incomplete position survive restart")
+        verifyDiscovery(restored[0].catalogWarnings == ["Openverse: HTTP 429"],
+                        "partial provider failures survive checkpoint persistence")
         job = restored[0]
         job.isPaused = false
         job.record(.unavailable)
@@ -126,8 +129,11 @@ enum SourceDiscoveryJobTests {
         var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(job))
             as! [String: Any]
         legacy.removeValue(forKey: "outcomes")
+        legacy.removeValue(forKey: "catalogWarnings")
         var migrated = try JSONDecoder().decode(SourceDiscoveryJob.self,
                          from: JSONSerialization.data(withJSONObject: legacy))
+        verifyDiscovery(migrated.catalogWarnings == nil,
+                        "legacy checkpoints without provider warnings still load")
         verifyDiscovery(migrated.nextIndex == 3 &&
                         migrated.outcome(for: wishes[1]) == .previous,
                         "pre-upgrade checkpoints retain their processed cursor")

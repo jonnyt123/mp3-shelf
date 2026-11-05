@@ -6,20 +6,18 @@ import FoundationXML
 import FoundationNetworking
 #endif
 
-/// Evidence for a downloadable MP3 that an independent catalog labels as
-/// Creative Commons or public domain. License metadata is supplied by the
-/// uploader, not independently certified by MP3 Shelf.
+/// An independently hosted audio file matching the requested recording.
+/// License metadata is optional attribution, never a download requirement.
 struct AudioCatalogMatch: Codable, Sendable {
     let downloadURL: URL
     let itemURL: URL
-    let licenseURL: URL
+    let licenseURL: URL?
     let sourceName: String
 }
 
-/// No Spotify audio APIs, stream extraction, scraping, YouTube conversion, or
-/// guessed media URLs. Only explicitly license-labeled archive MP3 files.
+/// Catalog discovery uses actual public file listings and recording metadata.
 enum AudioSourceFinder {
-    private struct FlexibleText: Decodable {
+    struct FlexibleText: Decodable {
         let value: String
         init(from decoder: Decoder) throws {
             let item = try decoder.singleValueContainer()
@@ -35,19 +33,19 @@ enum AudioSourceFinder {
         let title: FlexibleText?
         let creator: FlexibleText?
     }
-    private struct ArchiveItem: Decodable {
+    struct ArchiveItem: Decodable {
         let metadata: ItemMetadata?
         let files: [ArchiveFile]?
     }
-    private struct ItemMetadata: Decodable {
+    struct ItemMetadata: Decodable {
         let title: FlexibleText?
         let creator: FlexibleText?
         let licenseurl: FlexibleText?
     }
-    private struct ArchiveFile: Decodable {
+    struct ArchiveFile: Decodable {
         let name: String
         let source: String?
-        let length: String?
+        let size: String?
     }
 
     static func exactMetadataMatch(title: String, creator: String, wish: PlaylistWish) -> Bool {
@@ -99,27 +97,44 @@ enum AudioSourceFinder {
     ) async throws -> T {
         let request = catalogRequest(for: url, allowsCellular: allowsCellular)
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-              data.count < 2_000_000 else { throw SourceError.unavailable }
+        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
+        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
+        guard data.count < 2_000_000 else { throw SourceError.invalidResponse }
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     enum SourceError: LocalizedError {
         case unavailable
-        var errorDescription: String? { "Audio-source catalog unavailable." }
+        case http(Int)
+        case invalidResponse
+        case catalogsUnavailable([String])
+        var errorDescription: String? {
+            switch self {
+            case .unavailable: return "Some catalog item details could not be read."
+            case .http(let status):
+                switch status {
+                case 401, 403: return "Catalog refused the request (HTTP \(status))."
+                case 429: return "Catalog rate limit reached (HTTP 429)."
+                default: return "Catalog returned HTTP \(status)."
+                }
+            case .invalidResponse: return "Catalog returned an unreadable response."
+            case .catalogsUnavailable(let failures):
+                return "No catalogs could complete the search. " + failures.joined(separator: " • ")
+            }
+        }
     }
 
-    /// Internet Archive's file.length field is a byte count, not song
-    /// duration. Check size here and check audible duration after download.
+    /// Archive file.size is bytes; file.length is duration and may be decimal.
+    /// The importer validates the actual recording duration after download.
     /// Albums are allowed only when exactly one original file has a filename
     /// explicitly matching the requested song and the item credits its artist.
-    static func archiveFileCandidate(name: String, source: String?, lengthBytes: String?,
+    static func archiveFileCandidate(name: String, source: String?, sizeBytes: String?,
                                       itemTitle: String, itemCreator: String,
                                       audioFileCount: Int, wish: PlaylistWish) -> Bool {
         guard safeMP3File(name), MusicMatching.key(itemCreator) == MusicMatching.key(wish.artist),
               !MusicMatching.key(wish.artist).isEmpty else { return false }
-        if let lengthBytes {
-            guard let bytes = Int64(lengthBytes), bytes > 0,
+        if let sizeBytes {
+            guard let bytes = Int64(sizeBytes), bytes > 0,
                   bytes <= 100 * 1024 * 1024 else { return false }
         }
         if audioFileCount == 1 {
@@ -229,27 +244,9 @@ enum AudioSourceFinder {
                     detailLookupFailed = true
                     continue
                 }
-                guard let metadata = item.metadata,
-                      let license = licensedURL(metadata.licenseurl?.value) else { continue }
-
-                let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
-                let originalFiles = audioFiles.filter { $0.source == "original" }
-                let eligibleFiles = originalFiles.isEmpty ? audioFiles : originalFiles
-                let matches = eligibleFiles.filter { file in
-                    archiveFileCandidate(name: file.name, source: file.source,
-                                         lengthBytes: file.length,
-                                         itemTitle: metadata.title?.value ?? "",
-                                         itemCreator: metadata.creator?.value ?? "",
-                                         audioFileCount: eligibleFiles.count, wish: wish)
+                if let match = archiveCandidate(item, identifier: result.identifier, for: wish) {
+                    return match
                 }
-                guard matches.count == 1, let file = matches.first else { continue }
-                let itemURL = URL(string: "https://archive.org/details/")!
-                    .appendingPathComponent(result.identifier)
-                let downloadURL = URL(string: "https://archive.org/download/")!
-                    .appendingPathComponent(result.identifier)
-                    .appendingPathComponent(file.name)
-                return AudioCatalogMatch(downloadURL: downloadURL, itemURL: itemURL,
-                                         licenseURL: license, sourceName: "Internet Archive")
             }
             if search.response.docs.count < 20 ||
                 !ArchiveLookupBudget.stillWithinWindow(
@@ -259,6 +256,26 @@ enum AudioSourceFinder {
         // caller's bounded retries instead of persisting a false no-match.
         if detailLookupFailed { throw SourceError.unavailable }
         return nil
+    }
+
+    static func archiveCandidate(_ item: ArchiveItem, identifier: String,
+                                 for wish: PlaylistWish) -> AudioCatalogMatch? {
+        guard safeIdentifier(identifier), let metadata = item.metadata else { return nil }
+        let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
+        let originals = audioFiles.filter { $0.source == "original" }
+        let eligible = originals.isEmpty ? audioFiles : originals
+        let matches = eligible.filter { file in
+            archiveFileCandidate(name: file.name, source: file.source, sizeBytes: file.size,
+                                 itemTitle: metadata.title?.value ?? "",
+                                 itemCreator: metadata.creator?.value ?? "",
+                                 audioFileCount: eligible.count, wish: wish)
+        }
+        guard matches.count == 1, let file = matches.first else { return nil }
+        return AudioCatalogMatch(
+            downloadURL: URL(string: "https://archive.org/download/")!
+                .appendingPathComponent(identifier).appendingPathComponent(file.name),
+            itemURL: URL(string: "https://archive.org/details/")!.appendingPathComponent(identifier),
+            licenseURL: licensedURL(metadata.licenseurl?.value), sourceName: "Internet Archive")
     }
 }
 
@@ -300,7 +317,6 @@ extension AudioSourceFinder {
               ["wikimedia", "ccmixter", "fma"].contains(source.lowercased()),
               exactMetadataMatch(title: catalogFileTitle(title),
                                  creator: creator, wish: wish),
-              let licenseURL = licensedURL(license),
               let download, let downloadURL = URL(string: download),
               let landing, let landingURL = URL(string: landing),
               downloadURL.scheme == "https", landingURL.scheme == "https",
@@ -327,7 +343,7 @@ extension AudioSourceFinder {
         // Openverse supplies the creator, link and license but does not itself
         // certify that a publisher actually owns the recording.
         return AudioCatalogMatch(downloadURL: downloadURL, itemURL: landingURL,
-                                 licenseURL: licenseURL, sourceName: "Openverse: \(source)")
+                                 licenseURL: licensedURL(license), sourceName: "Openverse: \(source)")
     }
 
     static let maxOpenversePages = 2
@@ -403,7 +419,7 @@ extension AudioSourceFinder {
 
     // Wikimedia Commons' MediaWiki file API is a separate upstream catalog:
     // Commons recordings may be absent from Openverse's index. Only explicit
-    // machine-readable artist/license metadata and actual MP3 file URLs qualify.
+    // machine-readable artist metadata and actual MP3 file URLs qualify.
     private struct CommonsResponse: Decodable { let query: CommonsQuery? }
     private struct CommonsQuery: Decodable { let pages: [String: CommonsPage] }
     private struct CommonsPage: Decodable {
@@ -429,7 +445,6 @@ extension AudioSourceFinder {
                     .replacingOccurrences(of: ".mp3", with: "", options: .caseInsensitive),
                 creator: artistCredit.trimmingCharacters(in: .whitespacesAndNewlines),
                 wish: wish),
-              let licenseURL = licensedURL(license),
               let download, let audioURL = URL(string: download),
               audioURL.scheme == "https", audioURL.host?.lowercased() == "upload.wikimedia.org",
               audioURL.pathExtension.lowercased() == "mp3",
@@ -439,7 +454,7 @@ extension AudioSourceFinder {
               bytes == nil || (bytes! > 0 && bytes! <= 100 * 1024 * 1024)
         else { return nil }
         return AudioCatalogMatch(downloadURL: audioURL, itemURL: landingURL,
-                                 licenseURL: licenseURL, sourceName: "Wikimedia Commons")
+                                 licenseURL: licensedURL(license), sourceName: "Wikimedia Commons")
     }
 
     static func findCommons(for wish: PlaylistWish,
@@ -476,10 +491,30 @@ extension AudioSourceFinder {
     /// active, retaining alternates *before* it hands downloads to iOS. This
     /// lets a locked iPhone use a different verified source without needing
     /// to restart foreground source discovery.
-    private struct CatalogLookup: Sendable {
+    struct CatalogLookup: Sendable {
         let rank: Int
+        let provider: String
         let candidate: AudioCatalogMatch?
-        let failed: Bool
+        let failure: String?
+    }
+
+    struct CatalogSearchReport: Sendable {
+        let candidates: [AudioCatalogMatch]
+        let warnings: [String]
+    }
+
+    static func catalogReport(from results: [CatalogLookup]) throws -> CatalogSearchReport {
+        let ordered = results.sorted { $0.rank < $1.rank }
+        let candidates = uniqueDownloadSources(ordered.compactMap(\.candidate))
+        let warnings = ordered.compactMap { result in
+            result.failure.map { "\(result.provider): \($0)" }
+        }
+        // A healthy catalog's empty result is still useful. One optional
+        // provider outage must not consume five retries for every playlist song.
+        if candidates.isEmpty && !ordered.isEmpty && warnings.count == ordered.count {
+            throw SourceError.catalogsUnavailable(warnings)
+        }
+        return CatalogSearchReport(candidates: candidates, warnings: warnings)
     }
 
     static func uniqueDownloadSources(_ ordered: [AudioCatalogMatch]) -> [AudioCatalogMatch] {
@@ -518,66 +553,71 @@ extension AudioSourceFinder {
         return (remaining[index], Array(remaining.dropFirst(index + 1)))
     }
 
-    static func findDownloadCandidates(for wish: PlaylistWish,
-                                       allowsCellular: Bool = false) async throws -> [AudioCatalogMatch] {
+    static func discover(for wish: PlaylistWish,
+                         allowsCellular: Bool = false) async throws -> CatalogSearchReport {
         try Task.checkCancellation()
         let found = await withTaskGroup(of: CatalogLookup.self, returning: [CatalogLookup].self) { group in
             group.addTask {
                 do {
-                    return CatalogLookup(rank: 0,
+                    return CatalogLookup(rank: 0, provider: "Audius",
                         candidate: try await findAudius(for: wish, allowsCellular: allowsCellular),
-                        failed: false)
+                        failure: nil)
                 } catch {
-                    return CatalogLookup(rank: 0, candidate: nil, failed: true)
+                    return CatalogLookup(rank: 0, provider: "Audius", candidate: nil,
+                                         failure: error.localizedDescription)
                 }
             }
             group.addTask {
                 do {
-                    return CatalogLookup(rank: 1,
+                    return CatalogLookup(rank: 1, provider: "Openverse",
                         candidate: try await findOpenverse(for: wish, allowsCellular: allowsCellular),
-                        failed: false)
+                        failure: nil)
                 } catch {
-                    return CatalogLookup(rank: 1, candidate: nil, failed: true)
+                    return CatalogLookup(rank: 1, provider: "Openverse", candidate: nil,
+                                         failure: error.localizedDescription)
                 }
             }
             group.addTask {
                 do {
-                    return CatalogLookup(rank: 2,
+                    return CatalogLookup(rank: 2, provider: "Wikimedia Commons",
                         candidate: try await findCommons(for: wish, allowsCellular: allowsCellular),
-                        failed: false)
+                        failure: nil)
                 } catch {
-                    return CatalogLookup(rank: 2, candidate: nil, failed: true)
+                    return CatalogLookup(rank: 2, provider: "Wikimedia Commons", candidate: nil,
+                                         failure: error.localizedDescription)
                 }
             }
             group.addTask {
                 do {
-                    return CatalogLookup(rank: 3,
+                    return CatalogLookup(rank: 3, provider: "Internet Archive",
                         candidate: try await find(for: wish, allowsCellular: allowsCellular),
-                        failed: false)
+                        failure: nil)
                 } catch {
-                    return CatalogLookup(rank: 3, candidate: nil, failed: true)
+                    return CatalogLookup(rank: 3, provider: "Internet Archive", candidate: nil,
+                                         failure: error.localizedDescription)
                 }
             }
             group.addTask {
-                // Supplemental publisher catalog. If ccMixter's older RSS API
-                // is unavailable, existing healthy providers must not retry
-                // every unrelated Spotify song because of this one service.
-                let candidate = try? await findCCMixter(
-                    for: wish, allowsCellular: allowsCellular)
-                return CatalogLookup(rank: 4, candidate: candidate, failed: false)
+                do {
+                    return CatalogLookup(rank: 4, provider: "ccMixter",
+                        candidate: try await findCCMixter(for: wish, allowsCellular: allowsCellular),
+                        failure: nil)
+                } catch {
+                    return CatalogLookup(rank: 4, provider: "ccMixter", candidate: nil,
+                                         failure: error.localizedDescription)
+                }
             }
             var results: [CatalogLookup] = []
             for await result in group { results.append(result) }
             return results
         }
         try Task.checkCancellation()
-        let candidates = uniqueDownloadSources(found.sorted { $0.rank < $1.rank }
-            .compactMap(\.candidate))
-        if !candidates.isEmpty { return candidates }
-        // Do not permanently label a track missing when every available
-        // source might have been hidden by a temporary provider outage.
-        if found.contains(where: \.failed) { throw SourceError.unavailable }
-        return []
+        return try catalogReport(from: found)
+    }
+
+    static func findDownloadCandidates(for wish: PlaylistWish,
+                                       allowsCellular: Bool = false) async throws -> [AudioCatalogMatch] {
+        try await discover(for: wish, allowsCellular: allowsCellular).candidates
     }
 
     static func findAcrossCatalogs(for wish: PlaylistWish,
@@ -688,9 +728,8 @@ extension AudioSourceFinder {
 }
 
 
-// Optional web-wide discovery. Unlike the licensed catalog adapters, these
-// are search-engine results: pages are NOT assumed to be directly downloadable
-// or authorized. The user examines the source before supplying a permitted file.
+// Optional web-wide discovery. Search-engine results are navigation hints;
+// a result page alone is not evidence of a matching downloadable audio file.
 #if canImport(Security)
 import Security
 #endif
@@ -1233,8 +1272,8 @@ enum AudioLandingPageInspector {
 
 
 // Official ccMixter ccHost Query API exposes an RSS feed without an API key.
-// Exact metadata and uploader-supplied Creative Commons evidence are still
-// mandatory; RSS enclosures alone are not permission or identity evidence.
+// Exact metadata and a directly hosted MP3 enclosure are still
+// mandatory; an enclosure alone does not establish recording identity.
 extension AudioSourceFinder {
     struct CCMixterFeedTrack {
         var title = ""
@@ -1323,7 +1362,6 @@ extension AudioSourceFinder {
     static func ccMixterCandidate(_ track: CCMixterFeedTrack,
                                    for wish: PlaylistWish) -> AudioCatalogMatch? {
         guard exactMetadataMatch(title: track.title, creator: track.creator, wish: wish),
-              let license = licensedURL(track.licenseURL),
               let page = URL(string: track.landingURL), page.scheme == "https",
               let pageHost = page.host?.lowercased(),
               (pageHost == "ccmixter.org" || pageHost == "www.ccmixter.org"),
@@ -1336,7 +1374,7 @@ extension AudioSourceFinder {
               download.pathExtension.lowercased() == "mp3"
         else { return nil }
         return AudioCatalogMatch(downloadURL: download, itemURL: page,
-                                 licenseURL: license, sourceName: "ccMixter")
+                                 licenseURL: licensedURL(track.licenseURL), sourceName: "ccMixter")
     }
 
     static func ccMixterCandidates(in rssData: Data,
@@ -1353,10 +1391,11 @@ extension AudioSourceFinder {
         let request = catalogRequest(for: ccMixterSearchURL(for: wish),
                                      allowsCellular: allowsCellular)
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 200, !data.isEmpty, data.count <= 1_000_000,
+        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
+        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
+        guard !data.isEmpty, data.count <= 1_000_000,
               let matches = ccMixterCandidates(in: data, matching: wish)
-        else { throw SourceError.unavailable }
+        else { throw SourceError.invalidResponse }
         // Distinct eligible uploads may be separate remixes or releases.
         // Do not treat matching RSS text as proof that versions are identical.
         return matches.count == 1 ? matches.first : nil

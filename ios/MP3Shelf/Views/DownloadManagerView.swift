@@ -114,6 +114,11 @@ struct DownloadManagerView: View {
                                             Text(reason).font(.caption)
                                                 .foregroundStyle(ShelfTheme.coral)
                                         }
+                                        if let warnings = job.catalogWarnings, !warnings.isEmpty {
+                                            Text("Search incomplete: " + warnings.joined(separator: " • ") +
+                                                 " Retry unmatched songs to check these catalogs again.")
+                                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                        }
                                         if !job.isComplete {
                                             if !job.isPaused, let retry = job.nextRetryAt {
                                                 Text("Search retry scheduled: \(retry.formatted(date: .omitted, time: .shortened))")
@@ -164,7 +169,7 @@ struct DownloadManagerView: View {
                             .font(.system(.headline, design: .rounded, weight: .bold))
                             .foregroundStyle(.white)
                         Text(selectedFilter == .all
-                             ? "Import a playlist to find independently licensed MP3 files."
+                             ? "Import a playlist to find matching public audio files."
                              : "Switch to All to review your other downloads.")
                             .font(.subheadline)
                             .foregroundStyle(ShelfTheme.subdued)
@@ -310,8 +315,10 @@ private struct DownloadTicketRow: View {
                 Link(destination: ticket.sourcePage) {
                     Label("Source", systemImage: "arrow.up.right")
                 }
-                Link(destination: ticket.licensePage) {
-                    Label("License", systemImage: "doc.text")
+                if let licensePage = ticket.licensePage {
+                    Link(destination: licensePage) {
+                        Label("License", systemImage: "doc.text")
+                    }
                 }
             }
             .font(.caption.weight(.medium))

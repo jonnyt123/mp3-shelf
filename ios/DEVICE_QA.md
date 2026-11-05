@@ -5,7 +5,7 @@ simulator build is a separate, useful check and does not replace these tests.
 
 ## Preparation
 
-1. On a Mac with Xcode 16.4 or newer, check out the **candidate native iOS branch** (`fix/ios-download-finalization-and-conversion` for PR #28). The default `main` branch still contains the older web PWA; PR #4 is an earlier intermediate iOS branch. Run `bash ios/scripts/verify-local-release.sh` from the repository root to record local Swift regression and native build results without GitHub Actions minutes. Running the script does not replace on-device tests.
+1. On a Mac with Xcode 16.4 or newer, check out the **candidate native iOS branch** (`feat/ios-consolidated-candidate` for PR #29). The default `main` branch still contains the older web PWA; PR #4 is an earlier intermediate iOS branch. Run `bash ios/scripts/verify-local-release.sh` from the repository root to record local Swift regression and native build results without GitHub Actions minutes. Running the script does not replace on-device tests.
 2. Open `ios/MP3Shelf.xcodeproj`, choose the MP3Shelf app target,
    enable Automatically Manage Signing, and select your Apple development team.
 3. Connect an iPhone with iOS 17+, unlock/trust the Mac, enable Developer Mode
@@ -263,3 +263,10 @@ Queue retry/progress checks: select a song in a small filtered playlist whose fi
 Cancellation/copy follow-up: cancel an idle staged download, clear its history, then allow a delayed URLSession finish callback; no orphan file or imported song should remain for that ticket. Repeat during conversion and verify cancellation cleanup. Make a local copy of a Spotify playlist, including missing entries; change or delete the copy without modifying the original, and confirm Spotify refresh still targets the original. Native callback delivery and conversion cancellation remain device-only acceptance checks.
 
 Diagnostic/refresh checks: exercise 403, 404/410, rate limiting, HTML instead of audio, timeout and local disk-full/write failure. Error messages should identify the failure and recovery action; local storage failures must not begin alternate-source transfers. Import a playlist whose matching library metadata has a missing physical file and confirm that wish remains missing. Refresh pending title/duration metadata without adding IDs, relaunch, and confirm corrected metadata and the existing cursor/history persist.
+
+## Public-file source discovery regression gate
+
+- Run the source-discovery and checkpoint suites, including exact matches without license metadata and decimal Archive duration with a separate byte size. Verify oversized, mismatched and ambiguous files still fail admission.
+- Return 403/429 from one catalog while another responds: the playlist must advance, keep valid matches and show named partial-search warnings after relaunch. Return failures from every provider: bounded retry and specific failure details must remain.
+- Save a matching file without a license link, suspend/relaunch during its queued transfer, and verify playback, source attribution and no blank License action. Restore its native backup in the browser and back to iOS.
+- Rebuild and install this candidate before retrying the reported playlist. Record one failing song, provider and exact error if the recording remains unavailable; a catalog no-match is distinct from a network or file-import failure.

@@ -351,6 +351,8 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     var failed: Int = 0
     var isPaused = false
     var lastError: String? = nil
+    // Optional so older persisted checkpoints remain decodable.
+    var catalogWarnings: [String]? = nil
     var outcomes: [Outcome]? = nil
     // Optional fields preserve decoding of checkpoints created by older builds.
     var transientFailureCount: Int? = nil

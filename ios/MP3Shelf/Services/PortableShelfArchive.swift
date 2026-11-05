@@ -110,7 +110,8 @@ enum PortableShelfArchive {
             let source = item.track.sourceAttribution
             let attribution = source.map {
                 Attribution(sourceURL: $0.pageURL, licenseURL: $0.licenseURL,
-                            creator: item.track.artist, license: "See license",
+                            creator: item.track.artist,
+                            license: $0.licenseURL.isEmpty ? "Not supplied" : "See license",
                             provider: $0.providerName)
             }
             tracks.append(Track(

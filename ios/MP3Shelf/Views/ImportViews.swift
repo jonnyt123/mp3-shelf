@@ -57,7 +57,7 @@ struct DownloadView: View {
                             Text("Your Spotify playlists")
                                 .font(.system(.headline, design: .rounded, weight: .bold))
                                 .foregroundStyle(.white)
-                            Text("Import song lists and find eligible offline recordings")
+                            Text("Import song lists and find matching audio files")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -76,7 +76,7 @@ struct DownloadView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Have a direct download link?")
                                 .font(.system(.headline, design: .rounded, weight: .bold))
-                            Text("Save authorized audio straight to your shelf")
+                            Text("Save audio files straight to your shelf")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
                     }
@@ -117,7 +117,7 @@ struct DownloadView: View {
                     .buttonStyle(.bordered)
                     .tint(ShelfTheme.mint)
                     .disabled(isDownloading || library.isImporting || remoteURL.isEmpty)
-                    Text("Only files you have permission to download. Streaming links are not MP3 files.")
+                    Text("Use a direct audio-file link. A playlist or player-page link does not contain the audio file.")
                         .font(.caption2)
                         .foregroundStyle(ShelfTheme.subdued)
                         .fixedSize(horizontal: false, vertical: true)
@@ -191,7 +191,7 @@ struct SpotifyImportView: View {
                                 .font(.system(.headline, design: .rounded, weight: .bold))
                         }
                     }
-                    Text("Import a CSV or TSV list of your playlist's tracks. MP3 Shelf matches your local music, then automatically searches for independently licensed MP3 downloads for missing songs.")
+                    Text("Import a CSV or TSV song list. MP3 Shelf matches your local music, then automatically searches public audio catalogs for the missing songs.")
                         .foregroundStyle(ShelfTheme.subdued).font(.subheadline)
                     Text("This does not turn Spotify streams into MP3s. Commercial recordings usually have no qualifying free download source.")
                         .font(.caption).foregroundStyle(.orange)
