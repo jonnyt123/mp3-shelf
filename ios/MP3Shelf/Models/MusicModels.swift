@@ -109,6 +109,23 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
     var portableBackupID: String? = nil
     var createdAt: Date = .now
 
+    /// A separate local playlist, sharing audio files but no sync/restore identity.
+    func localCopy() -> MusicPlaylist {
+        var copy = MusicPlaylist(name: name + " Copy")
+        copy.trackIDs = trackIDs
+        let missingIDs = Set(missingTracks.map(\.id))
+        let orderedIDs = Set(sourceOrder.map(\.id))
+        let entries = sourceOrder + missingTracks.filter { !orderedIDs.contains($0.id) }
+        for wish in entries {
+            let entry = PlaylistWish(title: wish.title, artist: wish.artist,
+                                     album: wish.album, spotifyURL: wish.spotifyURL,
+                                     durationSeconds: wish.durationSeconds)
+            copy.sourceOrder.append(entry)
+            if missingIDs.contains(wish.id) { copy.missingTracks.append(entry) }
+        }
+        return copy
+    }
+
     func matchesPortableBackupID(_ backupID: String) -> Bool {
         portableBackupID == backupID || UUID(uuidString: backupID) == id
     }

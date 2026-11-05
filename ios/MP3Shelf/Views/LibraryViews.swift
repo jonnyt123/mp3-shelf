@@ -582,6 +582,9 @@ struct PlaylistsView: View {
                                         renamedName = list.name
                                         pendingRename = list
                                     } label: { Label("Rename Playlist", systemImage: "pencil") }
+                                    Button { library.duplicatePlaylist(list.id) } label: {
+                                        Label("Make local copy", systemImage: "doc.on.doc")
+                                    }
                                     Button(role: .destructive) {
                                         pendingDelete = list
                                     } label: { Label("Delete Playlist", systemImage: "trash") }

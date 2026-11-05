@@ -14,13 +14,14 @@ MP3 Shelf — local native verification without GitHub Actions
 
 Default: all eight Swift regression suites plus unsigned simulator Debug,
 simulator Release and physical-iPhone arm64 Release builds.
---tests-only: run the Foundation-based Swift regression suites (no Xcode build).
+--tests-only: run Swift regressions (codec tests require macOS AVFoundation).
 --builds-only: compile all three native configurations, skip Swift suites.
 --smoke: run the default checks, then launch the Debug app on a local
          iPhone Simulator and capture eight UI snapshots. Requires installed
          compatible simulator runtime; does not substitute for iPhone QA.
 
-Local outputs and logs: ios/build/local-release/ (Git-ignored).
+Latest report: ios/build/local-release/QA_RECORD.md (Git-ignored).
+Each invocation keeps its logs under ios/build/local-release/runs/.
 Requires full Xcode on macOS for builds/smoke. No signing or CI minutes.
 HELP
 }
@@ -30,8 +31,12 @@ SMOKE=false
 for arg in "$@"; do
   case "$arg" in
     --help|-h) usage; exit 0 ;;
-    --tests-only) MODE=tests ;;
-    --builds-only) MODE=builds ;;
+    --tests-only)
+      if [[ "$MODE" == builds ]]; then echo "ERROR: Choose either --tests-only or --builds-only." >&2; exit 2; fi
+      MODE=tests ;;
+    --builds-only)
+      if [[ "$MODE" == tests ]]; then echo "ERROR: Choose either --tests-only or --builds-only." >&2; exit 2; fi
+      MODE=builds ;;
     --smoke) SMOKE=true ;;
     *) echo "Unknown option: $arg" >&2; usage >&2; exit 2 ;;
   esac
@@ -41,19 +46,38 @@ if [[ "$SMOKE" == true && "$MODE" != all ]]; then
   exit 2
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 OUT="$ROOT/ios/build/local-release"
 DERIVED="$OUT/DerivedData"
 mkdir -p "$OUT"
 cd "$ROOT"
 
 
-COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-DIRTY=no
-if [[ -n "$(git status --porcelain --untracked-files=normal 2>/dev/null || true)" ]]; then
-  DIRTY=yes
+COMMIT=unknown
+DIRTY=unknown
+SOURCE_PROVENANCE="unidentified source"
+GIT_TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ "$GIT_TOP" == "$ROOT" ]]; then
+  COMMIT="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
+  DIRTY=no
+  if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then DIRTY=yes; fi
+  SOURCE_PROVENANCE="repository HEAD"
+  if [[ "$COMMIT" == unknown ]]; then SOURCE_PROVENANCE="repository without a commit"; fi
+elif [[ -f "$ROOT/SOURCE.json" ]] && command -v python3 >/dev/null 2>&1; then
+  COMMIT="$(python3 - "$ROOT/SOURCE.json" <<'PY_SOURCE'
+import json, re, sys
+try:
+    value = json.load(open(sys.argv[1])).get("commit", "")
+    print(value if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value) else "unknown")
+except (OSError, ValueError, AttributeError):
+    print("unknown")
+PY_SOURCE
+)"
+  SOURCE_PROVENANCE="archive metadata (not independently authenticated)"
 fi
 STARTED="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+RUN_OUT="$OUT/runs/$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+mkdir -p "$RUN_OUT"
 COMPLETED_STEPS=()
 FAILURE_REASON=""
 on_exit() {
@@ -63,26 +87,29 @@ on_exit() {
     echo
     echo "- Started (UTC): $STARTED"
     echo "- Checked commit: $COMMIT"
+    echo "- Source provenance: $SOURCE_PROVENANCE"
+    echo "- Current run logs: $RUN_OUT"
     echo "- Uncommitted changes: $DIRTY"
     echo "- Mode: $MODE"
     echo "- Simulator smoke requested: $SMOKE"
     echo "- Overall execution: $([[ $status -eq 0 ]] && echo PASS || echo FAIL)"
     echo "- Exit status: $status"
-    echo "- Failure reason: ${FAILURE_REASON:-see step logs if execution failed}"
+    echo "- Failure reason: ${FAILURE_REASON:-none}"
     echo "- Completed checks: ${COMPLETED_STEPS[*]:-none}"
     echo "- Apple signing / physical iPhone acceptance: NOT TESTED"
     echo "- GitHub Actions used: NO"
     echo
     echo "Build logs, Swift test results and optional screenshots are local to this directory."
     echo "A PASS does not establish real-device playback, permissions or background scheduling."
-  } > "$OUT/QA_RECORD.md"
+  } > "$RUN_OUT/QA_RECORD.md"
+  cp "$RUN_OUT/QA_RECORD.md" "$OUT/QA_RECORD.md"
   if [[ $status -ne 0 ]]; then
     echo "Local verification failed. See $OUT/QA_RECORD.md and step logs." >&2
   fi
 }
 trap on_exit EXIT
 
-if ! command -v swiftc >/dev/null 2>&1; then
+if [[ "$MODE" != builds ]] && ! command -v swiftc >/dev/null 2>&1; then
   FAILURE_REASON="Swift compiler not found"
   echo "ERROR: $FAILURE_REASON." >&2
   exit 2
@@ -93,7 +120,7 @@ if [[ "$MODE" != tests ]]; then
     echo "ERROR: $FAILURE_REASON." >&2
     exit 2
   fi
-  if ! xcodebuild -version > "$OUT/xcode-version.txt" 2>&1; then
+  if ! xcodebuild -version > "$RUN_OUT/xcode-version.txt" 2>&1; then
     FAILURE_REASON="Full Xcode is not selected or cannot run"
     echo "ERROR: $FAILURE_REASON." >&2
     exit 2
@@ -104,14 +131,17 @@ fi
 run_step() {
   local name="$1"; shift
   echo "==> $name"
-  "$@" 2>&1 | tee "$OUT/$name.log"
+  FAILURE_REASON="Step $name failed (see $RUN_OUT/$name.log)"
+  "$@" 2>&1 | tee "$RUN_OUT/$name.log"
   COMPLETED_STEPS+=("$name")
+  FAILURE_REASON=""
 }
 run_suite() {
   local name="$1"; shift
   echo "==> Compiling $name"
-  swiftc "$@" -o "$OUT/$name" 2>&1 | tee "$OUT/$name-compile.log"
-  run_step "$name" "$OUT/$name"
+  FAILURE_REASON="Compile $name failed (see $RUN_OUT/$name-compile.log)"
+  swiftc "$@" -o "$RUN_OUT/$name" 2>&1 | tee "$RUN_OUT/$name-compile.log"
+  run_step "$name" "$RUN_OUT/$name"
 }
 
 if [[ "$MODE" != builds ]]; then
@@ -170,6 +200,7 @@ if [[ "$SMOKE" == true ]]; then
       exit 3
     }
   done
+  FAILURE_REASON="No available iPhone Simulator could be selected"
   SIMULATOR="$(xcrun simctl list -j devices available | python3 -c '
 import json, sys
 data=json.load(sys.stdin)
@@ -185,10 +216,11 @@ sys.exit(1)
     echo "ERROR: iPhone Simulator/runtime or Debug .app unavailable." >&2
     exit 3
   fi
+  FAILURE_REASON=""
   xcrun simctl boot "$SIMULATOR" 2>/dev/null || true
   run_step simulator-boot xcrun simctl bootstatus "$SIMULATOR" -b
   run_step simulator-install xcrun simctl install "$SIMULATOR" "$APP"
-  mkdir -p "$OUT/screenshots"
+  mkdir -p "$RUN_OUT/screenshots"
   for tab in listen playlists add-music settings downloads filled-library search player; do
     if [[ "$tab" == listen ]]; then
       run_step "launch-$tab" xcrun simctl launch "$SIMULATOR" com.jonnyt.mp3shelf
@@ -201,7 +233,7 @@ sys.exit(1)
       *) sleep 3 ;;
     esac
     run_step "snapshot-$tab" xcrun simctl io "$SIMULATOR" screenshot \
-      "$OUT/screenshots/$tab.png"
+      "$RUN_OUT/screenshots/$tab.png"
     xcrun simctl terminate "$SIMULATOR" com.jonnyt.mp3shelf || true
   done
   echo "Screenshots captured; visual/accessibility review is still required."

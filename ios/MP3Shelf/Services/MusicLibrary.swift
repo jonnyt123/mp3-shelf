@@ -961,6 +961,12 @@ final class MusicLibrary: ObservableObject {
         save()
     }
 
+    func duplicatePlaylist(_ id: UUID) {
+        guard let original = playlists.first(where: { $0.id == id }) else { return }
+        playlists.append(original.localCopy())
+        save()
+    }
+
     func renamePlaylist(_ id: UUID, to name: String) {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, let index = playlists.firstIndex(where: { $0.id == id }) else { return }

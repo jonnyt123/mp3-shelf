@@ -78,6 +78,32 @@ enum PlaylistCSVTests {
         let bom = "\u{FEFF}Track Name,Artist Name\nExample,Someone\n"
         let bomRows = try PlaylistCSV.parse(Data(bom.utf8))
         check(bomRows.count == 1, "UTF-8 BOM")
+        let missingEntry = PlaylistWish(title: "Missing", artist: "Artist", album: "Album", spotifyURL: nil, durationSeconds: 180)
+        var originalPlaylist = MusicPlaylist(name: "Original")
+        originalPlaylist.trackIDs = [owned.id, owned.id]
+        originalPlaylist.sourceOrder = [missingEntry]
+        originalPlaylist.missingTracks = [missingEntry]
+        originalPlaylist.sourceURL = "https://open.spotify.com/playlist/example"
+        originalPlaylist.portableBackupID = "restored-playlist"
+        var localCopy = originalPlaylist.localCopy()
+        check(localCopy.id != originalPlaylist.id && localCopy.trackIDs == originalPlaylist.trackIDs,
+              "local copy has independent identity and preserves exact audio order")
+        check(localCopy.sourceURL == nil && localCopy.portableBackupID == nil,
+              "local copy cannot collide with Spotify refresh or archive restore identity")
+        check(localCopy.sourceOrder.first?.id != missingEntry.id &&
+              localCopy.missingTracks.first?.id == localCopy.sourceOrder.first?.id &&
+              localCopy.sourceOrder.first?.durationSeconds == 180,
+              "copied missing wishes retain duration and use consistent fresh identities")
+        var legacyPlaylist = MusicPlaylist(name: "Legacy")
+        legacyPlaylist.missingTracks = [missingEntry]
+        let legacyCopy = legacyPlaylist.localCopy()
+        check(legacyCopy.missingTracks.count == 1 && legacyCopy.sourceOrder.count == 1,
+              "local copy preserves legacy missing entries without source order")
+        let copiedRoundtrip = try JSONDecoder().decode(MusicPlaylist.self, from: JSONEncoder().encode(localCopy))
+        check(copiedRoundtrip.id == localCopy.id && copiedRoundtrip.sourceOrder == localCopy.sourceOrder,
+              "local copy identities survive persistence")
+        localCopy.trackIDs.removeAll()
+        check(originalPlaylist.trackIDs.count == 2, "editing copied playlist does not modify original")
         let saved = PersistedLibrary(tracks: [owned], playlists: [MusicPlaylist(name: "Test")])
         let restored = try JSONDecoder().decode(PersistedLibrary.self, from: JSONEncoder().encode(saved))
         check(restored.tracks.first?.id == owned.id, "library JSON roundtrip")

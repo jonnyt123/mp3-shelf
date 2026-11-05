@@ -652,3 +652,11 @@ For installation, double-click **Install on iPhone.command** inside `ios`. It li
 ## Consolidated integration candidate
 
 Branch `feat/ios-consolidated-candidate` combines the PR #28 download/conversion/playback work with PRs #24–#27 (shuffle history, queue editing, four-transfer backpressure and library indexes). Its Finder verification launcher includes eight regression suites. Conflict resolution preserves scene-gated discovery and bounded background ownership alongside the capacity check. Native compilation and device QA remain required before release.
+
+## Verification workflow follow-up
+
+The latest report remains at `ios/build/local-release/QA_RECORD.md`; logs and Simulator screenshots now live in separate `runs/` folders identified by that report. This prevents stale output from an earlier invocation being mistaken for new evidence. Conflicting test-only/build-only flags are rejected, and failed compilation/build steps are named in the report. Extracted ZIPs use the commit recorded in `SOURCE.json`, labeled as archive metadata with unknown modification state; an unrelated parent Git checkout is never treated as the source repository.
+
+`python3 ios/scripts/test-release-workflow.py` exercises the real runner with a fake toolchain in temporary directories. It verifies reporting/control flow only and does not compile Swift, build iOS, sign or install apps. The eight native regression suites and actual Xcode/device gates remain separate.
+
+Long-press a playlist and choose **Make local copy** to preserve its song order and missing entries as a separate local playlist. Audio files are shared. The copy has fresh playlist/wish IDs and does not inherit Spotify-refresh or portable-restore identity; it does not automatically begin downloads.

@@ -293,6 +293,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         ticket.status = .cancelled
         ticket.failureReason = "Cancelled"
         tickets[id] = ticket
+        // An idle staged file has no owner left after explicit cancellation.
+        // Active conversion owns cleanup until its cancellation check returns.
+        if !processing.contains(id) { try? fm.removeItem(at: Self.stagingURL(id)) }
         persist()
         revision += 1
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
@@ -771,7 +774,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: location, to: destination)
-            Task { @MainActor in await self.recoverStagedDownloads() }
+            Task { @MainActor in
+                // History may have been cleared after cancellation while this
+                // delegate was moving the completed file. Unknown tickets must
+                // never leave an orphan staged copy or import cancelled audio.
+                guard self.tickets[id]?.status == .queued else {
+                    try? self.fm.removeItem(at: destination)
+                    return
+                }
+                await self.recoverStagedDownloads()
+            }
         } catch {
             Task { @MainActor in self.setFailed(id) }
         }
