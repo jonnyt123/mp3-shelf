@@ -31,13 +31,14 @@ actor NativeAudioEngine {
     }
 
     enum Failure: LocalizedError {
-        case searchHTTP(Int), unreadableSearch, oversizedSearch, noAudio, changedRecording, extractionFailed(String), networkUnavailable, queueUnavailable
+        case searchHTTP(Int), unreadableSearch, oversizedSearch, noAudio, mediaResponse(Int, String), changedRecording, extractionFailed(String), networkUnavailable, queueUnavailable
         var errorDescription: String? {
             switch self {
             case .searchHTTP(let code): return "Recording search returned HTTP \(code)."
             case .unreadableSearch: return "The source returned a verification page or changed its search response."
             case .oversizedSearch: return "The recording search exceeded its response-size limit."
             case .noAudio: return "This source did not provide a supported AAC audio file."
+            case .mediaResponse(let code, let type): return "The resolved source returned HTTP \(code) (\(type)) instead of supported AAC audio."
             case .changedRecording: return "The resolved recording no longer matches this song's identity and length."
             case .extractionFailed(let reason): return "Audio extraction failed (\(reason)). Try another recording; the source may have changed or restricted this one."
             case .networkUnavailable: return "Open MP3 Shelf on Wi-Fi, or allow cellular for this playlist."
@@ -123,6 +124,26 @@ actor NativeAudioEngine {
                 guard let audio = streams.filterAudioOnly().filter({ $0.fileExtension == .m4a })
                     .highestAudioBitrateStream(), AudioSourceLinks.isResolvedAudioURL(audio.url),
                       !AudioSourceLinks.hasExpired(audio.url, at: Date().addingTimeInterval(30)) else { throw Failure.noAudio }
+                // A signed URL is not evidence that its response is audio.
+                // Reject HTML refusals before they enter the background queue.
+                var probe = AudioSourceFinder.catalogRequest(for: audio.url, allowsCellular: allowsCellular)
+                // Match the background transfer's default URLSession agent,
+                // rather than sending a catalog-specific user agent to media.
+                probe.setValue(nil, forHTTPHeaderField: "User-Agent")
+                probe.setValue("bytes=0-63", forHTTPHeaderField: "Range")
+                let (bytes, response) = try await connection.bytes(for: probe)
+                defer { bytes.task.cancel() }
+                guard response.expectedContentLength <= 100 * 1024 * 1024 else { throw Failure.noAudio }
+                var prefix = Data()
+                for try await byte in bytes {
+                    try Task.checkCancellation()
+                    prefix.append(byte)
+                    if prefix.count == 64 { break }
+                }
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard RecordingMatcher.acceptsAudioResponse(status: code, mime: response.mimeType, prefix: prefix) else {
+                    throw Failure.mediaResponse(code, response.mimeType ?? "missing content type")
+                }
                 try Task.checkCancellation()
                 return AudioCatalogMatch(downloadURL: audio.url, itemURL: candidate.pageURL,
                     licenseURL: nil, sourceName: "MP3 Shelf matching · YouTube")

@@ -33,6 +33,7 @@
         EEAC00000000000000000001 = {isa = PBXBuildFile; productRef = EEAC00000000000000000002; };
 		18C77339A4D7652726EC7476 /* AppleMusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C08A30564FF6144B824403C /* AppleMusicService.swift */; };
 		09BF39F8B3187FB59CC2C493 /* AppleMusicViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D528E27F0BB9C2F519E525AE /* AppleMusicViews.swift */; };
+		39ADF52DD635A9F51C690F39 /* DownloadPathProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC190252D4E4C0ABD6A1A875 /* DownloadPathProof.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -62,6 +63,7 @@
 		035A1AE581FE34F09A409D6D /* NativeAudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAudioEngine.swift; sourceTree = "<group>"; };
 		3C08A30564FF6144B824403C /* AppleMusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicService.swift; sourceTree = "<group>"; };
 		D528E27F0BB9C2F519E525AE /* AppleMusicViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicViews.swift; sourceTree = "<group>"; };
+		EC190252D4E4C0ABD6A1A875 /* DownloadPathProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadPathProof.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -89,6 +91,7 @@
 				ABCA09110000000000000006 /* SourceDiscoveryJob.swift */,
 			); path = Models; sourceTree = "<group>"; };
 		F30B052890FF09AC06846E94 /* Services */ = {isa = PBXGroup; children = (
+				EC190252D4E4C0ABD6A1A875 /* DownloadPathProof.swift */,
 				3C08A30564FF6144B824403C /* AppleMusicService.swift */,
 				556E9F57EB89589680F906AF /* MusicLibrary.swift */,
 				DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */,
@@ -131,6 +134,7 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		12573461486BCB4FF9F39CD6 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+				39ADF52DD635A9F51C690F39 /* DownloadPathProof.swift in Sources */,
 				09BF39F8B3187FB59CC2C493 /* AppleMusicViews.swift in Sources */,
 				18C77339A4D7652726EC7476 /* AppleMusicService.swift in Sources */,
 				628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */,

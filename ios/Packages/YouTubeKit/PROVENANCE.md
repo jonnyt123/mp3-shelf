@@ -1,8 +1,8 @@
 # YouTubeKit provenance
 
 Source: https://github.com/alexeichhorn/YouTubeKit
-Tag: 0.4.8
-Commit: 65be95dbb1dbd749499e0638871568c823822276
+Tag: 0.4.9
+Commit: e5b7d0396ce12bf3444f0d209e8436c83373b7af
 License: MIT; LICENSE and bundled JavaScript notices retained.
 
 Local changes: platform/product-only package manifest; playlist-scoped URLSession
@@ -19,3 +19,7 @@ structured task group that inherits cancellation and the session context.
 Local requests require an explicit scoped session and validate their initial host
 against YouTube/YouTube-nocookie/ytimg/googlevideo before using Foundation.
 The caller supplies a matching redirect allowlist and network restrictions.
+
+0.4.9 integration: updated player clients (including visionOS), optional stream
+quality decoding and additional embedded-player handling. Scoped requests,
+resolved-metadata checks and structured cancellation remain local modifications.

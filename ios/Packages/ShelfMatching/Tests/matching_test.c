@@ -52,5 +52,15 @@ int main(void) {
     oversized[sizeof oversized - 1] = '\0';
     input.candidate_title = oversized;
     assert(ShelfMatchEvaluate(&input).reason == ShelfMatchMissingIdentity);
-    puts("Owned matching core: identity, duration, version, review and invalid-input checks passed");
+    const uint8_t mp4[] = {0,0,0,24,'f','t','y','p','M','4','A',' '};
+    const uint8_t html[] = "<html><head><title>Site Unavailable</title></head></html>";
+    assert(ShelfAudioResponseIsMP4(200, "audio/mp4", mp4, sizeof mp4));
+    assert(ShelfAudioResponseIsMP4(206, "application/octet-stream", mp4, sizeof mp4));
+    assert(!ShelfAudioResponseIsMP4(200, "text/html", html, sizeof html));
+    assert(!ShelfAudioResponseIsMP4(206, "application/octet-stream", html, sizeof html));
+    assert(!ShelfAudioResponseIsMP4(403, "audio/mp4", mp4, sizeof mp4));
+    assert(!ShelfAudioResponseIsMP4(200, NULL, mp4, sizeof mp4));
+    assert(!ShelfAudioResponseIsMP4(200, "audio/mp4", NULL, 64));
+    assert(!ShelfAudioResponseIsMP4(200, "audio/mp4", mp4, 4));
+    puts("Owned matching core: identity, duration, version, review, HTTP/audio admission and invalid-input checks passed");
 }

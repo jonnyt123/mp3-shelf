@@ -1,5 +1,26 @@
 # Native release status — consolidated draft PR #29
 
+## Download proof follow-up — overall native verdict still unverified
+
+A live Carefree/Kevin MacLeod trace resolved AAC URLs but received a 195-byte
+HTTP-200 text/html Site Unavailable response; Range returned the same HTML.
+No successful YouTube audio download is claimed. Updated the extractor to pinned
+0.4.9 and added a real response-prefix/MIME probe before queueing, backed by the
+portable production C admission gate. The captured HTML is rejected, including
+when mislabeled as binary audio.
+
+A separate real HTTPS AAC sample downloaded, decoded with FFmpeg and encoded by
+the exact bundled adapter/LAME into a valid MP3, which fully decoded successfully.
+This does not exercise native AVAudioFile or the iPhone importer. Details, hashes
+and scope are in DOWNLOAD_PATH_EVIDENCE.md.
+
+Added an isolated Debug Simulator proof through the real app's search, matching,
+queue, transfer, conversion/import, full MP3 decode and local-file player. The
+Finder launcher saves per-run results and the MP3; reference-review selection is
+explicitly distinct from automatic selection. Six receipt/preflight regression
+tests pass; these are not native download tests. The native runner exited 2 here
+because macOS/Xcode is unavailable. Build and runtime acceptance remain open.
+
 ## Apple Music import candidate
 
 Added an iPhone Music-library playlist picker using MediaPlayer, with explicit

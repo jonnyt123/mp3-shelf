@@ -3,6 +3,14 @@
 #include <stdio.h>
 #include <string.h>
 
+int ShelfAudioResponseIsMP4(int status, const char *mime,
+                           const uint8_t *prefix, size_t prefix_count) {
+    if ((status != 200 && status != 206) || !mime || !prefix || prefix_count < 12) return 0;
+    if (strcmp(mime, "audio/mp4") && strcmp(mime, "audio/m4a") &&
+        strcmp(mime, "audio/x-m4a") && strcmp(mime, "application/octet-stream")) return 0;
+    return !memcmp(prefix + 4, "ftyp", 4);
+}
+
 static size_t bounded_length(const char *value) {
     if (!value) return 0;
     size_t count = 0;

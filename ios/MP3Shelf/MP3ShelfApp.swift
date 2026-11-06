@@ -88,6 +88,7 @@ struct MP3ShelfApp: App {
     @StateObject private var spotify = SpotifyService()
     #if DEBUG
     @State private var didStartVisualFixture = false
+    @State private var didStartDownloadProof = false
     #endif
 
     var body: some Scene {
@@ -104,6 +105,10 @@ struct MP3ShelfApp: App {
                     library.setForegroundDiscoveryEnabled(scenePhase == .active)
                     #if DEBUG
                     let snapshotArguments = ProcessInfo.processInfo.arguments
+                    if !didStartDownloadProof && snapshotArguments.contains("--mp3shelf-prove-download") {
+                        didStartDownloadProof = true
+                        Task { await DownloadPathProof.run(library: library) }
+                    }
                     if !didStartVisualFixture &&
                         (snapshotArguments.contains("--mp3shelf-snapshot-player") ||
                          snapshotArguments.contains("--mp3shelf-snapshot-filled-library") ||

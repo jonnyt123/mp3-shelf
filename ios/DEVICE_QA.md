@@ -1,5 +1,17 @@
 # MP3 Shelf — iPhone Installation and Background Download QA
 
+## Live native download proof
+
+Run Prove MP3 Downloads.command on the Mac before treating the downloader as
+working. Review the native-result.json stages and selection mode and play the
+saved MP3. The isolated test bundle must not modify or clear the normal app.
+A FAIL or missing result is not a successful download. Repeat on a physical
+iPhone with the reference song and a real Spotify/Apple Music playlist; verify
+Wi-Fi/cellular policy, suspended/locked transfers, cancellation and offline playback.
+Include an HTTP-200 HTML response and a binary-labeled HTML response: both must
+fail before queueing a resolved video source. A valid prefix still requires full
+transfer, codec, identity and duration validation before import.
+
 ## Apple Music library acceptance
 
 1. Build on the Mac and run the existing native parser and portable-backup suites,

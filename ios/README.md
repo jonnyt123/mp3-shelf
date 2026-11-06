@@ -1,5 +1,20 @@
 # MP3 Shelf — Native iPhone App
 
+## Prove an actual download before accepting this candidate
+
+Double-click **Prove MP3 Downloads.command** on the Mac. It uses a fresh isolated
+Simulator app to search for a reference recording, resolve/probe audio, queue the
+real transfer, import/convert MP3, fully decode the saved file and advance a local
+file player. It opens a truthful report and preserves the successful MP3. It uses
+no signing or GitHub Actions. Automatic versus explicit-reference selection is
+reported separately; physical-iPhone/background acceptance remains separate.
+
+See `DOWNLOAD_PATH_EVIDENCE.md` for the current results: a real public AAC file
+was downloaded and converted through the bundled encoder on Linux, but the live
+YouTube media request returned an HTML Site Unavailable page. The full native
+path has **not** passed in this environment. The new preflight rejects such HTML
+before it enters the transfer queue.
+
 ## Apple Music playlist import
 
 Open **Add Music → Your Apple Music playlists**, allow Media & Apple Music
@@ -38,7 +53,7 @@ splitting band names at commas. The resolved video's own metadata is checked
 again before a transfer starts.
 
 The small, app-owned `ShelfMatching` C package implements the scoring rules.
-Vendored MIT-licensed YouTubeKit 0.4.8, pinned in
+Vendored MIT-licensed YouTubeKit 0.4.9, pinned in
 `Packages/YouTubeKit/PROVENANCE.md`, supplies low-level local extraction only.
 Its optional remote extraction service is never selected. AAC audio enters the
 existing background URLSession queue and checked AVAudioFile/LAME MP3 converter;

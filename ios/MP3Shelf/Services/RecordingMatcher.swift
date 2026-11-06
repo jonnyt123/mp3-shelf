@@ -10,6 +10,16 @@ struct RecordingAssessment: Sendable {
 }
 
 enum RecordingMatcher {
+    static func acceptsAudioResponse(status: Int, mime: String?, prefix: Data) -> Bool {
+        guard status == 200 || status == 206 else { return false }
+        return (mime ?? "").lowercased().withCString { type in
+            prefix.withUnsafeBytes { bytes in
+                ShelfAudioResponseIsMP4(Int32(status), type,
+                    bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count) != 0
+            }
+        }
+    }
+
     static var isEnabled: Bool {
         UserDefaults.standard.object(forKey: "MP3Shelf.recordingMatching") as? Bool ?? true
     }
