@@ -88,6 +88,7 @@ struct PlaylistWish: Identifiable, Codable, Hashable, Sendable {
     var spotifyURL: String?
     // Used to reject alternate recordings when matching independent downloads.
     var durationSeconds: Double? = nil
+    var artistNames: [String]? = nil
 }
 
 struct AudioSourceAttribution: Codable, Hashable {
@@ -102,6 +103,55 @@ struct AudioCatalogMatch: Codable, Sendable, Equatable {
     let itemURL: URL
     let licenseURL: URL?
     let sourceName: String
+}
+
+struct RecordingCandidate: Identifiable, Codable, Hashable, Sendable {
+    let id: String
+    let title: String
+    let uploader: String
+    let durationSeconds: Double?
+    var verifiedArtist = false
+    var isLive = false
+
+    var pageURL: URL {
+        var parts = URLComponents(string: "https://www.youtube.com/watch")!
+        parts.queryItems = [URLQueryItem(name: "v", value: id)]
+        return parts.url!
+    }
+}
+
+enum AudioSourceLinks {
+    static func youtubeVideoID(_ url: URL) -> String? {
+        guard url.scheme == "https", ["youtube.com", "www.youtube.com"].contains(url.host?.lowercased() ?? ""),
+              url.path == "/watch", url.user == nil, url.password == nil,
+              let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "v" })?.value,
+              value.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil else { return nil }
+        return value
+    }
+
+    static func isResolvedAudioURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
+              host.hasSuffix(".googlevideo.com"), url.path == "/videoplayback",
+              url.user == nil, url.password == nil, url.port == nil || url.port == 443,
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return false }
+        let mime = items.filter { $0.name == "mime" || $0.name == "mimetype" }
+        guard mime.count == 1, ["audio/mp4", "audio/m4a"].contains(mime[0].value ?? ""),
+              items.contains(where: { ["sig", "signature", "lsig"].contains($0.name) && !($0.value ?? "").isEmpty })
+        else { return false }
+        if let size = items.first(where: { $0.name == "clen" })?.value {
+            guard let bytes = Int64(size), bytes > 0, bytes <= 100 * 1024 * 1024 else { return false }
+        }
+        return true
+    }
+
+    static func hasExpired(_ url: URL, at date: Date = .now) -> Bool {
+        guard isResolvedAudioURL(url),
+              let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "expire" })?.value,
+              let seconds = Double(raw), seconds.isFinite else { return false }
+        return seconds <= date.timeIntervalSince1970
+    }
 }
 
 struct MusicPlaylist: Identifiable, Codable, Hashable {

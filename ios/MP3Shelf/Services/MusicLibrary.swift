@@ -700,6 +700,46 @@ final class MusicLibrary: ObservableObject {
         automaticDownloadProgress = progress
     }
 
+    func canResolveRecordingSources(for playlistID: UUID) -> Bool {
+        foregroundDiscoveryEnabled && networkAllowsDiscovery(for: playlistID) &&
+            playlists.contains { $0.id == playlistID }
+    }
+
+    func queueRecording(_ candidate: RecordingCandidate, matching wish: PlaylistWish,
+                        playlistID: UUID) async throws {
+        guard canResolveRecordingSources(for: playlistID) else { throw NativeAudioEngine.Failure.networkUnavailable }
+        guard BackgroundDownloadBackpressure.mayEnqueue(
+            outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()) else { throw NativeAudioEngine.Failure.queueUnavailable }
+        let source = try await NativeAudioEngine.shared.resolve(candidate, for: wish,
+            allowsCellular: cellularApproved(for: playlistID), userSelected: true)
+        try Task.checkCancellation()
+        guard canResolveRecordingSources(for: playlistID), playlists.contains(where: {
+            $0.id == playlistID && $0.sourceOrder.contains(where: {
+                $0.id == wish.id && MusicMatching.sameRequestedRecording($0, wish)
+            })
+        }), BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID) else {
+            throw NativeAudioEngine.Failure.queueUnavailable
+        }
+    }
+
+    func recoverRecordingSource(after ticket: BackgroundAudioTicket) {
+        guard RecordingMatcher.isEnabled,
+              playlists.contains(where: { $0.id == ticket.playlistID && $0.sourceOrder.contains(where: { $0.id == ticket.requested.id }) }),
+              let index = discoveryJobs.firstIndex(where: { $0.playlistID == ticket.playlistID }),
+              let candidates = discoveryJobs[index].recordingCandidates?[ticket.requested.id.uuidString] else { return }
+        let failedIDs = failedRecordingIDs(for: ticket.requested, playlistID: ticket.playlistID)
+        guard RecordingMatcher.automaticChoice(RecordingMatcher.rank(candidates, for: ticket.requested), excluding: failedIDs) != nil,
+              discoveryJobs[index].requeueFailedSource(for: ticket.requested.id) else { return }
+        persistDiscovery()
+        resumePendingDiscovery()
+    }
+
+    private func failedRecordingIDs(for wish: PlaylistWish, playlistID: UUID) -> Set<String> {
+        Set(BackgroundAudioDownloader.shared.failedSourceTickets(for: wish, playlistID: playlistID)
+            .filter { !AudioSourceLinks.hasExpired($0.downloadURL) }
+            .compactMap { AudioSourceLinks.youtubeVideoID($0.sourcePage) })
+    }
+
     func stopBackgroundTransfers(for playlistID: UUID) {
         // Explicit Cancel All must not immediately queue replacements when a
         // transfer slot opens; pause discovery before cancelling any task.
@@ -806,15 +846,63 @@ final class MusicLibrary: ObservableObject {
             } else {
                 do {
                     let allowsCellular = !backgroundWiFiOnly && cellularApprovedPlaylists.contains(playlistID)
+                    var ownedSources: [AudioCatalogMatch] = []
+                    var ownedDetails: [String] = []
+                    if RecordingMatcher.isEnabled {
+                        do {
+                            let found: [RecordingCandidate]
+                            if let saved = job.recordingCandidates?[wish.id.uuidString] {
+                                found = saved
+                            } else {
+                                found = try await NativeAudioEngine.shared.search(for: wish, allowsCellular: allowsCellular)
+                                guard job.isCurrent(in: discoveryJobs, at: index) else { break }
+                                if job.recordingCandidates == nil { job.recordingCandidates = [:] }
+                                job.recordingCandidates?[wish.id.uuidString] = found
+                                discoveryJobs[index] = job
+                                persistDiscovery()
+                            }
+                            let ranked = RecordingMatcher.rank(found, for: wish)
+                            ownedDetails.append("MP3 Shelf matching: \(found.count) recordings examined")
+                            for match in ranked.prefix(2) {
+                                ownedDetails.append("Match \(match.score): \(match.candidate.title) — \(match.reason)")
+                            }
+                            var excluded = failedRecordingIDs(for: wish, playlistID: playlistID)
+                            for _ in 0..<2 {
+                                guard let choice = RecordingMatcher.automaticChoice(ranked, excluding: excluded) else { break }
+                                do {
+                                    let source = try await NativeAudioEngine.shared.resolve(choice, for: wish, allowsCellular: allowsCellular)
+                                    guard job.isCurrent(in: discoveryJobs, at: index) else { break }
+                                    ownedSources = [source]
+                                    ownedDetails.append("MP3 Shelf matching: selected \(choice.title); audio resolved on this iPhone")
+                                    break
+                                } catch is CancellationError { throw CancellationError() }
+                                catch {
+                                    try Task.checkCancellation()
+                                    ownedDetails.append("Recording \(choice.id): \(error.localizedDescription)")
+                                    excluded.insert(choice.id)
+                                }
+                            }
+                        } catch is CancellationError { throw CancellationError() }
+                        catch {
+                            try Task.checkCancellation()
+                            ownedDetails.append("MP3 Shelf matching: \(error.localizedDescription)")
+                        }
+                        guard job.isCurrent(in: discoveryJobs, at: index) else { break }
+                    }
                     let report: AudioSourceFinder.CatalogSearchReport
                     var catalogError: Error?
-                    do {
-                        report = try await AudioSourceFinder.discover(for: wish, allowsCellular: allowsCellular)
-                    } catch is CancellationError { throw CancellationError() }
-                    catch {
-                        catalogError = error
-                        report = .init(candidates: [], warnings: [error.localizedDescription],
-                                       details: [error.localizedDescription])
+                    if !ownedSources.isEmpty {
+                        report = .init(candidates: ownedSources, warnings: [], details: ownedDetails)
+                    } else {
+                        do {
+                            let catalog = try await AudioSourceFinder.discover(for: wish, allowsCellular: allowsCellular)
+                            report = .init(candidates: catalog.candidates, warnings: catalog.warnings, details: ownedDetails + catalog.details)
+                        } catch is CancellationError { throw CancellationError() }
+                        catch {
+                            catalogError = error
+                            report = .init(candidates: [], warnings: [error.localizedDescription],
+                                           details: ownedDetails + [error.localizedDescription])
+                        }
                     }
                     guard job.isCurrent(in: discoveryJobs, at: index) else { break }
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
@@ -889,7 +977,10 @@ final class MusicLibrary: ObservableObject {
                     guard BackgroundDownloadBackpressure.mayEnqueue(
                         outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
                     ) else { break }
-                    if let source = sources.first {
+                    if hasOfflineRecording(matching: wish) ||
+                        BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
+                        job.record(.alreadyPresent)
+                    } else if let source = sources.first {
                         if BackgroundAudioDownloader.shared.enqueue(
                             source: source, requested: wish, playlistID: playlistID,
                             alternatives: Array(sources.dropFirst())) {

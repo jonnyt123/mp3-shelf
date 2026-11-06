@@ -26,6 +26,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.script = self.root / "ios/scripts/verify-local-release.sh"
         self.script.parent.mkdir(parents=True)
         shutil.copy2(RUNNER, self.script)
+        shutil.copy2(RUNNER.with_name("test-recording-matcher-core.sh"), self.script.with_name("test-recording-matcher-core.sh"))
         self.bin = self.base / "tools"
         self.bin.mkdir()
         for command in ["mkdir", "dirname", "date", "tee", "cp", "git"]:
@@ -40,6 +41,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         path.chmod(0o755)
 
     def compiler(self):
+        self.tool("cc", f"#!{sys.executable}\n" + '''
+import os, pathlib, sys
+if os.environ.get("FAIL_MATCHING_CORE"):
+    print("Injected matching core compile failure")
+    sys.exit(9)
+args = sys.argv[1:]
+output = pathlib.Path(args[args.index("-o") + 1])
+output.write_text("fake object" if "-c" in args else "#!/bin/sh\\nexit 0\\n")
+output.chmod(0o755)
+''')
         self.tool("swiftc", f"#!{sys.executable}\n" + '''
 import os, pathlib, sys
 args = sys.argv[1:]
@@ -99,13 +110,20 @@ elif os.environ.get("FAIL_BUILD") and "Release" in args and "iphonesimulator" in
         self.assertIn("Failure reason: Step playback-order failed", self.report())
         self.assertIn("Completed checks: none", self.report())
 
-    def test_test_mode_runs_all_eight_suites(self):
+    def test_test_mode_runs_all_nine_native_suites_and_matching_core(self):
         self.compiler()
         self.assertEqual(self.run_runner("--tests-only").returncode, 0)
-        expected = "playback-order playback-interruptions downloaded-audio-format playlist-parser lyrics-parser authorized-audio-sources discovery-resume portable-backup"
+        expected = "playback-order playback-interruptions downloaded-audio-format playlist-parser lyrics-parser authorized-audio-sources discovery-resume portable-backup recording-matching-core recording-matcher"
         self.assertIn("Completed checks: " + expected, self.report())
         self.assertIn("Failure reason: none", self.report())
         self.assertIn("physical iPhone acceptance: NOT TESTED", self.report())
+
+    def test_matching_core_failure_stops_native_matcher(self):
+        self.compiler()
+        self.env["FAIL_MATCHING_CORE"] = "1"
+        self.assertEqual(self.run_runner("--tests-only").returncode, 9)
+        self.assertIn("Step recording-matching-core failed", self.report())
+        self.assertFalse(list((self.root / "ios/build/local-release").rglob("recording-matcher-compile.log")))
 
     def test_build_only_does_not_require_separate_swift_command(self):
         self.xcode()

@@ -12,7 +12,7 @@ MP3 Shelf — local native verification without GitHub Actions
   bash ios/scripts/verify-local-release.sh --builds-only
   bash ios/scripts/verify-local-release.sh --smoke
 
-Default: all eight Swift regression suites plus unsigned simulator Debug,
+Default: all nine Swift regression suites, the C matching core, unsigned simulator Debug,
 simulator Release and physical-iPhone arm64 Release builds.
 --tests-only: run Swift regressions (codec tests require macOS AVFoundation).
 --builds-only: compile all three native configurations, skip Swift suites.
@@ -174,6 +174,14 @@ if [[ "$MODE" != builds ]]; then
     ios/MP3Shelf/Models/MusicModels.swift \
     ios/MP3Shelf/Services/PortableShelfArchive.swift \
     ios/Tests/PortableShelfArchiveTests.swift
+  run_step recording-matching-core /bin/bash "$ROOT/ios/scripts/test-recording-matcher-core.sh" "$RUN_OUT"
+  run_suite recording-matcher \
+    -I "$ROOT/ios/Packages/ShelfMatching/Sources/ShelfMatching/include" \
+    ios/MP3Shelf/Models/MusicModels.swift \
+    ios/MP3Shelf/Services/PlaylistCSV.swift \
+    ios/MP3Shelf/Services/RecordingMatcher.swift \
+    ios/Tests/RecordingMatcherTests.swift \
+    "$RUN_OUT/ShelfMatching.o"
 fi
 
 if [[ "$MODE" != tests ]]; then

@@ -158,6 +158,52 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(finished.outcome(for: wishes[0]) == .queued &&
                         finished.outcome(for: wishes[1]) == .unavailable,
                         "individual MP3 search outcomes survive restart")
+        var recovery = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        recovery.record(.queued)
+        recovery.record(.unavailable)
+        _ = recovery.reserveWebSearch(for: wishes[0].id)
+        let retryClock = Date(timeIntervalSince1970: 1_700_000_000)
+        recovery.recordTransientFailure("Current song is waiting", at: retryClock)
+        let choice = RecordingCandidate(id: "abcdefghijk", title: "First", uploader: "Artist", durationSeconds: 210)
+        recovery.recordingCandidates = [wishes[0].id.uuidString: [choice]]
+        let beforeRecovery = recovery
+        verifyDiscovery(recovery.requeueFailedSource(for: wishes[0].id) &&
+                        recovery.nextIndex == 1 && recovery.currentWish?.id == wishes[2].id &&
+                        recovery.wishes.last?.id == wishes[0].id && recovery.queued == 0 &&
+                        recovery.unavailable == 1 && recovery.outcome(for: wishes[1]) == .unavailable,
+                        "failed recording returns to pending without skipping another song or rewriting its history")
+        verifyDiscovery(recovery.webSearchWishIDs == beforeRecovery.webSearchWishIDs &&
+                        recovery.nextRetryAt == beforeRecovery.nextRetryAt &&
+                        recovery.transientFailureCount == beforeRecovery.transientFailureCount &&
+                        !beforeRecovery.isCurrent(in: [recovery], at: 0),
+                        "source recovery preserves paid-search reservations and current-song backoff, invalidating stale lookups")
+        let restoredRecovery = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(recovery))
+        verifyDiscovery(restoredRecovery.recordingCandidates?[wishes[0].id.uuidString] == [choice] &&
+                        restoredRecovery.sourceRecoveryAttempts?[wishes[0].id.uuidString] == 1,
+                        "recording candidates and recovery budget survive relaunch")
+        verifyDiscovery(!recovery.requeueFailedSource(for: wishes[2].id) &&
+                        !recovery.requeueFailedSource(for: UUID()),
+                        "pending and removed songs cannot trigger processed-source recovery")
+        recovery.record(.alreadyPresent)
+        recovery.record(.queued)
+        recovery.isPaused = true
+        verifyDiscovery(!recovery.requeueFailedSource(for: wishes[0].id),
+                        "paused playlists do not silently restart a failed recording")
+        recovery.isPaused = false
+        for expected in 2...3 {
+            verifyDiscovery(recovery.requeueFailedSource(for: wishes[0].id) &&
+                            recovery.currentWish?.id == wishes[0].id &&
+                            recovery.sourceRecoveryAttempts?[wishes[0].id.uuidString] == expected,
+                            "automatic recovery consumes one persisted attempt")
+            recovery.record(.queued)
+        }
+        verifyDiscovery(!recovery.requeueFailedSource(for: wishes[0].id),
+                        "source recovery stops after three attempts")
+        var unknownHistory = beforeRecovery
+        unknownHistory.outcomes = nil
+        verifyDiscovery(!unknownHistory.requeueFailedSource(for: wishes[0].id),
+                        "legacy checkpoints with unknown outcomes cannot invent a queued result")
         // Older discovery checkpoints had no outcomes field. They must still
         // decode and resume at the exact same cursor without repeating songs.
         var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(job))

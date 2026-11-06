@@ -360,6 +360,8 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     // Optional so older persisted checkpoints remain decodable.
     var catalogWarnings: [String]? = nil
     var lookupDetails: [String: [String]]? = nil
+    var recordingCandidates: [String: [RecordingCandidate]]? = nil
+    var sourceRecoveryAttempts: [String: Int]? = nil
     var webSearchWishIDs: [UUID]? = nil
     var webSources: [String: [AudioCatalogMatch]]? = nil
     var webSearchStoppedReason: String? = nil
@@ -383,6 +385,26 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     mutating func saveLookupDetails(_ details: [String], for wishID: UUID) {
         if lookupDetails == nil { lookupDetails = [:] }
         lookupDetails?[wishID.uuidString] = Array(details.prefix(16)).map { String($0.prefix(500)) }
+    }
+
+    /// Move only this processed wish back to pending, keeping every other
+    /// song's cursor/history and the web-search credit ledger intact.
+    mutating func requeueFailedSource(for wishID: UUID) -> Bool {
+        guard !isPaused, nextIndex <= wishes.count,
+              let index = wishes.firstIndex(where: { $0.id == wishID }),
+              index < nextIndex, let history = outcomes, index < history.count,
+              history[index] == .queued,
+              (sourceRecoveryAttempts?[wishID.uuidString] ?? 0) < 3 else { return false }
+        let wish = wishes.remove(at: index)
+        wishes.append(wish)
+        var updated = history
+        updated.remove(at: index)
+        outcomes = updated
+        nextIndex -= 1
+        queued = max(0, queued - 1)
+        if sourceRecoveryAttempts == nil { sourceRecoveryAttempts = [:] }
+        sourceRecoveryAttempts?[wishID.uuidString, default: 0] += 1
+        return true
     }
 
     /// Exhaust a bounded retry budget instead of blocking this playlist

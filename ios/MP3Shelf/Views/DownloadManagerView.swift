@@ -302,11 +302,11 @@ private struct DownloadTicketRow: View {
                 Button {
                     transfers.retry(ticket.id)
                 } label: {
-                    Label("Retry MP3", systemImage: "arrow.clockwise")
+                    Label(transfers.isResolvingSource(ticket.id) ? "Refreshing audio source…" : "Retry MP3", systemImage: "arrow.clockwise")
                 }
                 .font(.subheadline)
                 .disabled(!transfers.canRetry(ticket.id))
-                if !transfers.canRetry(ticket.id) {
+                if !transfers.canRetry(ticket.id) && !transfers.isResolvingSource(ticket.id) {
                     Text("Retry becomes available when a slot opens, or in the playlist that still contains this download.")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }

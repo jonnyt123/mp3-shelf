@@ -1,5 +1,32 @@
 # MP3 Shelf — iPhone Installation and Background Download QA
 
+## Custom recording engine acceptance
+
+1. Build this candidate with all local packages and run the nine native Swift
+   suites plus the portable C matching core. Confirm the extractor's bundled
+   JavaScript resources are present in the app.
+2. With no Brave key saved, import a small Spotify playlist on Wi-Fi. Confirm
+   **Source search details** names MP3 Shelf matching, then a resolved source.
+   A successful search alone does not count as a completed download.
+3. Verify an exact artist/title/duration match becomes a real, playable MP3 in
+   Files and attaches in the original playlist order. Test playback offline.
+4. Include a cover, remaster, short preview and two equally strong candidates.
+   Wrong versions must be rejected and ties must expose **Review recording
+   matches**. Choose a reviewable candidate and verify its resolved metadata
+   is checked before downloading; rejected candidates remain disabled.
+5. Let a signed audio URL expire, then retry. Confirm the stable video ID is
+   resolved again rather than repeatedly requesting the expired URL. Simulate
+   source refusal and confirm automatic recovery stops after three attempts.
+6. Start four transfers, then retry another recording. It must wait for a slot.
+   Close the review sheet while resolving; delete a resolving song or playlist;
+   use Cancel All; clear finished history. No cancelled work may later enqueue.
+7. Test Wi-Fi loss, cellular without approval, explicit playlist cellular approval
+   and a background-only relaunch. Search/extraction must follow the same policy
+   as catalog discovery. No remote extraction helper should be contacted.
+8. Disable recording matching and confirm catalog/direct-link behavior still
+   works. Check existing local files, playlist order, pause state and paid-search
+   reservations survive relaunch and failed-source recovery.
+
 This checklist is the **physical-iPhone acceptance gate**. GitHub's macOS
 simulator build is a separate, useful check and does not replace these tests.
 

@@ -43,6 +43,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private let manifestURL: URL
     private var tickets: [UUID: BackgroundAudioTicket] = [:]
     private var processing: Set<UUID> = []
+    private var sourceResolutionTasks: [UUID: Task<Void, Never>] = [:]
     private var conversions: [UUID: Progress] = [:]
     private var reconcilingOrphans = false
     private weak var library: MusicLibrary?
@@ -231,11 +232,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     func canRetry(_ id: UUID) -> Bool {
-        guard let ticket = tickets[id], let library,
+        guard sourceResolutionTasks[id] == nil, let ticket = tickets[id], let library,
               ticket.status == .failed || ticket.status == .cancelled,
               library.playlists.contains(where: {
                   $0.id == ticket.playlistID && $0.sourceOrder.contains(where: { $0.id == ticket.requested.id })
               }) else { return false }
+        guard !sourceResolutionTasks.keys.contains(where: { key in
+            guard let resolving = tickets[key] else { return false }
+            return resolving.playlistID == ticket.playlistID &&
+                MusicMatching.sameRequestedRecording(resolving.requested, ticket.requested)
+        }) else { return false }
         if library.hasOfflineRecording(matching: ticket.requested) { return true }
         return Self.allowedDownloadURL(ticket.downloadURL) &&
             !isQueued(ticket.requested, for: ticket.playlistID) &&
@@ -270,6 +276,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
         guard Self.allowedDownloadURL(previous.downloadURL),
               !isQueued(previous.requested, for: previous.playlistID) else { return }
+        if let videoID = AudioSourceLinks.youtubeVideoID(previous.sourcePage) {
+            retryResolvedRecording(previous, videoID: videoID)
+            return
+        }
         // Use a new identifier. A late didComplete callback from the old
         // cancelled task must never change the state of the new transfer.
         let newID = UUID()
@@ -295,6 +305,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     func clearFinishedHistory() {
         let removed = tickets.values.filter { $0.status != .queued }
         for item in removed {
+            sourceResolutionTasks[item.id]?.cancel()
             try? fm.removeItem(at: Self.stagingURL(item.id))
         }
         tickets = tickets.filter { $0.value.status == .queued }
@@ -324,6 +335,54 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func pendingCount(for playlistID: UUID? = nil) -> Int {
         tickets.values.filter { $0.status == .queued && (playlistID == nil || $0.playlistID == playlistID) }.count
+            + sourceResolutionTasks.keys.filter { playlistID == nil || tickets[$0]?.playlistID == playlistID }.count
+    }
+
+    func isResolvingSource(_ id: UUID) -> Bool { sourceResolutionTasks[id] != nil }
+
+    private func retryResolvedRecording(_ previous: BackgroundAudioTicket, videoID: String) {
+        guard let library else { return }
+        guard library.canResolveRecordingSources(for: previous.playlistID) else {
+            var current = previous
+            current.failureReason = NativeAudioEngine.Failure.networkUnavailable.localizedDescription
+            tickets[previous.id] = current
+            persist()
+            revision += 1
+            return
+        }
+        sourceResolutionTasks[previous.id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.sourceResolutionTasks.removeValue(forKey: previous.id)
+                self.revision += 1
+                self.updatePending()
+            }
+            do {
+                let wish = previous.requested
+                let candidate = RecordingCandidate(id: videoID, title: wish.title,
+                    uploader: wish.artistNames?.first ?? wish.artist, durationSeconds: wish.durationSeconds)
+                let source = try await NativeAudioEngine.shared.resolve(candidate, for: wish,
+                    allowsCellular: library.cellularApproved(for: previous.playlistID), userSelected: true)
+                try Task.checkCancellation()
+                guard let current = self.tickets[previous.id], current.status == previous.status,
+                      library.canResolveRecordingSources(for: previous.playlistID),
+                      library.playlists.contains(where: { $0.id == previous.playlistID && $0.sourceOrder.contains(where: { $0.id == wish.id }) }) else { return }
+                self.sourceResolutionTasks.removeValue(forKey: previous.id)
+                guard self.enqueue(source: source, requested: wish, playlistID: previous.playlistID) else { return }
+                var replaced = current
+                replaced.status = .cancelled
+                replaced.failureReason = "Replaced by manual retry"
+                self.tickets[previous.id] = replaced
+                self.persist()
+            } catch {
+                guard !Task.isCancelled, var current = self.tickets[previous.id], current.status == previous.status else { return }
+                current.failureReason = "Source refresh failed: \(error.localizedDescription)"
+                self.tickets[previous.id] = current
+                self.persist()
+            }
+        }
+        revision += 1
+        updatePending()
     }
 
     func isFinalizing(_ id: UUID) -> Bool {
@@ -339,6 +398,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     func stopTransfers(for playlistID: UUID) {
+        for (id, task) in sourceResolutionTasks where tickets[id]?.playlistID == playlistID { task.cancel() }
         let ids = tickets.values.filter { $0.playlistID == playlistID && $0.status == .queued }.map(\.id)
         for id in ids { cancelTransfer(id) }
     }
@@ -347,6 +407,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// for tracks removed from that playlist. Do not delete library recordings
     /// or cancel tasks belonging to another playlist.
     func cancelRemovedTracks(for playlistID: UUID, keepingIDs: Set<UUID>) {
+        for (id, task) in sourceResolutionTasks {
+            if let ticket = tickets[id], ticket.playlistID == playlistID,
+               !keepingIDs.contains(ticket.requested.id) { task.cancel() }
+        }
         let removed = tickets.values.filter {
             $0.playlistID == playlistID && $0.status == .queued &&
             !keepingIDs.contains($0.requested.id)
@@ -507,6 +571,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         tickets[id] = ticket
         persist()
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
+        if allowAlternative { library?.recoverRecordingSource(after: ticket) }
         updatePending()
     }
 
@@ -746,6 +811,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     nonisolated private static func allowedDownloadURL(_ url: URL) -> Bool {
         guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
               !host.isEmpty, url.user == nil, url.password == nil else { return false }
+        if host == "googlevideo.com" || host.hasSuffix(".googlevideo.com") {
+            return AudioSourceLinks.isResolvedAudioURL(url)
+        }
         for blocked in ["spotify.com", "spotifycdn.com", "scdn.co", "jamendo.com", "youtube.com", "googlevideo.com"] {
             if host == blocked || host.hasSuffix("." + blocked) { return false }
         }

@@ -700,6 +700,8 @@ struct PlaylistDetailView: View {
     @State private var editing: MusicTrack?
     @State private var manuallyAdding: PlaylistWish?
     @State private var showWebDiscovery = false
+    @State private var reviewingRecording: PlaylistWish?
+    @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
 
@@ -865,7 +867,7 @@ struct PlaylistDetailView: View {
                                   systemImage: "wifi.slash")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
-                        Text("Automatic matching now checks Internet Archive, Openverse, Wikimedia Commons and artist-enabled Audius downloads. Other web pages require review; not every Spotify recording is independently downloadable.")
+                        Text("MP3 Shelf compares recording titles, artist credits, versions and lengths. Clear matches download automatically; use Review recording matches when several recordings are similar. Public audio catalogs provide additional sources.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         Button {
                             showWebDiscovery = true
@@ -873,6 +875,9 @@ struct PlaylistDetailView: View {
                             Label("Search the wider web for missing songs", systemImage: "globe")
                         }
                         .buttonStyle(.bordered)
+                        Toggle("Use MP3 Shelf recording matching", isOn: $recordingMatchingEnabled)
+                        Text("Matching and audio extraction run on this iPhone. No search key is needed for recording matching. Transfers use Wi-Fi unless you allow cellular for this playlist.")
+                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         if let warnings = library.discoveryJob(for: playlistID)?.catalogWarnings,
                            !warnings.isEmpty {
                             Label("Search incomplete: " + warnings.joined(separator: " • ") +
@@ -882,7 +887,7 @@ struct PlaylistDetailView: View {
                         }
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Catalog search: \(job.nextIndex)/\(job.wishes.count) processed")
+                                Text("Recording search: \(job.nextIndex)/\(job.wishes.count) processed")
                                     .font(.caption.monospacedDigit())
                                 if job.failed > 0 {
                                     Label("\(job.failed) song lookup(s) failed after retrying. The remaining songs continue automatically.",
@@ -1004,8 +1009,9 @@ struct PlaylistDetailView: View {
                                             .accessibilityLabel("Download progress for \(wish.title)")
                                     }
                                     if ticket.status == .failed || ticket.status == .cancelled {
-                                        Button("Retry MP3 download") { transfers.retry(ticket.id) }
+                                        Button(transfers.isResolvingSource(ticket.id) ? "Refreshing audio source…" : "Retry MP3 download") { transfers.retry(ticket.id) }
                                             .font(.caption.weight(.semibold))
+                                            .disabled(!transfers.canRetry(ticket.id))
                                     }
                                     if ticket.status == .queued || ticket.status == .imported {
                                         Text("Source: \(ticket.provider)")
@@ -1016,6 +1022,11 @@ struct PlaylistDetailView: View {
                                 if let details = library.discoveryJob(for: playlistID)?.lookupDetails?[wish.id.uuidString],
                                    !details.isEmpty {
                                     SongSourceDiagnosticsView(wish: wish, details: details)
+                                }
+                                if let choices = library.discoveryJob(for: playlistID)?.recordingCandidates?[wish.id.uuidString],
+                                   !choices.isEmpty, !library.hasOfflineRecording(matching: wish) {
+                                    Button("Review recording matches") { reviewingRecording = wish }
+                                        .font(.caption.weight(.semibold))
                                 }
                                 if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) == nil {
                                     Button { manuallyAdding = wish } label: {
@@ -1057,6 +1068,60 @@ struct PlaylistDetailView: View {
         .sheet(isPresented: $showWebDiscovery) {
             WebAudioDiscoveryView(wishes: playlist?.missingTracks ?? [])
         }
+        .sheet(item: $reviewingRecording) { wish in
+            RecordingMatchReviewView(wish: wish, playlistID: playlistID,
+                candidates: library.discoveryJob(for: playlistID)?.recordingCandidates?[wish.id.uuidString] ?? [])
+        }
+    }
+}
+
+private struct RecordingMatchReviewView: View {
+    let wish: PlaylistWish
+    let playlistID: UUID
+    let candidates: [RecordingCandidate]
+    @EnvironmentObject private var library: MusicLibrary
+    @Environment(\.dismiss) private var dismiss
+    @State private var task: Task<Void, Never>?
+    @State private var working = false
+    @State private var issue: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("REQUESTED RECORDING") {
+                    Text(wish.title).font(.headline)
+                    Text(wish.artist)
+                    if let length = wish.durationSeconds { Text("Expected length: \(length.formatted(.number.precision(.fractionLength(0)))) seconds") }
+                    if working { ProgressView("Resolving and checking this recording…") }
+                    if let issue { Text(issue).foregroundStyle(.red) }
+                }
+                ForEach(RecordingMatcher.rank(candidates, for: wish).prefix(8), id: \.candidate.id) { match in
+                    Section {
+                        Text(match.candidate.title).font(.headline)
+                        Text(match.candidate.uploader).font(.subheadline)
+                        Text("Match score: \(match.score) • \(match.reason)").font(.caption)
+                        if let duration = match.candidate.durationSeconds { Text("\(duration.formatted(.number.precision(.fractionLength(0)))) seconds").font(.caption) }
+                        Link("Open recording source", destination: match.candidate.pageURL)
+                        Button("Download this recording") {
+                            working = true
+                            issue = nil
+                            task = Task { @MainActor in
+                                defer { working = false }
+                                do {
+                                    try await library.queueRecording(match.candidate, matching: wish, playlistID: playlistID)
+                                    dismiss()
+                                } catch is CancellationError { }
+                                catch { issue = error.localizedDescription }
+                            }
+                        }
+                        .disabled(working || match.decision == .rejected)
+                    }
+                }
+            }
+            .navigationTitle("Recording matches")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        }
+        .onDisappear { task?.cancel() }
     }
 }
 

@@ -1,5 +1,41 @@
 # MP3 Shelf — Native iPhone App
 
+## On-device recording matcher and download engine
+
+The native app now owns recording search, normalization, scoring, candidate
+selection and retry policy. Spotify supplies the playlist metadata. MP3 Shelf
+searches YouTube on the iPhone, compares title, credited artist, recording
+version and duration, then resolves a selected recording to audio. This primary
+path needs no Brave search key and no Mac running while you use the app.
+
+Exact artist/title matches with a compatible duration can download automatically.
+Near matches and equally strong candidates stay available under **Review recording
+matches**. Covers, different edits/remasters, previews and ongoing livestreams
+are rejected. Spotify artist arrays preserve primary-artist identity without
+splitting band names at commas. The resolved video's own metadata is checked
+again before a transfer starts.
+
+The small, app-owned `ShelfMatching` C package implements the scoring rules.
+Vendored MIT-licensed YouTubeKit 0.4.8, pinned in
+`Packages/YouTubeKit/PROVENANCE.md`, supplies low-level local extraction only.
+Its optional remote extraction service is never selected. AAC audio enters the
+existing background URLSession queue and checked AVAudioFile/LAME MP3 converter;
+changing the extension alone does not create an MP3. Candidate IDs persist so
+manual retry can refresh an expired signed URL. Automatic source recovery is
+limited to three attempts per song in a discovery run.
+
+Wi-Fi remains the default. Search and extraction inherit the playlist's explicit
+cellular setting, and manual retry resolution counts against the four-transfer
+limit. Closing the review sheet cancels its lookup; removing a song or playlist
+cannot resurrect its transfer. Keep the app open for predictable source lookup;
+queued file transfers use the existing iOS background behavior.
+
+Run `bash ios/scripts/test-recording-matcher-core.sh` for the portable matching
+core. The Mac verifier also includes `RecordingMatcherTests.swift` and recovery
+checkpoint regressions. **Native compilation, extraction and a completed iPhone
+playlist download remain unverified in this environment.** Public search HTML
+was checked successfully, which does not establish successful audio extraction.
+
 ## Large music library and Spotify import performance
 
 The app maintains a revision-aware in-memory index of local recordings:
@@ -105,9 +141,8 @@ are downloaded.
 
 ## Local native release verification (no GitHub Actions minutes)
 
-The download and playback recovery candidate is on
-`fix/ios-download-finalization-and-conversion` (draft PR #28), separate from
-the default `main` PWA and the playback queue/large-library PRs #24–#27.
+The consolidated native candidate is on `feat/ios-consolidated-candidate`
+(draft PR #29), including the earlier download, playback and library changes.
 Check out this candidate branch in your local clone. You can
 also use GitHub's **Code → Download ZIP** after choosing that branch. Opening
 `ios/MP3Shelf.xcodeproj` on default `main` will not include these new features.
@@ -118,7 +153,7 @@ On a Mac with full Xcode selected, run:
 bash ios/scripts/verify-local-release.sh
 ```
 
-This executes all eight native Swift regression suites, unsigned Simulator
+This executes all nine native Swift regression suites, the C matching core, unsigned Simulator
 Debug and Release builds, and an unsigned physical-iPhone architecture Release
 build **locally**. It never queues a GitHub Actions workflow. Add `--smoke` to
 install and launch the Debug app on a locally installed iPhone Simulator and
@@ -180,13 +215,13 @@ Spotify sign-in uses OAuth Authorization Code **with PKCE** and iOS `ASWebAuthen
 2. In Spotify's Development Mode, the app owner currently needs Spotify Premium and the app is limited to up to five allowlisted testers. Add each user in the Spotify dashboard before sign-in.
 3. Open MP3 Shelf → Import → **Connect Spotify Account**. Enter the **Client ID**, sign in, and select a playlist.
 4. Only playlists owned by or collaborative with the signed-in user can expose their items under Spotify's 2026 API rules. Other followed playlists can return HTTP 403; use the CSV fallback for track lists you are permitted to export.
-5. Track metadata is matched against local MP3s. Missing songs are searched in public audio catalogs or can be filled with direct audio-file links. License labels are not required for matching files.
+5. Track metadata is matched against local MP3s. Missing songs enter the on-device recording matcher, followed by public audio catalog fallback. Direct audio-file links remain available. License labels are not required for matching files.
 
 Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow), [Spotify playlist-items API](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items), [Spotify redirect URIs](https://developer.spotify.com/documentation/web-api/concepts/apps), [Spotify Development Mode](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
 
 ## One-tap downloads for imported Spotify playlists
 
-Connect Spotify, choose a playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. MP3 Shelf imports the song list and searches independent public audio catalogs for matching files. Saved recordings are attached in playlist order. Keep the app open for discovery; queued files can continue through iOS background transfers after locking the phone.
+Connect Spotify, choose a playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. MP3 Shelf imports the song list and runs its recording matcher first. If it cannot resolve a clear match, public audio catalogs provide additional sources. Saved recordings are attached in playlist order. Keep the app open for discovery; queued files can continue through iOS background transfers after locking the phone. When candidates need a decision, open the song's **Review recording matches** action.
 
 **Matching requirements:** Normalized song title and artist must match, and the result must identify one downloadable recording. HTTPS, a supported audio format, the 100 MiB transfer limit and actual decoded duration checks remain. Album items can qualify when exactly one original MP3 filename identifies the song. License metadata is optional attribution: a missing or non-Creative-Commons label does not exclude an otherwise matching file. Source links remain available even when there is no license link.
 
@@ -630,7 +665,7 @@ No API secrets, ad SDKs, cloud services or external dependencies are bundled.
 
 ## Download and playback review branch
 
-Use branch `fix/ios-download-finalization-and-conversion` (draft PR #28) for these changes. In Finder, double-click **Verify MP3 Shelf.command** inside `ios`. It runs eight Swift regression suites, three unsigned native builds and the existing eight-screen Simulator smoke capture. It uses no GitHub Actions. macOS may require Open from the context menu for a downloaded script.
+Use branch `fix/ios-download-finalization-and-conversion` (draft PR #28) for these changes. In Finder, double-click **Verify MP3 Shelf.command** inside `ios`. It runs nine Swift regression suites plus the C matching core, three unsigned native builds and the existing eight-screen Simulator smoke capture. It uses no GitHub Actions. macOS may require Open from the context menu for a downloaded script.
 
 Reports and logs appear in `ios/build/local-release`. Missing Swift/Xcode now also creates a failed report. A successful Simulator launch still requires screenshot review and the physical iPhone scenarios in DEVICE_QA.md. The new interruption suite exercises resume intent; real calls, Siri and Bluetooth events require device testing.
 
@@ -638,13 +673,13 @@ For installation, double-click **Install on iPhone.command** inside `ios`. It li
 
 ## Consolidated integration candidate
 
-Branch `feat/ios-consolidated-candidate` combines the PR #28 download/conversion/playback work with PRs #24–#27 (shuffle history, queue editing, four-transfer backpressure and library indexes). Its Finder verification launcher includes eight regression suites. Conflict resolution preserves scene-gated discovery and bounded background ownership alongside the capacity check. Native compilation and device QA remain required before release.
+Branch `feat/ios-consolidated-candidate` combines the PR #28 download/conversion/playback work with PRs #24–#27 (shuffle history, queue editing, four-transfer backpressure and library indexes). Its Finder verification launcher includes nine Swift suites and the C matching core. Conflict resolution preserves scene-gated discovery and bounded background ownership alongside the capacity check. Native compilation and device QA remain required before release.
 
 ## Verification workflow follow-up
 
 The latest report remains at `ios/build/local-release/QA_RECORD.md`; logs and Simulator screenshots now live in separate `runs/` folders identified by that report. This prevents stale output from an earlier invocation being mistaken for new evidence. Conflicting test-only/build-only flags are rejected, and failed compilation/build steps are named in the report. Extracted ZIPs use the commit recorded in `SOURCE.json`, labeled as archive metadata with unknown modification state; an unrelated parent Git checkout is never treated as the source repository.
 
-`python3 ios/scripts/test-release-workflow.py` exercises the real runner with a fake toolchain in temporary directories. It verifies reporting/control flow only and does not compile Swift, build iOS, sign or install apps. The eight native regression suites and actual Xcode/device gates remain separate.
+`python3 ios/scripts/test-release-workflow.py` exercises the real runner with a fake toolchain in temporary directories. It verifies reporting/control flow only and does not compile Swift, build iOS, sign or install apps. The nine native Swift suites and actual Xcode/device gates remain separate.
 
 Long-press a playlist and choose **Make local copy** to preserve its song order and missing entries as a separate local playlist. Audio files are shared. The copy has fresh playlist/wish IDs and does not inherit Spotify-refresh or portable-restore identity; it does not automatically begin downloads.
 

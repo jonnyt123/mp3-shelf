@@ -1,5 +1,36 @@
 # Native release status — consolidated draft PR #29
 
+## Current custom-engine candidate
+
+The app now owns search parsing, recording normalization/scoring, ambiguity
+decisions, persisted candidate selection and bounded source recovery. Local-only
+YouTubeKit extraction supplies AAC to the existing background downloader and
+checked MP3 converter. The primary matcher needs no search key or running Mac.
+Manual review, expired-link refresh, cancellation and playlist deletion are
+wired through the existing scene/network/capacity policies.
+
+Evidence: the actual C matching core passes executable identity, duration,
+version, fuzzy-review and invalid-input checks. Thirteen verifier workflow tests
+and eight installer workflow tests pass using fake Apple tools; these exercise
+shell control flow, not Swift compilation or signing. A read-only YouTube search
+returned HTTP 200 with 20 video renderers, artist badges and duration fields in
+the expected shape. No audio was extracted in that probe.
+
+Fresh source checks: all 31 first-party Swift files passed syntax parsing.
+Static Xcode wiring checks passed for 21 app files, three local products and
+three extractor JavaScript resources. The raw parser also rejects pristine
+upstream YouTube.swift, so that file's parser result is inconclusive rather
+than a compiler verdict. C tests also passed with AddressSanitizer and UBSan;
+LeakSanitizer was disabled because of this host's execution restrictions.
+The native verifier exited 2 with `Swift compiler not found`.
+
+The Mac runner now has nine Swift suites plus the C matching-core check.
+Swift type checking, package linking, Xcode builds, native extraction, real MP3
+conversion through this new path and physical-iPhone acceptance are **NOT VERIFIED**.
+The source remains a draft candidate; no release or signing fix is claimed.
+
+## Earlier consolidated work and evidence
+
 The candidate now handles audio interruptions and route loss, and includes a double-click Mac verification launcher. The branch is `fix/ios-download-finalization-and-conversion`. The consolidated candidate branch `feat/ios-consolidated-candidate` now incorporates PRs #24–#27, with conflicts resolved in playback order, scene-gated discovery and regression tests.
 
 | Gate | Evidence / remaining work |
@@ -7,7 +38,7 @@ The candidate now handles audio interruptions and route loss, and includes a dou
 | Playback recovery | Resume-intent regression suite added and wired into local runner; Swift execution and real notification behavior NOT VERIFIED. |
 | Converter | Exact bundled C encoder harness and full MP3 decode passed on Linux in the prior development step. Swift bridge, codec support and native package linking NOT VERIFIED. |
 | Upstream source | The deprecated include and VBR helper array-bound declarations are corrected with provenance notes. Bundled compilation passed with these diagnostic categories treated as errors, then encoder assertions and full MP3 decode passed. This is not a pass under all -Wall/-Wextra warnings or an Apple compiler build. Vendored whitespace is retained. |
-| Local verification | Bash syntax and missing-Swift failure-report path checked here. Eight Swift suites, three native builds and eight Simulator captures require a Mac. |
+| Local verification | Nine Swift suites, three native builds and eight Simulator captures require a Mac. Portable C checks can run separately. |
 | iPhone | Calls/Siri, wired and Bluetooth route loss, crossfade interruption, background conversion/cancellation, locked playback and Wi-Fi/cellular acceptance remain required in DEVICE_QA.md. |
 | Release | Draft only; no signing, merge, deployment or device acceptance demonstrated. |
 
