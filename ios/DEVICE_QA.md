@@ -1,5 +1,30 @@
 # MP3 Shelf — iPhone Installation and Background Download QA
 
+## Apple Music library acceptance
+
+1. Build on the Mac and run the existing native parser and portable-backup suites,
+   including their new Apple Music cases. Use a physical iPhone for MediaPlayer QA.
+2. In Music, add/sync a small playlist with cloud-only songs and a repeated song.
+   Open Add Music → Your Apple Music playlists. Access should be requested only
+   after Read my Apple Music playlists; granting it should load playlist choices.
+3. Choose Find & Save Offline MP3s. Verify source order, repeated occurrences,
+   artist/duration metadata and immediate navigation to the song results. Complete
+   a matched MP3 download and play it with networking disabled.
+4. Import again, then add/remove/reorder songs in Music and refresh/reimport.
+   The same MP3 Shelf playlist should update, preserving stable existing wishes,
+   manual additions and completed work. Removed-song transfers must stop.
+5. Deny permission, reopen Settings, grant it, then refresh. Revoke permission
+   during a read. Stale playlist choices must clear and cancelled reads must not
+   import or start downloads after leaving the screen.
+6. Check empty, missing/unavailable metadata and non-music playlists. Errors must
+   explain the problem; an incomplete read must not silently replace a full list.
+7. Export/restore a native backup and make a local copy. Verify matching metadata
+   and source order survive, copies do not sync with the source, and another
+   installation's device-local IDs cannot update the wrong imported playlist.
+8. Confirm Spotify/CSV imports and the existing Wi-Fi/cellular, recording review,
+   four-transfer limit and source-refresh behavior still work. Verify Music asset
+   and preview URLs never reach the audio downloader.
+
 ## Custom recording engine acceptance
 
 1. Build this candidate with all local packages and run the nine native Swift

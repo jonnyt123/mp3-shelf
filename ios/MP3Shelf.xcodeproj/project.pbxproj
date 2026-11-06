@@ -31,6 +31,8 @@
 		31EE02568187EAEC04B62A7F /* NativeAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 035A1AE581FE34F09A409D6D; };
         EEAB00000000000000000001 = {isa = PBXBuildFile; productRef = EEAB00000000000000000002; };
         EEAC00000000000000000001 = {isa = PBXBuildFile; productRef = EEAC00000000000000000002; };
+		18C77339A4D7652726EC7476 /* AppleMusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C08A30564FF6144B824403C /* AppleMusicService.swift */; };
+		09BF39F8B3187FB59CC2C493 /* AppleMusicViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D528E27F0BB9C2F519E525AE /* AppleMusicViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +60,8 @@
 		638E866708182CE02BFCE157 /* MP3Shelf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MP3Shelf.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D26A5CF34B73574DD0C118F2 /* RecordingMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingMatcher.swift; sourceTree = "<group>"; };
 		035A1AE581FE34F09A409D6D /* NativeAudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAudioEngine.swift; sourceTree = "<group>"; };
+		3C08A30564FF6144B824403C /* AppleMusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicService.swift; sourceTree = "<group>"; };
+		D528E27F0BB9C2F519E525AE /* AppleMusicViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,6 +89,7 @@
 				ABCA09110000000000000006 /* SourceDiscoveryJob.swift */,
 			); path = Models; sourceTree = "<group>"; };
 		F30B052890FF09AC06846E94 /* Services */ = {isa = PBXGroup; children = (
+				3C08A30564FF6144B824403C /* AppleMusicService.swift */,
 				556E9F57EB89589680F906AF /* MusicLibrary.swift */,
 				DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */,
 				B582D5747D32C08B3D19E5E5 /* PlaybackController.swift */,
@@ -97,6 +102,7 @@
 				ABCA09110000000000000004 /* BackgroundAudioDownloader.swift */,
 			); path = Services; sourceTree = "<group>"; };
 		4E287F692FC82F49C1B450A3 /* Views */ = {isa = PBXGroup; children = (
+				D528E27F0BB9C2F519E525AE /* AppleMusicViews.swift */,
 				13A88BACB079DF001A2CFB03 /* MainView.swift */,
 				FA10BC1FA2806F4D64E207CC /* PlayerViews.swift */,
 				EFA0F0640481B59038E57A0F /* LibraryViews.swift */,
@@ -125,6 +131,8 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		12573461486BCB4FF9F39CD6 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+				09BF39F8B3187FB59CC2C493 /* AppleMusicViews.swift in Sources */,
+				18C77339A4D7652726EC7476 /* AppleMusicService.swift in Sources */,
 				628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */,
 				58F35F17B0B426557F7C6BFE /* MusicModels.swift in Sources */,
 				A9E6F2461B4C4F19A8D0C271 /* PlaybackOrder.swift in Sources */,

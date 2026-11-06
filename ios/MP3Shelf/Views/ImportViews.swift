@@ -70,6 +70,25 @@ struct DownloadView: View {
                 }
                 .buttonStyle(.plain)
 
+                NavigationLink { AppleMusicImportView() } label: {
+                    HStack(spacing: 14) {
+                        PremiumIcon(symbol: "music.note.list", color: ShelfTheme.coral, size: 55)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Your Apple Music playlists")
+                                .font(.system(.headline, design: .rounded, weight: .bold))
+                                .foregroundStyle(.white)
+                            Text("Read your Music library and find matching MP3s")
+                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right").foregroundStyle(ShelfTheme.coral)
+                    }
+                    .padding(19)
+                    .premiumCard(radius: 25)
+                }
+                .buttonStyle(.plain)
+
                 VStack(alignment: .leading, spacing: 15) {
                     HStack(spacing: 12) {
                         PremiumIcon(symbol: "link", color: ShelfTheme.accent)
@@ -191,10 +210,10 @@ struct SpotifyImportView: View {
                                 .font(.system(.headline, design: .rounded, weight: .bold))
                         }
                     }
-                    Text("Import a CSV or TSV song list. MP3 Shelf matches your local music, then automatically searches public audio catalogs for the missing songs.")
+                    Text("Import a CSV or TSV song list. MP3 Shelf matches your local music, then uses its recording engine to find missing songs.")
                         .foregroundStyle(ShelfTheme.subdued).font(.subheadline)
-                    Text("This does not turn Spotify streams into MP3s. Commercial recordings usually have no qualifying free download source.")
-                        .font(.caption).foregroundStyle(.orange)
+                    Text("Playlist files contain song details. Matching recordings appear in the song-by-song download results.")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }
                 .padding(.vertical, 8)
             }
@@ -398,7 +417,7 @@ struct SettingsView: View {
                 Label("Your tracks are stored on your iPhone", systemImage: "lock.shield")
                 Text("Find imported files in Files → On My iPhone → MP3 Shelf when file sharing is available. Back up your device to preserve playlist metadata.")
                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                Text("Spotify is used for playlist information, not downloading protected streams. Only eligible independent audio downloads are supported.")
+                Text("Spotify and Apple Music supply playlist details. MP3 Shelf finds matching audio through its recording engine and saves files for offline playback.")
                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
             } header: { Text("PRIVACY & FILES") }
             .listRowBackground(ShelfTheme.surface)

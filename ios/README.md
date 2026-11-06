@@ -1,5 +1,27 @@
 # MP3 Shelf — Native iPhone App
 
+## Apple Music playlist import
+
+Open **Add Music → Your Apple Music playlists**, allow Media & Apple Music
+access, select a playlist and tap **Find & Save Offline MP3s**. The playlist must
+appear in the iPhone Music app's library; add a shared playlist there and let it
+sync first if needed. No MusicKit developer token or new signing entitlement is
+required by this metadata-only integration.
+
+MP3 Shelf reads titles, artists, albums, durations and song order with MediaPlayer.
+Cloud and protected items are included for their metadata; asset and preview URLs
+are never extracted from Music. The existing recording matcher finds audio sources
+and feeds the background downloader/MP3 converter. Existing source availability,
+review, Wi-Fi/cellular and conversion limits still apply.
+
+Reimporting updates the same local playlist while retaining repeated occurrences
+and completed work. Library IDs have an installation namespace to avoid collisions
+when a native backup is restored on another device. Native backups retain Apple
+Music identities and matching metadata; local playlist copies remain independent.
+Missing metadata and unsupported non-music entries stop an import with an error
+rather than silently trimming the source list. **Native compilation, MediaPlayer
+access and a complete iPhone download still require physical-device verification.**
+
 ## On-device recording matcher and download engine
 
 The native app now owns recording search, normalization, scoring, candidate

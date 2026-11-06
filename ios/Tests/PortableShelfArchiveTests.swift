@@ -21,12 +21,18 @@ struct PortableShelfArchiveTests {
         list.sourceOrder = [
             PlaylistWish(title: "Test song", artist: "Local artist", album: "Album")
         ]
+        let appleNamespace = UUID(uuidString: "12345678-1234-5678-9ABC-123456789ABC")!
+        var appleList = MusicPlaylist(name: "Apple Music list")
+        appleList.appleMusicLibraryID = AppleMusicLibraryIdentity.key(namespace: appleNamespace, persistentID: 42)
+        appleList.sourceOrder = [PlaylistWish(title: "Test song", artist: "Local artist", album: "Album",
+            durationSeconds: 55, artistNames: ["Local artist"],
+            appleMusicItemID: AppleMusicLibraryIdentity.key(namespace: appleNamespace, persistentID: 10))]
         let archiveURL = folder.appendingPathComponent("test.mp3shelf")
         try PortableShelfArchive.export([
             .init(track: song, audioURL: audio,
                   artwork: Data([0xFF, 0xD8, 0xFF, 0xD9]),
                   lyrics: "[00:05.00]Original lyrics")
-        ], playlists: [list], to: archiveURL)
+        ], playlists: [list, appleList], to: archiveURL)
         let archive = try PortableShelfArchive.open(archiveURL)
         assert(archive.manifest.schema == "mp3-shelf-backup")
         assert(archive.manifest.version == 1)
@@ -35,6 +41,10 @@ struct PortableShelfArchiveTests {
         assert(archive.manifest.tracks[0].lyrics == "[00:05.00]Original lyrics")
         assert(archive.manifest.playlists[0].trackIds == [song.id.uuidString])
         assert(archive.manifest.playlists[0].wishes?.first?.title == "Test song")
+        assert(archive.manifest.playlists[1].appleMusicLibraryID == appleList.appleMusicLibraryID)
+        let appleWish = archive.manifest.playlists[1].wishes!.first!
+        assert(appleWish.appleMusicItemID == appleList.sourceOrder[0].appleMusicItemID)
+        assert(appleWish.durationSeconds == 55 && appleWish.artistNames == ["Local artist"])
         let extracted = try PortableShelfArchive.extract(
             archive.manifest.tracks[0].audio, from: archive, extensionName: "mp3")
         defer { try? FileManager.default.removeItem(at: extracted) }

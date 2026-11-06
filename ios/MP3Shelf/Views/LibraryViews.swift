@@ -215,15 +215,15 @@ struct LibraryView: View {
                 if library.tracks.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         PremiumSectionHeading(title: "More ways to listen")
-                        NavigationLink { SpotifyConnectView() } label: {
+                        NavigationLink { PlaylistSourcesView() } label: {
                             HStack(spacing: 14) {
                                 PremiumIcon(symbol: "square.stack.3d.up",
                                             color: ShelfTheme.coral, size: 46)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("Import a Spotify playlist")
+                                    Text("Import a music playlist")
                                         .font(.system(.subheadline, design: .rounded, weight: .bold))
                                         .foregroundStyle(.white)
-                                    Text("Find eligible MP3s for your song list")
+                                    Text("Apple Music, Spotify or a track-list file")
                                         .font(.caption)
                                         .foregroundStyle(ShelfTheme.subdued)
                                 }
@@ -515,7 +515,7 @@ struct PlaylistsView: View {
                 }
                 .padding(.top, 10)
 
-                NavigationLink { SpotifyConnectView() } label: {
+                NavigationLink { PlaylistSourcesView() } label: {
                     HStack(spacing: 14) {
                         PremiumIcon(symbol: "arrow.down.to.line.compact", color: ShelfTheme.mint, size: 50)
                         VStack(alignment: .leading, spacing: 3) {
@@ -757,7 +757,7 @@ struct PlaylistDetailView: View {
             case .alreadyPresent:
                 return ("Matched an existing recording", "checkmark.circle")
             case .removed:
-                return ("Removed from the refreshed Spotify playlist", "minus.circle")
+                return ("Removed from the refreshed source playlist", "minus.circle")
             case .previous:
                 return ("Previously checked — try search again", "clock.arrow.circlepath")
             case nil:
@@ -809,7 +809,10 @@ struct PlaylistDetailView: View {
                             .buttonStyle(.bordered)
                     }
                     .disabled(playlist.trackIDs.isEmpty)
-                    if let source = playlist.sourceURL, let link = URL(string: source) {
+                    if playlist.appleMusicLibraryID != nil {
+                        Label("Imported from your Apple Music library", systemImage: "music.note.list")
+                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    } else if let source = playlist.sourceURL, let link = URL(string: source) {
                         Link(destination: link) {
                             Label("Original playlist on Spotify", systemImage: "arrow.up.right.square")
                                 .font(.caption)
@@ -1209,7 +1212,7 @@ struct AuthorizedPlaylistAudioView: View {
                     .disabled(isDownloading || link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Section {
-                    Text("Spotify playlist links contain the song list. Use a direct audio-file link here to save the recording.")
+                    Text("Imported playlists contain song details. Use a direct audio-file link here to save the recording.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

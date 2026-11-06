@@ -1,5 +1,22 @@
 # Native release status — consolidated draft PR #29
 
+## Apple Music import candidate
+
+Added an iPhone Music-library playlist picker using MediaPlayer, with explicit
+library permission and the required Info.plist purpose string. Selected metadata
+enters the existing recording-matching/download pipeline; no Music asset URL,
+preview extraction, MusicKit token or signing entitlement was added. Source IDs
+are installation-scoped, duplicate song occurrences retain independent wish IDs,
+reimport updates the existing playlist, and native backups retain source metadata.
+
+Fresh checks: all 33 first-party Swift files passed syntax parsing; static Xcode
+wiring passed for 23 app files and the Music-library privacy purpose. All 13 shell
+verifier workflow tests passed with fake Apple tools. New Apple Music metadata,
+source identity, duplicate/refresh, copy and native-backup regression cases are
+included in the existing native suites but **NOT RUN** here. The native verifier
+exited 2 because Swift is unavailable. Apple SDK type checking, permission UI,
+cloud-library visibility and real iPhone import/download remain **NOT VERIFIED**.
+
 ## Current custom-engine candidate
 
 The app now owns search parsing, recording normalization/scoring, ambiguity

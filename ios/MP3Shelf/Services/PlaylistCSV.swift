@@ -99,11 +99,14 @@ enum PlaylistCSV {
 }
 
 
-/// Sync a previously imported Spotify playlist without changing the identity
+/// Sync an imported playlist without changing the identity
 /// of unchanged entries. An identical track can occur more than once; consume
 /// old occurrence IDs in sequence rather than collapsing duplicate entries.
 enum SpotifyPlaylistSync {
     static func identity(_ wish: PlaylistWish) -> String {
+        if let id = AppleMusicLibraryIdentity.canonical(wish.appleMusicItemID) {
+            return "apple-music:\(id)"
+        }
         if let raw = wish.spotifyURL,
            let url = URLComponents(string: raw),
            url.scheme?.lowercased() == "https",

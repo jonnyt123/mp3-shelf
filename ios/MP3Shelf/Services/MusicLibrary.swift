@@ -322,10 +322,13 @@ final class MusicLibrary: ObservableObject {
             var playlist = MusicPlaylist(id: id, name: item.name)
             playlist.portableBackupID = item.id
             playlist.sourceURL = item.sourceURL
+            playlist.appleMusicLibraryID = AppleMusicLibraryIdentity.canonical(item.appleMusicLibraryID)
             playlist.trackIDs = resolvedTrackIDs
             playlist.sourceOrder = (item.wishes ?? []).map {
                 PlaylistWish(title: $0.title, artist: $0.artist,
-                             album: $0.album, spotifyURL: $0.spotifyURL)
+                             album: $0.album, spotifyURL: $0.spotifyURL,
+                             durationSeconds: $0.durationSeconds, artistNames: $0.artistNames,
+                             appleMusicItemID: AppleMusicLibraryIdentity.canonical($0.appleMusicItemID))
             }
             playlist.missingTracks = playlist.sourceOrder
             playlists.append(playlist)
@@ -1180,17 +1183,21 @@ final class MusicLibrary: ObservableObject {
         importPlaylist(wishes: try PlaylistCSV.parse(data), name: name, sourceURL: spotifyURL)
     }
 
-    func importPlaylist(wishes: [PlaylistWish], name: String, sourceURL: String? = nil) -> PlaylistImportReport {
+    func importPlaylist(wishes: [PlaylistWish], name: String, sourceURL: String? = nil,
+                        appleMusicLibraryID: String? = nil) -> PlaylistImportReport {
         refreshTrackIndexIfNeeded()
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = trimmed.isEmpty ? "Imported Playlist" : trimmed
         let spotifyID = sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:))
-        // Refreshing an existing Spotify link updates the actual song list,
+        let appleID = spotifyID == nil ? AppleMusicLibraryIdentity.canonical(appleMusicLibraryID) : nil
+        let sourceIdentity = ImportedPlaylistIdentity.key(sourceURL: sourceURL, appleMusicLibraryID: appleID)
+        // Refreshing an imported source updates the actual song list,
         // not just the dashboard. Preserve stable per-occurrence wish IDs,
         // pending transfer IDs and completed discovery outcomes.
-        if let spotifyID,
+        if let sourceIdentity,
            let index = playlists.firstIndex(where: {
-               $0.sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:)) == spotifyID
+               ImportedPlaylistIdentity.key(sourceURL: $0.sourceURL,
+                                            appleMusicLibraryID: $0.appleMusicLibraryID) == sourceIdentity
            }) {
             let old = playlists[index]
             let updated = SpotifyPlaylistSync.merge(previous: old.sourceOrder, latest: wishes)
@@ -1200,7 +1207,8 @@ final class MusicLibrary: ObservableObject {
                 zip(old.sourceOrder, updated).contains(where: { pair in
                     pair.0.title != pair.1.title || pair.0.artist != pair.1.artist ||
                     pair.0.album != pair.1.album ||
-                    pair.0.durationSeconds != pair.1.durationSeconds
+                    pair.0.durationSeconds != pair.1.durationSeconds ||
+                    pair.0.artistNames != pair.1.artistNames || pair.0.appleMusicItemID != pair.1.appleMusicItemID
                 })
             if listChanged {
                 if automaticDownloadProgress?.playlistID == old.id {
@@ -1215,6 +1223,7 @@ final class MusicLibrary: ObservableObject {
                 playlists[index].sourceOrder = updated
                 playlists[index].name = displayName
                 playlists[index].sourceURL = sourceURL
+                playlists[index].appleMusicLibraryID = appleID
                 reconcileMissingSongs()
                 BackgroundAudioDownloader.shared.cancelRemovedTracks(
                     for: old.id, keepingIDs: Set(currentIDs))
@@ -1244,6 +1253,7 @@ final class MusicLibrary: ObservableObject {
         }
         var playlist = MusicPlaylist(name: displayName)
         if spotifyID != nil { playlist.sourceURL = sourceURL }
+        playlist.appleMusicLibraryID = appleID
         playlist.sourceOrder = wishes
         for wish in wishes {
             if let track = indexedByTitle.reusableTrack(for: wish, isAvailable: {

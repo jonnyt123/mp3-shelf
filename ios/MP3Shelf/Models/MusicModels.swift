@@ -89,6 +89,84 @@ struct PlaylistWish: Identifiable, Codable, Hashable, Sendable {
     // Used to reject alternate recordings when matching independent downloads.
     var durationSeconds: Double? = nil
     var artistNames: [String]? = nil
+    var appleMusicItemID: String? = nil
+}
+
+/// Media-library IDs are local to a device. A persisted installation namespace
+/// prevents a restored backup from syncing against an unrelated device's IDs.
+enum AppleMusicLibraryIdentity {
+    static func key(namespace: UUID, persistentID: UInt64) -> String {
+        "\(namespace.uuidString):\(persistentID)"
+    }
+
+    static func canonical(_ value: String?) -> String? {
+        // UUID, separator and at most 20 decimal UInt64 digits.
+        guard let value, value.count <= 57 else { return nil }
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2, let namespace = UUID(uuidString: String(parts[0])),
+              parts[1].allSatisfy({ $0.isASCII && $0.isNumber }),
+              let id = UInt64(parts[1]), id > 0 else { return nil }
+        return key(namespace: namespace, persistentID: id)
+    }
+}
+
+enum ImportedPlaylistIdentity {
+    static func key(sourceURL: String?, appleMusicLibraryID: String?) -> String? {
+        if let id = sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:)) { return "spotify:\(id)" }
+        return AppleMusicLibraryIdentity.canonical(appleMusicLibraryID).map { "apple-music:\($0)" }
+    }
+}
+
+struct AppleMusicPlaylistSummary: Identifiable, Sendable {
+    let id: UInt64
+    let name: String
+    let itemCount: Int
+}
+
+struct AppleMusicTrackSnapshot: Sendable {
+    let id: UInt64
+    let title: String
+    let artist: String
+    let album: String
+    let duration: Double
+    var isMusic = true
+}
+
+struct AppleMusicPlaylistSnapshot: Sendable {
+    static let maximumTracks = 20_000
+    let id: UInt64
+    let name: String
+    let items: [AppleMusicTrackSnapshot]
+
+    enum ImportFailure: LocalizedError {
+        case empty, tooLarge, incomplete, unsupported
+        var errorDescription: String? {
+            switch self {
+            case .empty: return "This Apple Music playlist has no songs."
+            case .tooLarge: return "Import supports up to 20,000 songs per playlist."
+            case .incomplete: return "Some songs are missing library details. Let the playlist finish syncing in Music, then refresh and retry."
+            case .unsupported: return "This playlist contains non-music items. Choose a playlist of songs or music videos."
+            }
+        }
+    }
+
+    func wishes(namespace: UUID) throws -> [PlaylistWish] {
+        guard !items.isEmpty else { throw ImportFailure.empty }
+        guard items.count <= Self.maximumTracks else { throw ImportFailure.tooLarge }
+        guard items.allSatisfy(\.isMusic) else { throw ImportFailure.unsupported }
+        guard id > 0, items.allSatisfy({
+            $0.id > 0 && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else { throw ImportFailure.incomplete }
+        return items.map { item in
+            let artist = item.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            return PlaylistWish(title: item.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                artist: artist, album: item.album, spotifyURL: nil,
+                durationSeconds: item.duration.isFinite && item.duration > 0 ? item.duration : nil,
+                artistNames: [artist],
+                appleMusicItemID: AppleMusicLibraryIdentity.key(namespace: namespace, persistentID: item.id))
+        }
+    }
 }
 
 struct AudioSourceAttribution: Codable, Hashable {
@@ -162,6 +240,7 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
     // Keeps the original CSV order when missing songs become available later.
     var sourceOrder: [PlaylistWish] = []
     var sourceURL: String? = nil
+    var appleMusicLibraryID: String? = nil
     // Preserve non-UUID playlist IDs from web .mp3shelf archives across
     // app relaunches and repeat restores; not a Spotify account credential.
     var portableBackupID: String? = nil
@@ -177,7 +256,8 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
         for wish in entries {
             let entry = PlaylistWish(title: wish.title, artist: wish.artist,
                                      album: wish.album, spotifyURL: wish.spotifyURL,
-                                     durationSeconds: wish.durationSeconds)
+                                     durationSeconds: wish.durationSeconds,
+                                     artistNames: wish.artistNames, appleMusicItemID: wish.appleMusicItemID)
             copy.sourceOrder.append(entry)
             if missingIDs.contains(wish.id) { copy.missingTracks.append(entry) }
         }

@@ -19,6 +19,66 @@ enum PlaylistCSVTests {
         check(wishes[1].title == "Second \"Quoted\" Song", "escaped quotes")
         check(wishes[0].spotifyURL?.contains("open.spotify.com/track/") == true, "Spotify URI conversion")
 
+        let namespace = UUID(uuidString: "12345678-1234-5678-9ABC-123456789ABC")!
+        let appleSong = AppleMusicTrackSnapshot(id: 10, title: " First ", artist: "Band, Inc.", album: "Album", duration: 201.5)
+        let appleSnapshot = AppleMusicPlaylistSnapshot(id: 42, name: "Apple playlist", items: [
+            appleSong,
+            AppleMusicTrackSnapshot(id: 11, title: "Second", artist: "Artist", album: "Next", duration: 180),
+            appleSong
+        ])
+        let appleWishes = try appleSnapshot.wishes(namespace: namespace)
+        check(appleWishes.map(\.title) == ["First", "Second", "First"] && Set(appleWishes.map(\.id)).count == 3,
+              "Apple Music keeps source order and distinct duplicate occurrences")
+        check(appleWishes[0].artistNames == ["Band, Inc."] && appleWishes[0].durationSeconds == 201.5 &&
+              appleWishes[0].spotifyURL == nil && appleWishes[0].appleMusicItemID == namespace.uuidString + ":10",
+              "Apple Music keeps fractional duration, band names and provider identity")
+        var renamedApple = appleWishes[0]
+        renamedApple.id = UUID()
+        renamedApple.title = "Corrected title"
+        let syncedApple = SpotifyPlaylistSync.merge(previous: appleWishes, latest: [renamedApple, appleWishes[2]])
+        check(syncedApple.map(\.id) == [appleWishes[0].id, appleWishes[2].id] && syncedApple[0].title == "Corrected title",
+              "Apple Music refresh preserves occurrence IDs while updating metadata")
+        let anotherDevice = try appleSnapshot.wishes(namespace: UUID())
+        check(SpotifyPlaylistSync.merge(previous: appleWishes, latest: anotherDevice).map(\.id) == anotherDevice.map(\.id),
+              "device-local media IDs cannot collide with another installation")
+        let appleID = AppleMusicLibraryIdentity.key(namespace: namespace, persistentID: UInt64.max)
+        check(AppleMusicLibraryIdentity.canonical(appleID) == appleID &&
+              AppleMusicLibraryIdentity.canonical(namespace.uuidString + ":0") == nil &&
+              AppleMusicLibraryIdentity.canonical("invalid:42") == nil,
+              "source IDs preserve UInt64 precision and reject invalid identities")
+        check(ImportedPlaylistIdentity.key(sourceURL: nil, appleMusicLibraryID: appleID) !=
+              ImportedPlaylistIdentity.key(sourceURL: "https://open.spotify.com/playlist/0123456789ABCDEFGHIJKL", appleMusicLibraryID: nil),
+              "Apple Music and Spotify source identities stay separate")
+        let unknownDuration = try AppleMusicPlaylistSnapshot(id: 42, name: "Unknown duration", items: [
+            AppleMusicTrackSnapshot(id: 10, title: "Song", artist: "Artist", album: "", duration: .nan)
+        ]).wishes(namespace: namespace)
+        check(unknownDuration[0].durationSeconds == nil, "unknown duration cannot become a false zero-length match")
+        var rejectedAppleSnapshots = 0
+        for bad in [
+            AppleMusicPlaylistSnapshot(id: 42, name: "Empty", items: []),
+            AppleMusicPlaylistSnapshot(id: 42, name: "Incomplete", items: [
+                appleSong, AppleMusicTrackSnapshot(id: 11, title: "", artist: "Artist", album: "", duration: 180)]),
+            AppleMusicPlaylistSnapshot(id: 42, name: "Podcast", items: [
+                AppleMusicTrackSnapshot(id: 11, title: "Episode", artist: "Host", album: "", duration: 180, isMusic: false)])
+        ] {
+            do {
+                _ = try bad.wishes(namespace: namespace)
+                fatalError("FAIL: incomplete or unsupported Apple Music playlist was silently imported")
+            } catch is AppleMusicPlaylistSnapshot.ImportFailure { rejectedAppleSnapshots += 1 }
+        }
+        check(rejectedAppleSnapshots == 3, "invalid Apple Music snapshots fail atomically rather than dropping entries")
+        var appleList = MusicPlaylist(name: "Apple library list")
+        appleList.appleMusicLibraryID = appleID
+        appleList.sourceOrder = appleWishes
+        appleList.missingTracks = appleWishes
+        let restoredApple = try JSONDecoder().decode(MusicPlaylist.self, from: JSONEncoder().encode(appleList))
+        check(restoredApple.appleMusicLibraryID == appleID && restoredApple.sourceOrder == appleWishes,
+              "Apple Music source identities survive app persistence")
+        let appleCopy = appleList.localCopy()
+        check(appleCopy.appleMusicLibraryID == nil && appleCopy.sourceOrder[0].appleMusicItemID == appleWishes[0].appleMusicItemID &&
+              appleCopy.sourceOrder[0].artistNames == appleWishes[0].artistNames,
+              "local copies preserve Apple Music matching metadata with independent playlist identity")
+
         let tab = "Track Name\tArtist Name\nHello\tA Singer\n"
         let tabRows = try PlaylistCSV.parse(Data(tab.utf8))
         check(tabRows.first?.artist == "A Singer", "TSV support")
