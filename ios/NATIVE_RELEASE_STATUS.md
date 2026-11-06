@@ -1,5 +1,21 @@
 # Native release status — consolidated draft PR #29
 
+## Q3 restart playback — native execution still pending
+
+Import success now requires writing the full track metadata and matched playlist
+links. Failed library writes preserve existing records, remove the new audio and
+artwork, expose storage errors and cannot trigger alternate-source downloads.
+The native proof now requires an app termination/relaunch, restored identity and
+checksum, rejected save-failure injection and production local-file playback.
+A separate Prove Offline Restart.command uses the small local MP3 fixture with
+foreground HTTP refused and discovery/transfers disabled; a fixture PASS cannot
+claim live download success. Physical-device Airplane Mode is a separate gate.
+
+Twelve fake-toolchain/receipt workflow tests pass; the real fixture fully decodes
+on the host. Eight changed Swift files pass syntax parsing. Native persistence
+regressions, Apple compilation and restart playback remain NOT RUN here; the
+native verifier and new launcher exit 2 without Swift/macOS/Xcode. Keep draft.
+
 ## Temporary lookup recovery — native regression execution pending
 
 Automatic discovery no longer discards a temporary recording-search/resolution

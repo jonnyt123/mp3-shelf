@@ -38,6 +38,15 @@ enum SourceDiscoveryJobTests {
             code: CocoaError.Code.fileWriteNoPermission.rawValue)
         verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: deniedStorage),
                         "local write-access failure does not switch network source")
+        let libraryWriteFailure = NSError(domain: PersistedLibrary.writeFailureDomain, code: 1,
+            userInfo: [NSUnderlyingErrorKey: CocoaError(.fileWriteFileExists)])
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: libraryWriteFailure) &&
+                        AudioDownloadDiagnostics.message(for: libraryWriteFailure).contains("library could not be saved"),
+                        "failed library persistence cannot trigger another source download")
+        let libraryDiskFull = NSError(domain: PersistedLibrary.writeFailureDomain, code: 1,
+            userInfo: [NSUnderlyingErrorKey: fullDisk])
+        verifyDiscovery(AudioDownloadDiagnostics.message(for: libraryDiskFull).contains("Free storage"),
+                        "library persistence retains the underlying disk-full diagnosis")
         let timedOut = URLError(.timedOut)
         verifyDiscovery(AudioDownloadDiagnostics.shouldTryAlternateSource(for: timedOut) &&
                         AudioDownloadDiagnostics.message(for: timedOut).contains("did not respond"),

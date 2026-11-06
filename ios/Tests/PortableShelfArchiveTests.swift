@@ -27,6 +27,33 @@ struct PortableShelfArchiveTests {
         appleList.sourceOrder = [PlaylistWish(title: "Test song", artist: "Local artist", album: "Album",
             durationSeconds: 55, artistNames: ["Local artist"],
             appleMusicItemID: AppleMusicLibraryIdentity.key(namespace: appleNamespace, persistentID: 10))]
+        let database = folder.appendingPathComponent("library.json")
+        let snapshot = PersistedLibrary(tracks: [song], playlists: [list, appleList])
+        try snapshot.write(to: database)
+        let savedDatabase = try Data(contentsOf: database)
+        let reopened = try JSONDecoder().decode(PersistedLibrary.self, from: Data(contentsOf: database))
+        assert(reopened.tracks == snapshot.tracks && reopened.playlists == snapshot.playlists)
+        assert(reopened.tracks[0].fileName == "my-song.mp3")
+        let blockedDatabase = folder.appendingPathComponent("database-is-a-directory", isDirectory: true)
+        try FileManager.default.createDirectory(at: blockedDatabase, withIntermediateDirectories: true)
+        do {
+            try snapshot.write(to: blockedDatabase)
+            fatalError("A failed library write must throw instead of reporting import success")
+        } catch {
+            assert((error as NSError).domain == PersistedLibrary.writeFailureDomain)
+            assert((error as NSError).userInfo[NSUnderlyingErrorKey] != nil)
+        }
+        var invalidSong = song
+        invalidSong.duration = .nan
+        do {
+            try PersistedLibrary(tracks: [invalidSong], playlists: []).write(to: database)
+            fatalError("Encoding failure must not replace the saved library")
+        } catch {
+            assert((error as NSError).domain == PersistedLibrary.writeFailureDomain)
+        }
+        let databaseAfterFailure = try Data(contentsOf: database)
+        assert(databaseAfterFailure == savedDatabase)
+        print("PASS: library snapshots reopen intact; write/encoding errors throw and preserve saved data")
         let archiveURL = folder.appendingPathComponent("test.mp3shelf")
         try PortableShelfArchive.export([
             .init(track: song, audioURL: audio,

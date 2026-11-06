@@ -447,8 +447,7 @@ final class MusicLibrary: ObservableObject {
 
     func save() {
         do {
-            let payload = try JSONEncoder().encode(PersistedLibrary(tracks: tracks, playlists: playlists))
-            try payload.write(to: databaseURL, options: .atomic)
+            try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
         } catch {
             print("MP3 Shelf could not save the music library: \(error)")
         }
@@ -473,7 +472,9 @@ final class MusicLibrary: ObservableObject {
     }
 
     private func addLocalAudio(sourceURL: URL, originalName: String,
-                               expectedDuration: TimeInterval? = nil) async throws -> Bool {
+                               expectedDuration: TimeInterval? = nil,
+                               matching wish: PlaylistWish? = nil,
+                               attribution: AudioSourceAttribution? = nil) async throws -> Bool {
         let extensionName = sourceURL.pathExtension.lowercased()
         let allowed = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
         guard allowed.contains(extensionName) else { throw MusicLibraryError.unsupportedFormat }
@@ -491,6 +492,7 @@ final class MusicLibrary: ObservableObject {
             originalName: originalName, id: id, fileExtension: extensionName)
         let destination = musicDirectory.appendingPathComponent(destinationName)
         try manager.copyItem(at: sourceURL, to: destination)
+        var artworkName: String?
         do {
             let asset = AVURLAsset(url: destination)
             // Fail immediately for renamed HTML, corrupt files or codecs that AVAudioPlayer cannot decode.
@@ -508,7 +510,6 @@ final class MusicLibrary: ObservableObject {
                 ?? URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
             let artist = metadataString(.commonKeyArtist).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Artist"
             let album = metadataString(.commonKeyAlbumName).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Album"
-            var artworkName: String?
             if let imageData = AVMetadataItem.metadataItems(from: metadata, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue,
                UIImage(data: imageData) != nil {
                 let proposedName = id.uuidString + ".img"
@@ -516,13 +517,26 @@ final class MusicLibrary: ObservableObject {
                     artworkName = proposedName
                 }
             }
-            tracks.append(MusicTrack(id: id, title: title, artist: artist, album: album,
-                                     fileName: destinationName, originalFileName: originalName,
-                                     artworkFileName: artworkName, duration: duration))
-            save()
+            var track = MusicTrack(id: id, title: title, artist: artist, album: album,
+                                   fileName: destinationName, originalFileName: originalName,
+                                   artworkFileName: artworkName, duration: duration)
+            if let wish {
+                track.title = wish.title
+                track.artist = wish.artist
+                if !wish.album.isEmpty { track.album = wish.album }
+                track.sourceAttribution = attribution
+            }
+            let updatedTracks = tracks + [track]
+            let updatedPlaylists = wish == nil ? playlists : reconciledPlaylists(using: updatedTracks)
+            // Report import success only after the complete record is written.
+            // A failed write must leave both the live and saved library intact.
+            try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists).write(to: databaseURL)
+            tracks = updatedTracks
+            playlists = updatedPlaylists
             return true
         } catch {
             try? manager.removeItem(at: destination)
+            if let artworkName { try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artworkName)) }
             throw error
         }
     }
@@ -792,19 +806,8 @@ final class MusicLibrary: ObservableObject {
         let original = "\(wish.artist) - \(wish.title).mp3"
         let imported = try await addLocalAudio(sourceURL: importURL,
                                                originalName: original,
-                                               expectedDuration: wish.durationSeconds)
-        if imported {
-            // Metadata comes from the playlist's exact-match catalog entry, not
-            // from arbitrary downloaded file tags that may be absent.
-            if let last = tracks.indices.last {
-                tracks[last].title = wish.title
-                tracks[last].artist = wish.artist
-                if !wish.album.isEmpty { tracks[last].album = wish.album }
-                tracks[last].sourceAttribution = attribution
-                save()
-            }
-            reconcileMissingSongs()
-        }
+                                               expectedDuration: wish.durationSeconds,
+                                               matching: wish, attribution: attribution)
         return imported
     }
 
@@ -1084,20 +1087,9 @@ final class MusicLibrary: ObservableObject {
         if let wish { try validateEmbeddedIdentity(fileURL: staging, matching: wish) }
         let imported = try await addLocalAudio(sourceURL: staging,
                                                originalName: filename + "." + actualExtension,
-                                               expectedDuration: wish?.durationSeconds)
-        if imported {
-            if let wish, let last = tracks.indices.last {
-                // The catalog had to match title/artist (and known duration)
-                // before the file was downloaded. Apply that playlist metadata
-                // so this song immediately occupies its original playlist slot.
-                tracks[last].title = wish.title
-                tracks[last].artist = wish.artist
-                if !wish.album.isEmpty { tracks[last].album = wish.album }
-                tracks[last].sourceAttribution = attribution
-                save()
-            }
-            reconcileMissingSongs()
-        }
+                                               expectedDuration: wish?.durationSeconds,
+                                               matching: wish, attribution: attribution)
+        if imported && wish == nil { reconcileMissingSongs() }
         return ImportReport(imported: imported ? 1 : 0, skipped: imported ? 0 : 1)
     }
 
@@ -1283,16 +1275,22 @@ final class MusicLibrary: ObservableObject {
     func recheckSavedAudio() { reconcileMissingSongs() }
 
     private func reconcileMissingSongs() {
-        refreshTrackIndexIfNeeded()
-        let available = tracks.filter { manager.fileExists(atPath: fileURL(for: $0).path) }
+        playlists = reconciledPlaylists(using: tracks)
+        save()
+    }
+
+    private func reconciledPlaylists(using updatedTracks: [MusicTrack]) -> [MusicPlaylist] {
+        let allTracksIndex = OfflineTrackIndex(tracks: updatedTracks)
+        let available = updatedTracks.filter { manager.fileExists(atPath: fileURL(for: $0).path) }
         let availableIndex = OfflineTrackIndex(tracks: available)
-        for index in playlists.indices where !playlists[index].sourceOrder.isEmpty {
-            let existing = playlists[index].trackIDs
+        var updated = playlists
+        for index in updated.indices where !updated[index].sourceOrder.isEmpty {
+            let existing = updated[index].trackIDs
             var ordered: [UUID] = []
             var missing: [PlaylistWish] = []
             var sourcedTrackIDs = Set<UUID>()
-            for wish in playlists[index].sourceOrder {
-                if let previous = indexedByTitle.reusableTrack(for: wish) {
+            for wish in updated[index].sourceOrder {
+                if let previous = allTracksIndex.reusableTrack(for: wish) {
                     sourcedTrackIDs.insert(previous.id)
                 }
                 if let track = availableIndex.reusableTrack(for: wish) {
@@ -1307,10 +1305,10 @@ final class MusicLibrary: ObservableObject {
             ordered.append(contentsOf: existing.filter {
                 !sourcedTrackIDs.contains($0) && recorded.insert($0).inserted
             })
-            playlists[index].trackIDs = ordered
-            playlists[index].missingTracks = missing
+            updated[index].trackIDs = ordered
+            updated[index].missingTracks = missing
         }
-        save()
+        return updated
     }
 
     func trackSizeBytes(_ track: MusicTrack) -> Int64 {

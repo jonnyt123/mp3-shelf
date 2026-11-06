@@ -34,6 +34,13 @@ final class PlaybackController: NSObject, ObservableObject {
     private var outgoingPlayer: AVAudioPlayer?
     @Published private var playbackOrder = PlaybackOrder()
 
+    #if DEBUG
+    /// Read the real local player's clock without depending on UI timer cadence.
+    func localFilePlaybackProof() -> (url: URL?, currentTime: TimeInterval, isPlaying: Bool) {
+        (audioPlayer?.url, audioPlayer?.currentTime ?? 0, audioPlayer?.isPlaying ?? false)
+    }
+    #endif
+
     private var loopMode: PlaybackLoopMode {
         switch repeatMode {
         case .off: return .off

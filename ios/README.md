@@ -5,7 +5,8 @@
 Double-click **Prove MP3 Downloads.command** on the Mac. It uses a fresh isolated
 Simulator app to search for a reference recording, resolve/probe audio, queue the
 real transfer, import/convert MP3, fully decode the saved file and advance a local
-file player. It opens a truthful report and preserves the successful MP3. It uses
+file player, then terminates the app and verifies the restored local MP3 through
+the production PlaybackController in a new process. It opens a truthful report and preserves the successful MP3. It uses
 no signing or GitHub Actions. Automatic versus explicit-reference selection is
 reported separately; physical-iPhone/background acceptance remains separate.
 
@@ -14,6 +15,22 @@ was downloaded and converted through the bundled encoder on Linux, but the live
 YouTube media request returned an HTML Site Unavailable page. The full native
 path has **not** passed in this environment. The new preflight rejects such HTML
 before it enters the transfer queue.
+
+## Check offline playback after restarting the app
+
+Double-click **Prove Offline Restart.command** on the Mac. This independent test
+imports the repository's small MP3 fixture through the production importer,
+checks that a real library-write failure is rejected cleanly, terminates the app,
+then reloads the saved library and plays the exact local file in a new process.
+Foreground HTTP is refused and source discovery/background transfer attachment
+is disabled for this isolated test. The normal app and Mac networking are unchanged.
+
+The report opens at `build/offline-restart-proof/QA_RECORD.md`. This fixture-only
+test does not establish live song search/download success. Neither native test
+has run in this Linux environment; Xcode and physical-iPhone Airplane Mode checks
+remain required. Imports now write the song metadata and matched playlist links
+before reporting success; failed writes preserve the existing library and remove
+the new import's audio/artwork instead of claiming it was saved.
 
 ## Apple Music playlist import
 

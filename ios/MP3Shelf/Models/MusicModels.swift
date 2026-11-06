@@ -270,8 +270,20 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
 }
 
 struct PersistedLibrary: Codable {
+    static let writeFailureDomain = "MP3Shelf.LibraryWrite"
     var tracks: [MusicTrack]
     var playlists: [MusicPlaylist]
+
+    func write(to url: URL) throws {
+        do {
+            try JSONEncoder().encode(self).write(to: url, options: .atomic)
+        } catch {
+            throw NSError(domain: Self.writeFailureDomain, code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "The music library could not be saved. The audio was not imported; check local storage and retry.",
+                NSUnderlyingErrorKey: error
+            ])
+        }
+    }
 }
 
 struct ImportReport {

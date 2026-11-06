@@ -1,5 +1,21 @@
 # MP3 Shelf — iPhone Installation and Background Download QA
 
+## Offline playback after process restart
+
+Run **Prove Offline Restart.command** on the Mac. The fixture test must reach its
+storage-failure-rejected stage, terminate the isolated app, and launch it again
+before PASS. Check different process tokens, preserved track/playlist identity,
+the unchanged MP3 checksum and production local-file playback. Foreground HTTP
+is refused; source discovery and background transfer attachment are disabled.
+This does not switch the Simulator/Mac into Airplane Mode and does not prove a
+live song download. Reports are separate from the live download proof.
+
+On the physical iPhone, save real MP3s in a small playlist, force-quit the app,
+enable Airplane Mode with Wi-Fi off, then reopen and play/seek each song. Check
+the playlist order, metadata and Files copies remain. Repeat after a normal app
+update; do not uninstall the app. Simulate a local save failure and confirm it
+reports a retryable storage problem instead of another successful download.
+
 ## Live native download proof
 
 Run Prove MP3 Downloads.command on the Mac before treating the downloader as

@@ -4,6 +4,32 @@
 with no Swift, Xcode, iPhone Simulator, or connected iPhone. No native PASS is
 claimed from the host checks below.
 
+## Q3: playback after restarting the app
+
+Code review found a persistence fault: addLocalAudio returned success after a
+nonthrowing save() logged a write failure. The downloaded ticket could therefore
+claim success while its track record was absent after relaunch. Imports now
+write the complete track metadata and matched playlist links before publishing
+success. Write failures retain the underlying storage error, do not trigger an
+alternate source download, and remove the failed import's audio/artwork.
+
+The v2 native proof requires a real process restart and production local-file
+playback before PASS. It checks restored IDs/metadata/playlist links, the MP3
+checksum, a real write-failure rejection and the underlying AVAudioPlayer clock.
+The separate Prove Offline Restart.command uses the existing short MP3 fixture,
+so this check can run independently of a failed live source. It cannot pass as a
+live-download proof. During restart playback foreground HTTP is refused and
+source discovery/background transfer attachment is disabled. Host networking is
+unchanged; physical-iPhone Airplane Mode remains untested.
+
+Twelve Python receipt/two-launch workflow tests pass using fake Apple commands
+and receipts; they do not run the app. The actual fixture fully decodes on this
+host (8820 PCM frames, non-silent). The eight changed Swift files pass syntax
+parsing, not Apple SDK type checking. New native persistence/error regressions
+and the real restart proof are **NOT RUN**: the native regression runner and
+offline launcher both exit 2 because Swift/macOS/Xcode are unavailable here.
+Offline restart behavior and the full iPhone download path remain **UNVERIFIED**.
+
 ## Retry recovery follow-up
 
 Code review identified a separate failure in the automatic workflow: a recording
