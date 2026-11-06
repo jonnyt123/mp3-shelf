@@ -4,6 +4,27 @@
 with no Swift, Xcode, iPhone Simulator, or connected iPhone. No native PASS is
 claimed from the host checks below.
 
+## Retry recovery follow-up
+
+Code review identified a separate failure in the automatic workflow: a recording
+search timeout, temporary HTTP failure, or interrupted media probe was caught and
+logged, then discarded when optional fallback catalogs completed with no match.
+The song was classified unavailable without entering the existing retry path.
+
+Temporary primary lookup failures are now retained until fallback selection ends.
+A usable fallback proceeds normally; otherwise the existing persisted backoff and
+five-attempt budget applies. A genuine no-match or permanent refusal does not gain
+automatic retries. Cancellation/network policy still prevents burning the budget
+while paused or disconnected, and the web-search credit ledger is preserved.
+
+Added regression cases in SourceDiscoveryJobTests for temporary URL failures,
+typed resolver classification, usable fallbacks, genuine misses, cancellation,
+persisted backoff, retry exhaustion and the existing web-search ledger. The four
+changed Swift files passed syntax parsing; whitespace checks passed. The native
+regression runner exited 2 with Swift compiler not found, so these new cases and
+the app integration are **NOT RUN** here. This patch is not evidence that the live
+HTML media response or the full iPhone download path has been repaired.
+
 ## Live recording trace
 
 Reference: Carefree — Kevin MacLeod, 206 seconds; YouTube ID sMcWOaJFuw0.

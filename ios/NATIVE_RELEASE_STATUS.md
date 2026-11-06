@@ -1,5 +1,17 @@
 # Native release status — consolidated draft PR #29
 
+## Temporary lookup recovery — native regression execution pending
+
+Automatic discovery no longer discards a temporary recording-search/resolution
+failure when fallback catalogs return no matches. It retains the failure for the
+existing persisted backoff and five-attempt limit, while a usable fallback can
+still queue immediately. Permanent refusals/genuine misses remain terminal, and
+the existing network policy, cancellation and web-search ledger are preserved.
+The discovery suite includes recovery/exhaustion/restart cases. Changed-file
+syntax and whitespace checks passed; the native test runner exited 2 because
+Swift is absent. Native regression execution and the full download proof remain
+unverified. The earlier live HTML response is not claimed to be fixed.
+
 ## Download proof follow-up — overall native verdict still unverified
 
 A live Carefree/Kevin MacLeod trace resolved AAC URLs but received a 195-byte

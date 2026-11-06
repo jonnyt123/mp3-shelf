@@ -5,6 +5,10 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
     print("PASS: \(label)")
 }
 
+private struct ClassifiedLookupFailure: SourceLookupRetryableError {
+    let shouldRetrySourceLookup: Bool
+}
+
 @main
 enum SourceDiscoveryJobTests {
     @MainActor static func main() async throws {
@@ -38,6 +42,52 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(AudioDownloadDiagnostics.shouldTryAlternateSource(for: timedOut) &&
                         AudioDownloadDiagnostics.message(for: timedOut).contains("did not respond"),
                         "network timeout retains source-fallback eligibility")
+
+        let temporaryLookupCodes: [URLError.Code] = [.timedOut, .networkConnectionLost, .notConnectedToInternet,
+            .dataNotAllowed, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed]
+        for code in temporaryLookupCodes {
+            verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(
+                URLError(code), hasCandidates: false) != nil,
+                "empty optional catalogs preserve interrupted recording lookup: \(code.rawValue)")
+        }
+        verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(timedOut, hasCandidates: true) == nil,
+                        "a usable fallback proceeds despite a primary lookup timeout")
+        verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(nil, hasCandidates: false) == nil,
+                        "a healthy search with no matches remains a genuine unavailable result")
+        verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(
+            ClassifiedLookupFailure(shouldRetrySourceLookup: true), hasCandidates: false) != nil &&
+                        SourceLookupRetryPolicy.failureToRetry(
+            ClassifiedLookupFailure(shouldRetrySourceLookup: false), hasCandidates: false) == nil,
+                        "typed resolver failures preserve temporary versus permanent classification")
+        let permanentLookupFailures: [Error] = [CancellationError(), URLError(.cancelled),
+            URLError(.unsupportedURL), URLError(.serverCertificateUntrusted)]
+        for error in permanentLookupFailures {
+            verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(error, hasCandidates: false) == nil,
+                            "cancellation and permanent failures do not consume lookup retries")
+        }
+        let interruptedWish = PlaylistWish(title: "Interrupted search", artist: "Artist", album: "")
+        var interrupted = SourceDiscoveryJob(playlistID: UUID(), wishes: [interruptedWish])
+        _ = interrupted.reserveWebSearch(for: interruptedWish.id)
+        for attempt in 1...SourceDiscoveryJob.automaticRetryLimit {
+            guard let failure = SourceLookupRetryPolicy.failureToRetry(timedOut, hasCandidates: false) else {
+                fatalError("An interrupted primary search cannot be treated as no match")
+            }
+            interrupted.recordTransientFailure(failure.localizedDescription,
+                at: Date(timeIntervalSince1970: TimeInterval(attempt * 3600)))
+            let exhausted = interrupted.finishExhaustedRetriesIfNeeded()
+            verifyDiscovery(exhausted == (attempt == SourceDiscoveryJob.automaticRetryLimit),
+                            "interrupted recording lookup obeys the existing retry limit")
+            if !exhausted {
+                verifyDiscovery(interrupted.nextIndex == 0 && interrupted.unavailable == 0 && interrupted.nextRetryAt != nil,
+                                "a transient source failure keeps the song pending with backoff")
+                interrupted = try JSONDecoder().decode(SourceDiscoveryJob.self,
+                    from: JSONEncoder().encode(interrupted))
+            }
+        }
+        verifyDiscovery(interrupted.isComplete && interrupted.failed == 1 && interrupted.unavailable == 0 &&
+                        interrupted.outcome(for: interruptedWish) == .failed &&
+                        interrupted.webSearchWishIDs == [interruptedWish.id],
+                        "exhaustion records a failure and preserves the web-search credit ledger")
 
         for mime in ["audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-aiff", "audio/flac", "Audio/X-FLAC; charset=binary"] {
             verifyDiscovery(DownloadedAudioContentType.allows(mime), "supported audio response reaches decoding: \(mime)")

@@ -194,6 +194,29 @@ enum BackgroundTransferRetryPolicy {
     }
 }
 
+/// Typed resolver failures distinguish temporary outages from a genuine miss.
+protocol SourceLookupRetryableError: Error {
+    var shouldRetrySourceLookup: Bool { get }
+}
+
+enum SourceLookupRetryPolicy {
+    static func isTemporary(_ error: Error) -> Bool {
+        if let failure = error as? any SourceLookupRetryableError {
+            return failure.shouldRetrySourceLookup
+        }
+        let failure = error as NSError
+        return failure.domain == NSURLErrorDomain &&
+            BackgroundTransferRetryPolicy.isTemporaryURLFailure(failure.code)
+    }
+
+    /// Empty optional catalogs cannot establish that an interrupted primary
+    /// lookup has no recording. A usable fallback still takes precedence.
+    static func failureToRetry(_ recordingFailure: Error?, hasCandidates: Bool) -> Error? {
+        guard !hasCandidates, let recordingFailure, isTemporary(recordingFailure) else { return nil }
+        return recordingFailure
+    }
+}
+
 /// Limit oversized transfers as soon as the background daemon reports their
 /// expected or received bytes, not only after downloading the whole file.
 /// Progress coalescing avoids hundreds of SwiftUI refreshes per recording.

@@ -30,8 +30,15 @@ actor NativeAudioEngine {
         else { resolutionWaiters.removeFirst().1.resume() }
     }
 
-    enum Failure: LocalizedError {
+    enum Failure: LocalizedError, SourceLookupRetryableError {
         case searchHTTP(Int), unreadableSearch, oversizedSearch, noAudio, mediaResponse(Int, String), changedRecording, extractionFailed(String), networkUnavailable, queueUnavailable
+        var shouldRetrySourceLookup: Bool {
+            switch self {
+            case .searchHTTP(let status), .mediaResponse(let status, _):
+                return BackgroundTransferRetryPolicy.isTemporaryHTTP(status)
+            default: return false
+            }
+        }
         var errorDescription: String? {
             switch self {
             case .searchHTTP(let code): return "Recording search returned HTTP \(code)."

@@ -851,6 +851,7 @@ final class MusicLibrary: ObservableObject {
                     let allowsCellular = !backgroundWiFiOnly && cellularApprovedPlaylists.contains(playlistID)
                     var ownedSources: [AudioCatalogMatch] = []
                     var ownedDetails: [String] = []
+                    var recordingFailure: Error?
                     if RecordingMatcher.isEnabled {
                         do {
                             let found: [RecordingCandidate]
@@ -882,6 +883,7 @@ final class MusicLibrary: ObservableObject {
                                 catch {
                                     try Task.checkCancellation()
                                     ownedDetails.append("Recording \(choice.id): \(error.localizedDescription)")
+                                    if SourceLookupRetryPolicy.isTemporary(error) { recordingFailure = error }
                                     excluded.insert(choice.id)
                                 }
                             }
@@ -889,6 +891,7 @@ final class MusicLibrary: ObservableObject {
                         catch {
                             try Task.checkCancellation()
                             ownedDetails.append("MP3 Shelf matching: \(error.localizedDescription)")
+                            if SourceLookupRetryPolicy.isTemporary(error) { recordingFailure = error }
                         }
                         guard job.isCurrent(in: discoveryJobs, at: index) else { break }
                     }
@@ -968,9 +971,15 @@ final class MusicLibrary: ObservableObject {
                             details.append("Web fallback: add and save a Brave API key in Web Search, then retry unmatched songs")
                         }
                     }
+                    let retryFailure = SourceLookupRetryPolicy.failureToRetry(
+                        recordingFailure, hasCandidates: !candidates.isEmpty)
+                    if retryFailure != nil {
+                        details.append("Recording lookup was interrupted; retrying with the existing five-attempt limit")
+                    }
                     job.saveLookupDetails(details, for: wish.id)
                     discoveryJobs[index] = job
                     persistDiscovery()
+                    if let retryFailure { throw retryFailure }
                     if let catalogError, candidates.isEmpty && !healthyLookup { throw catalogError }
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
                         (backgroundWiFiOnly && !isOnWiFi) { break }
