@@ -258,6 +258,7 @@ elif command=='launch':
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 report = self.candidate / "ios/build" / folder / "QA_RECORD.md"
                 self.assertIn("Result: PASS", report.read_text())
+                self.assertIn("Last step: complete", report.read_text())
                 self.assertIn("Proof mode: " + mode, report.read_text())
         calls = [json.loads(line) for line in (self.root / "calls.jsonl").read_text().splitlines()]
         launches = [i for i, call in enumerate(calls) if call[1] == "launch"]
@@ -280,6 +281,21 @@ elif command=='launch':
                 result = self.run_proof("--fixture-transfer", failure=failure)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn(message, result.stderr)
+
+    def test_zero_exit_after_fixture_setup_cannot_report_pass(self):
+        runner = self.scripts / "prove-download-path.sh"
+        build = "\nrun_step build xcodebuild "
+        source = runner.read_text()
+        self.assertEqual(source.count(build), 1)
+        runner.write_text(source.replace(build, "\nexit 0\n" + build))
+
+        result = self.run_proof("--fixture-transfer")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        report = (self.candidate / "ios/build/fixture-transfer-proof/QA_RECORD.md").read_text()
+        self.assertIn("Result: FAIL", report)
+        self.assertIn("Exit status: 1", report)
+        self.assertIn("Last step: configure-fixture-bundle", report)
+        self.assertIn("before validating the native receipt", report)
 
     def test_second_proof_does_not_interrupt_the_active_simulator_run(self):
         with (self.root / "mp3shelf-download-proof-test-phone.lock").open("w") as lock:

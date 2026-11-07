@@ -1,5 +1,17 @@
 # Native release status — consolidated draft PR #29
 
+## Proof completion reporting
+
+A Mac report marked the fixture transfer as PASS with the last step still at
+bundle configuration. Forcing an early zero exit at that point reproduced
+the false PASS. The launcher now requires completion of receipt and MP3
+validation and reports an early exit as a failure. It saves the validation
+log and records the shell version in the run summary.
+
+All 15 workflow tests passed, including the early exit case. A fresh Mac
+run is needed to confirm the native transfer. A successful fixture run ends
+at `complete` and exports `native-result.json` and `AAC-transfer-proof.mp3`.
+
 ## Obsolete transfers after a playlist refresh
 
 Refreshes cancel background tickets that refer to removed songs or outdated

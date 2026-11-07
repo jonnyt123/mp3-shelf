@@ -32,7 +32,15 @@ stop_fixture() {
   fi
 }
 on_exit() {
-  local result=$?
+  local result="$1"
+  if [[ "${BASH_SUBSHELL:-0}" -ne 0 ]]; then return "$result"; fi
+  trap - EXIT
+  local summary=""
+  if [[ $result -eq 0 && "$STEP" != complete ]]; then
+    result=1
+    summary="The launcher exited before validating the native receipt."
+    printf 'ERROR: %s Last step was %s.\n' "$summary" "$STEP" >&2
+  fi
   stop_fixture
   {
     echo "# MP3 Shelf $MODE proof"
@@ -40,6 +48,8 @@ on_exit() {
     echo "- Result: $([[ $result -eq 0 ]] && echo PASS || echo FAIL)"
     echo "- Exit status: $result"
     echo "- Last step: $STEP"
+    if [[ -n "$summary" ]]; then echo "- Detail: $summary"; fi
+    echo "- Shell: Bash $BASH_VERSION"
     echo "- Proof mode: $MODE"
     echo "- Run output: $RUN_OUT"
     echo '- Scope: isolated Simulator app, persisted MP3 import and playback in a fresh process.'
@@ -67,8 +77,9 @@ on_exit() {
   } > "$RUN_OUT/QA_RECORD.md"
   cp "$RUN_OUT/QA_RECORD.md" "$OUT/QA_RECORD.md"
   if [[ "$OWNS_SIMULATOR" == true ]]; then xcrun simctl terminate "$SIMULATOR" "$BUNDLE" >/dev/null 2>&1 || true; fi
+  exit "$result"
 }
-trap on_exit EXIT
+trap 'on_exit "$?"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 preflight_error() {
@@ -92,14 +103,14 @@ run_step() {
 }
 BUILD_SETTINGS=(CODE_SIGNING_ALLOWED=NO "PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE")
 if [[ "$MODE" == fixture-transfer ]]; then
-  run_step configure-fixture-bundle python3 - "$ROOT/ios/MP3Shelf/Resources/Info.plist" "$RUN_OUT/FixtureInfo.plist" <<'PY'
+  run_step configure-fixture-bundle python3 -c '
 import plistlib, sys
-with open(sys.argv[1], 'rb') as file: info = plistlib.load(file)
-domains = info.setdefault('NSAppTransportSecurity', {}).setdefault('NSExceptionDomains', {})
-domains['127.0.0.1'] = {'NSExceptionAllowsInsecureHTTPLoads': True}
-with open(sys.argv[2], 'wb') as file: plistlib.dump(info, file)
-PY
-  BUILD_SETTINGS+=("INFOPLIST_FILE=$RUN_OUT/FixtureInfo.plist")
+with open(sys.argv[1], "rb") as file: info = plistlib.load(file)
+domains = info.setdefault("NSAppTransportSecurity", {}).setdefault("NSExceptionDomains", {})
+domains["127.0.0.1"] = {"NSExceptionAllowsInsecureHTTPLoads": True}
+with open(sys.argv[2], "wb") as file: plistlib.dump(info, file)
+' "$ROOT/ios/MP3Shelf/Resources/Info.plist" "$RUN_OUT/FixtureInfo.plist"
+  BUILD_SETTINGS=("${BUILD_SETTINGS[@]}" "INFOPLIST_FILE=$RUN_OUT/FixtureInfo.plist")
 fi
 run_step build xcodebuild -project "$ROOT/ios/MP3Shelf.xcodeproj" -scheme MP3Shelf \
   -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
@@ -161,7 +172,7 @@ elif [[ "$MODE" == fixture-transfer ]]; then
     echo 'ERROR: The local AAC fixture server did not start.' >&2
     exit 1
   fi
-  FIRST_LAUNCH+=(--mp3shelf-proof-fixture-port "$(cat "$RUN_OUT/fixture-port")")
+  FIRST_LAUNCH=("${FIRST_LAUNCH[@]}" --mp3shelf-proof-fixture-port "$(cat "$RUN_OUT/fixture-port")")
 fi
 run_step launch xcrun simctl launch "$SIMULATOR" "$BUNDLE" "${FIRST_LAUNCH[@]}"
 STEP=wait-for-native-proof
@@ -186,13 +197,17 @@ while [[ "$SECONDS" -lt "$DEADLINE" ]]; do
       continue
     fi
     if [[ "$STATUS" == PASS || "$STATUS" == FAIL ]]; then
-      cp "$REPORT" "$RUN_OUT/native-result.json"
       STEP=validate-native-proof
+      cp "$REPORT" "$RUN_OUT/native-result.json"
       if [[ "$STATUS" == PASS && "$RESTARTED" != true ]]; then
         echo 'ERROR: A fresh-process restart is required before PASS.' >&2
         exit 1
       fi
-      python3 "$ROOT/ios/scripts/validate-download-proof.py" "$REPORT" "$CONTAINER" "$RUN_OUT" "$RUN_TOKEN" "$MODE"
+      if ! run_step validate-native-proof python3 "$ROOT/ios/scripts/validate-download-proof.py" \
+        "$RUN_OUT/native-result.json" "$CONTAINER" "$RUN_OUT" "$RUN_TOKEN" "$MODE"; then
+        cat "$RUN_OUT/validate-native-proof.log" >&2
+        exit 1
+      fi
       STEP=complete
       echo "Native $MODE proof passed. Results and MP3: $RUN_OUT"
       exit 0
