@@ -834,7 +834,6 @@ final class MusicLibrary: ObservableObject {
             if let maximum = maxProcessedSongs, processedThisPass >= maximum { break }
             var job = discoveryJobs[index]
             if Task.isCancelled || job.isPaused || job.isComplete ||
-                !job.canAttemptLookup(at: Date()) ||
                 !networkAllowsDiscovery(for: playlistID) ||
                 (backgroundWiFiOnly && !isOnWiFi) { break }
             // Keep the original playlist cursor untouched while all four
@@ -843,7 +842,14 @@ final class MusicLibrary: ObservableObject {
             if !BackgroundDownloadBackpressure.mayEnqueue(
                 outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
             ) { break }
-            guard let wish = job.currentWish else { break }
+            let previousWishID = job.currentWish?.id
+            guard job.prepareLookup(at: Date()), let wish = job.currentWish else { break }
+            if wish.id != previousWishID {
+                // Persist the selected cursor before any asynchronous work.
+                // Subsequent lookups reject stale checkpoints by equality.
+                discoveryJobs[index] = job
+                persistDiscovery()
+            }
             if var progress = automaticDownloadProgress {
                 progress.currentSong = "\(wish.artist) — \(wish.title)"
                 automaticDownloadProgress = progress

@@ -560,13 +560,36 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     }
 
     var nextLookupAt: Date? {
-        guard let wish = currentWish,
-              let recovery = sourceRecoveryNotBefore?[wish.id.uuidString] else { return nextRetryAt }
-        return max(recovery, nextRetryAt ?? recovery)
+        guard let wish = currentWish, let deadlines = sourceRecoveryNotBefore,
+              let recovery = deadlines[wish.id.uuidString] else { return nextRetryAt }
+        // A provider retry belongs to the current lookup. A recovered link
+        // has its own deadline, so other pending songs can use that time.
+        if let nextRetryAt { return max(recovery, nextRetryAt) }
+        var earliest = recovery
+        for pending in wishes.dropFirst(nextIndex + 1) {
+            guard let deadline = deadlines[pending.id.uuidString] else { return nil }
+            earliest = min(earliest, deadline)
+        }
+        return earliest
     }
 
     func canAttemptLookup(at date: Date) -> Bool {
         nextLookupAt.map { $0 <= date } ?? true
+    }
+
+    /// Move the first ready pending song to the cursor if its predecessor
+    /// is waiting for a replacement link. The processed prefix stays intact.
+    mutating func prepareLookup(at date: Date) -> Bool {
+        guard let wish = currentWish, nextRetryAt.map({ $0 <= date }) ?? true else { return false }
+        guard let deadlines = sourceRecoveryNotBefore,
+              let recovery = deadlines[wish.id.uuidString], recovery > date else { return true }
+        guard nextRetryAt == nil,
+              let readyIndex = wishes.indices.dropFirst(nextIndex + 1).first(where: {
+                  (deadlines[wishes[$0].id.uuidString] ?? date) <= date
+              }) else { return false }
+        let ready = wishes.remove(at: readyIndex)
+        wishes.insert(ready, at: nextIndex)
+        return true
     }
 
     /// The current song is not discarded when a catalog is temporarily down.

@@ -337,6 +337,36 @@ enum SourceDiscoveryJobTests {
                         delayedRecovery.canAttemptLookup(at: refreshAt) &&
                         BackgroundDiscoveryPolicy.earliestUsefulDate(for: [delayedRecovery], at: retryClock) == refreshAt,
                         "foreground and background discovery honour the recovered song's saved retry time after relaunch")
+        var readyWork = delayedRecovery
+        let newSong = PlaylistWish(title: "Newly added", artist: "Artist", album: "", spotifyURL: nil)
+        verifyDiscovery(readyWork.appendNewMissingWishes([newSong]) == 1 &&
+                        BackgroundDiscoveryPolicy.earliestUsefulDate(for: [readyWork], at: retryClock) == retryClock &&
+                        readyWork.prepareLookup(at: retryClock) && readyWork.currentWish?.id == newSong.id,
+                        "a new song can start while the recovered link is waiting")
+        readyWork.record(.queued)
+        verifyDiscovery(readyWork.outcome(for: newSong) == .queued &&
+                        readyWork.outcome(for: wishes[1]) == .unavailable &&
+                        readyWork.webSearchWishIDs == beforeRecovery.webSearchWishIDs &&
+                        readyWork.currentWish?.id == wishes[0].id && readyWork.nextLookupAt == refreshAt,
+                        "processing a ready song preserves history, search reservations and the original recovery time")
+
+        var staggeredRecovery = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        staggeredRecovery.record(.queued)
+        staggeredRecovery.record(.queued)
+        staggeredRecovery.record(.alreadyPresent)
+        let earlierRefresh = retryClock.addingTimeInterval(30)
+        verifyDiscovery(staggeredRecovery.requeueFailedSource(for: wishes[0].id, notBefore: refreshAt) &&
+                        staggeredRecovery.requeueFailedSource(for: wishes[1].id, notBefore: earlierRefresh) &&
+                        staggeredRecovery.nextLookupAt == earlierRefresh &&
+                        !staggeredRecovery.prepareLookup(at: retryClock) &&
+                        staggeredRecovery.prepareLookup(at: earlierRefresh) &&
+                        staggeredRecovery.currentWish?.id == wishes[1].id,
+                        "staggered recoveries wake at the first eligible time")
+        var providerBackoff = beforeRecovery
+        _ = providerBackoff.appendNewMissingWishes([newSong])
+        verifyDiscovery(!providerBackoff.prepareLookup(at: retryClock) &&
+                        providerBackoff.currentWish?.id == wishes[2].id,
+                        "new songs respect the current provider retry delay")
         delayedRecovery.record(.queued)
         verifyDiscovery(delayedRecovery.requeueFailedSource(for: wishes[0].id) &&
                         delayedRecovery.nextLookupAt == nil,

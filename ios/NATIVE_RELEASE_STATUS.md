@@ -1,5 +1,16 @@
 # Native release status — consolidated draft PR #29
 
+## Ready songs during link recovery
+
+The discovery queue can process ready songs while another song waits for its
+replacement link. It saves the new cursor before lookup and uses the earliest
+eligible recovery time when all remaining songs are waiting. A provider retry
+continues to wait on its current song.
+
+Regression cases cover newly added songs, staggered recovery times, saved
+results and provider backoff. Swift syntax checks passed for three files.
+The regression runner requires a Swift compiler and stopped at preflight here.
+
 ## Signed link expiry during transfer recovery
 
 Automatic retries, missing task recovery and cellular upgrades check whether
