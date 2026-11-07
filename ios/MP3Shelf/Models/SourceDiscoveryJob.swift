@@ -496,13 +496,7 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
               index < nextIndex, let history = outcomes, index < history.count,
               history[index] == .queued,
               (sourceRecoveryAttempts?[wishID.uuidString] ?? 0) < 3 else { return false }
-        let wish = wishes.remove(at: index)
-        wishes.append(wish)
-        var updated = history
-        updated.remove(at: index)
-        outcomes = updated
-        nextIndex -= 1
-        queued = max(0, queued - 1)
+        moveProcessedWishesToPending(at: [index])
         if sourceRecoveryAttempts == nil { sourceRecoveryAttempts = [:] }
         sourceRecoveryAttempts?[wishID.uuidString, default: 0] += 1
         if let notBefore {
@@ -630,36 +624,57 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         return true
     }
 
-    /// Append only genuinely new missing tracks while keeping completed
-    /// entries and their persisted cursor, outcomes, retries and errors intact.
-    /// Safe even when a duplicate song occurs more than once in the playlist.
+    /// Refresh missing songs and reopen any completed lookup that used old
+    /// recording metadata. Corrected entries keep their paid-search reservation.
     @discardableResult
-    mutating func appendNewMissingWishes(_ missing: [PlaylistWish]) -> Int {
+    mutating func refreshMissingWishes(_ missing: [PlaylistWish]) -> Int {
         if nextIndex < 0 || nextIndex > wishes.count { repairPersistedCheckpoint() }
         // Some external playlist feeds can repeat an internal wish ID.
         // Accept the newest metadata without crashing on duplicate keys.
         let updated = Dictionary(missing.map { ($0.id, $0) },
                                  uniquingKeysWith: { _, newest in newest })
-        // Refresh metadata for unfinished lookups using the same Spotify
-        // occurrence IDs; retain all historical outcomes and retry cursors.
-        for index in nextIndex..<wishes.count {
+        var correctedProcessed: [Int] = []
+        for index in wishes.indices {
             let previous = wishes[index]
             guard let latest = updated[previous.id] else { continue }
-            if previous.title != latest.title || previous.artist != latest.artist ||
-                previous.artistNames != latest.artistNames || previous.durationSeconds != latest.durationSeconds {
-                // Search hits and verified web links belong to the previous
-                // recording metadata. Keep the paid-search reservation.
+            if !previous.matchesSourceRequest(latest) {
                 let key = previous.id.uuidString
                 recordingCandidates?.removeValue(forKey: key)
                 webSources?.removeValue(forKey: key)
                 lookupDetails?.removeValue(forKey: key)
+                if index < nextIndex { correctedProcessed.append(index) }
             }
             wishes[index] = latest
+        }
+        if !correctedProcessed.isEmpty {
+            moveProcessedWishesToPending(at: correctedProcessed)
         }
         var ids = Set(wishes.map(\.id))
         let appended = missing.filter { ids.insert($0.id).inserted }
         wishes.append(contentsOf: appended)
-        return appended.count
+        return appended.count + correctedProcessed.count
+    }
+
+    /// Keep the current pending song and its retry time while moving stale
+    /// processed entries behind it. Legacy checkpoints may lack outcomes.
+    private mutating func moveProcessedWishesToPending(at indices: [Int]) {
+        let moving = Set(indices)
+        let retained = (0..<nextIndex).filter { !moving.contains($0) }
+        if let history = outcomes {
+            for index in indices where history.indices.contains(index) {
+                switch history[index] {
+                case .queued: queued = max(0, queued - 1)
+                case .unavailable: unavailable = max(0, unavailable - 1)
+                case .failed: failed = max(0, failed - 1)
+                default: break
+                }
+            }
+            outcomes = retained.compactMap { history.indices.contains($0) ? history[$0] : nil }
+        }
+        let reordered = retained.map { wishes[$0] } + Array(wishes.dropFirst(nextIndex)) + indices.map { wishes[$0] }
+        wishes = reordered
+        nextIndex = retained.count
+        repairPersistedCheckpoint()
     }
 
     func outcome(for wish: PlaylistWish) -> Outcome? {

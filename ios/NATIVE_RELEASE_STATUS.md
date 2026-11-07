@@ -1,5 +1,18 @@
 # Native release status — consolidated draft PR #29
 
+## Obsolete transfers after a playlist refresh
+
+Refreshes cancel background tickets that refer to removed songs or outdated
+title, artist credits, or duration. A corrected missing song can return to
+source discovery after a completed lookup. Existing queue order, user pauses
+and paid-search reservations carry forward. Relaunch compares persisted
+tickets and discovery checkpoints with the loaded playlist.
+
+The AAC fixture proof now requires cancellation of an outdated ticket before
+the corrected song downloads. All 14 receipt and workflow tests passed, and
+the changed Swift files parsed successfully. The native regression and fixture
+proof still require a Mac with Xcode.
+
 ## Refresh cached source searches
 
 Pending songs discard saved recording candidates, web links and lookup details

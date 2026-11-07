@@ -351,7 +351,7 @@ enum SourceDiscoveryJobTests {
                         "foreground and background discovery honour the recovered song's saved retry time after relaunch")
         var readyWork = delayedRecovery
         let newSong = PlaylistWish(title: "Newly added", artist: "Artist", album: "", spotifyURL: nil)
-        verifyDiscovery(readyWork.appendNewMissingWishes([newSong]) == 1 &&
+        verifyDiscovery(readyWork.refreshMissingWishes([newSong]) == 1 &&
                         BackgroundDiscoveryPolicy.earliestUsefulDate(for: [readyWork], at: retryClock) == retryClock &&
                         readyWork.prepareLookup(at: retryClock) && readyWork.currentWish?.id == newSong.id,
                         "a new song can start while the recovered link is waiting")
@@ -375,7 +375,7 @@ enum SourceDiscoveryJobTests {
                         staggeredRecovery.currentWish?.id == wishes[1].id,
                         "staggered recoveries wake at the first eligible time")
         var providerBackoff = beforeRecovery
-        _ = providerBackoff.appendNewMissingWishes([newSong])
+        _ = providerBackoff.refreshMissingWishes([newSong])
         verifyDiscovery(!providerBackoff.prepareLookup(at: retryClock) &&
                         providerBackoff.currentWish?.id == wishes[2].id,
                         "new songs respect the current provider retry delay")
@@ -668,7 +668,7 @@ enum SourceDiscoveryJobTests {
         refreshedJob.record(.queued)
         let added = PlaylistWish(title: "Recently Added", artist: "Band",
                                  album: "", spotifyURL: nil, durationSeconds: 180)
-        verifyDiscovery(refreshedJob.appendNewMissingWishes([wishes[1], added, added]) == 1,
+        verifyDiscovery(refreshedJob.refreshMissingWishes([wishes[1], added, added]) == 1,
                         "playlist refresh appends only new Spotify occurrences")
         verifyDiscovery(refreshedJob.nextIndex == 1 && refreshedJob.queued == 1 &&
                         refreshedJob.wishes.last?.id == added.id,
@@ -680,7 +680,7 @@ enum SourceDiscoveryJobTests {
         _ = refreshedJob.reserveWebSearch(for: wishes[1].id)
         var albumEdit = wishes[1]
         albumEdit.album = "Corrected album"
-        _ = refreshedJob.appendNewMissingWishes([albumEdit])
+        _ = refreshedJob.refreshMissingWishes([albumEdit])
         verifyDiscovery(refreshedJob.recordingCandidates?[pendingKey] == [choice] &&
                         refreshedJob.webSources?[pendingKey] == [cachedBackup],
                         "album-only refresh keeps verified lookup results")
@@ -688,7 +688,7 @@ enum SourceDiscoveryJobTests {
             title: "Second (renamed)", artist: wishes[1].artist,
             album: "New Album", spotifyURL: wishes[1].spotifyURL,
             durationSeconds: 213)
-        verifyDiscovery(refreshedJob.appendNewMissingWishes([editedPending]) == 0 &&
+        verifyDiscovery(refreshedJob.refreshMissingWishes([editedPending]) == 0 &&
                         refreshedJob.wishes[1].title == "Second (renamed)" &&
                         refreshedJob.wishes[1].durationSeconds == 213 &&
                         refreshedJob.nextIndex == 1,
@@ -714,6 +714,43 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(synchronized.wishes.last?.id == added.id &&
                         synchronized.outcome(for: wishes[1]) == .removed,
                         "refreshed playlist checkpoint survives app relaunch")
+        var processedRefresh = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes + [added])
+        processedRefresh.record(.queued)
+        processedRefresh.record(.unavailable)
+        processedRefresh.record(.failed)
+        processedRefresh.recordTransientFailure("Waiting for the current song", at: retryClock)
+        let originalRetryTime = processedRefresh.nextRetryAt
+        processedRefresh.isPaused = true
+        _ = processedRefresh.reserveWebSearch(for: wishes[0].id)
+        processedRefresh.recordingCandidates = [wishes[0].id.uuidString: [choice]]
+        processedRefresh.webSources = [wishes[0].id.uuidString: [cachedBackup]]
+        var correctedQueued = wishes[0]
+        correctedQueued.durationSeconds = 220
+        var correctedFailure = wishes[2]
+        correctedFailure.artistNames = ["Corrected Artist"]
+        verifyDiscovery(processedRefresh.refreshMissingWishes([correctedQueued, wishes[1], correctedFailure]) == 2 &&
+                        processedRefresh.wishes.map(\.id) == [wishes[1].id, added.id, wishes[0].id, wishes[2].id] &&
+                        processedRefresh.currentWish?.id == added.id &&
+                        processedRefresh.outcome(for: wishes[1]) == .unavailable &&
+                        processedRefresh.nextIndex == 1 && processedRefresh.queued == 0 &&
+                        processedRefresh.unavailable == 1 && processedRefresh.failed == 0,
+                        "corrected processed songs reopen behind the current lookup with aligned history")
+        let restoredRefresh = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(processedRefresh))
+        verifyDiscovery(restoredRefresh.isPaused && restoredRefresh.nextRetryAt == originalRetryTime &&
+                        restoredRefresh.webSearchWishIDs == [wishes[0].id] &&
+                        restoredRefresh.recordingCandidates?[wishes[0].id.uuidString] == nil &&
+                        restoredRefresh.webSources?[wishes[0].id.uuidString] == nil &&
+                        restoredRefresh.wishes.suffix(2).map(\.id) == [wishes[0].id, wishes[2].id],
+                        "a paused refresh clears old source evidence and preserves credits and the retry deadline")
+        verifyDiscovery(processedRefresh.refreshMissingWishes([correctedQueued, correctedFailure]) == 0,
+                        "repeating the same refresh does not queue the corrections twice")
+        var legacyRefresh = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
+        legacyRefresh.record(.queued)
+        legacyRefresh.outcomes = nil
+        verifyDiscovery(legacyRefresh.refreshMissingWishes([correctedQueued]) == 1 &&
+                        legacyRefresh.currentWish == correctedQueued && legacyRefresh.queued == 0,
+                        "a corrected legacy checkpoint can reopen even without per-song outcomes")
         var backgroundJob = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
         let backgroundClock = Date(timeIntervalSince1970: 1_700_100_000)
         verifyDiscovery(BackgroundDiscoveryPolicy.maxSongsPerPass == 5,

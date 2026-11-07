@@ -136,6 +136,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     func attach(to library: MusicLibrary) {
         self.library = library
         activate()
+        cancelObsoleteTransfers(in: library)
         updatePending()
         Task { [weak self] in
             await self?.recoverStagedDownloads()
@@ -226,9 +227,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     func canRetry(_ id: UUID) -> Bool {
         guard sourceResolutionTasks[id] == nil, let ticket = tickets[id], let library,
               ticket.status == .failed || ticket.status == .cancelled,
-              library.playlists.contains(where: {
-                  $0.id == ticket.playlistID && $0.sourceOrder.contains(where: { $0.id == ticket.requested.id })
-              }) else { return false }
+              library.hasCurrentSourceRequest(ticket.requested, for: ticket.playlistID) else { return false }
         guard !sourceResolutionTasks.keys.contains(where: { key in
             guard let resolving = tickets[key] else { return false }
             return resolving.playlistID == ticket.playlistID &&
@@ -298,11 +297,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         revision += 1
     }
 
-    func cancelTransfer(_ id: UUID) {
+    func cancelTransfer(_ id: UUID, reason: String = "Cancelled") {
         guard var ticket = tickets[id], ticket.status == .queued else { return }
         conversions[id]?.cancel()
         ticket.status = .cancelled
-        ticket.failureReason = "Cancelled"
+        ticket.failureReason = reason
         tickets[id] = ticket
         // An idle staged file has no owner left after explicit cancellation.
         // Active conversion owns cleanup until its cancellation check returns.
@@ -352,7 +351,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 guard let source = sources.first,
                       let current = self.tickets[previous.id], current.status == previous.status,
                       library.canResolveRecordingSources(for: previous.playlistID),
-                      library.playlists.contains(where: { $0.id == previous.playlistID && $0.sourceOrder.contains(where: { $0.id == wish.id }) }) else { return }
+                      library.hasCurrentSourceRequest(wish, for: previous.playlistID) else { return }
                 self.sourceResolutionTasks.removeValue(forKey: previous.id)
                 try self.enqueue(source: source, requested: wish, playlistID: previous.playlistID,
                                  alternatives: Array(sources.dropFirst()), replacingRetry: previous.id)
@@ -387,19 +386,22 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         for id in ids { cancelTransfer(id) }
     }
 
-    /// When the user refreshes a Spotify playlist, stop background transfers
-    /// for tracks removed from that playlist. Do not delete library recordings
-    /// or cancel tasks belonging to another playlist.
-    func cancelRemovedTracks(for playlistID: UUID, keepingIDs: Set<UUID>) {
-        for (id, task) in sourceResolutionTasks {
-            if let ticket = tickets[id], ticket.playlistID == playlistID,
-               !keepingIDs.contains(ticket.requested.id) { task.cancel() }
+    private static let obsoleteRequestReason = "The song changed or was removed from the playlist."
+
+    /// Compare each ticket with its loaded playlist, even after a relaunch.
+    /// Leave tickets pending if their playlist data is unavailable.
+    func cancelObsoleteTransfers(in library: MusicLibrary, for playlistID: UUID? = nil) {
+        let loadedIDs = Set(library.playlists.map(\.id))
+        let obsolete = tickets.values.filter { ticket in
+            (playlistID == nil || ticket.playlistID == playlistID) &&
+                loadedIDs.contains(ticket.playlistID) &&
+                (ticket.status == .queued || sourceResolutionTasks[ticket.id] != nil) &&
+                !library.hasCurrentSourceRequest(ticket.requested, for: ticket.playlistID)
         }
-        let removed = tickets.values.filter {
-            $0.playlistID == playlistID && $0.status == .queued &&
-            !keepingIDs.contains($0.requested.id)
-        }.map(\.id)
-        for id in removed { cancelTransfer(id) }
+        for ticket in obsolete {
+            sourceResolutionTasks[ticket.id]?.cancel()
+            cancelTransfer(ticket.id, reason: Self.obsoleteRequestReason)
+        }
     }
 
     func setBackgroundEventsCompletion(_ completion: @escaping () -> Void) {
@@ -635,8 +637,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             if Task.isCancelled { break }
             // The candidate snapshot can become stale across earlier awaits.
             // Never import a ticket that was cancelled or already satisfied.
-            guard tickets[ticket.id]?.status == .queued,
-                  processing.insert(ticket.id).inserted else { continue }
+            guard tickets[ticket.id]?.status == .queued else { continue }
+            guard library.hasCurrentSourceRequest(ticket.requested, for: ticket.playlistID) else {
+                if library.playlists.contains(where: { $0.id == ticket.playlistID }) {
+                    cancelTransfer(ticket.id, reason: Self.obsoleteRequestReason)
+                }
+                continue
+            }
+            guard processing.insert(ticket.id).inserted else { continue }
             let conversion = Progress()
             conversions[ticket.id] = conversion
             revision += 1
@@ -750,6 +758,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         var completedLocally = false
         for id in possible {
             guard let current = tickets[id], current.status == .queued,
+                  let library, library.hasCurrentSourceRequest(current.requested, for: current.playlistID),
                   BackgroundTransferRecoveryPolicy.shouldRecover(
                       startedAt: current.startedAt, checkedAt: Date(),
                       firstScanHasTask: first.ids.contains(id),
@@ -760,7 +769,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
             // A recording might already have been imported before a crash
             // prevented the transfer manifest from being finalized.
-            if let library, library.hasOfflineRecording(matching: current.requested) {
+            if library.hasOfflineRecording(matching: current.requested) {
                 var finished = current
                 finished.status = .imported
                 finished.failureReason = nil

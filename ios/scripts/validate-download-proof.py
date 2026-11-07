@@ -18,7 +18,7 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
     first_stages = {
         "live-download": ["queue-write-failure-rejected", "search", "match", "resolved-and-queued"],
         "local-import-restart": ["local-fixture-import"],
-        "fixture-transfer": ["queue-write-failure-rejected", "fixture-queued", "fixture-downloaded"],
+        "fixture-transfer": ["queue-write-failure-rejected", "obsolete-fixture-cancelled", "fixture-queued", "fixture-downloaded"],
     }
     if mode not in first_stages or (expected_mode is not None and mode != expected_mode):
         raise ValueError("The proof mode is missing or does not match this runner")

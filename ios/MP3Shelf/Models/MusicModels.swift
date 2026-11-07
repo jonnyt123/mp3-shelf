@@ -90,6 +90,11 @@ struct PlaylistWish: Identifiable, Codable, Hashable, Sendable {
     var durationSeconds: Double? = nil
     var artistNames: [String]? = nil
     var appleMusicItemID: String? = nil
+
+    func matchesSourceRequest(_ other: PlaylistWish) -> Bool {
+        id == other.id && title == other.title && artist == other.artist &&
+            artistNames == other.artistNames && durationSeconds == other.durationSeconds
+    }
 }
 
 /// Media-library IDs are local to a device. A persisted installation namespace

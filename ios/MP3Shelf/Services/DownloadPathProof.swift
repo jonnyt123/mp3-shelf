@@ -128,13 +128,19 @@ enum DownloadPathProof {
                 expectedDuration = Double(audio.length) / audio.processingFormat.sampleRate
                 guard expectedDuration.isFinite, expectedDuration > 0 else { throw fail("The local fixture is empty") }
             }
+            // A synthetic provider ID keeps the occurrence stable on refresh.
+            let fixturePlaylistURL = fixtureTransfer ? "https://open.spotify.com/playlist/0000000000000000000001" : nil
+            let fixtureTrackURL = fixtureTransfer ? "https://open.spotify.com/track/0000000000000000000001" : nil
             let wish = PlaylistWish(title: title,
                                     artist: mode == .liveDownload ? "Kevin MacLeod" : "MP3 Shelf", album: "",
-                                    durationSeconds: expectedDuration)
+                                    spotifyURL: fixtureTrackURL, durationSeconds: expectedDuration)
+            var initialWish = wish
+            if fixtureTransfer { initialWish.durationSeconds = expectedDuration + 30 }
             report["expectedDurationSeconds"] = expectedDuration
             report["expectedTitle"] = wish.title
             report["expectedArtist"] = wish.artist
-            let imported = library.importPlaylist(wishes: [wish], name: "Download path proof")
+            let imported = library.importPlaylist(wishes: [initialWish], name: "Download path proof",
+                                                  sourceURL: fixturePlaylistURL)
             playlistID = imported.playlistID
             var finished = false
             if localFixture {
@@ -143,7 +149,7 @@ enum DownloadPathProof {
                 report["selection"] = "local-fixture"
                 try record("local-fixture-import", "Imported the repository's real MP3 fixture through the production importer; no network transfer")
             } else {
-                try await verifyRejectedQueueSave(for: wish, playlistID: imported.playlistID)
+                try await verifyRejectedQueueSave(for: initialWish, playlistID: imported.playlistID)
                 try record("queue-write-failure-rejected", "An unwritable queue file prevented a ticket and background task from being created")
                 let transfers = BackgroundAudioDownloader.shared
                 let fixtureURL = fixtureTransfer ? fixtureDownloadURL : nil
@@ -152,6 +158,20 @@ enum DownloadPathProof {
                     guard let fixtureURL else { throw fail("The isolated AAC server URL is missing") }
                     let source = AudioCatalogMatch(downloadURL: fixtureURL, itemURL: fixtureURL,
                         licenseURL: nil, sourceName: "AAC transfer fixture")
+                    guard try transfers.enqueue(source: source, requested: initialWish, playlistID: imported.playlistID),
+                          let obsoleteID = transfers.ticketsForPlaylist(imported.playlistID).first?.id else {
+                        throw fail("The initial fixture transfer could not be queued")
+                    }
+                    let refreshed = library.importPlaylist(wishes: [wish], name: "Download path proof",
+                                                           sourceURL: fixturePlaylistURL)
+                    guard refreshed.playlistID == imported.playlistID,
+                          library.discoveryJob(for: refreshed.playlistID)?.currentWish == wish,
+                          transfers.ticketsForPlaylist(refreshed.playlistID).contains(where: {
+                              $0.id == obsoleteID && $0.status == .cancelled
+                          }), !transfers.canRetry(obsoleteID) else {
+                        throw fail("Refreshing the fixture did not cancel the obsolete transfer and queue the corrected wish")
+                    }
+                    try record("obsolete-fixture-cancelled", "A duration correction cancelled the old ticket and reopened discovery")
                     guard try transfers.enqueue(source: source, requested: wish, playlistID: imported.playlistID) else {
                         throw fail("The production queue did not accept the AAC fixture")
                     }
@@ -206,7 +226,8 @@ enum DownloadPathProof {
                         report["sourcePage"] = completed.sourcePage.absoluteString
                         if fixtureTransfer {
                             guard let fixtureURL, completed.downloadURL == fixtureURL,
-                                  completed.sourcePage == fixtureURL, completed.failureReason == nil else {
+                                  completed.sourcePage == fixtureURL, completed.failureReason == nil,
+                                  completed.requested.matchesSourceRequest(wish) else {
                                 throw fail("The completed transfer did not match the AAC fixture ticket")
                             }
                             try record("fixture-downloaded", "The production downloader imported the queued AAC response")

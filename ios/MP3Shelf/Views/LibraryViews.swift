@@ -724,7 +724,7 @@ struct PlaylistDetailView: View {
             return ("Saved offline as an audio file", "checkmark.circle.fill")
         }
         if let ticket = transfers.ticketsForPlaylist(playlistID).first(where: {
-            $0.requested.id == wish.id
+            $0.requested.matchesSourceRequest(wish)
         }) {
             switch ticket.status {
             case .queued:

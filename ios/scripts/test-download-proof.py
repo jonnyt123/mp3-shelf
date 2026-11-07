@@ -214,7 +214,8 @@ elif command=='launch':
         first=['local-fixture-import'] if local else ['queue-write-failure-rejected','search','match','resolved-and-queued']
         source=None
         if fixture:
-            first=['queue-write-failure-rejected','fixture-queued','fixture-downloaded']
+            first=['queue-write-failure-rejected','obsolete-fixture-cancelled','fixture-queued','fixture-downloaded']
+            if mode=='refresh-not-verified': first.remove('obsolete-fixture-cancelled')
             port=args[args.index('--mp3shelf-proof-fixture-port')+1]
             source=f'http://127.0.0.1:{port}/{run_id}/fixture.m4a'
             if mode!='no-fixture-response':
@@ -272,7 +273,8 @@ elif command=='launch':
                 self.assertEqual(call[-1], "com.jonnyt.mp3shelf.downloadproof")
 
     def test_fixture_transfer_requires_a_matching_server_response(self):
-        for failure, message in [("no-fixture-response", "No successful fixture response"),
+        for failure, message in [("refresh-not-verified", "missing required pipeline stages"),
+                                 ("no-fixture-response", "No successful fixture response"),
                                  ("wrong-fixture-source", "does not match the queued source")]:
             with self.subTest(failure=failure):
                 result = self.run_proof("--fixture-transfer", failure=failure)
