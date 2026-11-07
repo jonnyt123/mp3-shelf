@@ -1090,6 +1090,10 @@ final class MusicLibrary: ObservableObject {
         guard downloadedBytes > 0 && downloadedBytes <= 100 * 1024 * 1024 else {
             throw MusicLibraryError.downloadFailed
         }
+        guard DownloadedAudioRange.coversCompleteFile(status: http.statusCode,
+            contentRange: http.value(forHTTPHeaderField: "Content-Range"), downloadedBytes: downloadedBytes) else {
+            throw MusicLibraryError.incompleteDownload
+        }
         let ext = remoteURL.pathExtension.lowercased()
         let mime = (http.mimeType ?? "").lowercased()
         let supported = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
@@ -1341,7 +1345,7 @@ final class MusicLibrary: ObservableObject {
 }
 
 enum MusicLibraryError: LocalizedError {
-    case unsupportedFormat, invalidDownloadURL, downloadFailed, recordingDurationMismatch
+    case unsupportedFormat, invalidDownloadURL, downloadFailed, incompleteDownload, recordingDurationMismatch
     case downloadedFormatIsNotMP3, conversionUnsupportedFormat, conversionTooLong
     case recordingMetadataMismatch(String)
 
@@ -1353,6 +1357,7 @@ enum MusicLibraryError: LocalizedError {
         case .unsupportedFormat: return "Only supported audio files (MP3, M4A, AAC, WAV, AIFF) can be imported."
         case .invalidDownloadURL: return "Enter a direct HTTPS audio URL. Spotify streaming links cannot be downloaded."
         case .downloadFailed: return "The audio download did not complete successfully."
+        case .incompleteDownload: return DownloadedAudioRange.incompleteMessage
         case .recordingDurationMismatch: return "The downloaded audio duration did not match the requested recording."
         case .recordingMetadataMismatch(let field):
             return "The downloaded audio's embedded \(field) does not match the requested song. It was not added to your playlist."

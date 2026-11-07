@@ -872,12 +872,17 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // Copy/move BEFORE returning: URLSession deletes location at delegate return.
         let destination = Self.stagingURL(id)
         do {
-            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
-                                                    withIntermediateDirectories: true)
             let bytes = (try FileManager.default.attributesOfItem(atPath: location.path)[.size] as? NSNumber)?.int64Value ?? 0
             guard bytes > 0 && bytes <= BackgroundTransferProgressPolicy.maxBytes else {
                 throw CocoaError(.fileReadTooLarge)
             }
+            guard DownloadedAudioRange.coversCompleteFile(status: http.statusCode,
+                contentRange: http.value(forHTTPHeaderField: "Content-Range"), downloadedBytes: bytes) else {
+                Task { @MainActor in self.setFailed(id, reason: DownloadedAudioRange.incompleteMessage) }
+                return
+            }
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: location, to: destination)
             Task { @MainActor in

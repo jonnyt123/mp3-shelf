@@ -202,6 +202,18 @@ enum SourceDiscoveryJobTests {
             verifyDiscovery(!DownloadedAudioContentType.allows(mime), "non-supported response is rejected: \(mime)")
         }
         verifyDiscovery(!DownloadedAudioContentType.allows(nil), "missing response type is rejected")
+        verifyDiscovery(DownloadedAudioRange.coversCompleteFile(status: 200, contentRange: nil, downloadedBytes: 2107),
+                        "an ordinary full response does not require a range header")
+        verifyDiscovery(DownloadedAudioRange.coversCompleteFile(
+            status: 206, contentRange: "Bytes 00-2106/2107", downloadedBytes: 2107),
+                        "a 206 containing the entire representation is accepted")
+        for range in [nil, "bytes 0-1684/2107", "bytes 422-2106/2107", "bytes 0-1684/*",
+                      "bytes 0-1684/1686", "bytes 0-2106/2107", "bytes 0-1684/1685, bytes 0-1684/1685",
+                      "items 0-1684/1685", "bytes 0-1684/+1685", "bytes 0-1684/9223372036854775808"] {
+            verifyDiscovery(!DownloadedAudioRange.coversCompleteFile(
+                status: 206, contentRange: range, downloadedBytes: 1685),
+                            "incomplete or invalid range is rejected: \(range ?? "missing")")
+        }
         verifyDiscovery(BackgroundDownloadBackpressure.maximumOutstandingTransfers == 4,
                         "large playlist discovery limits outstanding background transfers")
         for count in 0..<4 {

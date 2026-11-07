@@ -356,3 +356,24 @@ enum DownloadedAudioContentType {
                 "audio/flac", "audio/x-flac"].contains(mime)
     }
 }
+
+enum DownloadedAudioRange {
+    static let incompleteMessage = "The source sent only part of the audio file. Try another source."
+
+    static func coversCompleteFile(status: Int, contentRange: String?, downloadedBytes: Int64) -> Bool {
+        guard status == 206 else { return true }
+        // A standalone file must cover byte zero through the end of the
+        // representation. The decoder may accept a truncated MP3 prefix.
+        let fields = contentRange?.split(whereSeparator: { $0 == " " || $0 == "\t" }) ?? []
+        guard downloadedBytes > 0, fields.count == 2, fields[0].lowercased() == "bytes" else { return false }
+        let extent = fields[1].split(separator: "/", omittingEmptySubsequences: false)
+        guard extent.count == 2 else { return false }
+        let bounds = extent[0].split(separator: "-", omittingEmptySubsequences: false)
+        guard bounds.count == 2,
+              [bounds[0], bounds[1], extent[1]].allSatisfy({
+                  !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) }
+              }) else { return false }
+        return Int64(bounds[0]) == 0 && Int64(bounds[1]) == downloadedBytes - 1 &&
+            Int64(extent[1]) == downloadedBytes
+    }
+}

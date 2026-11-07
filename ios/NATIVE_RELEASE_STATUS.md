@@ -1,5 +1,16 @@
 # Native release status — consolidated draft PR #29
 
+## Incomplete download responses
+
+A loopback server returned a 1,685-byte prefix of a 2,107-byte MP3 as HTTP 206.
+The prefix still decoded with FFmpeg. Background transfers and direct URL
+imports now require a 206 response to declare the entire byte range and match
+the saved file size before import. Incomplete playlist transfers can use the
+existing alternate-source recovery. Short source probes still accept ranges.
+
+Swift syntax and the portable C suite passed. The new range cases await the
+native test runner because this host lacks a Swift compiler.
+
 ## Search recovery after a failed transfer
 
 An automatically queued song can return to discovery after an eligible transfer
