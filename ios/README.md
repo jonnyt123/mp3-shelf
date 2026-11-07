@@ -36,10 +36,11 @@ the new import's audio/artwork instead of claiming it was saved.
 
 After a recording's identity is validated, the resolver considers up to three
 distinct signed AAC formats, highest bitrate first. Invalid, oversized and
-near-expiry links are filtered out. A failed media probe can try the next format;
-cancellation stops immediately. A temporary probe failure remains eligible for
-the existing bounded lookup retry when every format fails. The same HTTP/MIME/
-MP4-prefix and post-download decoding checks still apply.
+near-expiry links are filtered out. The first accepted link starts the transfer
+after probing for one backup. If the full transfer fails, the queue can use the
+saved backup while its link is still valid. Cancellation stops probing. A
+temporary probe failure remains eligible for bounded lookup retry when every
+format fails.
 
 The background queue now checks its four-slot limit at ticket insertion as well
 as before resolution, preventing a reviewed recording from overfilling a queue

@@ -1,5 +1,14 @@
 # Native release status — consolidated draft PR #29
 
+## Backup AAC link during full transfer
+
+Automatic matching, recording review and manual retry now save one verified
+backup format with the transfer ticket when available. The queue can switch to
+it after an eligible transfer failure and skips expired backup links. Backup
+probes use a five-second request timeout within the existing three-format limit.
+The C checks and syntax parsing of seven changed Swift files passed. Native
+regressions and live transfer verification require Swift and Xcode.
+
 ## AAC format fallback and queue capacity — native execution pending
 
 Recording resolution now tries at most three eligible signed AAC formats in

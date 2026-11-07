@@ -36,25 +36,31 @@ enum SourceDiscoveryJobTests {
                         "missing bitrate preserves the extractor's stable source priority")
 
         let fallbackLog = RecordingProbeLog()
-        let fallback = try await RecordingStreamProbe.resolve([high, low], at: clock) { url in
+        let fallback = try await RecordingStreamProbe.resolve([high, low], at: clock) { url, _ in
             await fallbackLog.record(url)
             if url == high.url { throw NSError(domain: "Fixture.HTTP", code: 403) }
         }
         let fallbackCalls = await fallbackLog.requests
-        verifyDiscovery(fallback == low.url && fallbackCalls == [high.url, low.url],
+        verifyDiscovery(fallback == [low.url] && fallbackCalls == [high.url, low.url],
                         "a refused high-bitrate AAC URL falls back to a working format from the same recording")
 
         let successLog = RecordingProbeLog()
-        let success = try await RecordingStreamProbe.resolve([low, high], at: clock) { url in
+        let success = try await RecordingStreamProbe.resolve([third, low, high], at: clock) { url, isBackup in
+            verifyDiscovery(isBackup == (url == low.url), "the second probe is a backup")
             await successLog.record(url)
         }
         let successCalls = await successLog.requests
-        verifyDiscovery(success == high.url && successCalls == [high.url],
-                        "a working highest-bitrate AAC source stops additional probes")
+        verifyDiscovery(success == [high.url, low.url] && successCalls == [high.url, low.url],
+                        "the first two verified formats are kept without probing a third")
+
+        let primaryOnly = try await RecordingStreamProbe.resolve([high, low], at: clock) { _, isBackup in
+            if isBackup { throw URLError(.timedOut) }
+        }
+        verifyDiscovery(primaryOnly == [high.url], "a backup timeout preserves the verified primary")
 
         let failedLog = RecordingProbeLog()
         do {
-            _ = try await RecordingStreamProbe.resolve([fourth, low, third, high], at: clock) { url in
+            _ = try await RecordingStreamProbe.resolve([fourth, low, third, high], at: clock) { url, _ in
                 await failedLog.record(url)
                 if url == high.url { throw URLError(.timedOut) }
                 throw NSError(domain: "Fixture.HTTP", code: 403)
@@ -71,7 +77,7 @@ enum SourceDiscoveryJobTests {
 
         let cancelledLog = RecordingProbeLog()
         do {
-            _ = try await RecordingStreamProbe.resolve([high, low], at: clock) { url in
+            _ = try await RecordingStreamProbe.resolve([high, low], at: clock) { url, _ in
                 await cancelledLog.record(url)
                 throw URLError(.cancelled)
             }
@@ -85,7 +91,7 @@ enum SourceDiscoveryJobTests {
 
         let stoppedLog = RecordingProbeLog()
         let stopped = Task { @MainActor in
-            try await RecordingStreamProbe.resolve([high, low], at: clock) { url in await stoppedLog.record(url) }
+            try await RecordingStreamProbe.resolve([high, low], at: clock) { url, _ in await stoppedLog.record(url) }
         }
         stopped.cancel()
         do { _ = try await stopped.value; fatalError("A stopped resolver must not return a source") }
@@ -94,11 +100,11 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(stoppedCalls.isEmpty, "a cancelled task sends no format probes")
 
         let invalidLog = RecordingProbeLog()
-        let invalid = try await RecordingStreamProbe.resolve([oversized, expiring], at: clock) { url in
+        let invalid = try await RecordingStreamProbe.resolve([oversized, expiring], at: clock) { url, _ in
             await invalidLog.record(url)
         }
         let invalidCalls = await invalidLog.requests
-        verifyDiscovery(invalid == nil && invalidCalls.isEmpty, "no admitted AAC format means no network probe")
+        verifyDiscovery(invalid.isEmpty && invalidCalls.isEmpty, "no admitted AAC format means no network probe")
     }
 
     @MainActor static func main() async throws {

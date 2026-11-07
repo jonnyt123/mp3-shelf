@@ -244,17 +244,20 @@ enum RecordingStreamProbe {
         }.prefix(maximumAttempts))
     }
 
+    /// Keep one verified backup for a failure during the full transfer.
     static func resolve(_ candidates: [Candidate], at date: Date = .now,
-                        probe: @Sendable (URL) async throws -> Void) async throws -> URL? {
+                        probe: @Sendable (_ url: URL, _ isBackup: Bool) async throws -> Void) async throws -> [URL] {
         try Task.checkCancellation()
+        var verified: [URL] = []
         var lastFailure: Error?
         var temporaryFailure: Error?
         for url in orderedSources(candidates, at: date) {
             try Task.checkCancellation()
             do {
-                try await probe(url)
+                try await probe(url, !verified.isEmpty)
                 try Task.checkCancellation()
-                return url
+                verified.append(url)
+                if verified.count == 2 { break }
             } catch is CancellationError { throw CancellationError() }
             catch {
                 try Task.checkCancellation()
@@ -264,10 +267,11 @@ enum RecordingStreamProbe {
                 lastFailure = error
             }
         }
+        if !verified.isEmpty { return verified }
         // Keep a temporary outage eligible for the existing bounded lookup
         // retry even if the last format happened to return a permanent refusal.
         if let failure = temporaryFailure ?? lastFailure { throw failure }
-        return nil
+        return []
     }
 }
 

@@ -541,10 +541,11 @@ extension AudioSourceFinder {
         }.map(\.element)
     }
 
-    static func nextAlternative(to currentURL: URL, from remaining: [AudioCatalogMatch])
+    static func nextAlternative(to currentURL: URL, from remaining: [AudioCatalogMatch], at date: Date = .now)
         -> (source: AudioCatalogMatch, remaining: [AudioCatalogMatch])? {
         guard let index = remaining.firstIndex(where: {
-            $0.downloadURL != currentURL && $0.downloadURL.scheme?.lowercased() == "https"
+            $0.downloadURL != currentURL && $0.downloadURL.scheme?.lowercased() == "https" &&
+                !AudioSourceLinks.hasExpired($0.downloadURL, at: date)
         }) else { return nil }
         return (remaining[index], Array(remaining.dropFirst(index + 1)))
     }

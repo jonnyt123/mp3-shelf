@@ -829,6 +829,12 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.nextAlternative(
             to: secondSource.downloadURL, from: fallback?.remaining ?? []) == nil,
                "exhausted source alternatives cannot cause repeated download loops")
+        let expiredAAC = AudioCatalogMatch(
+            downloadURL: URL(string: "https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4&sig=fixture&expire=100")!,
+            itemURL: firstSource.itemURL, licenseURL: nil, sourceName: "Expired AAC")
+        let freshFallback = AudioSourceFinder.nextAlternative(
+            to: firstSource.downloadURL, from: [expiredAAC, secondSource], at: Date(timeIntervalSince1970: 101))
+        verify(freshFallback?.source == secondSource, "a signed backup that expired during transfer is skipped")
         let serializedSources = try? JSONEncoder().encode(deduped)
         let restoredSources = serializedSources.flatMap {
             try? JSONDecoder().decode([AudioCatalogMatch].self, from: $0)

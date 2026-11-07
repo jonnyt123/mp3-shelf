@@ -727,14 +727,16 @@ final class MusicLibrary: ObservableObject {
         guard canResolveRecordingSources(for: playlistID) else { throw NativeAudioEngine.Failure.networkUnavailable }
         guard BackgroundDownloadBackpressure.mayEnqueue(
             outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()) else { throw NativeAudioEngine.Failure.queueUnavailable }
-        let source = try await NativeAudioEngine.shared.resolve(candidate, for: wish,
+        let sources = try await NativeAudioEngine.shared.resolve(candidate, for: wish,
             allowsCellular: cellularApproved(for: playlistID), userSelected: true)
         try Task.checkCancellation()
-        guard canResolveRecordingSources(for: playlistID), playlists.contains(where: {
+        guard let source = sources.first,
+              canResolveRecordingSources(for: playlistID), playlists.contains(where: {
             $0.id == playlistID && $0.sourceOrder.contains(where: {
                 $0.id == wish.id && MusicMatching.sameRequestedRecording($0, wish)
             })
-        }), BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID) else {
+        }), BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID,
+                                                      alternatives: Array(sources.dropFirst())) else {
             throw NativeAudioEngine.Failure.queueUnavailable
         }
     }
@@ -877,9 +879,9 @@ final class MusicLibrary: ObservableObject {
                             for _ in 0..<2 {
                                 guard let choice = RecordingMatcher.automaticChoice(ranked, excluding: excluded) else { break }
                                 do {
-                                    let source = try await NativeAudioEngine.shared.resolve(choice, for: wish, allowsCellular: allowsCellular)
+                                    let sources = try await NativeAudioEngine.shared.resolve(choice, for: wish, allowsCellular: allowsCellular)
                                     guard job.isCurrent(in: discoveryJobs, at: index) else { break }
-                                    ownedSources = [source]
+                                    ownedSources = sources
                                     ownedDetails.append("MP3 Shelf matching: selected \(choice.title); audio resolved on this iPhone")
                                     break
                                 } catch is CancellationError { throw CancellationError() }

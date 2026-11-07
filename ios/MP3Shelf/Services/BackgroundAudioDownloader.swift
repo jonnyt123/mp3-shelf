@@ -364,14 +364,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 let wish = previous.requested
                 let candidate = RecordingCandidate(id: videoID, title: wish.title,
                     uploader: wish.artistNames?.first ?? wish.artist, durationSeconds: wish.durationSeconds)
-                let source = try await NativeAudioEngine.shared.resolve(candidate, for: wish,
+                let sources = try await NativeAudioEngine.shared.resolve(candidate, for: wish,
                     allowsCellular: library.cellularApproved(for: previous.playlistID), userSelected: true)
                 try Task.checkCancellation()
-                guard let current = self.tickets[previous.id], current.status == previous.status,
+                guard let source = sources.first,
+                      let current = self.tickets[previous.id], current.status == previous.status,
                       library.canResolveRecordingSources(for: previous.playlistID),
                       library.playlists.contains(where: { $0.id == previous.playlistID && $0.sourceOrder.contains(where: { $0.id == wish.id }) }) else { return }
                 self.sourceResolutionTasks.removeValue(forKey: previous.id)
-                guard self.enqueue(source: source, requested: wish, playlistID: previous.playlistID) else { return }
+                guard self.enqueue(source: source, requested: wish, playlistID: previous.playlistID,
+                                   alternatives: Array(sources.dropFirst())) else { return }
                 var replaced = current
                 replaced.status = .cancelled
                 replaced.failureReason = "Replaced by manual retry"

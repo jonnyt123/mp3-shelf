@@ -106,7 +106,7 @@ actor NativeAudioEngine {
     }
 
     func resolve(_ candidate: RecordingCandidate, for wish: PlaylistWish,
-                 allowsCellular: Bool, userSelected: Bool = false) async throws -> AudioCatalogMatch {
+                 allowsCellular: Bool, userSelected: Bool = false) async throws -> [AudioCatalogMatch] {
         guard RecordingMatcher.validID(candidate.id) else { throw Failure.changedRecording }
         try await acquireResolution()
         defer { releaseResolution() }
@@ -130,13 +130,18 @@ actor NativeAudioEngine {
                 let streams = try await video.streams
                 let candidates = streams.filterAudioOnly().filter { $0.fileExtension == .m4a }
                     .map { RecordingStreamProbe.Candidate(url: $0.url, bitrate: $0.bitrate ?? $0.averageBitrate) }
-                let audioURL = try await RecordingStreamProbe.resolve(candidates) { url in
-                    try await Self.checkAudioResponse(from: url, connection: connection, allowsCellular: allowsCellular)
+                let verifiedURLs = try await RecordingStreamProbe.resolve(candidates) { url, isBackup in
+                    try await Self.checkAudioResponse(from: url, connection: connection,
+                                                      allowsCellular: allowsCellular, isBackup: isBackup)
                 }
-                guard let audioURL else { throw Failure.noAudio }
+                let deadline = Date().addingTimeInterval(30)
+                let usableURLs = verifiedURLs.filter { !AudioSourceLinks.hasExpired($0, at: deadline) }
+                guard !usableURLs.isEmpty else { throw Failure.noAudio }
                 try Task.checkCancellation()
-                return AudioCatalogMatch(downloadURL: audioURL, itemURL: candidate.pageURL,
-                    licenseURL: nil, sourceName: "MP3 Shelf matching · YouTube")
+                return usableURLs.map {
+                    AudioCatalogMatch(downloadURL: $0, itemURL: candidate.pageURL,
+                        licenseURL: nil, sourceName: "MP3 Shelf matching · YouTube")
+                }
             }
         } catch let error as YouTubeKitError {
             try Task.checkCancellation()
@@ -145,10 +150,11 @@ actor NativeAudioEngine {
     }
 
     nonisolated private static func checkAudioResponse(from url: URL, connection: URLSession,
-                                                       allowsCellular: Bool) async throws {
+                                                       allowsCellular: Bool, isBackup: Bool) async throws {
         // A signed URL is not evidence that its response is audio.
         guard !AudioSourceLinks.hasExpired(url, at: Date().addingTimeInterval(30)) else { throw Failure.noAudio }
         var request = AudioSourceFinder.catalogRequest(for: url, allowsCellular: allowsCellular)
+        if isBackup { request.timeoutInterval = 5 }
         request.setValue(nil, forHTTPHeaderField: "User-Agent")
         request.setValue("bytes=0-63", forHTTPHeaderField: "Range")
         let (bytes, response) = try await connection.bytes(for: request)
