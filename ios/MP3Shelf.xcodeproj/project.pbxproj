@@ -6,6 +6,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A9E6F2461B4C4F19A8D0C271 /* PlaybackOrder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */; };
 		DBA001A001A001A001A001A1 /* PortableShelfArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */; };
 		888888888888888888888888 /* LyricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 777777777777777777777777 /* LyricsView.swift */; };
 		666666666666666666666666 /* LyricsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 555555555555555555555555 /* LyricsParser.swift */; };
@@ -26,9 +27,17 @@
 		F53D677CCFFAA563526F33C2 /* ImportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AD92D136E4ED96ECEC7F6FF /* ImportViews.swift */; };
 		DC20160521FD84E15D0C86DE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3D98AD6443220BBB0E7A9295 /* Assets.xcassets */; };
 		EEAA00000000000000000001 = {isa = PBXBuildFile; productRef = EEAA00000000000000000002; };
+		6BD35F12D6E9B9C370F8BC0A /* RecordingMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = D26A5CF34B73574DD0C118F2; };
+		31EE02568187EAEC04B62A7F /* NativeAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 035A1AE581FE34F09A409D6D; };
+        EEAB00000000000000000001 = {isa = PBXBuildFile; productRef = EEAB00000000000000000002; };
+        EEAC00000000000000000001 = {isa = PBXBuildFile; productRef = EEAC00000000000000000002; };
+		18C77339A4D7652726EC7476 /* AppleMusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C08A30564FF6144B824403C /* AppleMusicService.swift */; };
+		09BF39F8B3187FB59CC2C493 /* AppleMusicViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D528E27F0BB9C2F519E525AE /* AppleMusicViews.swift */; };
+		39ADF52DD635A9F51C690F39 /* DownloadPathProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC190252D4E4C0ABD6A1A875 /* DownloadPathProof.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackOrder.swift; sourceTree = "<group>"; };
 		DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortableShelfArchive.swift; sourceTree = "<group>"; };
 		777777777777777777777777 /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsView.swift; sourceTree = "<group>"; };
 		555555555555555555555555 /* LyricsParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsParser.swift; sourceTree = "<group>"; };
@@ -50,10 +59,15 @@
 		3D98AD6443220BBB0E7A9295 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C80AF73362F348BD666F5DDB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		638E866708182CE02BFCE157 /* MP3Shelf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MP3Shelf.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D26A5CF34B73574DD0C118F2 /* RecordingMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingMatcher.swift; sourceTree = "<group>"; };
+		035A1AE581FE34F09A409D6D /* NativeAudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAudioEngine.swift; sourceTree = "<group>"; };
+		3C08A30564FF6144B824403C /* AppleMusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicService.swift; sourceTree = "<group>"; };
+		D528E27F0BB9C2F519E525AE /* AppleMusicViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicViews.swift; sourceTree = "<group>"; };
+		EC190252D4E4C0ABD6A1A875 /* DownloadPathProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadPathProof.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		F7573E4B8ACF1A7CD256E3D0 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (EEAA00000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
+		F7573E4B8ACF1A7CD256E3D0 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (EEAA00000000000000000001,EEAC00000000000000000001,EEAB00000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -73,9 +87,12 @@
 			); path = MP3Shelf; sourceTree = "<group>"; };
 		E9CF4F9355D0A5E1275010D6 /* Models */ = {isa = PBXGroup; children = (
 				3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */,
+				A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */,
 				ABCA09110000000000000006 /* SourceDiscoveryJob.swift */,
 			); path = Models; sourceTree = "<group>"; };
 		F30B052890FF09AC06846E94 /* Services */ = {isa = PBXGroup; children = (
+				EC190252D4E4C0ABD6A1A875 /* DownloadPathProof.swift */,
+				3C08A30564FF6144B824403C /* AppleMusicService.swift */,
 				556E9F57EB89589680F906AF /* MusicLibrary.swift */,
 				DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */,
 				B582D5747D32C08B3D19E5E5 /* PlaybackController.swift */,
@@ -83,9 +100,12 @@
 				555555555555555555555555 /* LyricsParser.swift */,
 				111111111111111111111111 /* SpotifyService.swift */,
 				ABCA09110000000000000002 /* AudioSourceFinder.swift */,
+                035A1AE581FE34F09A409D6D /* NativeAudioEngine.swift */,
+                D26A5CF34B73574DD0C118F2 /* RecordingMatcher.swift */,
 				ABCA09110000000000000004 /* BackgroundAudioDownloader.swift */,
 			); path = Services; sourceTree = "<group>"; };
 		4E287F692FC82F49C1B450A3 /* Views */ = {isa = PBXGroup; children = (
+				D528E27F0BB9C2F519E525AE /* AppleMusicViews.swift */,
 				13A88BACB079DF001A2CFB03 /* MainView.swift */,
 				FA10BC1FA2806F4D64E207CC /* PlayerViews.swift */,
 				EFA0F0640481B59038E57A0F /* LibraryViews.swift */,
@@ -101,11 +121,11 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		F9EC5056513716979962B814 /* MP3Shelf */ = {isa = PBXNativeTarget; buildConfigurationList = F2DF70F068A3EB3BC1C38478 /* Build configuration list for PBXNativeTarget "MP3Shelf" */; buildPhases = (12573461486BCB4FF9F39CD6 /* Sources */, F7573E4B8ACF1A7CD256E3D0 /* Frameworks */, AD47DB6BC4D863C12FECBD2B /* Resources */,); buildRules = (); dependencies = (); packageProductDependencies = (EEAA00000000000000000002,); name = MP3Shelf; productName = MP3Shelf; productReference = 638E866708182CE02BFCE157 /* MP3Shelf.app */; productType = "com.apple.product-type.application"; };
+		F9EC5056513716979962B814 /* MP3Shelf */ = {isa = PBXNativeTarget; buildConfigurationList = F2DF70F068A3EB3BC1C38478 /* Build configuration list for PBXNativeTarget "MP3Shelf" */; buildPhases = (12573461486BCB4FF9F39CD6 /* Sources */, F7573E4B8ACF1A7CD256E3D0 /* Frameworks */, AD47DB6BC4D863C12FECBD2B /* Resources */,); buildRules = (); dependencies = (); packageProductDependencies = (EEAA00000000000000000002,EEAC00000000000000000002,EEAB00000000000000000002,); name = MP3Shelf; productName = MP3Shelf; productReference = 638E866708182CE02BFCE157 /* MP3Shelf.app */; productType = "com.apple.product-type.application"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		0D9744D2873722A5CBFEB5E9 /* Project object */ = {isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1540; TargetAttributes = { F9EC5056513716979962B814 = { CreatedOnToolsVersion = 15.4; }; }; }; buildConfigurationList = 0BA07DF954ED8853E2F29237 /* Build configuration list for PBXProject "MP3Shelf" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = F649D734EC0812A9975C277B; productRefGroup = 470BE65A2412F72452221511 /* Products */; packageReferences = (EEAA00000000000000000003,); projectDirPath = ""; projectRoot = ""; targets = (F9EC5056513716979962B814 /* MP3Shelf */,); };
+		0D9744D2873722A5CBFEB5E9 /* Project object */ = {isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1540; TargetAttributes = { F9EC5056513716979962B814 = { CreatedOnToolsVersion = 15.4; }; }; }; buildConfigurationList = 0BA07DF954ED8853E2F29237 /* Build configuration list for PBXProject "MP3Shelf" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = F649D734EC0812A9975C277B; productRefGroup = 470BE65A2412F72452221511 /* Products */; packageReferences = (EEAA00000000000000000003,EEAC00000000000000000003,EEAB00000000000000000003,); projectDirPath = ""; projectRoot = ""; targets = (F9EC5056513716979962B814 /* MP3Shelf */,); };
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
@@ -114,8 +134,12 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		12573461486BCB4FF9F39CD6 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+				39ADF52DD635A9F51C690F39 /* DownloadPathProof.swift in Sources */,
+				09BF39F8B3187FB59CC2C493 /* AppleMusicViews.swift in Sources */,
+				18C77339A4D7652726EC7476 /* AppleMusicService.swift in Sources */,
 				628A034463F87C35D6F2DD95 /* MP3ShelfApp.swift in Sources */,
 				58F35F17B0B426557F7C6BFE /* MusicModels.swift in Sources */,
+				A9E6F2461B4C4F19A8D0C271 /* PlaybackOrder.swift in Sources */,
 				23F82C0DAB44C8D8C5F26241 /* MusicLibrary.swift in Sources */,
 				DBA001A001A001A001A001A1 /* PortableShelfArchive.swift in Sources */,
 				A400AF7B34CFD773219453FF /* PlaybackController.swift in Sources */,
@@ -123,6 +147,8 @@
 				666666666666666666666666 /* LyricsParser.swift in Sources */,
 				222222222222222222222222 /* SpotifyService.swift in Sources */,
 				ABCA09110000000000000001 /* AudioSourceFinder.swift in Sources */,
+                31EE02568187EAEC04B62A7F /* NativeAudioEngine.swift in Sources */,
+                6BD35F12D6E9B9C370F8BC0A /* RecordingMatcher.swift in Sources */,
 				ABCA09110000000000000003 /* BackgroundAudioDownloader.swift in Sources */,
 				ABCA09110000000000000005 /* SourceDiscoveryJob.swift in Sources */,
 				ABCA09110000000000000007 /* DownloadManagerView.swift in Sources */,
@@ -202,9 +228,13 @@
 
 /* Begin XCLocalSwiftPackageReference section */
         EEAA00000000000000000003 = {isa = XCLocalSwiftPackageReference; relativePath = Packages/ShelfMP3Encoder; };
+        EEAB00000000000000000003 = {isa = XCLocalSwiftPackageReference; relativePath = Packages/ShelfMatching; };
+        EEAC00000000000000000003 = {isa = XCLocalSwiftPackageReference; relativePath = Packages/YouTubeKit; };
 /* End XCLocalSwiftPackageReference section */
 /* Begin XCSwiftPackageProductDependency section */
         EEAA00000000000000000002 = {isa = XCSwiftPackageProductDependency; productName = ShelfEncoder; };
+        EEAB00000000000000000002 = {isa = XCSwiftPackageProductDependency; productName = ShelfMatching; };
+        EEAC00000000000000000002 = {isa = XCSwiftPackageProductDependency; productName = YouTubeKit; };
 /* End XCSwiftPackageProductDependency section */
 /* Begin XCConfigurationList section */
 		0BA07DF954ED8853E2F29237 /* Build configuration list for PBXProject "MP3Shelf" */ = {isa = XCConfigurationList; buildConfigurations = (CD0BAC0D4691772CB53C29C3 /* Debug */, DC0017D7D076762EF4B82B56 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };

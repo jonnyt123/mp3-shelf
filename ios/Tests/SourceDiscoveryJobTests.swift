@@ -5,9 +5,226 @@ func verifyDiscovery(_ condition: @autoclosure () -> Bool, _ label: String) {
     print("PASS: \(label)")
 }
 
+private struct ClassifiedLookupFailure: SourceLookupRetryableError {
+    let shouldRetrySourceLookup: Bool
+}
+
+private actor RecordingProbeLog {
+    private(set) var requests: [URL] = []
+    func record(_ url: URL) { requests.append(url) }
+}
+
 @main
 enum SourceDiscoveryJobTests {
+    @MainActor private static func verifyRecordingStreamFallbacks() async throws {
+        let clock = Date(timeIntervalSince1970: 1_700_000_000)
+        func source(_ id: Int, bitrate: Int, expiresIn: Int = 3600, bytes: Int = 1000) -> RecordingStreamProbe.Candidate {
+            let expiry = Int(clock.timeIntervalSince1970) + expiresIn
+            return .init(url: URL(string: "https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4&sig=fixture&expire=\(expiry)&clen=\(bytes)&itag=\(id)")!, bitrate: bitrate)
+        }
+        let high = source(141, bitrate: 256000)
+        let low = source(140, bitrate: 128000)
+        let third = source(139, bitrate: 64000)
+        let fourth = source(138, bitrate: 32000)
+        let oversized = source(150, bitrate: 999000, bytes: 200 * 1024 * 1024)
+        let expiring = source(151, bitrate: 888000, expiresIn: 30)
+        let candidates = [third, oversized, expiring, low, high, high, fourth]
+        verifyDiscovery(RecordingStreamProbe.orderedSources(candidates, at: clock) == [high.url, low.url, third.url],
+                        "AAC formats are ranked, deduplicated and capped after invalid/expiring links are removed")
+        let unknownRates = [low, high].map { RecordingStreamProbe.Candidate(url: $0.url, bitrate: nil) }
+        verifyDiscovery(RecordingStreamProbe.orderedSources(unknownRates, at: clock) == [low.url, high.url],
+                        "missing bitrate preserves the extractor's stable source priority")
+
+        let fallbackLog = RecordingProbeLog()
+        let fallback = try await RecordingStreamProbe.resolve([high, low], at: clock) { url, _ in
+            await fallbackLog.record(url)
+            if url == high.url { throw NSError(domain: "Fixture.HTTP", code: 403) }
+        }
+        let fallbackCalls = await fallbackLog.requests
+        verifyDiscovery(fallback == [low.url] && fallbackCalls == [high.url, low.url],
+                        "a refused high-bitrate AAC URL falls back to a working format from the same recording")
+
+        let successLog = RecordingProbeLog()
+        let success = try await RecordingStreamProbe.resolve([third, low, high], at: clock) { url, isBackup in
+            verifyDiscovery(isBackup == (url == low.url), "the second probe is a backup")
+            await successLog.record(url)
+        }
+        let successCalls = await successLog.requests
+        verifyDiscovery(success == [high.url, low.url] && successCalls == [high.url, low.url],
+                        "the first two verified formats are kept without probing a third")
+
+        let primaryOnly = try await RecordingStreamProbe.resolve([high, low], at: clock) { _, isBackup in
+            if isBackup { throw URLError(.timedOut) }
+        }
+        verifyDiscovery(primaryOnly == [high.url], "a backup timeout preserves the verified primary")
+
+        let failedLog = RecordingProbeLog()
+        do {
+            _ = try await RecordingStreamProbe.resolve([fourth, low, third, high], at: clock) { url, _ in
+                await failedLog.record(url)
+                if url == high.url { throw URLError(.timedOut) }
+                throw NSError(domain: "Fixture.HTTP", code: 403)
+            }
+            fatalError("Failed probes cannot return a ready source")
+        } catch {
+            let failure = error as NSError
+            verifyDiscovery(failure.domain == NSURLErrorDomain && failure.code == URLError.Code.timedOut.rawValue,
+                            "a later permanent format refusal cannot hide an earlier temporary outage")
+        }
+        let failedCalls = await failedLog.requests
+        verifyDiscovery(failedCalls == [high.url, low.url, third.url],
+                        "at most three distinct AAC formats are probed per recording")
+
+        let cancelledLog = RecordingProbeLog()
+        do {
+            _ = try await RecordingStreamProbe.resolve([high, low], at: clock) { url, _ in
+                await cancelledLog.record(url)
+                throw URLError(.cancelled)
+            }
+            fatalError("A cancelled probe must stop resolution")
+        } catch {
+            verifyDiscovery((error as NSError).code == URLError.Code.cancelled.rawValue,
+                            "request cancellation propagates instead of switching formats")
+        }
+        let cancelledCalls = await cancelledLog.requests
+        verifyDiscovery(cancelledCalls == [high.url], "cancellation never probes the next AAC format")
+
+        let stoppedLog = RecordingProbeLog()
+        let stopped = Task { @MainActor in
+            try await RecordingStreamProbe.resolve([high, low], at: clock) { url, _ in await stoppedLog.record(url) }
+        }
+        stopped.cancel()
+        do { _ = try await stopped.value; fatalError("A stopped resolver must not return a source") }
+        catch is CancellationError { }
+        let stoppedCalls = await stoppedLog.requests
+        verifyDiscovery(stoppedCalls.isEmpty, "a cancelled task sends no format probes")
+
+        let invalidLog = RecordingProbeLog()
+        let invalid = try await RecordingStreamProbe.resolve([oversized, expiring], at: clock) { url, _ in
+            await invalidLog.record(url)
+        }
+        let invalidCalls = await invalidLog.requests
+        verifyDiscovery(invalid.isEmpty && invalidCalls.isEmpty, "no admitted AAC format means no network probe")
+    }
+
     @MainActor static func main() async throws {
+        try await verifyRecordingStreamFallbacks()
+        verifyDiscovery(AudioDownloadDiagnostics.maySearchForAnotherSource(
+            reason: AudioDownloadDiagnostics.http(403), recordedAdvice: nil),
+                        "legacy source refusals can trigger a different source during playlist retry")
+        verifyDiscovery(!AudioDownloadDiagnostics.maySearchForAnotherSource(
+            reason: "Not enough space on this iPhone. Free storage and retry.", recordedAdvice: nil) &&
+                        !AudioDownloadDiagnostics.maySearchForAnotherSource(
+            reason: AudioDownloadDiagnostics.http(403), recordedAdvice: false),
+                        "local storage failures do not cause paid web fallback")
+        verifyDiscovery(AudioDownloadDiagnostics.http(403).contains("source refused"),
+                        "access refusal explains source permissions instead of generic failure")
+        verifyDiscovery(AudioDownloadDiagnostics.http(404).contains("no longer available") &&
+                        AudioDownloadDiagnostics.http(410).contains("new audio link"),
+                        "expired source links offer a recovery action")
+        verifyDiscovery(AudioDownloadDiagnostics.contentType("text/html").contains("webpage"),
+                        "HTML source response is distinguished from actual audio")
+        let fullDisk = NSError(domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileWriteOutOfSpace.rawValue)
+        let wrappedFullDisk = NSError(domain: "Conversion", code: 1,
+            userInfo: [NSUnderlyingErrorKey: fullDisk])
+        verifyDiscovery(AudioDownloadDiagnostics.message(for: wrappedFullDisk).contains("Free storage") &&
+                        !AudioDownloadDiagnostics.shouldTryAlternateSource(for: wrappedFullDisk),
+                        "local disk-full errors do not start more provider downloads")
+        let deniedStorage = NSError(domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileWriteNoPermission.rawValue)
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: deniedStorage),
+                        "local write-access failure does not switch network source")
+        let libraryWriteFailure = NSError(domain: PersistedLibrary.writeFailureDomain, code: 1,
+            userInfo: [NSUnderlyingErrorKey: CocoaError(.fileWriteFileExists)])
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: libraryWriteFailure) &&
+                        AudioDownloadDiagnostics.message(for: libraryWriteFailure).contains("library could not be saved"),
+                        "failed library persistence cannot trigger another source download")
+        let libraryDiskFull = NSError(domain: PersistedLibrary.writeFailureDomain, code: 1,
+            userInfo: [NSUnderlyingErrorKey: fullDisk])
+        verifyDiscovery(AudioDownloadDiagnostics.message(for: libraryDiskFull).contains("Free storage"),
+                        "library persistence retains the underlying disk-full diagnosis")
+        let timedOut = URLError(.timedOut)
+        verifyDiscovery(AudioDownloadDiagnostics.shouldTryAlternateSource(for: timedOut) &&
+                        AudioDownloadDiagnostics.message(for: timedOut).contains("did not respond"),
+                        "network timeout retains source-fallback eligibility")
+
+        let temporaryLookupCodes: [URLError.Code] = [.timedOut, .networkConnectionLost, .notConnectedToInternet,
+            .dataNotAllowed, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed]
+        for code in temporaryLookupCodes {
+            verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(
+                URLError(code), hasCandidates: false) != nil,
+                "empty optional catalogs preserve interrupted recording lookup: \(code.rawValue)")
+        }
+        verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(timedOut, hasCandidates: true) == nil,
+                        "a usable fallback proceeds despite a primary lookup timeout")
+        verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(nil, hasCandidates: false) == nil,
+                        "a healthy search with no matches remains a genuine unavailable result")
+        verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(
+            ClassifiedLookupFailure(shouldRetrySourceLookup: true), hasCandidates: false) != nil &&
+                        SourceLookupRetryPolicy.failureToRetry(
+            ClassifiedLookupFailure(shouldRetrySourceLookup: false), hasCandidates: false) == nil,
+                        "typed resolver failures preserve temporary versus permanent classification")
+        let permanentLookupFailures: [Error] = [CancellationError(), URLError(.cancelled),
+            URLError(.unsupportedURL), URLError(.serverCertificateUntrusted)]
+        for error in permanentLookupFailures {
+            verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(error, hasCandidates: false) == nil,
+                            "cancellation and permanent failures do not consume lookup retries")
+        }
+        let interruptedWish = PlaylistWish(title: "Interrupted search", artist: "Artist", album: "")
+        var interrupted = SourceDiscoveryJob(playlistID: UUID(), wishes: [interruptedWish])
+        _ = interrupted.reserveWebSearch(for: interruptedWish.id)
+        for attempt in 1...SourceDiscoveryJob.automaticRetryLimit {
+            guard let failure = SourceLookupRetryPolicy.failureToRetry(timedOut, hasCandidates: false) else {
+                fatalError("An interrupted primary search cannot be treated as no match")
+            }
+            interrupted.recordTransientFailure(failure.localizedDescription,
+                at: Date(timeIntervalSince1970: TimeInterval(attempt * 3600)))
+            let exhausted = interrupted.finishExhaustedRetriesIfNeeded()
+            verifyDiscovery(exhausted == (attempt == SourceDiscoveryJob.automaticRetryLimit),
+                            "interrupted recording lookup obeys the existing retry limit")
+            if !exhausted {
+                verifyDiscovery(interrupted.nextIndex == 0 && interrupted.unavailable == 0 && interrupted.nextRetryAt != nil,
+                                "a transient source failure keeps the song pending with backoff")
+                interrupted = try JSONDecoder().decode(SourceDiscoveryJob.self,
+                    from: JSONEncoder().encode(interrupted))
+            }
+        }
+        verifyDiscovery(interrupted.isComplete && interrupted.failed == 1 && interrupted.unavailable == 0 &&
+                        interrupted.outcome(for: interruptedWish) == .failed &&
+                        interrupted.webSearchWishIDs == [interruptedWish.id],
+                        "exhaustion records a failure and preserves the web-search credit ledger")
+
+        for mime in ["audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-aiff", "audio/flac", "Audio/X-FLAC; charset=binary"] {
+            verifyDiscovery(DownloadedAudioContentType.allows(mime), "supported audio response reaches decoding: \(mime)")
+        }
+        for mime in ["text/html", "application/json", "audio/ogg", "", "audio/mpeg-unsafe"] {
+            verifyDiscovery(!DownloadedAudioContentType.allows(mime), "non-supported response is rejected: \(mime)")
+        }
+        verifyDiscovery(!DownloadedAudioContentType.allows(nil), "missing response type is rejected")
+        verifyDiscovery(DownloadedAudioRange.coversCompleteFile(status: 200, contentRange: nil, downloadedBytes: 2107),
+                        "an ordinary full response does not require a range header")
+        verifyDiscovery(DownloadedAudioRange.coversCompleteFile(
+            status: 206, contentRange: "Bytes 00-2106/2107", downloadedBytes: 2107),
+                        "a 206 containing the entire representation is accepted")
+        for range in [nil, "bytes 0-1684/2107", "bytes 422-2106/2107", "bytes 0-1684/*",
+                      "bytes 0-1684/1686", "bytes 0-2106/2107", "bytes 0-1684/1685, bytes 0-1684/1685",
+                      "items 0-1684/1685", "bytes 0-1684/+1685", "bytes 0-1684/9223372036854775808"] {
+            verifyDiscovery(!DownloadedAudioRange.coversCompleteFile(
+                status: 206, contentRange: range, downloadedBytes: 1685),
+                            "incomplete or invalid range is rejected: \(range ?? "missing")")
+        }
+        verifyDiscovery(BackgroundDownloadBackpressure.maximumOutstandingTransfers == 4,
+                        "large playlist discovery limits outstanding background transfers")
+        for count in 0..<4 {
+            verifyDiscovery(BackgroundDownloadBackpressure.mayEnqueue(
+                outstandingTransfers: count),
+                "transfer slot available with \(count) active downloads")
+        }
+        verifyDiscovery(!BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: 4) &&
+                        !BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: 10) &&
+                        !BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: -1),
+                        "discovery does not advance when queue is full or corrupt")
         verifyDiscovery(DownloadNetworkPolicy.canDiscover(
             onWiFi: true, onCellular: false, explicitlyAllowCellular: false),
             "Wi-Fi downloads run without per-track confirmation")
@@ -61,10 +278,39 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(job.outcome(for: wishes[1]) == nil,
                         "unprocessed songs do not claim a result")
         job.isPaused = true
+        verifyDiscovery(job.reserveWebSearch(for: wishes[0].id),
+                        "first automatic web request reserves its budget before network access")
+        verifyDiscovery(!job.reserveWebSearch(for: wishes[0].id),
+                        "resuming the same song cannot spend another automatic search credit")
+        job.catalogWarnings = ["Openverse: HTTP 429"]
         let encoded = try JSONEncoder().encode([job])
         let restored = try JSONDecoder().decode([SourceDiscoveryJob].self, from: encoded)
         verifyDiscovery(restored[0].isPaused && restored[0].nextIndex == 1,
                         "pause and incomplete position survive restart")
+        verifyDiscovery(restored[0].catalogWarnings == ["Openverse: HTTP 429"],
+                        "partial provider failures survive checkpoint persistence")
+        verifyDiscovery(restored[0].webSearchWishIDs == [wishes[0].id],
+                        "web request reservations survive process restart")
+        var budgetJob = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        for _ in 0..<SourceDiscoveryJob.maxAutomaticWebSearches {
+            verifyDiscovery(budgetJob.reserveWebSearch(for: UUID()), "reserve bounded web search")
+        }
+        verifyDiscovery(!budgetJob.reserveWebSearch(for: UUID()),
+                        "a playlist cannot exceed its persisted automatic web request limit")
+        var stoppedJob = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        stoppedJob.webSearchStoppedReason = "Search credit limit reached"
+        verifyDiscovery(!stoppedJob.reserveWebSearch(for: wishes[0].id),
+                        "a search credit or authentication failure stops further paid calls")
+        let cachedSource = AudioCatalogMatch(
+            downloadURL: URL(string: "https://artist.example/Artist-Song.mp3")!,
+            itemURL: URL(string: "https://artist.example/song")!, licenseURL: nil, sourceName: "Web: artist.example")
+        stoppedJob.webSources = [wishes[0].id.uuidString: [cachedSource]]
+        stoppedJob.saveLookupDetails(["Web file: audio confirmed"], for: wishes[0].id)
+        let restoredWeb = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(stoppedJob))
+        verifyDiscovery(restoredWeb.webSources?[wishes[0].id.uuidString] == [cachedSource] &&
+                        restoredWeb.lookupDetails?[wishes[0].id.uuidString] == ["Web file: audio confirmed"],
+                        "verified web sources and song diagnostics survive a capacity pause or restart")
         job = restored[0]
         job.isPaused = false
         job.record(.unavailable)
@@ -80,13 +326,123 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(finished.outcome(for: wishes[0]) == .queued &&
                         finished.outcome(for: wishes[1]) == .unavailable,
                         "individual MP3 search outcomes survive restart")
+        var recovery = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        recovery.record(.queued)
+        recovery.record(.unavailable)
+        _ = recovery.reserveWebSearch(for: wishes[0].id)
+        let retryClock = Date(timeIntervalSince1970: 1_700_000_000)
+        recovery.recordTransientFailure("Current song is waiting", at: retryClock)
+        let choice = RecordingCandidate(id: "abcdefghijk", title: "First", uploader: "Artist", durationSeconds: 210)
+        recovery.recordingCandidates = [wishes[0].id.uuidString: [choice]]
+        let beforeRecovery = recovery
+        let refreshAt = retryClock.addingTimeInterval(90)
+        var delayedRecovery = beforeRecovery
+        verifyDiscovery(delayedRecovery.requeueFailedSource(for: wishes[0].id, notBefore: refreshAt) &&
+                        delayedRecovery.currentWish?.id == wishes[2].id &&
+                        delayedRecovery.nextLookupAt == beforeRecovery.nextRetryAt,
+                        "an expired link preserves the pending song and its existing retry time")
+        delayedRecovery.record(.alreadyPresent)
+        delayedRecovery = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(delayedRecovery))
+        verifyDiscovery(delayedRecovery.currentWish?.id == wishes[0].id &&
+                        !delayedRecovery.canAttemptLookup(at: refreshAt.addingTimeInterval(-1)) &&
+                        delayedRecovery.canAttemptLookup(at: refreshAt) &&
+                        BackgroundDiscoveryPolicy.earliestUsefulDate(for: [delayedRecovery], at: retryClock) == refreshAt,
+                        "foreground and background discovery honour the recovered song's saved retry time after relaunch")
+        var readyWork = delayedRecovery
+        let newSong = PlaylistWish(title: "Newly added", artist: "Artist", album: "", spotifyURL: nil)
+        verifyDiscovery(readyWork.appendNewMissingWishes([newSong]) == 1 &&
+                        BackgroundDiscoveryPolicy.earliestUsefulDate(for: [readyWork], at: retryClock) == retryClock &&
+                        readyWork.prepareLookup(at: retryClock) && readyWork.currentWish?.id == newSong.id,
+                        "a new song can start while the recovered link is waiting")
+        readyWork.record(.queued)
+        verifyDiscovery(readyWork.outcome(for: newSong) == .queued &&
+                        readyWork.outcome(for: wishes[1]) == .unavailable &&
+                        readyWork.webSearchWishIDs == beforeRecovery.webSearchWishIDs &&
+                        readyWork.currentWish?.id == wishes[0].id && readyWork.nextLookupAt == refreshAt,
+                        "processing a ready song preserves history, search reservations and the original recovery time")
+
+        var staggeredRecovery = SourceDiscoveryJob(playlistID: UUID(), wishes: wishes)
+        staggeredRecovery.record(.queued)
+        staggeredRecovery.record(.queued)
+        staggeredRecovery.record(.alreadyPresent)
+        let earlierRefresh = retryClock.addingTimeInterval(30)
+        verifyDiscovery(staggeredRecovery.requeueFailedSource(for: wishes[0].id, notBefore: refreshAt) &&
+                        staggeredRecovery.requeueFailedSource(for: wishes[1].id, notBefore: earlierRefresh) &&
+                        staggeredRecovery.nextLookupAt == earlierRefresh &&
+                        !staggeredRecovery.prepareLookup(at: retryClock) &&
+                        staggeredRecovery.prepareLookup(at: earlierRefresh) &&
+                        staggeredRecovery.currentWish?.id == wishes[1].id,
+                        "staggered recoveries wake at the first eligible time")
+        var providerBackoff = beforeRecovery
+        _ = providerBackoff.appendNewMissingWishes([newSong])
+        verifyDiscovery(!providerBackoff.prepareLookup(at: retryClock) &&
+                        providerBackoff.currentWish?.id == wishes[2].id,
+                        "new songs respect the current provider retry delay")
+        delayedRecovery.record(.queued)
+        verifyDiscovery(delayedRecovery.requeueFailedSource(for: wishes[0].id) &&
+                        delayedRecovery.nextLookupAt == nil,
+                        "a completed lookup clears its previous recovery deadline")
+        verifyDiscovery(recovery.requeueFailedSource(for: wishes[0].id) &&
+                        recovery.nextIndex == 1 && recovery.currentWish?.id == wishes[2].id &&
+                        recovery.wishes.last?.id == wishes[0].id && recovery.queued == 0 &&
+                        recovery.unavailable == 1 && recovery.outcome(for: wishes[1]) == .unavailable,
+                        "failed recording returns to pending without skipping another song or rewriting its history")
+        verifyDiscovery(recovery.webSearchWishIDs == beforeRecovery.webSearchWishIDs &&
+                        recovery.nextRetryAt == beforeRecovery.nextRetryAt &&
+                        recovery.transientFailureCount == beforeRecovery.transientFailureCount &&
+                        !beforeRecovery.isCurrent(in: [recovery], at: 0),
+                        "source recovery preserves paid-search reservations and current-song backoff, invalidating stale lookups")
+        let restoredRecovery = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(recovery))
+        verifyDiscovery(restoredRecovery.recordingCandidates?[wishes[0].id.uuidString] == [choice] &&
+                        restoredRecovery.sourceRecoveryAttempts?[wishes[0].id.uuidString] == 1,
+                        "recording candidates and recovery budget survive relaunch")
+        verifyDiscovery(!recovery.requeueFailedSource(for: wishes[2].id) &&
+                        !recovery.requeueFailedSource(for: UUID()),
+                        "pending and removed songs cannot trigger processed-source recovery")
+        recovery.record(.alreadyPresent)
+        recovery.record(.queued)
+        recovery.isPaused = true
+        verifyDiscovery(!recovery.requeueFailedSource(for: wishes[0].id),
+                        "paused playlists do not silently restart a failed recording")
+        recovery.isPaused = false
+        for expected in 2...3 {
+            verifyDiscovery(recovery.requeueFailedSource(for: wishes[0].id) &&
+                            recovery.currentWish?.id == wishes[0].id &&
+                            recovery.sourceRecoveryAttempts?[wishes[0].id.uuidString] == expected,
+                            "automatic recovery consumes one persisted attempt")
+            recovery.record(.queued)
+        }
+        verifyDiscovery(!recovery.requeueFailedSource(for: wishes[0].id),
+                        "source recovery stops after three attempts")
+        var unknownHistory = beforeRecovery
+        unknownHistory.outcomes = nil
+        verifyDiscovery(!unknownHistory.requeueFailedSource(for: wishes[0].id),
+                        "legacy checkpoints with unknown outcomes cannot invent a queued result")
+        var catalogRecovery = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
+        let cachedBackup = AudioCatalogMatch(downloadURL: URL(string: "https://example.invalid/backup.mp3")!,
+            itemURL: URL(string: "https://example.invalid/recording")!, licenseURL: nil, sourceName: "Cached web source")
+        catalogRecovery.record(.queued)
+        _ = catalogRecovery.reserveWebSearch(for: wishes[0].id)
+        catalogRecovery.webSources = [wishes[0].id.uuidString: [cachedBackup]]
+        verifyDiscovery(catalogRecovery.recordingCandidates == nil &&
+                        catalogRecovery.requeueFailedSource(for: wishes[0].id) &&
+                        catalogRecovery.currentWish?.id == wishes[0].id &&
+                        catalogRecovery.webSources?[wishes[0].id.uuidString] == [cachedBackup] &&
+                        !catalogRecovery.reserveWebSearch(for: wishes[0].id),
+                        "a catalog transfer can recover with cached web sources and its original search reservation")
         // Older discovery checkpoints had no outcomes field. They must still
         // decode and resume at the exact same cursor without repeating songs.
         var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(job))
             as! [String: Any]
         legacy.removeValue(forKey: "outcomes")
+        legacy.removeValue(forKey: "catalogWarnings")
+        legacy.removeValue(forKey: "webSearchWishIDs")
         var migrated = try JSONDecoder().decode(SourceDiscoveryJob.self,
                          from: JSONSerialization.data(withJSONObject: legacy))
+        verifyDiscovery(migrated.catalogWarnings == nil,
+                        "legacy checkpoints without provider warnings still load")
         verifyDiscovery(migrated.nextIndex == 3 &&
                         migrated.outcome(for: wishes[1]) == .previous,
                         "pre-upgrade checkpoints retain their processed cursor")
@@ -273,6 +629,18 @@ enum SourceDiscoveryJobTests {
                             "invalid links and security failures are not retried")
         }
         let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let expiry = now.addingTimeInterval(45)
+        let signedAAC = URL(string: "https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4&sig=fixture&expire=1700000045")!
+        verifyDiscovery(!BackgroundTransferRetryPolicy.linkExpiresByStart(signedAAC, earliestBeginDate: nil, now: now) &&
+                        !BackgroundTransferRetryPolicy.linkExpiresByStart(
+                            signedAAC, earliestBeginDate: expiry.addingTimeInterval(-1), now: now),
+                        "a signed link can transfer while its expiry is still in the future")
+        verifyDiscovery(BackgroundTransferRetryPolicy.linkExpiresByStart(signedAAC, earliestBeginDate: expiry, now: now) &&
+                        BackgroundTransferRetryPolicy.linkExpiresByStart(signedAAC, earliestBeginDate: now, now: expiry),
+                        "a retry or a relaunch at expiry cannot replay the signed link")
+        let ordinaryURL = URL(string: "https://artist.example/song.mp3?expire=100")!
+        verifyDiscovery(!BackgroundTransferRetryPolicy.linkExpiresByStart(ordinaryURL, earliestBeginDate: expiry, now: now),
+                        "an ordinary download URL does not gain a signed-link expiry rule")
         let stale = now.addingTimeInterval(-BackgroundTransferRecoveryPolicy.minimumAge - 1)
         let fresh = now.addingTimeInterval(-20)
         func canRestore(startedAt: Date? = stale,
@@ -314,6 +682,12 @@ enum SourceDiscoveryJobTests {
                         refreshedJob.wishes[1].durationSeconds == 213 &&
                         refreshedJob.nextIndex == 1,
                         "refresh updates unprocessed song metadata without resetting cursor")
+        let persistedMetadataEdit = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(refreshedJob))
+        verifyDiscovery(persistedMetadataEdit.wishes[1].title == "Second (renamed)" &&
+                        persistedMetadataEdit.wishes[1].durationSeconds == 213 &&
+                        persistedMetadataEdit.nextIndex == 1 && persistedMetadataEdit.queued == 1,
+                        "metadata-only pending refresh survives serialization without resetting history")
         refreshedJob.record(.removed)
         verifyDiscovery(refreshedJob.outcome(for: wishes[1]) == .removed &&
                         refreshedJob.nextIndex == 2,

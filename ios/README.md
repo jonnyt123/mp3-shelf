@@ -1,5 +1,159 @@
 # MP3 Shelf — Native iPhone App
 
+## Prove an actual download before accepting this candidate
+
+Double-click **Prove MP3 Downloads.command** on the Mac. It uses a fresh isolated
+Simulator app to search for a reference recording, resolve/probe audio, queue the
+real transfer, import/convert MP3, fully decode the saved file and advance a local
+file player, then terminates the app and verifies the restored local MP3 through
+the production PlaybackController in a new process. It opens a truthful report and preserves the successful MP3. It uses
+no signing or GitHub Actions. Automatic versus explicit-reference selection is
+reported separately; physical-iPhone/background acceptance remains separate.
+
+See `DOWNLOAD_PATH_EVIDENCE.md` for the current results: a real public AAC file
+was downloaded and converted through the bundled encoder on Linux, but the live
+YouTube media request returned an HTML Site Unavailable page. The full native
+path has **not** passed in this environment. The new preflight rejects such HTML
+before it enters the transfer queue.
+
+## Check offline playback after restarting the app
+
+Double-click **Prove Offline Restart.command** on the Mac. This independent test
+imports the repository's small MP3 fixture through the production importer,
+checks that a real library-write failure is rejected cleanly, terminates the app,
+then reloads the saved library and plays the exact local file in a new process.
+Foreground HTTP is refused and source discovery/background transfer attachment
+is disabled for this isolated test. The normal app and Mac networking are unchanged.
+
+The report opens at `build/offline-restart-proof/QA_RECORD.md`. This fixture-only
+test does not establish live song search/download success. Neither native test
+has run in this Linux environment; Xcode and physical-iPhone Airplane Mode checks
+remain required. Imports now write the song metadata and matched playlist links
+before reporting success; failed writes preserve the existing library and remove
+the new import's audio/artwork instead of claiming it was saved.
+
+## AAC format fallback and queue capacity
+
+After a recording's identity is validated, the resolver considers up to three
+distinct signed AAC formats, highest bitrate first. Invalid, oversized and
+near-expiry links are filtered out. The first accepted link starts the transfer
+after probing for one backup. If the full transfer fails, the queue can use the
+saved backup while its link is still valid. Cancellation stops probing. A
+temporary probe failure remains eligible for bounded lookup retry when every
+format fails.
+
+The background queue now checks its four-slot limit at ticket insertion as well
+as before resolution, preventing a reviewed recording from overfilling a queue
+that changed while its source was resolving. Native execution of these changes
+remains unverified here; use the existing local verification/download launchers.
+
+## Apple Music playlist import
+
+Open **Add Music → Your Apple Music playlists**, allow Media & Apple Music
+access, select a playlist and tap **Find & Save Offline MP3s**. The playlist must
+appear in the iPhone Music app's library; add a shared playlist there and let it
+sync first if needed. No MusicKit developer token or new signing entitlement is
+required by this metadata-only integration.
+
+MP3 Shelf reads titles, artists, albums, durations and song order with MediaPlayer.
+Cloud and protected items are included for their metadata; asset and preview URLs
+are never extracted from Music. The existing recording matcher finds audio sources
+and feeds the background downloader/MP3 converter. Existing source availability,
+review, Wi-Fi/cellular and conversion limits still apply.
+
+Reimporting updates the same local playlist while retaining repeated occurrences
+and completed work. Library IDs have an installation namespace to avoid collisions
+when a native backup is restored on another device. Native backups retain Apple
+Music identities and matching metadata; local playlist copies remain independent.
+Missing metadata and unsupported non-music entries stop an import with an error
+rather than silently trimming the source list. **Native compilation, MediaPlayer
+access and a complete iPhone download still require physical-device verification.**
+
+## On-device recording matcher and download engine
+
+The native app now owns recording search, normalization, scoring, candidate
+selection and retry policy. Spotify supplies the playlist metadata. MP3 Shelf
+searches YouTube on the iPhone, compares title, credited artist, recording
+version and duration, then resolves a selected recording to audio. This primary
+path needs no Brave search key and no Mac running while you use the app.
+
+Exact artist/title matches with a compatible duration can download automatically.
+Near matches and equally strong candidates stay available under **Review recording
+matches**. Covers, different edits/remasters, previews and ongoing livestreams
+are rejected. Spotify artist arrays preserve primary-artist identity without
+splitting band names at commas. The resolved video's own metadata is checked
+again before a transfer starts.
+
+The small, app-owned `ShelfMatching` C package implements the scoring rules.
+Vendored MIT-licensed YouTubeKit 0.4.9, pinned in
+`Packages/YouTubeKit/PROVENANCE.md`, supplies low-level local extraction only.
+Its optional remote extraction service is never selected. AAC audio enters the
+existing background URLSession queue and checked AVAudioFile/LAME MP3 converter;
+changing the extension alone does not create an MP3. Candidate IDs persist so
+manual retry can refresh an expired signed URL. Automatic source recovery is
+limited to three attempts per song in a discovery run.
+
+Wi-Fi remains the default. Search and extraction inherit the playlist's explicit
+cellular setting, and manual retry resolution counts against the four-transfer
+limit. Closing the review sheet cancels its lookup; removing a song or playlist
+cannot resurrect its transfer. Keep the app open for predictable source lookup;
+queued file transfers use the existing iOS background behavior.
+
+Run `bash ios/scripts/test-recording-matcher-core.sh` for the portable matching
+core. The Mac verifier also includes `RecordingMatcherTests.swift` and recovery
+checkpoint regressions. **Native compilation, extraction and a completed iPhone
+playlist download remain unverified in this environment.** Public search HTML
+was checked successfully, which does not establish successful audio extraction.
+
+## Large music library and Spotify import performance
+
+The app maintains a revision-aware in-memory index of local recordings:
+UUID lookup and playlist song resolution no longer scan the entire song
+collection for every row. Title-bucketed Spotify matching avoids repeating
+full-library scans while preserving strict artist, title, edit-duration and
+ambiguity protections. Existing playlist order and stable track IDs are
+unchanged.
+
+The Listen screen now reuses **Title**, **Artist** and **Recently added** sorted
+snapshots until the library actually changes. This avoids re-sorting thousands
+of recordings on each playback progress update or view refresh. Embedded
+artwork decoding uses an evictable **32 MiB NSCache** rather than reopening
+the same cover file for every visible row. The cache is invalidated when an
+existing artwork file is overwritten or removed.
+
+`ios/Tests/PlaylistCSVTests.swift` includes a 3,000-track matching regression
+against the original exhaustive matching algorithm, checking exact results,
+versioned durations and ambiguous duplicates. Full Xcode, on-device memory
+pressure and scrolling QA are still required before release.
+
+## Reliable shuffle and queue navigation
+
+The native player now uses a **shuffle bag** instead of choosing a fresh random
+song on every skip. Each track in the current playlist plays at most once per
+shuffle cycle, unless you explicitly choose a track yourself. **Repeat Off**
+stops at the end of the shuffle cycle; **Repeat All** shuffles a new cycle;
+**Repeat One** replays the current track when it ends.
+
+**Back** returns through the actual listening history in shuffle mode, and
+**Next** after Back restores the song you just left. The Now Playing **Up Next**
+preview reads the real pending order rather than displaying the original
+playlist sequence. Playback does not alter the user's saved playlist order;
+files deleted from the library are skipped gracefully. Shuffle and repeat
+continue to work with lock-screen controls and crossfade transitions.
+
+The shuffle order is intentionally session-only (not persisted after force-quit
+or app relaunch). Run the Foundation-only queue regression suite without any
+GitHub Actions minutes:
+
+```bash
+bash ios/scripts/test-playback-order.sh
+```
+
+This test checks the queue logic only. Xcode simulator builds, actual audio
+transitions, AirPlay and physical-iPhone behavior still require native QA.
+
+
+
 A standalone **SwiftUI** iOS application that can be opened directly in Xcode and installed on a physical iPhone. It complements the existing MP3 Shelf Next.js web app, without replacing or altering the web app.
 
 ## Wi-Fi-only background source-discovery batches
@@ -56,9 +210,8 @@ are downloaded.
 
 ## Local native release verification (no GitHub Actions minutes)
 
-The download and playback recovery candidate is on
-`fix/ios-download-finalization-and-conversion` (draft PR #28), separate from
-the default `main` PWA and the playback queue/large-library PRs #24–#27.
+The consolidated native candidate is on `feat/ios-consolidated-candidate`
+(draft PR #29), including the earlier download, playback and library changes.
 Check out this candidate branch in your local clone. You can
 also use GitHub's **Code → Download ZIP** after choosing that branch. Opening
 `ios/MP3Shelf.xcodeproj` on default `main` will not include these new features.
@@ -69,7 +222,7 @@ On a Mac with full Xcode selected, run:
 bash ios/scripts/verify-local-release.sh
 ```
 
-This executes all seven native Swift regression suites, unsigned Simulator
+This executes all nine native Swift regression suites, the C matching core, unsigned Simulator
 Debug and Release builds, and an unsigned physical-iPhone architecture Release
 build **locally**. It never queues a GitHub Actions workflow. Add `--smoke` to
 install and launch the Debug app on a locally installed iPhone Simulator and
@@ -131,57 +284,46 @@ Spotify sign-in uses OAuth Authorization Code **with PKCE** and iOS `ASWebAuthen
 2. In Spotify's Development Mode, the app owner currently needs Spotify Premium and the app is limited to up to five allowlisted testers. Add each user in the Spotify dashboard before sign-in.
 3. Open MP3 Shelf → Import → **Connect Spotify Account**. Enter the **Client ID**, sign in, and select a playlist.
 4. Only playlists owned by or collaborative with the signed-in user can expose their items under Spotify's 2026 API rules. Other followed playlists can return HTTP 403; use the CSV fallback for track lists you are permitted to export.
-5. Track metadata is matched against local MP3s. Missing songs require independent, legitimately acquired audio. There is **no unrestricted Spotify-to-MP3 converter**; only qualifying independent licensed sources can be downloaded.
+5. Track metadata is matched against local MP3s. Missing songs enter the on-device recording matcher, followed by public audio catalog fallback. Direct audio-file links remain available. License labels are not required for matching files.
 
 Source documentation: [Spotify PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow), [Spotify playlist-items API](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items), [Spotify redirect URIs](https://developer.spotify.com/documentation/web-api/concepts/apps), [Spotify Development Mode](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
 
 ## One-tap downloads for imported Spotify playlists
 
-Connect Spotify, select a permitted playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. The app automatically opens the song-by-song download dashboard and checks missing songs against independent authorized audio sources, downloading only qualifying MP3 files to its local storage. The process shows track-by-track progress and can be stopped. Downloads are matched to their original playlist order and are playable offline after completion. Keep the app open for source discovery. Already queued downloads may continue through iOS background transfers after locking the phone.
+Connect Spotify, choose a playlist or paste its Spotify share link, then press **Find & Save Offline MP3s**. MP3 Shelf imports the song list and runs its recording matcher first. If it cannot resolve a clear match, public audio catalogs provide additional sources. Saved recordings are attached in playlist order. Keep the app open for discovery; queued files can continue through iOS background transfers after locking the phone. When candidates need a decision, open the song's **Review recording matches** action.
 
-**Automatic reliability ranking:** Verified MP3 imports increase a provider's priority, while terminal failures decrease it; the most recent 200 outcomes are used with neutral smoothing so unfamiliar sources remain eligible. Cancellations, temporary retries and already-stored duplicates are excluded. A recording successfully imported after a Wi-Fi or server retry clears its previous transient error so it counts as a real success, not an unresolved failure. Verified alternate URLs remain queued in priority order for background fallback.
+**Matching requirements:** Normalized song title and artist must match, and the result must identify one downloadable recording. HTTPS, a supported audio format, the 100 MiB transfer limit and actual decoded duration checks remain. Album items can qualify when exactly one original MP3 filename identifies the song. License metadata is optional attribution: a missing or non-Creative-Commons label does not exclude an otherwise matching file. Source links remain available even when there is no license link.
 
-**Bounded Internet Archive discovery:** The Archive search now includes indexed title/creator metadata and checks the most relevant records first. Item-detail lookups are capped at eight per page, no new requests start after a 45-second search window, and at most two result pages are considered. An HTTP request already in flight may finish after that deadline, subject to its separate request timeout. Each selected recording still requires an original/direct MP3, exact artist/title identity, an uploader-declared Creative Commons/public-domain license and downloaded duration validation. This favors completing more playlist songs in each system-granted background window instead of spending minutes probing dozens of lower-quality Archive records. The trade-off is that valid uploads deeper in the result pages might require manual discovery; no unverified recording is imported automatically.
+**Current catalogs:** Internet Archive, Openverse-backed supported publishers, Wikimedia Commons, Audius download endpoints and ccMixter RSS. Search is bounded for battery life and provider rate limits. Archive detail reads are capped at eight per page and two pages; no new request starts after its 45-second lookup window. Archive file sizes come from `files[].size`, not `files[].length` (which can contain decimal duration). Openverse checks up to two pages per focused or broader query. Audius downloads still require an actual available download endpoint; login-gated or unavailable files cannot be retrieved by changing a license label.
 
-**Current catalog adapters:** Internet Archive, Openverse-backed eligible publishers, direct Wikimedia Commons, artist-enabled Audius downloads, and a conservative ccMixter RSS adapter. ccMixter’s public Query API is consulted for uploads with a matching title, matching credited creator, explicit Creative Commons license and directly hosted HTTPS MP3 enclosure; ambiguous results are not automatically selected. If ccMixter’s older RSS endpoint is temporarily unavailable, the other catalogs continue normally instead of retrying the whole playlist. The source browser also opens ccMixter’s own search page. Openverse now checks up to two result pages for each focused or broader query only when no eligible candidate appeared earlier. Search remains bounded, follows the catalog's pagination metadata, and still requires an exact recording and a supported direct MP3 host. Before importing a result, the app requires:
-- Strict normalized *song title and artist* match; no intentional covers/remixes/other artists.
-- A single MP3 file for the matching archive item, to reject album/concert downloads.
-- A Creative Commons or public-domain license URL declared in the archive item's metadata.
-- When Spotify supplied duration, audio-file duration metadata within four seconds.
-- HTTPS download, decodable local audio, and a maximum 100 MB transfer.
+**Provider failures:** A failed catalog does not discard another provider's match or block the rest of a playlist. If healthy catalogs find no match, discovery advances and saves named provider warnings with the checkpoint. The playlist and Downloads screens show **Search incomplete** and a retry action. If every catalog fails, the existing bounded retry policy applies, with named provider/HTTP details. This avoids repeating every lookup five times merely because one optional catalog is down.
 
-Catalog licenses are declared by uploaders, **not independently verified by MP3 Shelf**. MP3 Shelf stores attribution links for discovered sources. Catalog metadata can be wrong; compare suspect recordings with their source page. Most commercial Spotify recordings do **not** have a legitimate freely downloadable match, and will remain unmatched. The app never bypasses paywalls or DRM, downloads Spotify streams, scrapes arbitrary converter sites, or silently replaces a requested song with a different recording. Spotify developer terms may impose additional restrictions on apps combining Spotify metadata and other audio services; obtain approval before a public production release.
+**Automatic reliability ranking:** Verified imports increase a provider's priority, while terminal failures decrease it using the most recent 200 outcomes. Alternate sources are retained in the background ticket. Local storage failures do not start alternative network downloads.
 
-## If a Spotify playlist says "No qualifying MP3 source found"
+## Automatic web fallback and song diagnostics
 
-This is normally a **catalog availability limit**, not a Spotify sign-in failure. Spotify
-provides **song title, artist, album and duration metadata**, not downloadable MP3
-recordings. MP3 Shelf searches Internet Archive, Openverse and Wikimedia Commons;
-their openly licensed inventories do not include most mainstream commercial releases.
-It will not guess a YouTube converter, replace a song with a cover, or bypass DRM.
+After catalog lookup, a song with no usable catalog file now enters automatic web search when a Brave API key is saved and **Automatically search when catalogs find no match** is enabled. Open the playlist's wider-web search screen, save the key once, return and use **Retry unmatched songs**. No individual result selection is required for files admitted by the automatic matcher. Without a key, catalog discovery still works and the song's diagnostic explains that web fallback was skipped.
 
-To tell an unavailable recording apart from a temporary lookup problem:
+Automatic fallback makes one Brave query per unmatched song and at most 20 per playlist discovery run. Reservations are persisted before the API request, so resuming the same job does not repeat a charged query. Completed web results, including empty results, survive a capacity pause or restart. A rejected key or rate/credit limit stops further automatic API calls for that run. A request interrupted before its result is saved is not repeated within that run; **Retry unmatched songs**, after that run finishes, starts a new bounded run. Manual web-search batches retain their separately displayed request budgets.
 
-1. Open **Playlists → your imported playlist → Song-by-song MP3 results**.
-2. **No qualifying MP3 source found** means the checked catalogs returned no
-   eligible exact recording; repeatedly retrying a commercial track will not
-   make a licensed download appear.
-3. **Searching** or **Awaiting** means discovery has not finished; keep the app
-   open. **Source lookup failed** or **Paused by network error** means retry
-   on a working connection. Downloads already queued are shown under
-   **Add Music → Your downloads**.
-4. To fill an unmatched slot, use **I have an authorized audio link** beside
-   that song and supply a *direct HTTPS URL* to a legally downloadable MP3
-   (or other supported audio file) provided by its rights holder. The app
-   validates the audio and, where Spotify supplied duration, checks the
-   recording's length before assigning the original playlist metadata.
-5. Alternatively import legally acquired MP3/M4A files from **Add Music**.
-   Correct title and artist metadata allow the existing offline files to match
-   imported playlists; edit local metadata from the song menu if necessary.
+A direct result must independently identify both artist and song in its filename. Source pages may instead identify the recording through Schema.org MusicRecording/AudioObject metadata, including artist references and duration where provided. At most two relevant pages are read and six file responses probed per song. Only supported audio responses enter the existing background importer, which still checks embedded identity and decoded duration. Page reads are bounded to 1 MB, redirects are refused, and automatic search, page reads and file probes all inherit the playlist's Wi-Fi/cellular policy. There is no license-label requirement.
 
-Automatic discovery may still return zero results even while all three catalog
-APIs are operating correctly. The direct-link option is not a stream ripper and
-must only be used for recordings you have permission to download.
+On a new search, stored failures for the same recording exclude previously failed source URLs before choosing catalog or web candidates. Local storage failures do not trigger another-source search. Thus **Retry unmatched songs** can seek a new web source instead of repeatedly queuing the same refused catalog URL. A source that fails after a transfer is queued remains visible in Downloads; retry initiates the next source search.
+
+Each playlist song now has expandable **Source search details** and **Share search diagnostics**. The trace names provider outcomes, prior file refusals, missing-key/disabled/budget states and web page/file response checks. It contains no API key. These details persist with the discovery checkpoint.
+
+A live public-source trace from the development host used **Jazz Backing Track — Stefan Kartenberg**: ccMixter RSS returned the matching metadata and direct MP3 URL (HTTP 200), while both HEAD and a bounded GET for that file returned HTTP 403. This demonstrates a source-access refusal rather than an absent license label. It is a representative probe, not a reproduction of an unspecified song from the user's playlist or an iPhone runtime test.
+
+## When a playlist has missing songs
+
+Spotify supplies the song list, artist, album and duration, not MP3 files. Removing the license-label requirement broadens eligible catalog matches; it does not create downloadable files for recordings absent from those catalogs.
+
+1. Open **Playlists → your playlist → Song-by-song MP3 results**.
+2. A no-match result means the catalogs that answered did not identify a matching file. **Search incomplete** names providers that could not answer. **Source lookup failed** means every provider failed after bounded retries.
+3. Use **Retry unmatched songs** to search again. Keep the app open during source discovery. Transfers already queued appear in **Add Music → Your downloads**.
+4. Use **Attach an audio-file link** to supply a direct HTTPS MP3 or another supported audio format. File decoding and duration checks run before attaching it to the song.
+5. **Search the wider web for missing songs** opens broader manual discovery. In-app web search uses the optional Brave API key; browser search does not require that key. Search results are pages and possible links, and are not automatically treated as matching audio files.
+6. Local files imported from **Add Music** also match playlists by title/artist metadata.
 
 ## Automatic Wi-Fi playlist downloads
 
@@ -293,7 +435,7 @@ Every newly imported playlist song is looked up across all four supported
 independent catalog APIs concurrently (Audius, Openverse, Wikimedia Commons,
 Internet Archive). The first exact, permitted downloadable recording starts
 as the primary background transfer; up to three other unique verified URLs,
-along with each source's attribution and license, are saved in that ticket's
+along with each source's attribution and optional license, are saved in that ticket's
 Codable manifest. Searching sources concurrently avoids having to wait for four
 catalogs in serial, but does add catalog requests when the first one already
 would have found the song.
@@ -458,12 +600,10 @@ links directly to a supported audio file, **Check and save this audio file**
 passes the URL to the existing user-confirmed downloader, which validates
 HTTPS, audio decoding, file size, and expected track duration. An ordinary
 web page is never silently treated as an MP3, and the app doesn't acquire
-Spotify streams or bypass DRM. You can also use **I have an authorized audio
-link** and import previously purchased audio through Files.
+Spotify streams or bypass DRM. You can also use **Attach an audio-file link** or import audio through Files.
 
-This expands *finding links* well beyond the three strict CC/public-domain
-catalogs. A web result does not establish that the file is legally available
-or that it matches the intended recording.
+This expands finding links beyond the connected catalogs. A search result
+alone does not establish that a link contains audio or matches the intended recording.
 
 ### Read a publisher page to locate direct audio files
 
@@ -530,9 +670,9 @@ cursor is retained and search is retried on the next foreground activation.
 Already queued background transfers are not duplicated on recovery.
 
 **Download Manager:** Open **Settings → Download Manager**, or the download
-icon inside a playlist, to view each authorized catalog MP3 transfer:
+icon inside a playlist, to view each catalog audio transfer:
 queued/downloading, saved offline, failed and cancelled; byte progress where
-available; source/license links; individual Cancel and Retry; and
+available; source links and any supplied license links; individual Cancel and Retry; and
 clear-finished-history without deleting audio. Retried transfers get new
 identifiers so a late callback from a cancelled task cannot corrupt the new one.
 Open **Settings → Manage Music Storage** for song-level sizes, total library
@@ -585,7 +725,7 @@ swiftc MP3Shelf/Models/MusicModels.swift MP3Shelf/Services/PlaylistCSV.swift MP3
 - `Services/PlaybackController.swift`: audio session, queue, playback, remote commands, Now Playing data.
 - `Services/PlaylistCSV.swift`: independently testable CSV/TSV parsing and metadata matching.
 - `Services/SpotifyService.swift`: Spotify PKCE/Keychain and playlist metadata requests.
-- `Services/AudioSourceFinder.swift`: strict independent Archive.org license-declared MP3 matching and lookup.
+- `Services/AudioSourceFinder.swift`: public audio-catalog matching, provider diagnostics and direct-file lookup.
 - `Services/LyricsParser.swift`: independent LRC / plain-text parsing.
 - `Views/SpotifyViews.swift`, `Views/LyricsView.swift`: playlist importer and offline lyrics.
 - `Views/`: SwiftUI library, playlists, full player, downloads, settings and Spotify playlist import.
@@ -594,8 +734,28 @@ No API secrets, ad SDKs, cloud services or external dependencies are bundled.
 
 ## Download and playback review branch
 
-Use branch `fix/ios-download-finalization-and-conversion` (draft PR #28) for these changes. In Finder, double-click **Verify MP3 Shelf.command** inside `ios`. It runs seven Swift regression suites, three unsigned native builds and the existing eight-screen Simulator smoke capture. It uses no GitHub Actions. macOS may require Open from the context menu for a downloaded script.
+Use branch `fix/ios-download-finalization-and-conversion` (draft PR #28) for these changes. In Finder, double-click **Verify MP3 Shelf.command** inside `ios`. It runs nine Swift regression suites plus the C matching core, three unsigned native builds and the existing eight-screen Simulator smoke capture. It uses no GitHub Actions. macOS may require Open from the context menu for a downloaded script.
 
 Reports and logs appear in `ios/build/local-release`. Missing Swift/Xcode now also creates a failed report. A successful Simulator launch still requires screenshot review and the physical iPhone scenarios in DEVICE_QA.md. The new interruption suite exercises resume intent; real calls, Siri and Bluetooth events require device testing.
 
 For installation, double-click **Install on iPhone.command** inside `ios`. It lists devices and asks for your iPhone identifier and Apple Team ID, then invokes the existing signing/install helper. Xcode account sign-in, device trust and Developer Mode must already be configured. It does not bypass provisioning or perform device acceptance tests.
+
+## Consolidated integration candidate
+
+Branch `feat/ios-consolidated-candidate` combines the PR #28 download/conversion/playback work with PRs #24–#27 (shuffle history, queue editing, four-transfer backpressure and library indexes). Its Finder verification launcher includes nine Swift suites and the C matching core. Conflict resolution preserves scene-gated discovery and bounded background ownership alongside the capacity check. Native compilation and device QA remain required before release.
+
+## Verification workflow follow-up
+
+The latest report remains at `ios/build/local-release/QA_RECORD.md`; logs and Simulator screenshots now live in separate `runs/` folders identified by that report. This prevents stale output from an earlier invocation being mistaken for new evidence. Conflicting test-only/build-only flags are rejected, and failed compilation/build steps are named in the report. Extracted ZIPs use the commit recorded in `SOURCE.json`, labeled as archive metadata with unknown modification state; an unrelated parent Git checkout is never treated as the source repository.
+
+`python3 ios/scripts/test-release-workflow.py` exercises the real runner with a fake toolchain in temporary directories. It verifies reporting/control flow only and does not compile Swift, build iOS, sign or install apps. The nine native Swift suites and actual Xcode/device gates remain separate.
+
+Long-press a playlist and choose **Make local copy** to preserve its song order and missing entries as a separate local playlist. Audio files are shared. The copy has fresh playlist/wish IDs and does not inherit Spotify-refresh or portable-restore identity; it does not automatically begin downloads.
+
+## Diagnosing a CodeSign failure
+
+In the same project folder you opened in Xcode, double-click **ios/Diagnose Signing.command**. This builds/signs Debug for an iOS device using the Apple team and bundle identifier selected in that project; it never installs or launches the app. Xcode may perform its normal automatic provisioning. Select your own Team in Xcode first. The optional MP3SHELF_TEAM_ID environment override still works.
+
+The diagnostic opens **ios/build/iphone-device/QA_RECORD.md**, which records the current step, result, exit code and relevant log context. Share the error section above the generic CodeSign summary. Each attempt preserves its own report and build/signature logs in **ios/build/iphone-device/runs/**. The install launcher also opens the report on failure. Failed builds/signature checks/installations/launches replace the latest report, so an older PASS cannot be mistaken for the new result.
+
+The generic exit summary does not establish whether the cause is a development-team/profile mismatch, unavailable certificate/private key, keychain access or rejected Finder/resource-fork metadata. No signing credentials are exported or manually changed by these helpers. See the exact error in the report before choosing a repair. Apple documents the distinct cases in [signing errors](https://help.apple.com/xcode/mac/current/en.lproj/dev01865b392.html) and [resource-fork/Finder metadata rejection](https://developer.apple.com/library/archive/qa/qa1940/_index.html).

@@ -54,6 +54,9 @@ enum PortableShelfArchive {
         var artist: String
         var album: String
         var spotifyURL: String?
+        var durationSeconds: Double? = nil
+        var artistNames: [String]? = nil
+        var appleMusicItemID: String? = nil
     }
 
     struct Playlist: Codable {
@@ -62,6 +65,7 @@ enum PortableShelfArchive {
         var trackIds: [String]
         var sourceURL: String?
         var wishes: [Wish]?
+        var appleMusicLibraryID: String? = nil
     }
 
     struct Manifest: Codable {
@@ -110,7 +114,8 @@ enum PortableShelfArchive {
             let source = item.track.sourceAttribution
             let attribution = source.map {
                 Attribution(sourceURL: $0.pageURL, licenseURL: $0.licenseURL,
-                            creator: item.track.artist, license: "See license",
+                            creator: item.track.artist,
+                            license: $0.licenseURL.isEmpty ? "Not supplied" : "See license",
                             provider: $0.providerName)
             }
             tracks.append(Track(
@@ -134,8 +139,10 @@ enum PortableShelfArchive {
                 sourceURL: list.sourceURL,
                 wishes: wishes.isEmpty ? nil : wishes.map {
                     Wish(title: $0.title, artist: $0.artist, album: $0.album,
-                         spotifyURL: $0.spotifyURL)
-                }
+                         spotifyURL: $0.spotifyURL, durationSeconds: $0.durationSeconds,
+                         artistNames: $0.artistNames, appleMusicItemID: $0.appleMusicItemID)
+                },
+                appleMusicLibraryID: list.appleMusicLibraryID
             )
         }
         let manifest = Manifest(schema: "mp3-shelf-backup", version: 1,

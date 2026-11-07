@@ -88,12 +88,148 @@ struct PlaylistWish: Identifiable, Codable, Hashable, Sendable {
     var spotifyURL: String?
     // Used to reject alternate recordings when matching independent downloads.
     var durationSeconds: Double? = nil
+    var artistNames: [String]? = nil
+    var appleMusicItemID: String? = nil
+}
+
+/// Media-library IDs are local to a device. A persisted installation namespace
+/// prevents a restored backup from syncing against an unrelated device's IDs.
+enum AppleMusicLibraryIdentity {
+    static func key(namespace: UUID, persistentID: UInt64) -> String {
+        "\(namespace.uuidString):\(persistentID)"
+    }
+
+    static func canonical(_ value: String?) -> String? {
+        // UUID, separator and at most 20 decimal UInt64 digits.
+        guard let value, value.count <= 57 else { return nil }
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2, let namespace = UUID(uuidString: String(parts[0])),
+              parts[1].allSatisfy({ $0.isASCII && $0.isNumber }),
+              let id = UInt64(parts[1]), id > 0 else { return nil }
+        return key(namespace: namespace, persistentID: id)
+    }
+}
+
+enum ImportedPlaylistIdentity {
+    static func key(sourceURL: String?, appleMusicLibraryID: String?) -> String? {
+        if let id = sourceURL.flatMap(SpotifyPlaylistLinks.playlistID(from:)) { return "spotify:\(id)" }
+        return AppleMusicLibraryIdentity.canonical(appleMusicLibraryID).map { "apple-music:\($0)" }
+    }
+}
+
+struct AppleMusicPlaylistSummary: Identifiable, Sendable {
+    let id: UInt64
+    let name: String
+    let itemCount: Int
+}
+
+struct AppleMusicTrackSnapshot: Sendable {
+    let id: UInt64
+    let title: String
+    let artist: String
+    let album: String
+    let duration: Double
+    var isMusic = true
+}
+
+struct AppleMusicPlaylistSnapshot: Sendable {
+    static let maximumTracks = 20_000
+    let id: UInt64
+    let name: String
+    let items: [AppleMusicTrackSnapshot]
+
+    enum ImportFailure: LocalizedError {
+        case empty, tooLarge, incomplete, unsupported
+        var errorDescription: String? {
+            switch self {
+            case .empty: return "This Apple Music playlist has no songs."
+            case .tooLarge: return "Import supports up to 20,000 songs per playlist."
+            case .incomplete: return "Some songs are missing library details. Let the playlist finish syncing in Music, then refresh and retry."
+            case .unsupported: return "This playlist contains non-music items. Choose a playlist of songs or music videos."
+            }
+        }
+    }
+
+    func wishes(namespace: UUID) throws -> [PlaylistWish] {
+        guard !items.isEmpty else { throw ImportFailure.empty }
+        guard items.count <= Self.maximumTracks else { throw ImportFailure.tooLarge }
+        guard items.allSatisfy(\.isMusic) else { throw ImportFailure.unsupported }
+        guard id > 0, items.allSatisfy({
+            $0.id > 0 && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else { throw ImportFailure.incomplete }
+        return items.map { item in
+            let artist = item.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            return PlaylistWish(title: item.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                artist: artist, album: item.album, spotifyURL: nil,
+                durationSeconds: item.duration.isFinite && item.duration > 0 ? item.duration : nil,
+                artistNames: [artist],
+                appleMusicItemID: AppleMusicLibraryIdentity.key(namespace: namespace, persistentID: item.id))
+        }
+    }
 }
 
 struct AudioSourceAttribution: Codable, Hashable {
     var pageURL: String
     var licenseURL: String
     var providerName: String
+}
+
+/// A direct file matching the requested recording. License metadata is optional.
+struct AudioCatalogMatch: Codable, Sendable, Equatable {
+    let downloadURL: URL
+    let itemURL: URL
+    let licenseURL: URL?
+    let sourceName: String
+}
+
+struct RecordingCandidate: Identifiable, Codable, Hashable, Sendable {
+    let id: String
+    let title: String
+    let uploader: String
+    let durationSeconds: Double?
+    var verifiedArtist = false
+    var isLive = false
+
+    var pageURL: URL {
+        var parts = URLComponents(string: "https://www.youtube.com/watch")!
+        parts.queryItems = [URLQueryItem(name: "v", value: id)]
+        return parts.url!
+    }
+}
+
+enum AudioSourceLinks {
+    static func youtubeVideoID(_ url: URL) -> String? {
+        guard url.scheme == "https", ["youtube.com", "www.youtube.com"].contains(url.host?.lowercased() ?? ""),
+              url.path == "/watch", url.user == nil, url.password == nil,
+              let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "v" })?.value,
+              value.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil else { return nil }
+        return value
+    }
+
+    static func isResolvedAudioURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
+              host.hasSuffix(".googlevideo.com"), url.path == "/videoplayback",
+              url.user == nil, url.password == nil, url.port == nil || url.port == 443,
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return false }
+        let mime = items.filter { $0.name == "mime" || $0.name == "mimetype" }
+        guard mime.count == 1, ["audio/mp4", "audio/m4a"].contains(mime[0].value ?? ""),
+              items.contains(where: { ["sig", "signature", "lsig"].contains($0.name) && !($0.value ?? "").isEmpty })
+        else { return false }
+        if let size = items.first(where: { $0.name == "clen" })?.value {
+            guard let bytes = Int64(size), bytes > 0, bytes <= 100 * 1024 * 1024 else { return false }
+        }
+        return true
+    }
+
+    static func hasExpired(_ url: URL, at date: Date = .now) -> Bool {
+        guard isResolvedAudioURL(url),
+              let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "expire" })?.value,
+              let seconds = Double(raw), seconds.isFinite else { return false }
+        return seconds <= date.timeIntervalSince1970
+    }
 }
 
 struct MusicPlaylist: Identifiable, Codable, Hashable {
@@ -104,10 +240,29 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
     // Keeps the original CSV order when missing songs become available later.
     var sourceOrder: [PlaylistWish] = []
     var sourceURL: String? = nil
+    var appleMusicLibraryID: String? = nil
     // Preserve non-UUID playlist IDs from web .mp3shelf archives across
     // app relaunches and repeat restores; not a Spotify account credential.
     var portableBackupID: String? = nil
     var createdAt: Date = .now
+
+    /// A separate local playlist, sharing audio files but no sync/restore identity.
+    func localCopy() -> MusicPlaylist {
+        var copy = MusicPlaylist(name: name + " Copy")
+        copy.trackIDs = trackIDs
+        let missingIDs = Set(missingTracks.map(\.id))
+        let orderedIDs = Set(sourceOrder.map(\.id))
+        let entries = sourceOrder + missingTracks.filter { !orderedIDs.contains($0.id) }
+        for wish in entries {
+            let entry = PlaylistWish(title: wish.title, artist: wish.artist,
+                                     album: wish.album, spotifyURL: wish.spotifyURL,
+                                     durationSeconds: wish.durationSeconds,
+                                     artistNames: wish.artistNames, appleMusicItemID: wish.appleMusicItemID)
+            copy.sourceOrder.append(entry)
+            if missingIDs.contains(wish.id) { copy.missingTracks.append(entry) }
+        }
+        return copy
+    }
 
     func matchesPortableBackupID(_ backupID: String) -> Bool {
         portableBackupID == backupID || UUID(uuidString: backupID) == id
@@ -115,8 +270,20 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
 }
 
 struct PersistedLibrary: Codable {
+    static let writeFailureDomain = "MP3Shelf.LibraryWrite"
     var tracks: [MusicTrack]
     var playlists: [MusicPlaylist]
+
+    func write(to url: URL) throws {
+        do {
+            try JSONEncoder().encode(self).write(to: url, options: .atomic)
+        } catch {
+            throw NSError(domain: Self.writeFailureDomain, code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "The music library could not be saved. The audio was not imported; check local storage and retry.",
+                NSUnderlyingErrorKey: error
+            ])
+        }
+    }
 }
 
 struct ImportReport {
@@ -175,4 +342,38 @@ struct PlaybackInterruptionState {
     }
 
     mutating func cancelResume() { wantsResume = false }
+}
+
+/// Response admission only; decoding, identity and duration still determine import.
+enum DownloadedAudioContentType {
+    static func allows(_ raw: String?) -> Bool {
+        guard let raw else { return false }
+        let mime = raw.split(separator: ";", maxSplits: 1).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return ["audio/mpeg", "audio/mp3", "audio/x-mpeg", "application/octet-stream",
+                "audio/mp4", "audio/m4a", "audio/x-m4a", "audio/aac", "audio/x-aac",
+                "audio/wav", "audio/wave", "audio/x-wav", "audio/aiff", "audio/x-aiff",
+                "audio/flac", "audio/x-flac"].contains(mime)
+    }
+}
+
+enum DownloadedAudioRange {
+    static let incompleteMessage = "The source sent only part of the audio file. Try another source."
+
+    static func coversCompleteFile(status: Int, contentRange: String?, downloadedBytes: Int64) -> Bool {
+        guard status == 206 else { return true }
+        // A standalone file must cover byte zero through the end of the
+        // representation. The decoder may accept a truncated MP3 prefix.
+        let fields = contentRange?.split(whereSeparator: { $0 == " " || $0 == "\t" }) ?? []
+        guard downloadedBytes > 0, fields.count == 2, fields[0].lowercased() == "bytes" else { return false }
+        let extent = fields[1].split(separator: "/", omittingEmptySubsequences: false)
+        guard extent.count == 2 else { return false }
+        let bounds = extent[0].split(separator: "-", omittingEmptySubsequences: false)
+        guard bounds.count == 2,
+              [bounds[0], bounds[1], extent[1]].allSatisfy({
+                  !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) }
+              }) else { return false }
+        return Int64(bounds[0]) == 0 && Int64(bounds[1]) == downloadedBytes - 1 &&
+            Int64(extent[1]) == downloadedBytes
+    }
 }
