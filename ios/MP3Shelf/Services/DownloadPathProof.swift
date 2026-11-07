@@ -282,6 +282,21 @@ enum DownloadPathProof {
             guard BackgroundAudioDownloader.shared.pendingCount() == 0 else {
                 throw fail("A transfer is still active; the isolated library is not ready for the restart test")
             }
+            let secondWish = PlaylistWish(title: wish.title + "!", artist: wish.artist,
+                album: wish.album, durationSeconds: wish.durationSeconds)
+            let secondPlaylist = library.importPlaylist(wishes: [secondWish], name: "Download reuse proof")
+            guard secondPlaylist.matched == 1, secondPlaylist.missing == 0,
+                  library.playlists.first(where: { $0.id == secondPlaylist.playlistID })?.trackIDs == [track.id] else {
+                throw fail("A second playlist could not link the saved recording")
+            }
+            let tracksBeforeReuse = library.tracks
+            let playlistsBeforeReuse = library.playlists
+            let importedAgain = try await library.importStagedAudio(from: file, matching: secondWish,
+                attribution: AudioSourceAttribution(pageURL: "", licenseURL: "", providerName: "Proof reuse"))
+            guard !importedAgain, library.tracks == tracksBeforeReuse, library.playlists == playlistsBeforeReuse else {
+                throw fail("A second download duplicated a recording already saved offline")
+            }
+            try record("existing-recording-reused", "A differently named request reused the saved recording")
             try await verifyRejectedSave(using: file, library: library)
             try record("storage-failure-rejected", "A real library write failure was rejected; saved records and audio remained unchanged")
             report["status"] = "READY_FOR_RESTART"

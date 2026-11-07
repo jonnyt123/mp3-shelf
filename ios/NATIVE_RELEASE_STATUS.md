@@ -1,5 +1,13 @@
 # Native release status — consolidated draft PR #29
 
+## Reuse a recording saved during a transfer
+
+Playlist audio imports recheck for an available matching recording at the
+library write boundary. This covers audio saved while a download or conversion
+was in progress. The native proof requires two playlists to share the saved
+track and a second import request to leave both playlists intact. The receipt
+tests passed. The native proof still needs Xcode.
+
 ## Incomplete download responses
 
 A loopback server returned a 1,685-byte prefix of a 2,107-byte MP3 as HTTP 206.

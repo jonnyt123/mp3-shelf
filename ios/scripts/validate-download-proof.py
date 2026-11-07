@@ -22,7 +22,7 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
     }
     if mode not in first_stages or (expected_mode is not None and mode != expected_mode):
         raise ValueError("The proof mode is missing or does not match this runner")
-    required = first_stages[mode] + ["saved-mp3", "full-decode", "local-playback", "storage-failure-rejected",
+    required = first_stages[mode] + ["saved-mp3", "full-decode", "local-playback", "existing-recording-reused", "storage-failure-rejected",
         "ready-for-restart", "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]
     actual = [item.get("stage") for item in report.get("steps", [])]
     if not set(required) <= set(actual):

@@ -475,6 +475,9 @@ final class MusicLibrary: ObservableObject {
                                expectedDuration: TimeInterval? = nil,
                                matching wish: PlaylistWish? = nil,
                                attribution: AudioSourceAttribution? = nil) async throws -> Bool {
+        // A different import may have saved this recording while a download
+        // or AAC conversion was suspended. Recheck at the library write boundary.
+        if let wish, hasOfflineRecording(matching: wish) { return false }
         let extensionName = sourceURL.pathExtension.lowercased()
         let allowed = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
         guard allowed.contains(extensionName) else { throw MusicLibraryError.unsupportedFormat }

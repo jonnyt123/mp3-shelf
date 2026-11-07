@@ -39,7 +39,7 @@ class DownloadProofTests(unittest.TestCase):
             "sha256": hashlib.sha256(self.audio.read_bytes()).hexdigest(),
             "decodedFrames": 9084600, "durationSeconds": 206,
             "steps": [{"stage": name} for name in ["queue-write-failure-rejected", "search", "match", "resolved-and-queued",
-                "saved-mp3", "full-decode", "local-playback", "storage-failure-rejected", "ready-for-restart",
+                "saved-mp3", "full-decode", "local-playback", "existing-recording-reused", "storage-failure-rejected", "ready-for-restart",
                 "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]],
         }
 
@@ -95,7 +95,7 @@ class DownloadProofTests(unittest.TestCase):
 
     def test_missing_required_stage_and_wrong_stage_order_cannot_pass(self):
         baseline = copy.deepcopy(self.report)
-        for stage in ["queue-write-failure-rejected", "storage-failure-rejected", "ready-for-restart", "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]:
+        for stage in ["queue-write-failure-rejected", "existing-recording-reused", "storage-failure-rejected", "ready-for-restart", "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]:
             self.report = copy.deepcopy(baseline)
             self.report["steps"] = [s for s in self.report["steps"] if s["stage"] != stage]
             with self.subTest(stage=stage), self.assertRaises(ValueError): self.validate()
@@ -233,7 +233,7 @@ elif command=='launch':
             'trackID':str(uuid.uuid4()),'playlistID':str(uuid.uuid4()),'filePath':str(audio),'fileBytes':audio.stat().st_size,
             'sha256':hashlib.sha256(audio.read_bytes()).hexdigest(),'decodedFrames':int(duration*44100),
             'durationSeconds':duration,'expectedDurationSeconds':duration,
-            'steps':[{'stage':s} for s in first+['saved-mp3','full-decode','local-playback','storage-failure-rejected','ready-for-restart']]}
+            'steps':[{'stage':s} for s in first+['saved-mp3','full-decode','local-playback','existing-recording-reused','storage-failure-rejected','ready-for-restart']]}
     result.write_text(json.dumps(report))
 ''')
 
