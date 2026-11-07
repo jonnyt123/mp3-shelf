@@ -408,6 +408,18 @@ enum SourceDiscoveryJobTests {
         unknownHistory.outcomes = nil
         verifyDiscovery(!unknownHistory.requeueFailedSource(for: wishes[0].id),
                         "legacy checkpoints with unknown outcomes cannot invent a queued result")
+        var catalogRecovery = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
+        let cachedBackup = AudioCatalogMatch(downloadURL: URL(string: "https://example.invalid/backup.mp3")!,
+            itemURL: URL(string: "https://example.invalid/recording")!, licenseURL: nil, sourceName: "Cached web source")
+        catalogRecovery.record(.queued)
+        _ = catalogRecovery.reserveWebSearch(for: wishes[0].id)
+        catalogRecovery.webSources = [wishes[0].id.uuidString: [cachedBackup]]
+        verifyDiscovery(catalogRecovery.recordingCandidates == nil &&
+                        catalogRecovery.requeueFailedSource(for: wishes[0].id) &&
+                        catalogRecovery.currentWish?.id == wishes[0].id &&
+                        catalogRecovery.webSources?[wishes[0].id.uuidString] == [cachedBackup] &&
+                        !catalogRecovery.reserveWebSearch(for: wishes[0].id),
+                        "a catalog transfer can recover with cached web sources and its original search reservation")
         // Older discovery checkpoints had no outcomes field. They must still
         // decode and resume at the exact same cursor without repeating songs.
         var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(job))

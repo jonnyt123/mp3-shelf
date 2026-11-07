@@ -742,15 +742,14 @@ final class MusicLibrary: ObservableObject {
     }
 
     func recoverRecordingSource(after ticket: BackgroundAudioTicket, notBefore: Date? = nil) {
-        guard RecordingMatcher.isEnabled,
-              playlists.contains(where: { $0.id == ticket.playlistID && $0.sourceOrder.contains(where: { $0.id == ticket.requested.id }) }),
-              let index = discoveryJobs.firstIndex(where: { $0.playlistID == ticket.playlistID }),
-              let candidates = discoveryJobs[index].recordingCandidates?[ticket.requested.id.uuidString] else { return }
+        guard playlists.contains(where: {
+            $0.id == ticket.playlistID && $0.sourceOrder.contains(where: { $0.id == ticket.requested.id })
+        }), let index = discoveryJobs.firstIndex(where: { $0.playlistID == ticket.playlistID }) else { return }
+        // Discovery can still find a catalog or cached web file after the
+        // recording matcher has no candidates left or has been disabled.
         let now = Date()
-        let lookupAt = max(now, notBefore ?? now)
-        let failedIDs = failedRecordingIDs(for: ticket.requested, playlistID: ticket.playlistID, at: lookupAt)
-        guard RecordingMatcher.automaticChoice(RecordingMatcher.rank(candidates, for: ticket.requested), excluding: failedIDs) != nil,
-              discoveryJobs[index].requeueFailedSource(for: ticket.requested.id, notBefore: lookupAt > now ? lookupAt : nil) else { return }
+        let lookupAt = notBefore.flatMap { $0 > now ? $0 : nil }
+        guard discoveryJobs[index].requeueFailedSource(for: ticket.requested.id, notBefore: lookupAt) else { return }
         persistDiscovery()
         resumePendingDiscovery()
         if !foregroundDiscoveryEnabled && !backgroundDiscoveryInProgress {
@@ -758,9 +757,10 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
-    private func failedRecordingIDs(for wish: PlaylistWish, playlistID: UUID, at date: Date = .now) -> Set<String> {
-        Set(BackgroundAudioDownloader.shared.failedSourceTickets(for: wish, playlistID: playlistID)
-            .filter { !AudioSourceLinks.hasExpired($0.downloadURL, at: date) }
+    private func failedRecordingIDs(for wish: PlaylistWish, playlistID: UUID) -> Set<String> {
+        let now = Date()
+        return Set(BackgroundAudioDownloader.shared.failedSourceTickets(for: wish, playlistID: playlistID)
+            .filter { !AudioSourceLinks.hasExpired($0.downloadURL, at: now) }
             .compactMap { AudioSourceLinks.youtubeVideoID($0.sourcePage) })
     }
 

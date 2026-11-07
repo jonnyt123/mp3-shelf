@@ -1,5 +1,13 @@
 # Native release status — consolidated draft PR #29
 
+## Search recovery after a failed transfer
+
+An automatically queued song can return to discovery after an eligible transfer
+failure even if the recording matcher found no remaining candidate or was
+disabled. The existing three-attempt limit applies. Catalog and cached web
+sources remain eligible, and prior paid search reservations stay in place.
+Swift syntax checks passed. The native test runner requires a Swift compiler.
+
 ## Repeatable AAC transfer proof
 
 Double-click `Prove AAC Transfer.command` to run an isolated Simulator build
