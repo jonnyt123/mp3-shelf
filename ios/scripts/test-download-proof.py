@@ -37,7 +37,7 @@ class DownloadProofTests(unittest.TestCase):
             "filePath": str(self.audio), "fileBytes": self.audio.stat().st_size,
             "sha256": hashlib.sha256(self.audio.read_bytes()).hexdigest(),
             "decodedFrames": 9084600, "durationSeconds": 206,
-            "steps": [{"stage": name} for name in ["search", "match", "resolved-and-queued",
+            "steps": [{"stage": name} for name in ["queue-write-failure-rejected", "search", "match", "resolved-and-queued",
                 "saved-mp3", "full-decode", "local-playback", "storage-failure-rejected", "ready-for-restart",
                 "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]],
         }
@@ -92,9 +92,9 @@ class DownloadProofTests(unittest.TestCase):
             self.report[field] = value
             with self.subTest(field=field, value=value), self.assertRaises(ValueError): self.validate()
 
-    def test_missing_restart_stage_and_wrong_stage_order_cannot_pass(self):
+    def test_missing_required_stage_and_wrong_stage_order_cannot_pass(self):
         baseline = copy.deepcopy(self.report)
-        for stage in ["storage-failure-rejected", "ready-for-restart", "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]:
+        for stage in ["queue-write-failure-rejected", "storage-failure-rejected", "ready-for-restart", "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]:
             self.report = copy.deepcopy(baseline)
             self.report["steps"] = [s for s in self.report["steps"] if s["stage"] != stage]
             with self.subTest(stage=stage), self.assertRaises(ValueError): self.validate()
@@ -105,7 +105,7 @@ class DownloadProofTests(unittest.TestCase):
     def test_fixture_receipt_is_separate_from_live_download(self):
         self.report.update(mode="local-import-restart", selection="local-fixture", durationSeconds=0.2,
                            expectedDurationSeconds=0.2, decodedFrames=8820, restartPlaybackSeconds=0.1)
-        self.report["steps"] = [{"stage": "local-fixture-import"}] + self.report["steps"][3:]
+        self.report["steps"] = [{"stage": "local-fixture-import"}] + self.report["steps"][4:]
         self.validate()
         self.assertTrue((self.root / "output/Offline-restart-fixture-proof.mp3").exists())
         report_path = self.root / "result.json"
@@ -186,7 +186,7 @@ elif command=='launch':
     else:
         local='--mp3shelf-prove-local-restart' in args
         audio=documents/'saved.mp3'; audio.write_bytes(b'fake saved bytes, not an actual MP3')
-        first=['local-fixture-import'] if local else ['search','match','resolved-and-queued']
+        first=['local-fixture-import'] if local else ['queue-write-failure-rejected','search','match','resolved-and-queued']
         report={'schema':'mp3-shelf-download-proof-v2','status':'PASS' if mode=='premature-pass' else 'READY_FOR_RESTART',
             'mode':'local-import-restart' if local else 'live-download','selection':'local-fixture' if local else 'automatic',
             'runID':args[args.index('--mp3shelf-proof-run')+1],'initialProcessToken':str(uuid.uuid4()),

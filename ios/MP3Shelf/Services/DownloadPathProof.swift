@@ -101,6 +101,8 @@ enum DownloadPathProof {
                 report["selection"] = "local-fixture"
                 try record("local-fixture-import", "Imported the repository's real MP3 fixture through the production importer; no network transfer")
             } else {
+                try await verifyRejectedQueueSave(for: wish, playlistID: imported.playlistID)
+                try record("queue-write-failure-rejected", "An unwritable queue file prevented a ticket and background task from being created")
                 for _ in 0..<30 {
                     if library.canResolveRecordingSources(for: imported.playlistID) { break }
                     try await Task.sleep(nanoseconds: 200_000_000)
@@ -227,6 +229,35 @@ enum DownloadPathProof {
             report["status"] = "FAIL"
             report["error"] = error.localizedDescription
             try? record("failed", error.localizedDescription)
+        }
+    }
+
+    private static func verifyRejectedQueueSave(for wish: PlaylistWish, playlistID: UUID) async throws {
+        let fm = FileManager.default
+        let transfers = BackgroundAudioDownloader.shared
+        let manifest = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MP3Shelf/background-audio-tickets.json")
+        func fail(_ message: String) -> NSError {
+            NSError(domain: "MP3Shelf.DownloadProof", code: 4, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        guard transfers.ticketsForPlaylist().isEmpty, !(await transfers.hasBackgroundTasksForProof()),
+              !fm.fileExists(atPath: manifest.path) else {
+            throw fail("Queue failure proof requires an empty, isolated download queue")
+        }
+
+        // A directory at the manifest destination blocks a real atomic save.
+        try fm.createDirectory(at: manifest, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: manifest) }
+        let url = URL(string: "https://example.invalid/queue-proof.mp3")!
+        let source = AudioCatalogMatch(downloadURL: url, itemURL: url, licenseURL: nil, sourceName: "Queue proof fixture")
+        do {
+            try transfers.enqueue(source: source, requested: wish, playlistID: playlistID)
+            throw fail("Queueing did not report the manifest write failure")
+        } catch let error as NSError where error.domain == BackgroundTicketManifestPolicy.writeFailureDomain {
+            guard transfers.ticketsForPlaylist().isEmpty, transfers.pendingCount() == 0,
+                  !(await transfers.hasBackgroundTasksForProof()) else {
+                throw fail("The queue added a ticket or started a transfer despite the write failure")
+            }
         }
     }
 

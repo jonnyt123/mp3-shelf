@@ -1,5 +1,18 @@
 # Native release status — consolidated draft PR #29
 
+## Queue storage before transfers start
+
+New downloads and replacement tasks save their tickets before the background
+transfer starts. A replacement and its predecessor's retirement share one
+atomic write. If saving fails, a cellular upgrade leaves the Wi-Fi task active.
+Automatic discovery pauses at the same song and shows the storage error.
+
+The live Simulator proof checks a real queue write failure before searching
+for the song. It requires the storage error and an empty ticket list and task
+inventory. All 12 receipt and shell workflow tests passed, and six changed
+Swift files passed syntax parsing. Native checks stopped at preflight because
+the host lacks Swift and Xcode. Device behavior and live downloads await testing.
+
 ## Ready songs during link recovery
 
 The discovery queue can process ready songs while another song waits for its

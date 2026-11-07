@@ -898,7 +898,7 @@ struct PlaylistDetailView: View {
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 }
                                 if let issue = job.lastError {
-                                    Label("Source temporarily unavailable: \(issue)", systemImage: "wifi.exclamationmark")
+                                    Label(issue, systemImage: "exclamationmark.circle")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 }
                                 if let retryAt = job.nextLookupAt, !job.isPaused {

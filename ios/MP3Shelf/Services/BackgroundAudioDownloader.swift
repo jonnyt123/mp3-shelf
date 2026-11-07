@@ -78,7 +78,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         session.getAllTasks { [weak self] tasks in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                var changed = false
                 for task in tasks {
                     guard let raw = task.taskDescription,
                           let oldID = UUID(uuidString: raw),
@@ -95,32 +94,22 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                         task.cancel()
                         continue
                     }
-                    var old = oldTicket
-                    old.status = .cancelled
-                    old.failureReason = "Replaced with a cellular-authorized transfer"
-                    self.tickets[oldID] = old
                     var replacement = BackgroundAudioTicket(
-                        id: UUID(), playlistID: old.playlistID,
-                        requested: old.requested, downloadURL: old.downloadURL,
-                        sourcePage: old.sourcePage, licensePage: old.licensePage,
-                        provider: old.provider)
+                        id: UUID(), playlistID: oldTicket.playlistID,
+                        requested: oldTicket.requested, downloadURL: oldTicket.downloadURL,
+                        sourcePage: oldTicket.sourcePage, licensePage: oldTicket.licensePage,
+                        provider: oldTicket.provider)
                     replacement.startedAt = .now
-                    replacement.automaticRetryCount = old.automaticRetryCount
-                    replacement.connectivityRetryCount = old.connectivityRetryCount
-                    replacement.nextRetryAt = old.nextRetryAt
-                    replacement.alternativeSources = old.alternativeSources
-                    self.tickets[replacement.id] = replacement
-                    let next = self.session.downloadTask(
-                        with: self.downloadRequest(for: replacement.downloadURL, playlistID: playlistID))
-                    next.taskDescription = replacement.id.uuidString
-                    next.earliestBeginDate = replacement.nextRetryAt
-                    next.resume()
-                    task.cancel()
-                    changed = true
-                }
-                if changed {
-                    self.persist()
-                    self.updatePending()
+                    replacement.automaticRetryCount = oldTicket.automaticRetryCount
+                    replacement.connectivityRetryCount = oldTicket.connectivityRetryCount
+                    replacement.nextRetryAt = oldTicket.nextRetryAt
+                    replacement.alternativeSources = oldTicket.alternativeSources
+                    do {
+                        try self.startTransfer(replacement, replacing: (oldID, "Replaced with a cellular-authorized transfer"))
+                        task.cancel()
+                    } catch {
+                        self.noteQueueWriteFailure(error, for: oldID)
+                    }
                 }
             }
         }
@@ -166,7 +155,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             BackgroundProviderHistoryPolicy.Outcome(
                 provider: ticket.provider,
                 imported: ticket.status == .imported,
-                failed: ticket.status == .failed,
+                failed: ticket.status == .failed && ticket.mayTryAnotherSource != false,
                 failureReason: ticket.failureReason)
         }
         let recent = tickets.values.filter {
@@ -181,7 +170,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     @discardableResult
     func enqueue(source: AudioCatalogMatch, requested: PlaylistWish, playlistID: UUID,
-                 alternatives: [AudioCatalogMatch] = []) -> Bool {
+                 alternatives: [AudioCatalogMatch] = [], replacingRetry previousID: UUID? = nil) throws -> Bool {
         // Resolution suspends callers, so an earlier capacity check can be
         // stale. This MainActor check and ticket insertion have no await gap.
         guard BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount()),
@@ -198,14 +187,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         ticket.alternativeSources = AudioSourceFinder.uniqueDownloadSources(
             alternatives.filter { $0.downloadURL != source.downloadURL &&
                 Self.allowedDownloadURL($0.downloadURL) })
-        tickets[ticket.id] = ticket
-        persist()
-        revision += 1
-        let task = session.downloadTask(
-            with: downloadRequest(for: source.downloadURL, playlistID: playlistID))
-        task.taskDescription = ticket.id.uuidString
-        task.resume()
-        updatePending()
+        try startTransfer(ticket, replacing: previousID.map { ($0, "Replaced by manual retry") })
         return true
     }
 
@@ -292,24 +274,17 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
         // Use a new identifier. A late didComplete callback from the old
         // cancelled task must never change the state of the new transfer.
-        let newID = UUID()
         var ticket = BackgroundAudioTicket(
-            id: newID, playlistID: previous.playlistID, requested: previous.requested,
+            id: UUID(), playlistID: previous.playlistID, requested: previous.requested,
             downloadURL: previous.downloadURL, sourcePage: previous.sourcePage,
             licensePage: previous.licensePage, provider: previous.provider)
         ticket.startedAt = .now
         ticket.alternativeSources = previous.alternativeSources
-        var retired = previous
-        retired.status = .cancelled
-        retired.failureReason = "Replaced by manual retry"
-        tickets[id] = retired
-        tickets[newID] = ticket
-        persist()
-        let task = session.downloadTask(
-            with: downloadRequest(for: ticket.downloadURL, playlistID: ticket.playlistID))
-        task.taskDescription = newID.uuidString
-        task.resume()
-        updatePending()
+        do {
+            try startTransfer(ticket, replacing: (id, "Replaced by manual retry"))
+        } catch {
+            noteQueueWriteFailure(error, for: id)
+        }
     }
 
     func clearFinishedHistory() {
@@ -379,13 +354,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                       library.canResolveRecordingSources(for: previous.playlistID),
                       library.playlists.contains(where: { $0.id == previous.playlistID && $0.sourceOrder.contains(where: { $0.id == wish.id }) }) else { return }
                 self.sourceResolutionTasks.removeValue(forKey: previous.id)
-                guard self.enqueue(source: source, requested: wish, playlistID: previous.playlistID,
-                                   alternatives: Array(sources.dropFirst())) else { return }
-                var replaced = current
-                replaced.status = .cancelled
-                replaced.failureReason = "Replaced by manual retry"
-                self.tickets[previous.id] = replaced
-                self.persist()
+                try self.enqueue(source: source, requested: wish, playlistID: previous.playlistID,
+                                 alternatives: Array(sources.dropFirst()), replacingRetry: previous.id)
+            } catch let error as NSError where error.domain == BackgroundTicketManifestPolicy.writeFailureDomain {
+                self.noteQueueWriteFailure(error, for: previous.id)
             } catch {
                 guard !Task.isCancelled, var current = self.tickets[previous.id], current.status == previous.status else { return }
                 current.failureReason = "Source refresh failed: \(error.localizedDescription)"
@@ -435,10 +407,38 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         activate()
     }
 
-    private func persist() {
-        if let data = try? JSONEncoder().encode(Array(tickets.values)) {
-            try? data.write(to: manifestURL, options: .atomic)
+    private func startTransfer(_ ticket: BackgroundAudioTicket,
+                               replacing previous: (id: UUID, reason: String)? = nil) throws {
+        var updated = tickets
+        if let previous, var retired = updated[previous.id] {
+            retired.status = .cancelled
+            retired.failureReason = previous.reason
+            updated[retired.id] = retired
         }
+        updated[ticket.id] = ticket
+        // Save both ticket changes together before the daemon can transfer
+        // bytes. A failed save leaves the previous task and manifest intact.
+        try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        tickets = updated
+
+        let task = session.downloadTask(
+            with: downloadRequest(for: ticket.downloadURL, playlistID: ticket.playlistID))
+        task.taskDescription = ticket.id.uuidString
+        task.earliestBeginDate = ticket.nextRetryAt
+        task.resume()
+        updatePending()
+    }
+
+    private func noteQueueWriteFailure(_ error: Error, for id: UUID) {
+        guard var ticket = tickets[id] else { return }
+        ticket.failureReason = error.localizedDescription
+        ticket.mayTryAnotherSource = false
+        tickets[id] = ticket
+        revision += 1
+    }
+
+    private func persist() {
+        try? BackgroundTicketManifestPolicy.write(Array(tickets.values), to: manifestURL)
     }
 
     private func updatePending() {
@@ -514,11 +514,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return
         }
 
-        var retired = previous
-        retired.status = .cancelled
-        retired.failureReason = "Replaced by automatic retry"
-        tickets[id] = retired
-
         var replacement = BackgroundAudioTicket(
             id: UUID(), playlistID: previous.playlistID,
             requested: previous.requested, downloadURL: previous.downloadURL,
@@ -532,22 +527,18 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         replacement.nextRetryAt = retryAt
         replacement.alternativeSources = previous.alternativeSources
         replacement.failureReason = reason
-        tickets[replacement.id] = replacement
-        persist()
-
-        let task = session.downloadTask(
-            with: downloadRequest(for: replacement.downloadURL, playlistID: replacement.playlistID))
-        task.taskDescription = replacement.id.uuidString
-        task.earliestBeginDate = replacement.nextRetryAt
-        task.resume()
-        updatePending()
+        do {
+            try startTransfer(replacement, replacing: (id, "Replaced by automatic retry"))
+        } catch {
+            setFailed(id, reason: error.localizedDescription, allowAlternative: false)
+        }
     }
 
     /// After the current file fails validation or exhausts network retries,
     /// switch to another previously verified catalog result. All candidates
     /// already passed the title, artist, license and (when available) duration
     /// checks before the phone was locked.
-    private func tryNextDownloadSource(after id: UUID, earliestBeginDate: Date?) -> Bool {
+    private func startAlternateTransfer(after id: UUID, earliestBeginDate: Date?) throws -> Bool {
         guard let old = tickets[id], old.status == .queued,
               let remaining = old.alternativeSources else { return false }
         let candidates = remaining.filter { Self.allowedDownloadURL($0.downloadURL) }
@@ -555,11 +546,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let retryAt = earliestBeginDate.flatMap { $0 > now ? $0 : nil }
         guard let next = AudioSourceFinder.nextAlternative(to: old.downloadURL,
                                                             from: candidates, at: retryAt ?? now) else { return false }
-
-        var superseded = old
-        superseded.status = .cancelled
-        superseded.failureReason = "Replaced by alternate verified source"
-        tickets[id] = superseded
 
         var replacement = BackgroundAudioTicket(
             id: UUID(), playlistID: old.playlistID,
@@ -569,15 +555,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         replacement.startedAt = old.startedAt ?? .now
         replacement.nextRetryAt = retryAt
         replacement.alternativeSources = next.remaining
-        tickets[replacement.id] = replacement
-        persist()
-
-        let task = session.downloadTask(
-            with: downloadRequest(for: replacement.downloadURL, playlistID: replacement.playlistID))
-        task.taskDescription = replacement.id.uuidString
-        task.earliestBeginDate = retryAt
-        task.resume()
-        updatePending()
+        try startTransfer(replacement, replacing: (id, "Replaced by alternate verified source"))
         return true
     }
 
@@ -585,14 +563,23 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                            allowAlternative: Bool = true, earliestRecovery: Date? = nil) {
         reconcileAlreadyStoredDownloads()
         guard var ticket = tickets[id], ticket.status == .queued else { return }
-        if allowAlternative && tryNextDownloadSource(after: id, earliestBeginDate: earliestRecovery) { return }
+        var failure = reason
+        var canTryAnotherSource = allowAlternative
+        if allowAlternative {
+            do {
+                if try startAlternateTransfer(after: id, earliestBeginDate: earliestRecovery) { return }
+            } catch {
+                failure = error.localizedDescription
+                canTryAnotherSource = false
+            }
+        }
         ticket.status = .failed
-        ticket.failureReason = reason
-        ticket.mayTryAnotherSource = allowAlternative
+        ticket.failureReason = failure
+        ticket.mayTryAnotherSource = canTryAnotherSource
         tickets[id] = ticket
         persist()
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
-        if allowAlternative { library?.recoverRecordingSource(after: ticket, notBefore: earliestRecovery) }
+        if canTryAnotherSource { library?.recoverRecordingSource(after: ticket, notBefore: earliestRecovery) }
         updatePending()
     }
 
@@ -723,6 +710,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
     }
 
+    #if DEBUG
+    func hasBackgroundTasksForProof() async -> Bool {
+        let inventory = await backgroundTaskInventory()
+        return !inventory.ids.isEmpty || inventory.hasUnknownTasks
+    }
+    #endif
+
     /// Reconnect a persisted ticket that iOS no longer knows about. A single
     /// getAllTasks query is NOT sufficient: a completed task can vanish before
     /// its file-move callback finishes. Require an aged ticket and two scans,
@@ -753,7 +747,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         } catch { return }
         let second = await backgroundTaskInventory()
         guard !second.hasUnknownTasks else { return }
-        var restored = false
+        var completedLocally = false
         for id in possible {
             guard let current = tickets[id], current.status == .queued,
                   BackgroundTransferRecoveryPolicy.shouldRecover(
@@ -774,7 +768,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 finished.alternativeSources = nil
                 tickets[id] = finished
                 library.finishedBackgroundDownload(for: current.playlistID, succeeded: true)
-                restored = true
+                completedLocally = true
                 continue
             }
             guard Self.allowedDownloadURL(current.downloadURL) else {
@@ -787,11 +781,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                           earliestRecovery: current.nextRetryAt)
                 continue
             }
-            var replaced = current
-            replaced.status = .cancelled
-            replaced.failureReason = "Recovered missing background task"
-            tickets[id] = replaced
-
             var replacement = BackgroundAudioTicket(
                 id: UUID(), playlistID: current.playlistID,
                 requested: current.requested, downloadURL: current.downloadURL,
@@ -802,20 +791,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             replacement.connectivityRetryCount = current.connectivityRetryCount
             replacement.nextRetryAt = current.nextRetryAt
             replacement.alternativeSources = current.alternativeSources
-            tickets[replacement.id] = replacement
-            persist()
-
             // Explicit cellular approval is session-only; after relaunch,
             // replacement requests safely return to the Wi-Fi default.
-            let task = session.downloadTask(
-                with: downloadRequest(for: replacement.downloadURL,
-                                      playlistID: replacement.playlistID))
-            task.taskDescription = replacement.id.uuidString
-            task.earliestBeginDate = replacement.nextRetryAt
-            task.resume()
-            restored = true
+            do {
+                try startTransfer(replacement, replacing: (id, "Recovered missing background task"))
+            } catch {
+                setFailed(id, reason: error.localizedDescription, allowAlternative: false)
+            }
         }
-        if restored {
+        if completedLocally {
             persist()
             updatePending()
         }

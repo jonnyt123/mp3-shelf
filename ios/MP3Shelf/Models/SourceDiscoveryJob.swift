@@ -128,6 +128,19 @@ enum BackgroundProviderHistoryPolicy {
 /// crashing on Dictionary(uniqueKeysWithValues:). Prefer the most recently
 /// started ticket on collision; older tickets without a time retain first-win.
 enum BackgroundTicketManifestPolicy {
+    static let writeFailureDomain = "MP3Shelf.DownloadQueueWrite"
+
+    static func write<T: Encodable>(_ tickets: [T], to url: URL) throws {
+        do {
+            try JSONEncoder().encode(tickets).write(to: url, options: .atomic)
+        } catch {
+            throw NSError(domain: writeFailureDomain, code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "The download queue could not be saved. Check iPhone storage and retry.",
+                NSUnderlyingErrorKey: error
+            ])
+        }
+    }
+
     static func distinctByIdentifier<T>(
         _ values: [T], id: (T) -> UUID, startedAt: (T) -> Date?
     ) -> [UUID: T] {

@@ -735,8 +735,8 @@ final class MusicLibrary: ObservableObject {
             $0.id == playlistID && $0.sourceOrder.contains(where: {
                 $0.id == wish.id && MusicMatching.sameRequestedRecording($0, wish)
             })
-        }), BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID,
-                                                      alternatives: Array(sources.dropFirst())) else {
+        }), try BackgroundAudioDownloader.shared.enqueue(source: source, requested: wish, playlistID: playlistID,
+                                                          alternatives: Array(sources.dropFirst())) else {
             throw NativeAudioEngine.Failure.queueUnavailable
         }
     }
@@ -1010,7 +1010,7 @@ final class MusicLibrary: ObservableObject {
                         BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
                         job.record(.alreadyPresent)
                     } else if let source = sources.first {
-                        if BackgroundAudioDownloader.shared.enqueue(
+                        if try BackgroundAudioDownloader.shared.enqueue(
                             source: source, requested: wish, playlistID: playlistID,
                             alternatives: Array(sources.dropFirst())) {
                             job.record(.queued)
@@ -1019,6 +1019,11 @@ final class MusicLibrary: ObservableObject {
                         job.record(.unavailable)
                         job.catalogWarnings = Array(Set((job.catalogWarnings ?? []) + report.warnings)).sorted()
                     }
+                } catch let error as NSError where error.domain == BackgroundTicketManifestPolicy.writeFailureDomain {
+                    // Storage needs attention. Preserve this wish and the
+                    // saved search budget until the user resumes discovery.
+                    job.isPaused = true
+                    job.lastError = error.localizedDescription
                 } catch is CancellationError {
                     break
                 } catch {

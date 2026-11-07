@@ -16,8 +16,10 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
     mode = report.get("mode")
     if mode not in {"live-download", "local-import-restart"} or (expected_mode is not None and mode != expected_mode):
         raise ValueError("The proof mode is missing or does not match this runner")
-    required = (["search", "match", "resolved-and-queued"] if mode == "live-download" else ["local-fixture-import"]) + ["saved-mp3", "full-decode", "local-playback",
-                "storage-failure-rejected", "ready-for-restart", "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]
+    required = (["queue-write-failure-rejected", "search", "match", "resolved-and-queued"]
+                if mode == "live-download" else ["local-fixture-import"])
+    required += ["saved-mp3", "full-decode", "local-playback", "storage-failure-rejected", "ready-for-restart",
+                 "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]
     actual = [item.get("stage") for item in report.get("steps", [])]
     if not set(required) <= set(actual):
         raise ValueError("The native receipt is missing required pipeline stages")

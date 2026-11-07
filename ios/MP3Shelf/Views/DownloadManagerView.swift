@@ -257,6 +257,9 @@ private struct DownloadTicketRow: View {
                     .background(statusColor.opacity(0.12), in: Capsule())
             }
             if ticket.status == .queued {
+                if let reason = ticket.failureReason {
+                    Text(reason).font(.caption).foregroundStyle(ShelfTheme.subdued)
+                }
                 if transfers.isFinalizing(ticket.id) {
                     Text("Checking audio format and saving to your library")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
