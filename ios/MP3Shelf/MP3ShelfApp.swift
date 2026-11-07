@@ -60,6 +60,7 @@ final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
             _ = DownloadProofOfflineNetwork.install()
             return true
         }
+        if DownloadPathProof.fixtureTransferRequested { return true }
         #endif
         MP3ShelfBackgroundDiscovery.register()
         return true
@@ -119,7 +120,7 @@ struct MP3ShelfApp: App {
                             didStartDownloadProof = true
                             let installed = DownloadProofOfflineNetwork.install()
                             if ProcessInfo.processInfo.arguments.contains("--mp3shelf-prove-local-restart") {
-                                Task { await DownloadPathProof.run(library: library, localFixture: true) }
+                                Task { await DownloadPathProof.run(library: library, mode: .localRestart) }
                             } else {
                                 Task { await DownloadPathProof.verifyAfterRestart(
                                     library: library, playback: playback, networkGuardInstalled: installed) }
@@ -127,15 +128,18 @@ struct MP3ShelfApp: App {
                         }
                         return
                     }
+                    let fixtureTransfer = DownloadPathProof.fixtureTransferRequested
+                    #else
+                    let fixtureTransfer = false
                     #endif
                     MP3ShelfBackgroundDiscovery.foregroundLibrary = library
                     BackgroundAudioDownloader.shared.attach(to: library)
-                    library.setForegroundDiscoveryEnabled(scenePhase == .active)
+                    library.setForegroundDiscoveryEnabled(scenePhase == .active && !fixtureTransfer)
                     #if DEBUG
                     let snapshotArguments = ProcessInfo.processInfo.arguments
-                    if !didStartDownloadProof && snapshotArguments.contains("--mp3shelf-prove-download") {
+                    if !didStartDownloadProof && (fixtureTransfer || snapshotArguments.contains("--mp3shelf-prove-download")) {
                         didStartDownloadProof = true
-                        Task { await DownloadPathProof.run(library: library) }
+                        Task { await DownloadPathProof.run(library: library, mode: fixtureTransfer ? .fixtureTransfer : .liveDownload) }
                     }
                     if !didStartVisualFixture &&
                         (snapshotArguments.contains("--mp3shelf-snapshot-player") ||
@@ -151,7 +155,7 @@ struct MP3ShelfApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     #if DEBUG
-                    if DownloadProofOfflineNetwork.isRequested {
+                    if DownloadProofOfflineNetwork.isRequested || DownloadPathProof.fixtureTransferRequested {
                         library.setForegroundDiscoveryEnabled(false)
                         return
                     }

@@ -820,6 +820,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     nonisolated private static func allowedDownloadURL(_ url: URL) -> Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        if url.scheme == "http", url == DownloadPathProof.fixtureDownloadURL { return true }
+        #endif
         guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
               !host.isEmpty, url.user == nil, url.password == nil else { return false }
         if host == "googlevideo.com" || host.hasSuffix(".googlevideo.com") {
@@ -835,6 +838,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                                 willPerformHTTPRedirection response: HTTPURLResponse,
                                 newRequest request: URLRequest,
                                 completionHandler: @escaping (URLRequest?) -> Void) {
+        #if DEBUG && targetEnvironment(simulator)
+        if let fixtureURL = DownloadPathProof.fixtureDownloadURL, task.originalRequest?.url == fixtureURL {
+            completionHandler(nil)
+            return
+        }
+        #endif
         completionHandler(request.url.map { Self.allowedDownloadURL($0) } == true ? request : nil)
     }
 

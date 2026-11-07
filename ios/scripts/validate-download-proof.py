@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import shutil
 import sys
+from urllib.parse import urlsplit
 import uuid
 
 
@@ -14,12 +15,15 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
     if report.get("schema") != "mp3-shelf-download-proof-v2" or report.get("status") != "PASS":
         raise ValueError(report.get("error", "Native download proof has not passed"))
     mode = report.get("mode")
-    if mode not in {"live-download", "local-import-restart"} or (expected_mode is not None and mode != expected_mode):
+    first_stages = {
+        "live-download": ["queue-write-failure-rejected", "search", "match", "resolved-and-queued"],
+        "local-import-restart": ["local-fixture-import"],
+        "fixture-transfer": ["queue-write-failure-rejected", "fixture-queued", "fixture-downloaded"],
+    }
+    if mode not in first_stages or (expected_mode is not None and mode != expected_mode):
         raise ValueError("The proof mode is missing or does not match this runner")
-    required = (["queue-write-failure-rejected", "search", "match", "resolved-and-queued"]
-                if mode == "live-download" else ["local-fixture-import"])
-    required += ["saved-mp3", "full-decode", "local-playback", "storage-failure-rejected", "ready-for-restart",
-                 "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]
+    required = first_stages[mode] + ["saved-mp3", "full-decode", "local-playback", "storage-failure-rejected",
+        "ready-for-restart", "restart", "offline-guard-verified", "restored-library", "restart-local-playback"]
     actual = [item.get("stage") for item in report.get("steps", [])]
     if not set(required) <= set(actual):
         raise ValueError("The native receipt is missing required pipeline stages")
@@ -41,8 +45,9 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
         raise ValueError("The restart phase did not verify that its HTTP guard works")
     if type(report.get("blockedNetworkRequests")) is not int or report["blockedNetworkRequests"] != 0:
         raise ValueError("The restart phase attempted an HTTP request")
-    selections = {"automatic", "reference-review"} if mode == "live-download" else {"local-fixture"}
-    if report.get("selection") not in selections:
+    selections = {"live-download": {"automatic", "reference-review"},
+                  "local-import-restart": {"local-fixture"}, "fixture-transfer": {"fixture-transfer"}}
+    if report.get("selection") not in selections[mode]:
         raise ValueError("The recording-selection mode is missing")
     source = Path(report["filePath"]).resolve()
     if not source.is_relative_to(Path(container).resolve()) or source.suffix.lower() != ".mp3":
@@ -63,6 +68,21 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
         if expected_duration != 206:
             raise ValueError("The live proof did not use the expected reference recording")
         tolerance = 4
+    elif mode == "fixture-transfer":
+        if expected_duration != 2:
+            raise ValueError("The transfer proof did not use the two-second AAC fixture")
+        tolerance = 0.15
+        evidence = Path(destination) / "fixture-served.json"
+        if not evidence.is_file():
+            raise ValueError("No successful fixture response was recorded for this run")
+        served = json.loads(evidence.read_text())
+        url = urlsplit(served["url"])
+        fixture = (Path(__file__).resolve().parents[1] / "Tests/Fixtures/transfer-tone.m4a").read_bytes()
+        if (served["runID"] != report["runID"] or served["url"] != report.get("sourcePage")
+                or url.scheme != "http" or not url.port or url.netloc != f"127.0.0.1:{url.port}"
+                or url.path != f"/{report['runID']}/fixture.m4a" or url.query or url.fragment
+                or served["bytes"] != len(fixture) or served["sha256"] != hashlib.sha256(fixture).hexdigest()):
+            raise ValueError("The fixture response does not match the queued source and AAC bytes")
     else:
         if not math.isfinite(expected_duration) or not 0.05 <= expected_duration <= 10:
             raise ValueError("The local fixture duration is invalid")
@@ -74,8 +94,10 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
         raise ValueError("Production playback did not advance after restart")
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
-    name = "Carefree-Kevin-MacLeod-proof.mp3" if mode == "live-download" else "Offline-restart-fixture-proof.mp3"
-    shutil.copy2(source, destination / name)
+    names = {"live-download": "Carefree-Kevin-MacLeod-proof.mp3",
+             "local-import-restart": "Offline-restart-fixture-proof.mp3",
+             "fixture-transfer": "AAC-transfer-proof.mp3"}
+    shutil.copy2(source, destination / names[mode])
     print("PASS: native receipt stages and saved-file checksum verified; mode=" + mode + "; selection=" + report["selection"])
 
 

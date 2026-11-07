@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Receipt/workflow tests only; these do not stand in for a native download."""
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -143,14 +144,20 @@ class RestartWorkflowTests(unittest.TestCase):
         self.candidate = self.root / "candidate with spaces"
         self.scripts = self.candidate / "ios/scripts"
         self.scripts.mkdir(parents=True)
-        for name in ["prove-download-path.sh", "validate-download-proof.py"]:
+        for name in ["prove-download-path.sh", "serve-download-fixture.py", "validate-download-proof.py"]:
             shutil.copy2(HERE / name, self.scripts / name)
         fixtures = self.candidate / "ios/Tests/Fixtures"
         fixtures.mkdir(parents=True)
         (fixtures / "valid-mp3.mp3").write_bytes(b"fake fixture for shell staging only")
+        self.fixture = fixtures / "transfer-tone.m4a"
+        shutil.copy2(HERE.parent / "Tests/Fixtures/transfer-tone.m4a", self.fixture)
+        info = self.candidate / "ios/MP3Shelf/Resources/Info.plist"
+        info.parent.mkdir(parents=True)
+        shutil.copy2(HERE.parent / "MP3Shelf/Resources/Info.plist", info)
         self.tools = self.root / "tools"
         self.tools.mkdir()
         self.env = dict(os.environ, PATH=str(self.tools) + os.pathsep + os.environ["PATH"],
+                        TMPDIR=str(self.root),
                         MOCK_PROOF_CONTAINER=str(self.root / "container"), MOCK_PROOF_LOG=str(self.root / "calls.jsonl"))
         self.tool("uname", "#!/bin/sh\necho Darwin\n")
         self.tool("xcodebuild", f"#!{sys.executable}\n" + '''
@@ -159,10 +166,15 @@ args=sys.argv[1:]
 root=pathlib.Path(args[args.index('-derivedDataPath')+1])
 app=root/'Build/Products/Debug-iphonesimulator/MP3Shelf.app'
 app.mkdir(parents=True)
-(app/'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier':'com.jonnyt.mp3shelf.downloadproof'}))
+settings=dict(argument.split('=',1) for argument in args if '=' in argument)
+info={}
+if 'INFOPLIST_FILE' in settings:
+    info=plistlib.loads(pathlib.Path(settings['INFOPLIST_FILE']).read_bytes())
+info['CFBundleIdentifier']=settings['PRODUCT_BUNDLE_IDENTIFIER']
+(app/'Info.plist').write_bytes(plistlib.dumps(info))
 ''')
         self.tool("xcrun", f"#!{sys.executable}\n" + '''
-import hashlib, json, os, pathlib, sys, uuid
+import hashlib, json, os, pathlib, plistlib, socket, sys, urllib.error, urllib.parse, urllib.request, uuid
 args=sys.argv[1:]
 with open(os.environ['MOCK_PROOF_LOG'],'a') as log: log.write(json.dumps(args)+'\\n')
 container=pathlib.Path(os.environ['MOCK_PROOF_CONTAINER'])
@@ -171,10 +183,18 @@ command=args[1]
 mode=os.environ.get('MOCK_PROOF_FAILURE','')
 if command=='list': print(json.dumps({'devices':{'test':[{'udid':'test-phone','name':'iPhone Test','isAvailable':True,'state':'Booted'}]}}))
 elif command=='get_app_container': print(container)
+elif command=='install':
+    info=plistlib.loads((pathlib.Path(args[-1])/'Info.plist').read_bytes())
+    expected={'NSExceptionDomains':{'127.0.0.1':{'NSExceptionAllowsInsecureHTTPLoads':True}}} if os.environ['MOCK_PROOF_FIXTURE']=='yes' else {}
+    assert info.get('NSAppTransportSecurity',{})==expected, 'Unexpected Simulator ATS exception'
 elif command=='launch':
     result=documents/'MP3ShelfDownloadProof.json'
     if '--mp3shelf-prove-offline-restart' in args:
         report=json.loads(result.read_text())
+        if report['mode']=='fixture-transfer':
+            with socket.socket() as probe:
+                probe.settimeout(1)
+                assert probe.connect_ex(('127.0.0.1', urllib.parse.urlsplit(report['sourcePage']).port))!=0
         report.update(status='FAIL' if mode=='restart-fails' else 'PASS',restartProcessToken=str(uuid.uuid4()),
             networkMode='foreground-http-denied; discovery-disabled; transfers-not-attached',
             blockedNetworkRequests=1 if mode=='network-attempt' else 0,networkGuardVerified=True,
@@ -185,14 +205,34 @@ elif command=='launch':
         if mode=='corrupt-file': pathlib.Path(report['filePath']).write_bytes(b'bad')
     else:
         local='--mp3shelf-prove-local-restart' in args
+        fixture='--mp3shelf-prove-fixture-transfer' in args
+        run_id=args[args.index('--mp3shelf-proof-run')+1]
+        proof_mode='local-import-restart' if local else 'fixture-transfer' if fixture else 'live-download'
+        selection='local-fixture' if local else 'fixture-transfer' if fixture else 'automatic'
+        duration=0.2 if local else 2 if fixture else 206
         audio=documents/'saved.mp3'; audio.write_bytes(b'fake saved bytes, not an actual MP3')
         first=['local-fixture-import'] if local else ['queue-write-failure-rejected','search','match','resolved-and-queued']
+        source=None
+        if fixture:
+            first=['queue-write-failure-rejected','fixture-queued','fixture-downloaded']
+            port=args[args.index('--mp3shelf-proof-fixture-port')+1]
+            source=f'http://127.0.0.1:{port}/{run_id}/fixture.m4a'
+            if mode!='no-fixture-response':
+                try:
+                    urllib.request.urlopen(source+'?wrong',timeout=2).close()
+                    raise AssertionError('Fixture server accepted the wrong path')
+                except urllib.error.HTTPError as error:
+                    assert error.code==404
+                with urllib.request.urlopen(source,timeout=2) as response:
+                    assert response.headers.get_content_type()=='audio/mp4'
+                    assert response.read()[4:8]==b'ftyp'
+            if mode=='wrong-fixture-source': source+='?different'
         report={'schema':'mp3-shelf-download-proof-v2','status':'PASS' if mode=='premature-pass' else 'READY_FOR_RESTART',
-            'mode':'local-import-restart' if local else 'live-download','selection':'local-fixture' if local else 'automatic',
-            'runID':args[args.index('--mp3shelf-proof-run')+1],'initialProcessToken':str(uuid.uuid4()),
+            'mode':proof_mode,'selection':selection,'sourcePage':source,
+            'runID':run_id,'initialProcessToken':str(uuid.uuid4()),
             'trackID':str(uuid.uuid4()),'playlistID':str(uuid.uuid4()),'filePath':str(audio),'fileBytes':audio.stat().st_size,
-            'sha256':hashlib.sha256(audio.read_bytes()).hexdigest(),'decodedFrames':8820 if local else 9084600,
-            'durationSeconds':0.2 if local else 206,'expectedDurationSeconds':0.2 if local else 206,
+            'sha256':hashlib.sha256(audio.read_bytes()).hexdigest(),'decodedFrames':int(duration*44100),
+            'durationSeconds':duration,'expectedDurationSeconds':duration,
             'steps':[{'stage':s} for s in first+['saved-mp3','full-decode','local-playback','storage-failure-rejected','ready-for-restart']]}
     result.write_text(json.dumps(report))
 ''')
@@ -204,12 +244,14 @@ elif command=='launch':
 
     def run_proof(self, *arguments, failure=""):
         return subprocess.run(["/bin/bash", str(self.scripts / "prove-download-path.sh"), *arguments],
-            cwd=self.candidate, env=dict(self.env, MOCK_PROOF_FAILURE=failure), text=True,
+            cwd=self.candidate, env=dict(self.env, MOCK_PROOF_FAILURE=failure,
+                MOCK_PROOF_FIXTURE="yes" if arguments == ("--fixture-transfer",) else "no"), text=True,
             capture_output=True, timeout=20)
 
-    def test_both_modes_require_terminate_and_second_launch(self):
+    def test_all_modes_require_terminate_and_second_launch(self):
         for arguments, folder, mode in [((), "download-proof", "live-download"),
-                                        (("--offline-restart",), "offline-restart-proof", "local-import-restart")]:
+                                        (("--offline-restart",), "offline-restart-proof", "local-import-restart"),
+                                        (("--fixture-transfer",), "fixture-transfer-proof", "fixture-transfer")]:
             with self.subTest(mode=mode):
                 result = self.run_proof(*arguments)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -218,8 +260,8 @@ elif command=='launch':
                 self.assertIn("Proof mode: " + mode, report.read_text())
         calls = [json.loads(line) for line in (self.root / "calls.jsonl").read_text().splitlines()]
         launches = [i for i, call in enumerate(calls) if call[1] == "launch"]
-        self.assertEqual(len(launches), 4)
-        for first, second in [(launches[0], launches[1]), (launches[2], launches[3])]:
+        self.assertEqual(len(launches), 6)
+        for first, second in zip(launches[::2], launches[1::2]):
             self.assertTrue(any(call[1] == "terminate" for call in calls[first + 1:second]))
             self.assertIn("--mp3shelf-prove-offline-restart", calls[second])
             token_index = calls[first].index("--mp3shelf-proof-run") + 1
@@ -228,6 +270,22 @@ elif command=='launch':
         for call in calls:
             if call[1] in {"uninstall", "terminate"}:
                 self.assertEqual(call[-1], "com.jonnyt.mp3shelf.downloadproof")
+
+    def test_fixture_transfer_requires_a_matching_server_response(self):
+        for failure, message in [("no-fixture-response", "No successful fixture response"),
+                                 ("wrong-fixture-source", "does not match the queued source")]:
+            with self.subTest(failure=failure):
+                result = self.run_proof("--fixture-transfer", failure=failure)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+
+    def test_second_proof_does_not_interrupt_the_active_simulator_run(self):
+        with (self.root / "mp3shelf-download-proof-test-phone.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            result = self.run_proof("--fixture-transfer")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        calls = [json.loads(line) for line in (self.root / "calls.jsonl").read_text().splitlines()]
+        self.assertEqual([call[1] for call in calls], ["list"])
 
     def test_first_launch_cannot_pass_without_restart(self):
         result = self.run_proof(failure="premature-pass")

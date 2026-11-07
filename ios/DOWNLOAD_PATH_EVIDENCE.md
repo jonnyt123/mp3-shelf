@@ -1,8 +1,32 @@
-# Download-path evidence — 2026-11-06
+# Download-path evidence
 
 **Overall verdict: the full iPhone path is NOT PROVEN.** This executor is Linux,
 with no Swift, Xcode, iPhone Simulator, or connected iPhone. No native PASS is
 claimed from the host checks below.
+
+## Loopback AAC transfer and conversion
+
+`ios/Prove AAC Transfer.command` queues a generated 523 Hz AAC tone through the
+same background downloader and MP3 importer used for matched recordings. The
+proof requires an HTTP response from the run's loopback server, import of that
+ticket, full MP3 decode, and playback from the saved file after relaunch. The
+server exits before the restart, and the report and MP3 are in
+`ios/build/fixture-transfer-proof`. The fixture HTTP exception is limited to
+the isolated Debug Simulator build and the run's exact URL.
+
+The Linux check fetched the actual fixture from the bundled server and compared
+all 17,614 bytes with the source file. FFmpeg decoded the AAC for the production
+ShelfEncoder and bundled LAME. The resulting mono 44.1 kHz MP3 was 50,154 bytes
+and 2.08975 seconds long. Its full decode returned 92,160 frames with audible samples.
+
+| File | SHA-256 |
+| --- | --- |
+| Served AAC fixture | `a5ce5f6bc3887b52ec882b1cf34d750970d2d3841707c17ff4fd0c8ad12d8e68` |
+| Linux MP3 result | `723292137e2274138cf3ca6a31587d533863ff43baef1df31cdfc1a08548be8c` |
+
+The fixture test reached its macOS/Xcode preflight here. Native transfer,
+AVAudioFile conversion and restart playback still await a Simulator run.
+Live Spotify or Apple Music playlist matching still needs its own acceptance test.
 
 ## AAC fallback and enqueue-capacity follow-up
 

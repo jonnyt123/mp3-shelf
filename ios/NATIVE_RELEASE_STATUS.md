@@ -1,5 +1,18 @@
 # Native release status — consolidated draft PR #29
 
+## Repeatable AAC transfer proof
+
+Double-click `Prove AAC Transfer.command` to run an isolated Simulator build
+against the bundled two-second AAC recording on loopback. The proof requires
+the matching server response, a completed background ticket, a decoded MP3
+and local playback after terminating and relaunching the app. The server
+stops before the second launch. Live song matching has its own proof.
+
+The Linux host received all 17,614 AAC bytes over loopback. FFmpeg decoded
+the input, the bundled ShelfEncoder and LAME wrote a 50,154-byte MP3, and
+FFmpeg decoded all 92,160 output frames. The Simulator proof stopped at
+preflight because Xcode is unavailable here. See DOWNLOAD_PATH_EVIDENCE.md.
+
 ## Queue storage before transfers start
 
 New downloads and replacement tasks save their tickets before the background

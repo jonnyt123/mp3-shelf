@@ -44,15 +44,58 @@ final class DownloadProofOfflineNetwork: URLProtocol, @unchecked Sendable {
 /// Uses the production search, matcher, review queue, downloader and importer.
 @MainActor
 enum DownloadPathProof {
+    enum Mode: String {
+        case liveDownload = "live-download"
+        case localRestart = "local-import-restart"
+        case fixtureTransfer = "fixture-transfer"
+    }
+
     private static let processToken = UUID().uuidString
-    private static var runToken: String? {
+    private nonisolated static var runToken: String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--mp3shelf-proof-run"),
               index + 1 < arguments.count, UUID(uuidString: arguments[index + 1]) != nil else { return nil }
         return arguments[index + 1]
     }
 
-    static func run(library: MusicLibrary, localFixture: Bool = false) async {
+    nonisolated static var fixtureTransferRequested: Bool {
+        #if targetEnvironment(simulator)
+        return Bundle.main.bundleIdentifier == "com.jonnyt.mp3shelf.downloadproof" &&
+            ProcessInfo.processInfo.arguments.contains("--mp3shelf-prove-fixture-transfer")
+        #else
+        return false
+        #endif
+    }
+
+    nonisolated static var fixtureDownloadURL: URL? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard fixtureTransferRequested, let runToken,
+              let index = arguments.firstIndex(of: "--mp3shelf-proof-fixture-port"),
+              index + 1 < arguments.count, let port = Int(arguments[index + 1]),
+              (1...65535).contains(port) else { return nil }
+        return URL(string: "http://127.0.0.1:\(port)/\(runToken)/fixture.m4a")
+    }
+
+    static func run(library: MusicLibrary, mode: Mode) async {
+        let localFixture = mode == .localRestart
+        let fixtureTransfer = mode == .fixtureTransfer
+        let title: String
+        let startMessage: String
+        let durationTolerance: Double
+        switch mode {
+        case .liveDownload:
+            title = "Carefree"
+            startMessage = "Live test: Carefree — Kevin MacLeod, expected 206 seconds"
+            durationTolerance = 4
+        case .localRestart:
+            title = "Offline restart fixture"
+            startMessage = "Local MP3 import and restart playback"
+            durationTolerance = 0.1
+        case .fixtureTransfer:
+            title = "AAC transfer fixture"
+            startMessage = "Loopback AAC transfer through the background queue and MP3 converter"
+            durationTolerance = 0.15
+        }
         let output = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MP3ShelfDownloadProof.json")
         var steps: [[String: String]] = []
@@ -60,7 +103,7 @@ enum DownloadPathProof {
             "scope": "iOS Simulator foreground pipeline; physical-device/background acceptance is separate"]
         report["runID"] = runToken
         report["initialProcessToken"] = processToken
-        report["mode"] = localFixture ? "local-import-restart" : "live-download"
+        report["mode"] = mode.rawValue
         var playlistID: UUID?
         func record(_ stage: String, _ detail: String) throws {
             steps.append(["stage": stage, "detail": detail])
@@ -73,21 +116,20 @@ enum DownloadPathProof {
                     userInfo: [NSLocalizedDescriptionKey: message])
         }
         do {
-            try record("start", localFixture ? "Local MP3 import/restart test; no live-source result is claimed" :
-                "Live test: Carefree — Kevin MacLeod, expected 206 seconds")
+            try record("start", startMessage)
             guard Bundle.main.bundleIdentifier == "com.jonnyt.mp3shelf.downloadproof", runToken != nil,
                   library.tracks.isEmpty, library.playlists.isEmpty else {
                 throw fail("Proof requires a fresh, isolated test app; the normal music library is never cleared.")
             }
             let fixture = output.deletingLastPathComponent().appendingPathComponent("MP3ShelfRestartFixture.mp3")
-            var expectedDuration = 206.0
+            var expectedDuration = fixtureTransfer ? 2.0 : 206.0
             if localFixture {
                 let audio = try AVAudioFile(forReading: fixture)
                 expectedDuration = Double(audio.length) / audio.processingFormat.sampleRate
                 guard expectedDuration.isFinite, expectedDuration > 0 else { throw fail("The local fixture is empty") }
             }
-            let wish = PlaylistWish(title: localFixture ? "Offline restart fixture" : "Carefree",
-                                    artist: localFixture ? "MP3 Shelf" : "Kevin MacLeod", album: "",
+            let wish = PlaylistWish(title: title,
+                                    artist: mode == .liveDownload ? "Kevin MacLeod" : "MP3 Shelf", album: "",
                                     durationSeconds: expectedDuration)
             report["expectedDurationSeconds"] = expectedDuration
             report["expectedTitle"] = wish.title
@@ -103,44 +145,57 @@ enum DownloadPathProof {
             } else {
                 try await verifyRejectedQueueSave(for: wish, playlistID: imported.playlistID)
                 try record("queue-write-failure-rejected", "An unwritable queue file prevented a ticket and background task from being created")
-                for _ in 0..<30 {
-                    if library.canResolveRecordingSources(for: imported.playlistID) { break }
-                    try await Task.sleep(nanoseconds: 200_000_000)
-                }
-                guard library.canResolveRecordingSources(for: imported.playlistID) else {
-                    throw fail("The test app is waiting for its normal foreground/Wi-Fi policy. Connect the Mac to Wi-Fi and retry.")
-                }
-                let candidates = try await NativeAudioEngine.shared.search(for: wish, allowsCellular: false)
-                try record("search", "Received \(candidates.count) recording candidates")
-                let ranked = RecordingMatcher.rank(candidates, for: wish)
-                let candidate: RecordingCandidate
-                if let automatic = RecordingMatcher.automaticChoice(ranked) {
-                    candidate = automatic
-                    report["selection"] = "automatic"
-                    // The actual Find & Save workflow runs below, including fallback.
-                } else if let reference = ranked.first(where: {
-                    $0.candidate.id == "sMcWOaJFuw0" && $0.decision != .rejected
-                }) {
-                    // This explicit reference exercises the same path as choosing
-                    // a recording in Review matches. It does not prove auto selection.
-                    candidate = reference.candidate
-                    report["selection"] = "reference-review"
-                } else { throw fail("No matching reference recording was found; no substituted source is accepted.") }
-                let usesAutomaticWorkflow = report["selection"] as? String == "automatic"
-                try record("match", "Selected \(candidate.id); selection=\(report["selection"] as? String ?? "unknown")")
-                if usesAutomaticWorkflow {
-                    library.startAutomaticDownloads(for: imported.playlistID)
-                    try record("automatic-search-started", "Started the production Find & Save workflow")
-                } else {
-                    try await library.queueRecording(candidate, matching: wish, playlistID: imported.playlistID)
-                }
                 let transfers = BackgroundAudioDownloader.shared
-                let deadline = Date().addingTimeInterval(240)
+                let fixtureURL = fixtureTransfer ? fixtureDownloadURL : nil
+                var usesAutomaticWorkflow = false
+                if fixtureTransfer {
+                    guard let fixtureURL else { throw fail("The isolated AAC server URL is missing") }
+                    let source = AudioCatalogMatch(downloadURL: fixtureURL, itemURL: fixtureURL,
+                        licenseURL: nil, sourceName: "AAC transfer fixture")
+                    guard try transfers.enqueue(source: source, requested: wish, playlistID: imported.playlistID) else {
+                        throw fail("The production queue did not accept the AAC fixture")
+                    }
+                    report["selection"] = mode.rawValue
+                    try record("fixture-queued", "Saved the AAC ticket and started its background transfer")
+                } else {
+                    for _ in 0..<30 {
+                        if library.canResolveRecordingSources(for: imported.playlistID) { break }
+                        try await Task.sleep(nanoseconds: 200_000_000)
+                    }
+                    guard library.canResolveRecordingSources(for: imported.playlistID) else {
+                        throw fail("The test app is waiting for its normal foreground/Wi-Fi policy. Connect the Mac to Wi-Fi and retry.")
+                    }
+                    let candidates = try await NativeAudioEngine.shared.search(for: wish, allowsCellular: false)
+                    try record("search", "Received \(candidates.count) recording candidates")
+                    let ranked = RecordingMatcher.rank(candidates, for: wish)
+                    let candidate: RecordingCandidate
+                    if let automatic = RecordingMatcher.automaticChoice(ranked) {
+                        candidate = automatic
+                        report["selection"] = "automatic"
+                        // The actual Find & Save workflow runs below, including fallback.
+                    } else if let reference = ranked.first(where: {
+                        $0.candidate.id == "sMcWOaJFuw0" && $0.decision != .rejected
+                    }) {
+                        // This explicit reference exercises the same path as choosing
+                        // a recording in Review matches. It does not prove auto selection.
+                        candidate = reference.candidate
+                        report["selection"] = "reference-review"
+                    } else { throw fail("No matching reference recording was found; no substituted source is accepted.") }
+                    usesAutomaticWorkflow = report["selection"] as? String == "automatic"
+                    try record("match", "Selected \(candidate.id); selection=\(report["selection"] as? String ?? "unknown")")
+                    if usesAutomaticWorkflow {
+                        library.startAutomaticDownloads(for: imported.playlistID)
+                        try record("automatic-search-started", "Started the production Find & Save workflow")
+                    } else {
+                        try await library.queueRecording(candidate, matching: wish, playlistID: imported.playlistID)
+                    }
+                }
+                let deadline = Date().addingTimeInterval(fixtureTransfer ? 90 : 240)
                 var recordedQueue = false
                 while Date() < deadline {
                     try Task.checkCancellation()
                     let tickets = transfers.ticketsForPlaylist(imported.playlistID)
-                    if !recordedQueue, let ticket = tickets.first {
+                    if !fixtureTransfer, !recordedQueue, let ticket = tickets.first {
                         report["sourceProvider"] = ticket.provider
                         report["sourcePage"] = ticket.sourcePage.absoluteString
                         try record("resolved-and-queued", "The production workflow created a background transfer")
@@ -149,6 +204,13 @@ enum DownloadPathProof {
                     if let completed = tickets.first(where: { $0.status == .imported }) {
                         report["sourceProvider"] = completed.provider
                         report["sourcePage"] = completed.sourcePage.absoluteString
+                        if fixtureTransfer {
+                            guard let fixtureURL, completed.downloadURL == fixtureURL,
+                                  completed.sourcePage == fixtureURL, completed.failureReason == nil else {
+                                throw fail("The completed transfer did not match the AAC fixture ticket")
+                            }
+                            try record("fixture-downloaded", "The production downloader imported the queued AAC response")
+                        }
                         finished = true
                         break
                     }
@@ -199,7 +261,7 @@ enum DownloadPathProof {
                 }
                 return (frames, audible, Double(frames) / audio.processingFormat.sampleRate)
             }.value
-            guard decoded.0 > 0, decoded.1, abs(decoded.2 - expectedDuration) <= (localFixture ? 0.1 : 4) else {
+            guard decoded.0 > 0, decoded.1, abs(decoded.2 - expectedDuration) <= durationTolerance else {
                 throw fail("Full MP3 decode was empty, silent or had the wrong duration")
             }
             report["decodedFrames"] = decoded.0
