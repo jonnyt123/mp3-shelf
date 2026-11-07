@@ -1,5 +1,12 @@
 # Native release status — consolidated draft PR #29
 
+## Refresh cached source searches
+
+Pending songs discard saved recording candidates, web links and lookup details
+when a playlist refresh corrects the title, artist credits or duration. The
+queue position, other songs' results and paid-search reservations are preserved.
+Swift syntax checks passed. The native regression suite still requires Xcode.
+
 ## Reuse a recording saved during a transfer
 
 Playlist audio imports recheck for an available matching recording at the

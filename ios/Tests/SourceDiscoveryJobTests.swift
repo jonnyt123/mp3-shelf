@@ -673,6 +673,17 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(refreshedJob.nextIndex == 1 && refreshedJob.queued == 1 &&
                         refreshedJob.wishes.last?.id == added.id,
                         "refresh preserves download cursor and completed outcome")
+        let pendingKey = wishes[1].id.uuidString
+        refreshedJob.recordingCandidates = [pendingKey: [choice], wishes[0].id.uuidString: [choice]]
+        refreshedJob.webSources = [pendingKey: [cachedBackup]]
+        refreshedJob.saveLookupDetails(["Old source evidence"], for: wishes[1].id)
+        _ = refreshedJob.reserveWebSearch(for: wishes[1].id)
+        var albumEdit = wishes[1]
+        albumEdit.album = "Corrected album"
+        _ = refreshedJob.appendNewMissingWishes([albumEdit])
+        verifyDiscovery(refreshedJob.recordingCandidates?[pendingKey] == [choice] &&
+                        refreshedJob.webSources?[pendingKey] == [cachedBackup],
+                        "album-only refresh keeps verified lookup results")
         let editedPending = PlaylistWish(id: wishes[1].id,
             title: "Second (renamed)", artist: wishes[1].artist,
             album: "New Album", spotifyURL: wishes[1].spotifyURL,
@@ -688,6 +699,12 @@ enum SourceDiscoveryJobTests {
                         persistedMetadataEdit.wishes[1].durationSeconds == 213 &&
                         persistedMetadataEdit.nextIndex == 1 && persistedMetadataEdit.queued == 1,
                         "metadata-only pending refresh survives serialization without resetting history")
+        verifyDiscovery(persistedMetadataEdit.recordingCandidates?[pendingKey] == nil &&
+                        persistedMetadataEdit.webSources?[pendingKey] == nil &&
+                        persistedMetadataEdit.lookupDetails?[pendingKey] == nil &&
+                        persistedMetadataEdit.recordingCandidates?[wishes[0].id.uuidString] == [choice] &&
+                        persistedMetadataEdit.webSearchWishIDs?.contains(wishes[1].id) == true,
+                        "corrected recording metadata invalidates stale hits without repeating a paid search")
         refreshedJob.record(.removed)
         verifyDiscovery(refreshedJob.outcome(for: wishes[1]) == .removed &&
                         refreshedJob.nextIndex == 2,

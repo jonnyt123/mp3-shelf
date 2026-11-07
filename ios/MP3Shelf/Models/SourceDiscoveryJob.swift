@@ -643,9 +643,18 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         // Refresh metadata for unfinished lookups using the same Spotify
         // occurrence IDs; retain all historical outcomes and retry cursors.
         for index in nextIndex..<wishes.count {
-            if let latest = updated[wishes[index].id] {
-                wishes[index] = latest
+            let previous = wishes[index]
+            guard let latest = updated[previous.id] else { continue }
+            if previous.title != latest.title || previous.artist != latest.artist ||
+                previous.artistNames != latest.artistNames || previous.durationSeconds != latest.durationSeconds {
+                // Search hits and verified web links belong to the previous
+                // recording metadata. Keep the paid-search reservation.
+                let key = previous.id.uuidString
+                recordingCandidates?.removeValue(forKey: key)
+                webSources?.removeValue(forKey: key)
+                lookupDetails?.removeValue(forKey: key)
             }
+            wishes[index] = latest
         }
         var ids = Set(wishes.map(\.id))
         let appended = missing.filter { ids.insert($0.id).inserted }
