@@ -323,6 +323,24 @@ enum SourceDiscoveryJobTests {
         let choice = RecordingCandidate(id: "abcdefghijk", title: "First", uploader: "Artist", durationSeconds: 210)
         recovery.recordingCandidates = [wishes[0].id.uuidString: [choice]]
         let beforeRecovery = recovery
+        let refreshAt = retryClock.addingTimeInterval(90)
+        var delayedRecovery = beforeRecovery
+        verifyDiscovery(delayedRecovery.requeueFailedSource(for: wishes[0].id, notBefore: refreshAt) &&
+                        delayedRecovery.currentWish?.id == wishes[2].id &&
+                        delayedRecovery.nextLookupAt == beforeRecovery.nextRetryAt,
+                        "an expired link preserves the pending song and its existing retry time")
+        delayedRecovery.record(.alreadyPresent)
+        delayedRecovery = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(delayedRecovery))
+        verifyDiscovery(delayedRecovery.currentWish?.id == wishes[0].id &&
+                        !delayedRecovery.canAttemptLookup(at: refreshAt.addingTimeInterval(-1)) &&
+                        delayedRecovery.canAttemptLookup(at: refreshAt) &&
+                        BackgroundDiscoveryPolicy.earliestUsefulDate(for: [delayedRecovery], at: retryClock) == refreshAt,
+                        "foreground and background discovery honour the recovered song's saved retry time after relaunch")
+        delayedRecovery.record(.queued)
+        verifyDiscovery(delayedRecovery.requeueFailedSource(for: wishes[0].id) &&
+                        delayedRecovery.nextLookupAt == nil,
+                        "a completed lookup clears its previous recovery deadline")
         verifyDiscovery(recovery.requeueFailedSource(for: wishes[0].id) &&
                         recovery.nextIndex == 1 && recovery.currentWish?.id == wishes[2].id &&
                         recovery.wishes.last?.id == wishes[0].id && recovery.queued == 0 &&
@@ -557,6 +575,18 @@ enum SourceDiscoveryJobTests {
                             "invalid links and security failures are not retried")
         }
         let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let expiry = now.addingTimeInterval(45)
+        let signedAAC = URL(string: "https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4&sig=fixture&expire=1700000045")!
+        verifyDiscovery(!BackgroundTransferRetryPolicy.linkExpiresByStart(signedAAC, earliestBeginDate: nil, now: now) &&
+                        !BackgroundTransferRetryPolicy.linkExpiresByStart(
+                            signedAAC, earliestBeginDate: expiry.addingTimeInterval(-1), now: now),
+                        "a signed link can transfer while its expiry is still in the future")
+        verifyDiscovery(BackgroundTransferRetryPolicy.linkExpiresByStart(signedAAC, earliestBeginDate: expiry, now: now) &&
+                        BackgroundTransferRetryPolicy.linkExpiresByStart(signedAAC, earliestBeginDate: now, now: expiry),
+                        "a retry or a relaunch at expiry cannot replay the signed link")
+        let ordinaryURL = URL(string: "https://artist.example/song.mp3?expire=100")!
+        verifyDiscovery(!BackgroundTransferRetryPolicy.linkExpiresByStart(ordinaryURL, earliestBeginDate: expiry, now: now),
+                        "an ordinary download URL does not gain a signed-link expiry rule")
         let stale = now.addingTimeInterval(-BackgroundTransferRecoveryPolicy.minimumAge - 1)
         let fresh = now.addingTimeInterval(-20)
         func canRestore(startedAt: Date? = stale,

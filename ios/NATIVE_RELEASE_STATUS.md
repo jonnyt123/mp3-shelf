@@ -1,5 +1,17 @@
 # Native release status — consolidated draft PR #29
 
+## Signed link expiry during transfer recovery
+
+Automatic retries, missing task recovery and cellular upgrades check whether
+the link expires by the next scheduled start. A backup must be valid at that
+start and inherits the scheduled delay. Eligible automatic searches save the
+affected song's earliest lookup time and return it behind the pending songs.
+
+Regression cases cover the expiry boundary, backup selection and saved lookup
+timing after relaunch. C tests and syntax checks for seven Swift files passed.
+The Swift regression runner stopped at the missing compiler check. Device
+transfer recovery still requires Xcode verification.
+
 ## Backup AAC link during full transfer
 
 Automatic matching, recording review and manual retry now save one verified

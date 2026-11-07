@@ -2,6 +2,8 @@ import Foundation
 
 /// User-facing diagnostics do not change transport retry budgets or validation.
 enum AudioDownloadDiagnostics {
+    static let expiredAudioLink = "This audio link expires before the transfer can restart."
+
     static func maySearchForAnotherSource(reason: String?, recordedAdvice: Bool?) -> Bool {
         if let recordedAdvice { return recordedAdvice }
         // Old tickets predate explicit source/storage classification.
@@ -149,6 +151,10 @@ enum BackgroundTicketManifestPolicy {
 /// retry invalid media, rejected permissions, or conflicting song metadata.
 enum BackgroundTransferRetryPolicy {
     static let maxRetries = 3
+
+    static func linkExpiresByStart(_ url: URL, earliestBeginDate: Date?, now: Date = .now) -> Bool {
+        AudioSourceLinks.hasExpired(url, at: max(now, earliestBeginDate ?? now))
+    }
 
     static func delay(afterFailure attempt: Int) -> TimeInterval? {
         switch attempt {
@@ -416,7 +422,7 @@ enum BackgroundDiscoveryPolicy {
         let active = jobs.filter { !$0.isPaused && !$0.isComplete }
         guard !active.isEmpty else { return nil }
         return active.map { job in
-            max(date, job.nextRetryAt ?? date)
+            max(date, job.nextLookupAt ?? date)
         }.min()
     }
 }
@@ -443,6 +449,7 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     var lookupDetails: [String: [String]]? = nil
     var recordingCandidates: [String: [RecordingCandidate]]? = nil
     var sourceRecoveryAttempts: [String: Int]? = nil
+    var sourceRecoveryNotBefore: [String: Date]? = nil
     var webSearchWishIDs: [UUID]? = nil
     var webSources: [String: [AudioCatalogMatch]]? = nil
     var webSearchStoppedReason: String? = nil
@@ -470,7 +477,7 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
 
     /// Move only this processed wish back to pending, keeping every other
     /// song's cursor/history and the web-search credit ledger intact.
-    mutating func requeueFailedSource(for wishID: UUID) -> Bool {
+    mutating func requeueFailedSource(for wishID: UUID, notBefore: Date? = nil) -> Bool {
         guard !isPaused, nextIndex <= wishes.count,
               let index = wishes.firstIndex(where: { $0.id == wishID }),
               index < nextIndex, let history = outcomes, index < history.count,
@@ -485,6 +492,10 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         queued = max(0, queued - 1)
         if sourceRecoveryAttempts == nil { sourceRecoveryAttempts = [:] }
         sourceRecoveryAttempts?[wishID.uuidString, default: 0] += 1
+        if let notBefore {
+            if sourceRecoveryNotBefore == nil { sourceRecoveryNotBefore = [:] }
+            sourceRecoveryNotBefore?[wishID.uuidString] = notBefore
+        }
         return true
     }
 
@@ -548,8 +559,14 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         return changed
     }
 
+    var nextLookupAt: Date? {
+        guard let wish = currentWish,
+              let recovery = sourceRecoveryNotBefore?[wish.id.uuidString] else { return nextRetryAt }
+        return max(recovery, nextRetryAt ?? recovery)
+    }
+
     func canAttemptLookup(at date: Date) -> Bool {
-        nextRetryAt.map { $0 <= date } ?? true
+        nextLookupAt.map { $0 <= date } ?? true
     }
 
     /// The current song is not discarded when a catalog is temporarily down.
@@ -632,6 +649,7 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
             updated.append(.removed)
         }
         outcomes = updated
+        sourceRecoveryNotBefore?.removeValue(forKey: wishes[nextIndex].id.uuidString)
         nextIndex += 1
         lastError = nil
         transientFailureCount = nil

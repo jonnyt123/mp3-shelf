@@ -901,7 +901,7 @@ struct PlaylistDetailView: View {
                                     Label("Source temporarily unavailable: \(issue)", systemImage: "wifi.exclamationmark")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 }
-                                if let retryAt = job.nextRetryAt, !job.isPaused {
+                                if let retryAt = job.nextLookupAt, !job.isPaused {
                                     Text("Automatic retry: \(retryAt.formatted(date: .omitted, time: .shortened))")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 }
@@ -914,7 +914,7 @@ struct PlaylistDetailView: View {
                                              library.cellularApproved(for: playlistID))) &&
                                           (library.automaticDownloadProgress?.playlistID != playlistID ||
                                            library.automaticDownloadProgress?.isRunning != true) {
-                                    if job.nextRetryAt == nil {
+                                    if job.nextLookupAt == nil {
                                         Button("Resume Search") {
                                             library.resumeSourceDiscovery(for: playlistID)
                                         }
@@ -936,7 +936,7 @@ struct PlaylistDetailView: View {
                                 }
                             } else {
                                 Text(progress.wasCancelled ? "Source discovery stopped." :
-                                     library.discoveryJob(for: playlistID)?.nextRetryAt != nil
+                                     library.discoveryJob(for: playlistID)?.nextLookupAt != nil
                                      ? "Source lookup will retry automatically. No tap needed."
                                      : "Source lookup finished. Background downloads may still be running.")
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)

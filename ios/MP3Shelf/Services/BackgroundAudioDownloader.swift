@@ -88,6 +88,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                           !self.fm.fileExists(atPath: Self.stagingURL(oldID).path),
                           task.originalRequest?.allowsCellularAccess == false
                     else { continue }
+                    if BackgroundTransferRetryPolicy.linkExpiresByStart(
+                        oldTicket.downloadURL, earliestBeginDate: oldTicket.nextRetryAt) {
+                        self.setFailed(oldID, reason: AudioDownloadDiagnostics.expiredAudioLink,
+                                       earliestRecovery: oldTicket.nextRetryAt)
+                        task.cancel()
+                        continue
+                    }
                     var old = oldTicket
                     old.status = .cancelled
                     old.failureReason = "Replaced with a cellular-authorized transfer"
@@ -501,6 +508,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             delay = allowedDelay
         }
+        let retryAt = Date().addingTimeInterval(delay)
+        if BackgroundTransferRetryPolicy.linkExpiresByStart(previous.downloadURL, earliestBeginDate: retryAt) {
+            setFailed(id, reason: AudioDownloadDiagnostics.expiredAudioLink, earliestRecovery: retryAt)
+            return
+        }
 
         var retired = previous
         retired.status = .cancelled
@@ -517,7 +529,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             previous.automaticRetryCount : nextServerAttempt
         replacement.connectivityRetryCount = connectivityInterruption ?
             nextConnectionAttempt : previous.connectivityRetryCount
-        replacement.nextRetryAt = Date().addingTimeInterval(delay)
+        replacement.nextRetryAt = retryAt
         replacement.alternativeSources = previous.alternativeSources
         replacement.failureReason = reason
         tickets[replacement.id] = replacement
@@ -535,12 +547,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// switch to another previously verified catalog result. All candidates
     /// already passed the title, artist, license and (when available) duration
     /// checks before the phone was locked.
-    private func tryNextDownloadSource(after id: UUID) -> Bool {
+    private func tryNextDownloadSource(after id: UUID, earliestBeginDate: Date?) -> Bool {
         guard let old = tickets[id], old.status == .queued,
               let remaining = old.alternativeSources else { return false }
         let candidates = remaining.filter { Self.allowedDownloadURL($0.downloadURL) }
+        let now = Date()
+        let retryAt = earliestBeginDate.flatMap { $0 > now ? $0 : nil }
         guard let next = AudioSourceFinder.nextAlternative(to: old.downloadURL,
-                                                            from: candidates) else { return false }
+                                                            from: candidates, at: retryAt ?? now) else { return false }
 
         var superseded = old
         superseded.status = .cancelled
@@ -553,6 +567,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             sourcePage: next.source.itemURL, licensePage: next.source.licenseURL,
             provider: next.source.sourceName)
         replacement.startedAt = old.startedAt ?? .now
+        replacement.nextRetryAt = retryAt
         replacement.alternativeSources = next.remaining
         tickets[replacement.id] = replacement
         persist()
@@ -560,23 +575,24 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let task = session.downloadTask(
             with: downloadRequest(for: replacement.downloadURL, playlistID: replacement.playlistID))
         task.taskDescription = replacement.id.uuidString
+        task.earliestBeginDate = retryAt
         task.resume()
         updatePending()
         return true
     }
 
     private func setFailed(_ id: UUID, reason: String = "Download or validation failed",
-                           allowAlternative: Bool = true) {
+                           allowAlternative: Bool = true, earliestRecovery: Date? = nil) {
         reconcileAlreadyStoredDownloads()
         guard var ticket = tickets[id], ticket.status == .queued else { return }
-        if allowAlternative && tryNextDownloadSource(after: id) { return }
+        if allowAlternative && tryNextDownloadSource(after: id, earliestBeginDate: earliestRecovery) { return }
         ticket.status = .failed
         ticket.failureReason = reason
         ticket.mayTryAnotherSource = allowAlternative
         tickets[id] = ticket
         persist()
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
-        if allowAlternative { library?.recoverRecordingSource(after: ticket) }
+        if allowAlternative { library?.recoverRecordingSource(after: ticket, notBefore: earliestRecovery) }
         updatePending()
     }
 
@@ -763,6 +779,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             guard Self.allowedDownloadURL(current.downloadURL) else {
                 setFailed(id, reason: "The saved download URL is no longer supported")
+                continue
+            }
+            if BackgroundTransferRetryPolicy.linkExpiresByStart(
+                current.downloadURL, earliestBeginDate: current.nextRetryAt) {
+                setFailed(id, reason: AudioDownloadDiagnostics.expiredAudioLink,
+                          earliestRecovery: current.nextRetryAt)
                 continue
             }
             var replaced = current

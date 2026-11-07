@@ -120,7 +120,7 @@ struct DownloadManagerView: View {
                                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                         }
                                         if !job.isComplete {
-                                            if !job.isPaused, let retry = job.nextRetryAt {
+                                            if !job.isPaused, let retry = job.nextLookupAt {
                                                 Text("Search retry scheduled: \(retry.formatted(date: .omitted, time: .shortened))")
                                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                             }
@@ -267,7 +267,8 @@ private struct DownloadTicketRow: View {
                         .foregroundStyle(ShelfTheme.mint)
                 }
                 if !transfers.hasStagedAudio(ticket.id), let retry = ticket.nextRetryAt {
-                    Label("Temporary interruption · automatic retry \(ticket.automaticRetryCount ?? 0)/\(BackgroundTransferRetryPolicy.maxRetries)",
+                    let attempt = ticket.automaticRetryCount ?? 0
+                    Label(attempt > 0 ? "Automatic retry \(attempt)/\(BackgroundTransferRetryPolicy.maxRetries)" : "Transfer scheduled",
                           systemImage: "arrow.clockwise")
                         .font(.caption.weight(.medium)).foregroundStyle(ShelfTheme.mint)
                     Text("Scheduled no earlier than \(retry.formatted(date: .omitted, time: .shortened)) · Wi-Fi unless cellular was explicitly approved")

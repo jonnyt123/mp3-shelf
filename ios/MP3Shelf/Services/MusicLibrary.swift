@@ -653,7 +653,7 @@ final class MusicLibrary: ObservableObject {
         }
         let now = Date()
         guard let job = eligible.first(where: { $0.canAttemptLookup(at: now) }) else {
-            if let next = eligible.compactMap(\.nextRetryAt).filter({ $0 > now }).min() {
+            if let next = eligible.compactMap(\.nextLookupAt).filter({ $0 > now }).min() {
                 scheduleCatalogRetry(at: next)
             }
             return
@@ -741,21 +741,26 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
-    func recoverRecordingSource(after ticket: BackgroundAudioTicket) {
+    func recoverRecordingSource(after ticket: BackgroundAudioTicket, notBefore: Date? = nil) {
         guard RecordingMatcher.isEnabled,
               playlists.contains(where: { $0.id == ticket.playlistID && $0.sourceOrder.contains(where: { $0.id == ticket.requested.id }) }),
               let index = discoveryJobs.firstIndex(where: { $0.playlistID == ticket.playlistID }),
               let candidates = discoveryJobs[index].recordingCandidates?[ticket.requested.id.uuidString] else { return }
-        let failedIDs = failedRecordingIDs(for: ticket.requested, playlistID: ticket.playlistID)
+        let now = Date()
+        let lookupAt = max(now, notBefore ?? now)
+        let failedIDs = failedRecordingIDs(for: ticket.requested, playlistID: ticket.playlistID, at: lookupAt)
         guard RecordingMatcher.automaticChoice(RecordingMatcher.rank(candidates, for: ticket.requested), excluding: failedIDs) != nil,
-              discoveryJobs[index].requeueFailedSource(for: ticket.requested.id) else { return }
+              discoveryJobs[index].requeueFailedSource(for: ticket.requested.id, notBefore: lookupAt > now ? lookupAt : nil) else { return }
         persistDiscovery()
         resumePendingDiscovery()
+        if !foregroundDiscoveryEnabled && !backgroundDiscoveryInProgress {
+            MP3ShelfBackgroundDiscovery.schedule(nextUsefulDate: nextBackgroundDiscoveryDate)
+        }
     }
 
-    private func failedRecordingIDs(for wish: PlaylistWish, playlistID: UUID) -> Set<String> {
+    private func failedRecordingIDs(for wish: PlaylistWish, playlistID: UUID, at date: Date = .now) -> Set<String> {
         Set(BackgroundAudioDownloader.shared.failedSourceTickets(for: wish, playlistID: playlistID)
-            .filter { !AudioSourceLinks.hasExpired($0.downloadURL) }
+            .filter { !AudioSourceLinks.hasExpired($0.downloadURL, at: date) }
             .compactMap { AudioSourceLinks.youtubeVideoID($0.sourcePage) })
     }
 
@@ -829,6 +834,7 @@ final class MusicLibrary: ObservableObject {
             if let maximum = maxProcessedSongs, processedThisPass >= maximum { break }
             var job = discoveryJobs[index]
             if Task.isCancelled || job.isPaused || job.isComplete ||
+                !job.canAttemptLookup(at: Date()) ||
                 !networkAllowsDiscovery(for: playlistID) ||
                 (backgroundWiFiOnly && !isOnWiFi) { break }
             // Keep the original playlist cursor untouched while all four
