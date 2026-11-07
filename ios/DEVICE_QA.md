@@ -71,6 +71,9 @@ transfer, codec, identity and duration validation before import.
    resolved again rather than repeatedly requesting the expired URL. Simulate
    source refusal and confirm automatic recovery stops after three attempts.
 6. Start four transfers, then retry another recording. It must wait for a slot.
+   Also start a reviewed recording with three transfers active, fill the fourth
+   slot while that source resolves, and confirm it cannot create a fifth ticket.
+   Free one slot and retry; the reviewed recording should then queue normally.
    Close the review sheet while resolving; delete a resolving song or playlist;
    use Cancel All; clear finished history. No cancelled work may later enqueue.
 7. Test Wi-Fi loss, cellular without approval, explicit playlist cellular approval
@@ -79,6 +82,13 @@ transfer, codec, identity and duration validation before import.
 8. Disable recording matching and confirm catalog/direct-link behavior still
    works. Check existing local files, playlist order, pause state and paid-search
    reservations survive relaunch and failed-source recovery.
+
+9. With a controlled source response, fail the highest-bitrate AAC probe while
+   leaving a lower-bitrate format usable. Confirm the same matched recording can
+   queue the lower format and become a real playable MP3. Reject stale/oversized
+   formats before probing, stop after at most three distinct formats, and stop
+   immediately on cancellation. If all formats fail, retain a temporary outage
+   for bounded retry; never treat a signed URL or HTML body as downloaded audio.
 
 This checklist is the **physical-iPhone acceptance gate**. GitHub's macOS
 simulator build is a separate, useful check and does not replace these tests.

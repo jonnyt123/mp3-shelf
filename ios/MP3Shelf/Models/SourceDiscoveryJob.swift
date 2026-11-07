@@ -219,6 +219,58 @@ enum SourceLookupRetryPolicy {
     }
 }
 
+/// Try a bounded set of AAC formats from one already-validated recording.
+/// A refused or stale high-bitrate URL must not hide a usable lower-bitrate URL.
+enum RecordingStreamProbe {
+    struct Candidate: Sendable {
+        let url: URL
+        let bitrate: Int?
+    }
+    static let maximumAttempts = 3
+
+    static func orderedSources(_ candidates: [Candidate], at date: Date = .now) -> [URL] {
+        let ranked = candidates.enumerated().sorted {
+            let first = max(0, $0.element.bitrate ?? 0)
+            let second = max(0, $1.element.bitrate ?? 0)
+            return first == second ? $0.offset < $1.offset : first > second
+        }
+        var seen = Set<URL>()
+        return Array(ranked.compactMap { entry -> URL? in
+            let url = entry.element.url
+            guard AudioSourceLinks.isResolvedAudioURL(url),
+                  !AudioSourceLinks.hasExpired(url, at: date.addingTimeInterval(30)),
+                  seen.insert(url).inserted else { return nil }
+            return url
+        }.prefix(maximumAttempts))
+    }
+
+    static func resolve(_ candidates: [Candidate], at date: Date = .now,
+                        probe: @Sendable (URL) async throws -> Void) async throws -> URL? {
+        try Task.checkCancellation()
+        var lastFailure: Error?
+        var temporaryFailure: Error?
+        for url in orderedSources(candidates, at: date) {
+            try Task.checkCancellation()
+            do {
+                try await probe(url)
+                try Task.checkCancellation()
+                return url
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                try Task.checkCancellation()
+                let failure = error as NSError
+                if failure.domain == NSURLErrorDomain && failure.code == URLError.Code.cancelled.rawValue { throw error }
+                if SourceLookupRetryPolicy.isTemporary(error), temporaryFailure == nil { temporaryFailure = error }
+                lastFailure = error
+            }
+        }
+        // Keep a temporary outage eligible for the existing bounded lookup
+        // retry even if the last format happened to return a permanent refusal.
+        if let failure = temporaryFailure ?? lastFailure { throw failure }
+        return nil
+    }
+}
+
 /// Limit oversized transfers as soon as the background daemon reports their
 /// expected or received bytes, not only after downloading the whole file.
 /// Progress coalescing avoids hundreds of SwiftUI refreshes per recording.

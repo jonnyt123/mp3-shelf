@@ -1,5 +1,19 @@
 # Native release status — consolidated draft PR #29
 
+## AAC format fallback and queue capacity — native execution pending
+
+Recording resolution now tries at most three eligible signed AAC formats in
+bitrate order instead of discarding the recording when the top format fails.
+It filters invalid/stale/oversized links, stops on success/cancellation and keeps
+temporary failures eligible for the existing bounded retry. The background queue
+also rechecks its four-slot limit at MainActor insertion, closing the capacity
+race across awaited recording resolution. Import/response validation is preserved.
+
+The C matching/audio-admission suite and four changed-file Swift syntax checks
+pass. New native discovery regressions and queue-race acceptance are NOT RUN;
+the native verifier exits 2 without Swift. No new live-download success, Apple
+compilation or iPhone runtime result is claimed. Keep the candidate draft.
+
 ## Q3 restart playback — native execution still pending
 
 Import success now requires writing the full track metadata and matched playlist

@@ -175,7 +175,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     @discardableResult
     func enqueue(source: AudioCatalogMatch, requested: PlaylistWish, playlistID: UUID,
                  alternatives: [AudioCatalogMatch] = []) -> Bool {
-        guard Self.allowedDownloadURL(source.downloadURL) else { return false }
+        // Resolution suspends callers, so an earlier capacity check can be
+        // stale. This MainActor check and ticket insertion have no await gap.
+        guard BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount()),
+              Self.allowedDownloadURL(source.downloadURL) else { return false }
         if tickets.values.contains(where: {
             $0.status == .queued && $0.playlistID == playlistID &&
             MusicMatching.sameRequestedRecording($0.requested, requested)

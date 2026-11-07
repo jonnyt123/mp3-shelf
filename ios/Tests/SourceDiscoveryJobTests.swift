@@ -9,9 +9,100 @@ private struct ClassifiedLookupFailure: SourceLookupRetryableError {
     let shouldRetrySourceLookup: Bool
 }
 
+private actor RecordingProbeLog {
+    private(set) var requests: [URL] = []
+    func record(_ url: URL) { requests.append(url) }
+}
+
 @main
 enum SourceDiscoveryJobTests {
+    @MainActor private static func verifyRecordingStreamFallbacks() async throws {
+        let clock = Date(timeIntervalSince1970: 1_700_000_000)
+        func source(_ id: Int, bitrate: Int, expiresIn: Int = 3600, bytes: Int = 1000) -> RecordingStreamProbe.Candidate {
+            let expiry = Int(clock.timeIntervalSince1970) + expiresIn
+            return .init(url: URL(string: "https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4&sig=fixture&expire=\(expiry)&clen=\(bytes)&itag=\(id)")!, bitrate: bitrate)
+        }
+        let high = source(141, bitrate: 256000)
+        let low = source(140, bitrate: 128000)
+        let third = source(139, bitrate: 64000)
+        let fourth = source(138, bitrate: 32000)
+        let oversized = source(150, bitrate: 999000, bytes: 200 * 1024 * 1024)
+        let expiring = source(151, bitrate: 888000, expiresIn: 30)
+        let candidates = [third, oversized, expiring, low, high, high, fourth]
+        verifyDiscovery(RecordingStreamProbe.orderedSources(candidates, at: clock) == [high.url, low.url, third.url],
+                        "AAC formats are ranked, deduplicated and capped after invalid/expiring links are removed")
+        let unknownRates = [low, high].map { RecordingStreamProbe.Candidate(url: $0.url, bitrate: nil) }
+        verifyDiscovery(RecordingStreamProbe.orderedSources(unknownRates, at: clock) == [low.url, high.url],
+                        "missing bitrate preserves the extractor's stable source priority")
+
+        let fallbackLog = RecordingProbeLog()
+        let fallback = try await RecordingStreamProbe.resolve([high, low], at: clock) { url in
+            await fallbackLog.record(url)
+            if url == high.url { throw NSError(domain: "Fixture.HTTP", code: 403) }
+        }
+        let fallbackCalls = await fallbackLog.requests
+        verifyDiscovery(fallback == low.url && fallbackCalls == [high.url, low.url],
+                        "a refused high-bitrate AAC URL falls back to a working format from the same recording")
+
+        let successLog = RecordingProbeLog()
+        let success = try await RecordingStreamProbe.resolve([low, high], at: clock) { url in
+            await successLog.record(url)
+        }
+        let successCalls = await successLog.requests
+        verifyDiscovery(success == high.url && successCalls == [high.url],
+                        "a working highest-bitrate AAC source stops additional probes")
+
+        let failedLog = RecordingProbeLog()
+        do {
+            _ = try await RecordingStreamProbe.resolve([fourth, low, third, high], at: clock) { url in
+                await failedLog.record(url)
+                if url == high.url { throw URLError(.timedOut) }
+                throw NSError(domain: "Fixture.HTTP", code: 403)
+            }
+            fatalError("Failed probes cannot return a ready source")
+        } catch {
+            let failure = error as NSError
+            verifyDiscovery(failure.domain == NSURLErrorDomain && failure.code == URLError.Code.timedOut.rawValue,
+                            "a later permanent format refusal cannot hide an earlier temporary outage")
+        }
+        let failedCalls = await failedLog.requests
+        verifyDiscovery(failedCalls == [high.url, low.url, third.url],
+                        "at most three distinct AAC formats are probed per recording")
+
+        let cancelledLog = RecordingProbeLog()
+        do {
+            _ = try await RecordingStreamProbe.resolve([high, low], at: clock) { url in
+                await cancelledLog.record(url)
+                throw URLError(.cancelled)
+            }
+            fatalError("A cancelled probe must stop resolution")
+        } catch {
+            verifyDiscovery((error as NSError).code == URLError.Code.cancelled.rawValue,
+                            "request cancellation propagates instead of switching formats")
+        }
+        let cancelledCalls = await cancelledLog.requests
+        verifyDiscovery(cancelledCalls == [high.url], "cancellation never probes the next AAC format")
+
+        let stoppedLog = RecordingProbeLog()
+        let stopped = Task { @MainActor in
+            try await RecordingStreamProbe.resolve([high, low], at: clock) { url in await stoppedLog.record(url) }
+        }
+        stopped.cancel()
+        do { _ = try await stopped.value; fatalError("A stopped resolver must not return a source") }
+        catch is CancellationError { }
+        let stoppedCalls = await stoppedLog.requests
+        verifyDiscovery(stoppedCalls.isEmpty, "a cancelled task sends no format probes")
+
+        let invalidLog = RecordingProbeLog()
+        let invalid = try await RecordingStreamProbe.resolve([oversized, expiring], at: clock) { url in
+            await invalidLog.record(url)
+        }
+        let invalidCalls = await invalidLog.requests
+        verifyDiscovery(invalid == nil && invalidCalls.isEmpty, "no admitted AAC format means no network probe")
+    }
+
     @MainActor static func main() async throws {
+        try await verifyRecordingStreamFallbacks()
         verifyDiscovery(AudioDownloadDiagnostics.maySearchForAnotherSource(
             reason: AudioDownloadDiagnostics.http(403), recordedAdvice: nil),
                         "legacy source refusals can trigger a different source during playlist retry")

@@ -32,6 +32,20 @@ remain required. Imports now write the song metadata and matched playlist links
 before reporting success; failed writes preserve the existing library and remove
 the new import's audio/artwork instead of claiming it was saved.
 
+## AAC format fallback and queue capacity
+
+After a recording's identity is validated, the resolver considers up to three
+distinct signed AAC formats, highest bitrate first. Invalid, oversized and
+near-expiry links are filtered out. A failed media probe can try the next format;
+cancellation stops immediately. A temporary probe failure remains eligible for
+the existing bounded lookup retry when every format fails. The same HTTP/MIME/
+MP4-prefix and post-download decoding checks still apply.
+
+The background queue now checks its four-slot limit at ticket insertion as well
+as before resolution, preventing a reviewed recording from overfilling a queue
+that changed while its source was resolving. Native execution of these changes
+remains unverified here; use the existing local verification/download launchers.
+
 ## Apple Music playlist import
 
 Open **Add Music → Your Apple Music playlists**, allow Media & Apple Music

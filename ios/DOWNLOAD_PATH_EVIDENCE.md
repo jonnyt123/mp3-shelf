@@ -4,6 +4,30 @@
 with no Swift, Xcode, iPhone Simulator, or connected iPhone. No native PASS is
 claimed from the host checks below.
 
+## AAC fallback and enqueue-capacity follow-up
+
+Code review identified two separate recovery gaps. The resolver chose the single
+highest-bitrate AAC format before checking that URL, so an invalid/expiring link
+or failed response could discard a usable format from the same recording.
+Recording review checked capacity before an awaited resolution, but enqueue had
+no capacity guard; another transfer could fill the final slot during that await.
+
+The production resolver now filters/ranks/deduplicates formats and probes at most
+three eligible URLs. It stops on the first accepted response or cancellation;
+when every probe fails, a temporary failure takes precedence for the existing
+bounded lookup retry. Signed URL expiry is rechecked before/after each probe.
+The existing byte/MIME admission gate and full import validation are unchanged.
+The MainActor queue now checks capacity immediately before insertion, without
+an await gap. The existing manual-retry reservation is released before enqueue.
+
+New native discovery cases cover format ranking, stale/oversized URLs, bounded
+fallback, success short-circuiting, temporary-error preservation and cancellation.
+These cases and the actual queue race are NOT RUN here: the native verifier exits
+2 because Swift is absent. Four changed Swift files pass syntax parsing and
+whitespace checks pass. The actual C matching/audio-admission suite passes.
+This is not a successful live-media transfer or Apple runtime verdict; the
+earlier HTML media response and full native download path remain unproven.
+
 ## Q3: playback after restarting the app
 
 Code review found a persistence fault: addLocalAudio returned success after a

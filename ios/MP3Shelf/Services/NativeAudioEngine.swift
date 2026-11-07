@@ -128,36 +128,42 @@ actor NativeAudioEngine {
                     throw Failure.changedRecording
                 }
                 let streams = try await video.streams
-                guard let audio = streams.filterAudioOnly().filter({ $0.fileExtension == .m4a })
-                    .highestAudioBitrateStream(), AudioSourceLinks.isResolvedAudioURL(audio.url),
-                      !AudioSourceLinks.hasExpired(audio.url, at: Date().addingTimeInterval(30)) else { throw Failure.noAudio }
-                // A signed URL is not evidence that its response is audio.
-                // Reject HTML refusals before they enter the background queue.
-                var probe = AudioSourceFinder.catalogRequest(for: audio.url, allowsCellular: allowsCellular)
-                // Match the background transfer's default URLSession agent,
-                // rather than sending a catalog-specific user agent to media.
-                probe.setValue(nil, forHTTPHeaderField: "User-Agent")
-                probe.setValue("bytes=0-63", forHTTPHeaderField: "Range")
-                let (bytes, response) = try await connection.bytes(for: probe)
-                defer { bytes.task.cancel() }
-                guard response.expectedContentLength <= 100 * 1024 * 1024 else { throw Failure.noAudio }
-                var prefix = Data()
-                for try await byte in bytes {
-                    try Task.checkCancellation()
-                    prefix.append(byte)
-                    if prefix.count == 64 { break }
+                let candidates = streams.filterAudioOnly().filter { $0.fileExtension == .m4a }
+                    .map { RecordingStreamProbe.Candidate(url: $0.url, bitrate: $0.bitrate ?? $0.averageBitrate) }
+                let audioURL = try await RecordingStreamProbe.resolve(candidates) { url in
+                    try await Self.checkAudioResponse(from: url, connection: connection, allowsCellular: allowsCellular)
                 }
-                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-                guard RecordingMatcher.acceptsAudioResponse(status: code, mime: response.mimeType, prefix: prefix) else {
-                    throw Failure.mediaResponse(code, response.mimeType ?? "missing content type")
-                }
+                guard let audioURL else { throw Failure.noAudio }
                 try Task.checkCancellation()
-                return AudioCatalogMatch(downloadURL: audio.url, itemURL: candidate.pageURL,
+                return AudioCatalogMatch(downloadURL: audioURL, itemURL: candidate.pageURL,
                     licenseURL: nil, sourceName: "MP3 Shelf matching · YouTube")
             }
         } catch let error as YouTubeKitError {
             try Task.checkCancellation()
             throw Failure.extractionFailed(error.rawValue)
         }
+    }
+
+    nonisolated private static func checkAudioResponse(from url: URL, connection: URLSession,
+                                                       allowsCellular: Bool) async throws {
+        // A signed URL is not evidence that its response is audio.
+        guard !AudioSourceLinks.hasExpired(url, at: Date().addingTimeInterval(30)) else { throw Failure.noAudio }
+        var request = AudioSourceFinder.catalogRequest(for: url, allowsCellular: allowsCellular)
+        request.setValue(nil, forHTTPHeaderField: "User-Agent")
+        request.setValue("bytes=0-63", forHTTPHeaderField: "Range")
+        let (bytes, response) = try await connection.bytes(for: request)
+        defer { bytes.task.cancel() }
+        guard response.expectedContentLength <= 100 * 1024 * 1024 else { throw Failure.noAudio }
+        var prefix = Data()
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            prefix.append(byte)
+            if prefix.count == 64 { break }
+        }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard RecordingMatcher.acceptsAudioResponse(status: code, mime: response.mimeType, prefix: prefix) else {
+            throw Failure.mediaResponse(code, response.mimeType ?? "missing content type")
+        }
+        guard !AudioSourceLinks.hasExpired(url, at: Date().addingTimeInterval(30)) else { throw Failure.noAudio }
     }
 }
