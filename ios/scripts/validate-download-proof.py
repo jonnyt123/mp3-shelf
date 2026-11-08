@@ -60,6 +60,7 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
         "schema", "runID", "mode", "initialProcessToken", "trackID", "playlistID",
         "selection", "sourcePage", "sourceProvider", "expectedTitle", "expectedArtist",
         "fileBytes", "sha256", "decodedFrames", "durationSeconds", "expectedDurationSeconds",
+        "fixtureInputBytes", "fixtureInputSHA256",
     )
     for field in recording_fields:
         if initial.get(field) != report.get(field):
@@ -90,11 +91,14 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
         served = json.loads(evidence.read_text())
         url = urlsplit(served["url"])
         fixture = (Path(__file__).resolve().parents[1] / "Tests/Fixtures/transfer-tone.m4a").read_bytes()
+        fixture_digest = hashlib.sha256(fixture).hexdigest()
         if (served["runID"] != report["runID"] or served["url"] != report.get("sourcePage")
                 or url.scheme != "http" or not url.port or url.netloc != f"127.0.0.1:{url.port}"
                 or url.path != f"/{report['runID']}/fixture.m4a" or url.query or url.fragment
-                or served["bytes"] != len(fixture) or served["sha256"] != hashlib.sha256(fixture).hexdigest()):
+                or served["bytes"] != len(fixture) or served["sha256"] != fixture_digest):
             raise ValueError("The fixture response does not match the queued source and AAC bytes")
+        if report.get("fixtureInputBytes") != len(fixture) or report.get("fixtureInputSHA256") != fixture_digest:
+            raise ValueError("The staged AAC input does not match the bundled fixture")
     else:
         if not math.isfinite(expected_duration) or not 0.05 <= expected_duration <= 10:
             raise ValueError("The local fixture duration is invalid")

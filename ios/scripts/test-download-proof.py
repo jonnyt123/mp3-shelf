@@ -255,6 +255,7 @@ elif command=='launch':
         audio=documents/'saved.mp3'; audio.write_bytes(b'fake saved bytes, not an actual MP3')
         first=['local-fixture-import'] if local else ['queue-write-failure-rejected','search','match','resolved-and-queued']
         source=None
+        fixture_input={}
         if fixture:
             first=['queue-write-failure-rejected','obsolete-fixture-cancelled','fixture-queued','fixture-downloaded']
             if mode=='refresh-not-verified': first.remove('obsolete-fixture-cancelled')
@@ -268,7 +269,12 @@ elif command=='launch':
                     assert error.code==404
                 with urllib.request.urlopen(source,timeout=2) as response:
                     assert response.headers.get_content_type()=='audio/mp4'
-                    assert response.read()[4:8]==b'ftyp'
+                    payload=response.read()
+                    assert payload[4:8]==b'ftyp'
+                    if mode!='fixture-input-missing':
+                        fixture_input=dict(fixtureInputBytes=len(payload), fixtureInputSHA256=hashlib.sha256(payload).hexdigest())
+                    if mode=='fixture-input-changed':
+                        fixture_input['fixtureInputSHA256']='0'*64
             if mode=='wrong-fixture-source': source+='?different'
         report={'schema':'mp3-shelf-download-proof-v2','status':'PASS' if mode=='premature-pass' else 'READY_FOR_RESTART',
             'mode':proof_mode,'selection':selection,'sourcePage':source,
@@ -277,6 +283,7 @@ elif command=='launch':
             'sha256':hashlib.sha256(audio.read_bytes()).hexdigest(),'decodedFrames':int(duration*44100),
             'durationSeconds':duration,'expectedDurationSeconds':duration,
             'steps':[{'stage':s} for s in first+['saved-mp3','full-decode','local-playback','existing-recording-reused','storage-failure-rejected','ready-for-restart']]}
+        report.update(fixture_input)
     result.write_text(json.dumps(report))
 ''')
 
@@ -323,6 +330,13 @@ elif command=='launch':
                 result = self.run_proof("--fixture-transfer", failure=failure)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn(message, result.stderr)
+
+    def test_fixture_requires_matching_bytes_observed_by_the_importer(self):
+        for failure in ["fixture-input-missing", "fixture-input-changed"]:
+            with self.subTest(failure=failure):
+                result = self.run_proof("--fixture-transfer", failure=failure)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("staged AAC input does not match", result.stderr)
 
     def test_zero_exit_after_fixture_setup_cannot_report_pass(self):
         runner = self.scripts / "prove-download-path.sh"

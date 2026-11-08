@@ -230,7 +230,12 @@ enum DownloadPathProof {
                                   completed.requested.matchesSourceRequest(wish) else {
                                 throw fail("The completed transfer did not match the AAC fixture ticket")
                             }
-                            try record("fixture-downloaded", "The production downloader imported the queued AAC response")
+                            guard let input = transfers.importedFixtureInput, input.ticketID == completed.id else {
+                                throw fail("The imported fixture is missing its staged AAC checksum")
+                            }
+                            report["fixtureInputBytes"] = input.bytes
+                            report["fixtureInputSHA256"] = input.sha256
+                            try record("fixture-downloaded", "The production downloader recorded the staged AAC bytes before import")
                         }
                         finished = true
                         break

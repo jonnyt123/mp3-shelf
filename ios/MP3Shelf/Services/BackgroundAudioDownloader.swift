@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 import UIKit
+#if DEBUG
+import CryptoKit
+#endif
 
 /// A persisted download ticket is independent of Spotify's OAuth session.
 /// The direct audio file URL is transferred by iOS.
@@ -36,6 +39,9 @@ struct BackgroundAudioTicket: Codable, Identifiable {
 @MainActor
 final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDownloadDelegate {
     @Published private(set) var revision: Int = 0
+    #if DEBUG
+    private(set) var importedFixtureInput: (ticketID: UUID, bytes: Int, sha256: String)?
+    #endif
     static let shared = BackgroundAudioDownloader()
     static let identifier = "com.jonnyt.mp3shelf.licensed-audio-v1"
 
@@ -655,6 +661,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             let stagedURL = Self.stagingURL(ticket.id)
             do {
+                #if DEBUG
+                var fixtureInput: (ticketID: UUID, bytes: Int, sha256: String)?
+                if let fixtureURL = DownloadPathProof.fixtureDownloadURL, ticket.downloadURL == fixtureURL {
+                    let data = try Data(contentsOf: stagedURL, options: .mappedIfSafe)
+                    guard (1...(1024 * 1024)).contains(data.count) else { throw CocoaError(.fileReadCorruptFile) }
+                    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                    fixtureInput = (ticket.id, data.count, digest)
+                }
+                #endif
                 let attribution = AudioSourceAttribution(
                     pageURL: ticket.sourcePage.absoluteString,
                     licenseURL: ticket.licensePage?.absoluteString ?? "",
@@ -663,6 +678,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                     from: stagedURL, matching: ticket.requested, attribution: attribution, conversionProgress: conversion)
                 if imported {
                     if var current = tickets[ticket.id], current.status == .queued {
+                        #if DEBUG
+                        if let fixtureInput { importedFixtureInput = fixtureInput }
+                        #endif
                         current.status = .imported
                         // An earlier network retry is not an error once the
                         // recording has actually been decoded and imported.

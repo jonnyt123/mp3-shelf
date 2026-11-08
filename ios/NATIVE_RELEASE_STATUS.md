@@ -1,5 +1,14 @@
 # Native release status — consolidated draft PR #29
 
+## AAC received by the downloader
+
+The fixture proof records the size and SHA-256 of the staged AAC immediately
+before the production importer reads it. The validator requires those
+values to agree with the bundled fixture and its loopback server record.
+The evidence is tied to the imported ticket and must survive restart.
+The receipt and workflow tests cover missing and changed input evidence
+with mocked Simulator commands. Native verification still requires Xcode.
+
 ## Evidence across restart
 
 The proof compares the final receipt with the runner's pre-restart copy.
