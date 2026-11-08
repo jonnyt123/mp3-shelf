@@ -8,9 +8,15 @@ the false PASS. The launcher now requires completion of receipt and MP3
 validation and reports an early exit as a failure. It saves the validation
 log and records the shell version in the run summary.
 
-All 15 workflow tests passed, including the early exit case. A fresh Mac
-run is needed to confirm the native transfer. A successful fixture run ends
-at `complete` and exports `native-result.json` and `AAC-transfer-proof.mp3`.
+The launcher records shell errors outside individual steps in
+`runner-errors.log` and includes them in the failure report. An unreadable
+receipt still produces a current failure report with the validation error.
+All 17 receipt and workflow tests passed, including injected setup and
+receipt failures. The Simulator commands are mocked in these tests.
+
+A fresh Mac run is needed to confirm the native transfer and diagnose the
+original stop. A successful fixture run ends at `complete` and exports
+`native-result.json` and `AAC-transfer-proof.mp3`.
 
 ## Obsolete transfers after a playlist refresh
 

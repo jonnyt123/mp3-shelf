@@ -24,6 +24,9 @@ OWNS_SIMULATOR=false
 FIXTURE_PID=""
 STEP=preflight
 mkdir -p "$RUN_OUT"
+RUNNER_ERRORS="$RUN_OUT/runner-errors.log"
+# Save shell diagnostics that are emitted outside a logged step.
+exec 3>&2 2>"$RUNNER_ERRORS"
 stop_fixture() {
   if [[ -n "$FIXTURE_PID" ]]; then
     kill "$FIXTURE_PID" 2>/dev/null || true
@@ -36,6 +39,7 @@ on_exit() {
   if [[ "${BASH_SUBSHELL:-0}" -ne 0 ]]; then return "$result"; fi
   trap - EXIT
   local summary=""
+  local step_log="$RUN_OUT/$STEP.log"
   if [[ $result -eq 0 && "$STEP" != complete ]]; then
     result=1
     summary="The launcher exited before validating the native receipt."
@@ -64,19 +68,33 @@ on_exit() {
     echo '- Selection mode is recorded in native-result.json; reference-review does not prove automatic selection.'
     echo '- Physical-iPhone/background acceptance: NOT TESTED'
     echo '- Signing / GitHub Actions: NOT USED'
-    if [[ $result -ne 0 && -f "$RUN_OUT/$STEP.log" ]]; then
+    if [[ $result -ne 0 && -s "$step_log" ]]; then
+      echo
+      echo 'Failed step log'
       echo
       echo '```text'
-      tail -n 30 "$RUN_OUT/$STEP.log"
+      tail -n 30 "$step_log"
+      echo '```'
+    fi
+    if [[ $result -ne 0 && -s "$RUNNER_ERRORS" ]]; then
+      echo
+      echo 'Launcher errors'
+      echo
+      echo '```text'
+      tail -n 30 "$RUNNER_ERRORS"
       echo '```'
     fi
     if [[ $result -ne 0 && -f "$RUN_OUT/native-result.json" ]]; then
       echo
-      python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("error","Native proof failed"))' "$RUN_OUT/native-result.json"
+      python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("error","Native proof failed"))' \
+        "$RUN_OUT/native-result.json" 2>/dev/null || echo 'The native receipt is unreadable. See the validation log.'
     fi
   } > "$RUN_OUT/QA_RECORD.md"
   cp "$RUN_OUT/QA_RECORD.md" "$OUT/QA_RECORD.md"
   if [[ "$OWNS_SIMULATOR" == true ]]; then xcrun simctl terminate "$SIMULATOR" "$BUNDLE" >/dev/null 2>&1 || true; fi
+  exec 2>&3 3>&-
+  if [[ $result -ne 0 && -s "$step_log" ]]; then tail -n 30 "$step_log" >&2 || true; fi
+  if [[ -s "$RUNNER_ERRORS" ]]; then cat "$RUNNER_ERRORS" >&2 || true; fi
   exit "$result"
 }
 trap 'on_exit "$?"' EXIT
@@ -84,7 +102,6 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 preflight_error() {
   printf 'ERROR: %s\n' "$1" > "$RUN_OUT/preflight.log"
-  cat "$RUN_OUT/preflight.log" >&2
   exit 2
 }
 [[ "$(uname -s)" == Darwin ]] || preflight_error 'This native test requires macOS with Xcode.'
@@ -152,6 +169,7 @@ run_step boot-ready xcrun simctl bootstatus "$SIMULATOR" -b
 # Only the dedicated test app is reset. Existing MP3 Shelf data stays intact.
 xcrun simctl uninstall "$SIMULATOR" "$BUNDLE" > "$RUN_OUT/reset.log" 2>&1 || true
 run_step install xcrun simctl install "$SIMULATOR" "$APP"
+STEP=locate-app-container
 CONTAINER="$(xcrun simctl get_app_container "$SIMULATOR" "$BUNDLE" data)"
 FIRST_LAUNCH=("$FIRST_ARGUMENT" --mp3shelf-proof-run "$RUN_TOKEN")
 if [[ "$MODE" == local-import-restart ]]; then
@@ -205,7 +223,6 @@ while [[ "$SECONDS" -lt "$DEADLINE" ]]; do
       fi
       if ! run_step validate-native-proof python3 "$ROOT/ios/scripts/validate-download-proof.py" \
         "$RUN_OUT/native-result.json" "$CONTAINER" "$RUN_OUT" "$RUN_TOKEN" "$MODE"; then
-        cat "$RUN_OUT/validate-native-proof.log" >&2
         exit 1
       fi
       STEP=complete

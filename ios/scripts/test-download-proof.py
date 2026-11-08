@@ -297,6 +297,45 @@ elif command=='launch':
         self.assertIn("Last step: configure-fixture-bundle", report)
         self.assertIn("before validating the native receipt", report)
 
+    def test_setup_shell_error_is_preserved_in_report(self):
+        runner = self.scripts / "prove-download-path.sh"
+        build = "\nrun_step build xcodebuild "
+        source = runner.read_text()
+        self.assertEqual(source.count(build), 1)
+        runner.write_text(source.replace(build,
+            '\nunset PROOF_SETUP_ARGUMENT\nprintf "%s\\n" "$PROOF_SETUP_ARGUMENT"\n' + build))
+
+        result = self.run_proof("--fixture-transfer")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PROOF_SETUP_ARGUMENT", result.stderr)
+        output = self.candidate / "ios/build/fixture-transfer-proof"
+        report = (output / "QA_RECORD.md").read_text()
+        self.assertIn("Result: FAIL", report)
+        self.assertIn("Last step: configure-fixture-bundle", report)
+        self.assertIn("PROOF_SETUP_ARGUMENT", report)
+        log, = (output / "runs").glob("*/runner-errors.log")
+        self.assertIn("PROOF_SETUP_ARGUMENT", log.read_text())
+
+    def test_unreadable_native_receipt_replaces_stale_pass_report(self):
+        self.tool("cp", '''#!/bin/sh
+case "$2" in
+  */native-result.json) printf '{' > "$2" ;;
+  *) exec /bin/cp "$@" ;;
+esac
+''')
+        report_path = self.candidate / "ios/build/download-proof/QA_RECORD.md"
+        report_path.parent.mkdir(parents=True)
+        report_path.write_text("STALE PASS")
+
+        result = self.run_proof()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        report = report_path.read_text()
+        self.assertIn("Result: FAIL", report)
+        self.assertIn("Last step: validate-native-proof", report)
+        self.assertIn("Expecting property name", report)
+        self.assertIn("native receipt is unreadable", report)
+        self.assertNotIn("STALE PASS", report)
+
     def test_second_proof_does_not_interrupt_the_active_simulator_run(self):
         with (self.root / "mp3shelf-download-proof-test-phone.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
