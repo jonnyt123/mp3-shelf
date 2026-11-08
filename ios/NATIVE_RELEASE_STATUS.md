@@ -1,5 +1,17 @@
 # Native release status — consolidated draft PR #29
 
+## Empty and partial download responses
+
+Background and direct imports reject an empty download with an explicit
+source error. A partial Content-Range is rejected even when a provider labels
+the response HTTP 200. Local read-access failures stop background source
+recovery and show a storage message. Direct URL imports remove the temporary
+response after validation rejects it.
+
+The Swift regression cases cover empty responses, partial and complete ranges
+on HTTP 200, and read-access failure classification. Native execution requires
+Xcode.
+
 ## AAC received by the downloader
 
 The fixture proof records the size and SHA-256 of the staged AAC immediately

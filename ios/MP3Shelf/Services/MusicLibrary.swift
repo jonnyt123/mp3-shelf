@@ -1084,6 +1084,7 @@ final class MusicLibrary: ObservableObject {
         isImporting = true
         defer { isImporting = false }
         let (temporary, response) = try await URLSession.shared.download(from: remoteURL)
+        defer { try? manager.removeItem(at: temporary) }
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MusicLibraryError.downloadFailed
         }
@@ -1091,10 +1092,12 @@ final class MusicLibrary: ObservableObject {
            ["spotify.com", "spotifycdn.com", "scdn.co"].contains(where: { finalHost == $0 || finalHost.hasSuffix("." + $0) }) {
             throw MusicLibraryError.invalidDownloadURL
         }
-        let downloadedBytes = (try? manager.attributesOfItem(atPath: temporary.path)[.size] as? NSNumber)?.int64Value ?? 0
-        guard downloadedBytes > 0 && downloadedBytes <= 100 * 1024 * 1024 else {
+        let attributes = try manager.attributesOfItem(atPath: temporary.path)
+        guard let downloadedBytes = (attributes[.size] as? NSNumber)?.int64Value,
+              downloadedBytes <= BackgroundTransferProgressPolicy.maxBytes else {
             throw MusicLibraryError.downloadFailed
         }
+        guard downloadedBytes > 0 else { throw MusicLibraryError.emptyDownload }
         guard DownloadedAudioRange.coversCompleteFile(status: http.statusCode,
             contentRange: http.value(forHTTPHeaderField: "Content-Range"), downloadedBytes: downloadedBytes) else {
             throw MusicLibraryError.incompleteDownload
@@ -1347,7 +1350,7 @@ final class MusicLibrary: ObservableObject {
 }
 
 enum MusicLibraryError: LocalizedError {
-    case unsupportedFormat, invalidDownloadURL, downloadFailed, incompleteDownload, recordingDurationMismatch
+    case unsupportedFormat, invalidDownloadURL, downloadFailed, emptyDownload, incompleteDownload, recordingDurationMismatch
     case downloadedFormatIsNotMP3, conversionUnsupportedFormat, conversionTooLong
     case recordingMetadataMismatch(String)
 
@@ -1359,6 +1362,7 @@ enum MusicLibraryError: LocalizedError {
         case .unsupportedFormat: return "Only supported audio files (MP3, M4A, AAC, WAV, AIFF) can be imported."
         case .invalidDownloadURL: return "Enter a direct HTTPS audio URL. Spotify streaming links cannot be downloaded."
         case .downloadFailed: return "The audio download did not complete successfully."
+        case .emptyDownload: return AudioDownloadDiagnostics.emptyResponse
         case .incompleteDownload: return DownloadedAudioRange.incompleteMessage
         case .recordingDurationMismatch: return "The downloaded audio duration did not match the requested recording."
         case .recordingMetadataMismatch(let field):

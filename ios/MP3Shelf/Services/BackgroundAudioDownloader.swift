@@ -892,15 +892,22 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             return
         }
-        guard DownloadedAudioContentType.allows(http.mimeType) else {
-            Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.contentType(http.mimeType)) }
-            return
-        }
         // Copy/move BEFORE returning: URLSession deletes location at delegate return.
         let destination = Self.stagingURL(id)
         do {
-            let bytes = (try FileManager.default.attributesOfItem(atPath: location.path)[.size] as? NSNumber)?.int64Value ?? 0
-            guard bytes > 0 && bytes <= BackgroundTransferProgressPolicy.maxBytes else {
+            let attributes = try FileManager.default.attributesOfItem(atPath: location.path)
+            guard let bytes = (attributes[.size] as? NSNumber)?.int64Value else {
+                throw CocoaError(.fileReadUnknown)
+            }
+            guard bytes > 0 else {
+                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.emptyResponse) }
+                return
+            }
+            guard DownloadedAudioContentType.allows(http.mimeType) else {
+                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.contentType(http.mimeType)) }
+                return
+            }
+            guard bytes <= BackgroundTransferProgressPolicy.maxBytes else {
                 throw CocoaError(.fileReadTooLarge)
             }
             guard DownloadedAudioRange.coversCompleteFile(status: http.statusCode,

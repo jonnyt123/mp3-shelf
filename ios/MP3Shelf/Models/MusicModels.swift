@@ -366,11 +366,12 @@ enum DownloadedAudioRange {
     static let incompleteMessage = "The source sent only part of the audio file. Try another source."
 
     static func coversCompleteFile(status: Int, contentRange: String?, downloadedBytes: Int64) -> Bool {
-        guard status == 206 else { return true }
+        guard downloadedBytes > 0 else { return false }
+        guard status == 206 || contentRange != nil else { return true }
         // A standalone file must cover byte zero through the end of the
         // representation. The decoder may accept a truncated MP3 prefix.
         let fields = contentRange?.split(whereSeparator: { $0 == " " || $0 == "\t" }) ?? []
-        guard downloadedBytes > 0, fields.count == 2, fields[0].lowercased() == "bytes" else { return false }
+        guard fields.count == 2, fields[0].lowercased() == "bytes" else { return false }
         let extent = fields[1].split(separator: "/", omittingEmptySubsequences: false)
         guard extent.count == 2 else { return false }
         let bounds = extent[0].split(separator: "-", omittingEmptySubsequences: false)

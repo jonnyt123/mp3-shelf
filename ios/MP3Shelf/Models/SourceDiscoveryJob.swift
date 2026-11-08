@@ -3,6 +3,7 @@ import Foundation
 /// User-facing diagnostics do not change transport retry budgets or validation.
 enum AudioDownloadDiagnostics {
     static let expiredAudioLink = "This audio link expires before the transfer can restart."
+    static let emptyResponse = "The source returned an empty audio file. Try another source."
 
     static func maySearchForAnotherSource(reason: String?, recordedAdvice: Bool?) -> Bool {
         if let recordedAdvice { return recordedAdvice }
@@ -42,6 +43,9 @@ enum AudioDownloadDiagnostics {
                 }
                 if current.code == CocoaError.Code.fileWriteNoPermission.rawValue {
                     return "Audio could not be saved on this iPhone. Check local storage access and retry."
+                }
+                if current.code == CocoaError.Code.fileReadNoPermission.rawValue {
+                    return "The downloaded audio could not be read on this iPhone. Check local storage access and retry."
                 }
             }
             if current.domain == NSPOSIXErrorDomain && current.code == Int(POSIXErrorCode.ENOSPC.rawValue) {

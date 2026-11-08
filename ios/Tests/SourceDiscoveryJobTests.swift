@@ -135,6 +135,10 @@ enum SourceDiscoveryJobTests {
             code: CocoaError.Code.fileWriteNoPermission.rawValue)
         verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: deniedStorage),
                         "local write-access failure does not switch network source")
+        let deniedRead = CocoaError(.fileReadNoPermission)
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: deniedRead) &&
+                        AudioDownloadDiagnostics.message(for: deniedRead).contains("storage access"),
+                        "local read-access failure explains storage access and avoids another source")
         let libraryWriteFailure = NSError(domain: PersistedLibrary.writeFailureDomain, code: 1,
             userInfo: [NSUnderlyingErrorKey: CocoaError(.fileWriteFileExists)])
         verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: libraryWriteFailure) &&
@@ -204,6 +208,14 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(!DownloadedAudioContentType.allows(nil), "missing response type is rejected")
         verifyDiscovery(DownloadedAudioRange.coversCompleteFile(status: 200, contentRange: nil, downloadedBytes: 2107),
                         "an ordinary full response does not require a range header")
+        verifyDiscovery(!DownloadedAudioRange.coversCompleteFile(status: 200, contentRange: nil, downloadedBytes: 0),
+                        "an empty success response cannot contain a complete recording")
+        verifyDiscovery(!DownloadedAudioRange.coversCompleteFile(
+            status: 200, contentRange: "bytes 0-1684/2107", downloadedBytes: 1685),
+                        "a partial range cannot be imported even if the server sends HTTP 200")
+        verifyDiscovery(DownloadedAudioRange.coversCompleteFile(
+            status: 200, contentRange: "bytes 0-2106/2107", downloadedBytes: 2107),
+                        "a complete range is accepted with HTTP 200")
         verifyDiscovery(DownloadedAudioRange.coversCompleteFile(
             status: 206, contentRange: "Bytes 00-2106/2107", downloadedBytes: 2107),
                         "a 206 containing the entire representation is accepted")
