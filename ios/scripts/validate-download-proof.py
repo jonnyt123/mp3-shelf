@@ -4,8 +4,8 @@ import hashlib
 import json
 import math
 from pathlib import Path
-import shutil
 import sys
+from tempfile import TemporaryDirectory
 from urllib.parse import urlsplit
 import uuid
 
@@ -55,12 +55,6 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
     size = source.stat().st_size
     if not 0 < size <= 100 * 1024 * 1024 or size != report.get("fileBytes"):
         raise ValueError("Saved file size does not match the native receipt")
-    digest = hashlib.sha256()
-    with source.open("rb") as file:
-        for chunk in iter(lambda: file.read(65536), b""):
-            digest.update(chunk)
-    if digest.hexdigest() != report.get("sha256"):
-        raise ValueError("Saved MP3 does not match its native checksum")
     duration = report.get("durationSeconds", 0)
     expected_duration = report.get("expectedDurationSeconds", 0)
     frames = report.get("decodedFrames", 0)
@@ -97,7 +91,24 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
     names = {"live-download": "Carefree-Kevin-MacLeod-proof.mp3",
              "local-import-restart": "Offline-restart-fixture-proof.mp3",
              "fixture-transfer": "AAC-transfer-proof.mp3"}
-    shutil.copy2(source, destination / names[mode])
+    exported = destination / names[mode]
+    # Hash the bytes as they are staged. Publish only the checked copy.
+    with TemporaryDirectory(prefix=".proof-export-", dir=destination) as staging:
+        staged = Path(staging) / exported.name
+        digest = hashlib.sha256()
+        written = 0
+        with source.open("rb") as file, staged.open("wb") as output:
+            for chunk in iter(lambda: file.read(65536), b""):
+                written += len(chunk)
+                if written > size:
+                    raise ValueError("Saved file size changed during export")
+                output.write(chunk)
+                digest.update(chunk)
+        if written != size:
+            raise ValueError("Saved file size changed during export")
+        if digest.hexdigest() != report.get("sha256"):
+            raise ValueError("Saved MP3 does not match its native checksum")
+        staged.replace(exported)
     print("PASS: native receipt stages and saved-file checksum verified; mode=" + mode + "; selection=" + report["selection"])
 
 

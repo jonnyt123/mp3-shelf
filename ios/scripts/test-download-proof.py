@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Receipt/workflow tests only; these do not stand in for a native download."""
 import fcntl
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 import copy
 import sys
@@ -51,6 +53,33 @@ class DownloadProofTests(unittest.TestCase):
     def test_valid_receipt_copies_exact_saved_bytes(self):
         self.validate()
         self.assertEqual((self.root / "output/Carefree-Kevin-MacLeod-proof.mp3").read_bytes(), self.audio.read_bytes())
+
+    def test_export_uses_the_bytes_that_were_checked(self):
+        original = self.audio.read_bytes()
+        open_path = Path.open
+
+        @contextmanager
+        def read_then_change(path, *args, **kwargs):
+            with open_path(path, *args, **kwargs) as file:
+                yield file
+            with open_path(path, "wb") as file:
+                file.write(b"x" * len(original))
+
+        def open_with_source_change(path, *args, **kwargs):
+            if path == self.audio and args == ("rb",):
+                return read_then_change(path, *args, **kwargs)
+            return open_path(path, *args, **kwargs)
+
+        with patch.object(Path, "open", open_with_source_change):
+            self.validate()
+        self.assertNotEqual(self.audio.read_bytes(), original)
+        self.assertEqual((self.root / "output/Carefree-Kevin-MacLeod-proof.mp3").read_bytes(), original)
+
+    def test_checksum_failure_does_not_publish_or_leave_a_temporary_export(self):
+        self.report["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "native checksum"):
+            self.validate()
+        self.assertEqual(list((self.root / "output").glob("*")), [])
 
     def test_failed_or_running_result_cannot_pass(self):
         for status in ["FAIL", "RUNNING", "UNKNOWN", "READY_FOR_RESTART"]:

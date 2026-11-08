@@ -1,5 +1,13 @@
 # Native release status — consolidated draft PR #29
 
+## Verified MP3 export
+
+The proof validator hashes the bytes it writes to a temporary file, then
+publishes that file only if its size and digest match the native receipt.
+A test that changes the source after reading it reproduced the old behavior,
+where the validator reported PASS and exported different bytes. All 19 receipt
+and workflow tests passed with mocked Simulator commands.
+
 ## Proof completion reporting
 
 A Mac report marked the fixture transfer as PASS with the last step still at
