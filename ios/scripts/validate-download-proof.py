@@ -49,6 +49,24 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
                   "local-import-restart": {"local-fixture"}, "fixture-transfer": {"fixture-transfer"}}
     if report.get("selection") not in selections[mode]:
         raise ValueError("The recording-selection mode is missing")
+    destination = Path(destination)
+    checkpoint = destination / "pre-restart-result.json"
+    if not checkpoint.is_file():
+        raise ValueError("The runner did not capture the pre-restart receipt")
+    initial = json.loads(checkpoint.read_text())
+    if not isinstance(initial, dict) or initial.get("status") != "READY_FOR_RESTART":
+        raise ValueError("The pre-restart receipt did not complete the first phase")
+    recording_fields = (
+        "schema", "runID", "mode", "initialProcessToken", "trackID", "playlistID",
+        "selection", "sourcePage", "sourceProvider", "expectedTitle", "expectedArtist",
+        "fileBytes", "sha256", "decodedFrames", "durationSeconds", "expectedDurationSeconds",
+    )
+    for field in recording_fields:
+        if initial.get(field) != report.get(field):
+            raise ValueError("The native receipt changed across restart: " + field)
+    first_phase_end = actual.index("ready-for-restart") + 1
+    if initial.get("steps") != report["steps"][:first_phase_end]:
+        raise ValueError("First-phase stage evidence changed across restart")
     source = Path(report["filePath"]).resolve()
     if not source.is_relative_to(Path(container).resolve()) or source.suffix.lower() != ".mp3":
         raise ValueError("MP3 path is outside the isolated test container")
@@ -86,7 +104,6 @@ def validate(report_path, container, destination, expected_run=None, expected_mo
     advance = report.get("restartPlaybackSeconds", 0)
     if not math.isfinite(advance) or advance <= min(0.25, duration / 4):
         raise ValueError("Production playback did not advance after restart")
-    destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     names = {"live-download": "Carefree-Kevin-MacLeod-proof.mp3",
              "local-import-restart": "Offline-restart-fixture-proof.mp3",

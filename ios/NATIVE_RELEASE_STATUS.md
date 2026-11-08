@@ -1,5 +1,14 @@
 # Native release status — consolidated draft PR #29
 
+## Evidence across restart
+
+The proof compares the final receipt with the runner's pre-restart copy.
+Recording identity, source, checksum, decode measurements and first-phase
+stage evidence must agree before an MP3 can be exported. A mocked restart
+that replaced both the recording and its checksum reproduced a false pass
+before the fix. All 20 receipt and workflow tests passed with mocked
+Simulator commands. Native verification still requires Xcode.
+
 ## Verified MP3 export
 
 The proof validator hashes the bytes it writes to a temporary file, then

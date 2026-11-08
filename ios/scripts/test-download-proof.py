@@ -48,7 +48,16 @@ class DownloadProofTests(unittest.TestCase):
     def validate(self):
         path = self.root / "result.json"
         path.write_text(json.dumps(self.report))
-        VALIDATOR.validate(path, self.container, self.root / "output")
+        output = self.root / "output"
+        output.mkdir(exist_ok=True)
+        first_phase = []
+        for step in self.report["steps"]:
+            if step["stage"] == "restart":
+                break
+            first_phase.append(step)
+        initial = dict(self.report, status="READY_FOR_RESTART", steps=first_phase)
+        (output / "pre-restart-result.json").write_text(json.dumps(initial))
+        VALIDATOR.validate(path, self.container, output)
 
     def test_valid_receipt_copies_exact_saved_bytes(self):
         self.validate()
@@ -79,7 +88,7 @@ class DownloadProofTests(unittest.TestCase):
         self.report["sha256"] = "0" * 64
         with self.assertRaisesRegex(ValueError, "native checksum"):
             self.validate()
-        self.assertEqual(list((self.root / "output").glob("*")), [])
+        self.assertEqual({file.name for file in (self.root / "output").iterdir()}, {"pre-restart-result.json"})
 
     def test_failed_or_running_result_cannot_pass(self):
         for status in ["FAIL", "RUNNING", "UNKNOWN", "READY_FOR_RESTART"]:
@@ -232,6 +241,10 @@ elif command=='launch':
         if mode=='same-process': report['restartProcessToken']=report['initialProcessToken']
         if mode=='restart-fails': report['error']='Injected restart playback failure'
         if mode=='corrupt-file': pathlib.Path(report['filePath']).write_bytes(b'bad')
+        if mode=='replace-recording':
+            replacement = b'different recording supplied after restart'
+            pathlib.Path(report['filePath']).write_bytes(replacement)
+            report.update(fileBytes=len(replacement), sha256=hashlib.sha256(replacement).hexdigest())
     else:
         local='--mp3shelf-prove-local-restart' in args
         fixture='--mp3shelf-prove-fixture-transfer' in args
@@ -377,6 +390,14 @@ esac
         result = self.run_proof(failure="premature-pass")
         self.assertEqual(result.returncode, 1)
         self.assertIn("fresh-process restart is required", result.stderr)
+
+    def test_restart_cannot_replace_recording_and_its_checksum(self):
+        result = self.run_proof(failure="replace-recording")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("changed across restart", result.stderr)
+        output = self.candidate / "ios/build/download-proof"
+        self.assertIn("Result: FAIL", (output / "QA_RECORD.md").read_text())
+        self.assertEqual(list((output / "runs").glob("*/*-proof.mp3")), [])
 
     def test_restart_failure_network_or_changed_file_never_pass(self):
         for failure in ["restart-fails", "same-process", "network-attempt", "corrupt-file"]:
