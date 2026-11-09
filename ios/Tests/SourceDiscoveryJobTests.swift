@@ -415,10 +415,21 @@ enum SourceDiscoveryJobTests {
                         "pending and removed songs cannot trigger processed-source recovery")
         recovery.record(.alreadyPresent)
         recovery.record(.queued)
-        recovery.isPaused = true
-        verifyDiscovery(!recovery.requeueFailedSource(for: wishes[0].id),
-                        "paused playlists do not silently restart a failed recording")
-        recovery.isPaused = false
+        var pausedRecovery = recovery
+        pausedRecovery.isPaused = true
+        verifyDiscovery(pausedRecovery.requeueFailedSource(for: wishes[0].id) &&
+                        pausedRecovery.isPaused && !pausedRecovery.isComplete &&
+                        !BackgroundDiscoveryPolicy.hasPending([pausedRecovery]) &&
+                        BackgroundDiscoveryPolicy.earliestUsefulDate(for: [pausedRecovery], at: retryClock) == nil,
+                        "a failed transfer remains pending without resuming paused discovery")
+        pausedRecovery = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(pausedRecovery))
+        verifyDiscovery(pausedRecovery.isPaused && pausedRecovery.currentWish?.id == wishes[0].id &&
+                        !BackgroundDiscoveryPolicy.canProcess(onWiFi: true, job: pausedRecovery, at: retryClock),
+                        "the failed song and pause survive relaunch")
+        pausedRecovery.isPaused = false
+        verifyDiscovery(BackgroundDiscoveryPolicy.canProcess(onWiFi: true, job: pausedRecovery, at: retryClock),
+                        "explicit resume can search again for the failed recording")
         for expected in 2...3 {
             verifyDiscovery(recovery.requeueFailedSource(for: wishes[0].id) &&
                             recovery.currentWish?.id == wishes[0].id &&
@@ -432,6 +443,16 @@ enum SourceDiscoveryJobTests {
         unknownHistory.outcomes = nil
         verifyDiscovery(!unknownHistory.requeueFailedSource(for: wishes[0].id),
                         "legacy checkpoints with unknown outcomes cannot invent a queued result")
+        var existingTransfer = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
+        existingTransfer.record(.alreadyPresent)
+        _ = existingTransfer.reserveWebSearch(for: wishes[0].id)
+        existingTransfer = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(existingTransfer))
+        verifyDiscovery(existingTransfer.requeueFailedSource(for: wishes[0].id) &&
+                        existingTransfer.currentWish?.id == wishes[0].id &&
+                        existingTransfer.queued == 0 &&
+                        existingTransfer.webSearchWishIDs == [wishes[0].id],
+                        "a failed transfer misclassified by an older build can return to search without spending another credit")
         var catalogRecovery = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
         let cachedBackup = AudioCatalogMatch(downloadURL: URL(string: "https://example.invalid/backup.mp3")!,
             itemURL: URL(string: "https://example.invalid/recording")!, licenseURL: nil, sourceName: "Cached web source")

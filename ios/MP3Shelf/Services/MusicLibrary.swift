@@ -750,7 +750,8 @@ final class MusicLibrary: ObservableObject {
 
     func recoverRecordingSource(after ticket: BackgroundAudioTicket, notBefore: Date? = nil) {
         guard hasCurrentSourceRequest(ticket.requested, for: ticket.playlistID),
-              let index = discoveryJobs.firstIndex(where: { $0.playlistID == ticket.playlistID }) else { return }
+              let index = discoveryJobs.firstIndex(where: { $0.playlistID == ticket.playlistID }),
+              !hasOfflineRecording(matching: ticket.requested) else { return }
         // Discovery can still find a catalog or cached web file after the
         // recording matcher has no candidates left or has been disabled.
         let now = Date()
@@ -863,9 +864,10 @@ final class MusicLibrary: ObservableObject {
             if !hasCurrentSourceRequest(wish, for: playlistID) {
                 // Obsolete entries advance without another lookup.
                 job.record(.removed)
-            } else if hasOfflineRecording(matching: wish) ||
-                BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
+            } else if hasOfflineRecording(matching: wish) {
                 job.record(.alreadyPresent)
+            } else if BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
+                job.record(.queued)
             } else {
                 do {
                     let allowsCellular = !backgroundWiFiOnly && cellularApprovedPlaylists.contains(playlistID)
@@ -1011,9 +1013,10 @@ final class MusicLibrary: ObservableObject {
                     guard BackgroundDownloadBackpressure.mayEnqueue(
                         outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
                     ) else { break }
-                    if hasOfflineRecording(matching: wish) ||
-                        BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
+                    if hasOfflineRecording(matching: wish) {
                         job.record(.alreadyPresent)
+                    } else if BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
+                        job.record(.queued)
                     } else if let source = sources.first {
                         if try BackgroundAudioDownloader.shared.enqueue(
                             source: source, requested: wish, playlistID: playlistID,

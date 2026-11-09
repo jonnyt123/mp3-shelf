@@ -493,12 +493,13 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     }
 
     /// Move only this processed wish back to pending, keeping every other
-    /// song's cursor/history and the web-search credit ledger intact.
+    /// song's cursor/history, the pause and the web-search credit ledger intact.
+    /// Older checkpoints used alreadyPresent for an existing transfer.
     mutating func requeueFailedSource(for wishID: UUID, notBefore: Date? = nil) -> Bool {
-        guard !isPaused, nextIndex <= wishes.count,
+        guard nextIndex <= wishes.count,
               let index = wishes.firstIndex(where: { $0.id == wishID }),
               index < nextIndex, let history = outcomes, index < history.count,
-              history[index] == .queued,
+              history[index] == .queued || history[index] == .alreadyPresent,
               (sourceRecoveryAttempts?[wishID.uuidString] ?? 0) < 3 else { return false }
         moveProcessedWishesToPending(at: [index])
         if sourceRecoveryAttempts == nil { sourceRecoveryAttempts = [:] }

@@ -1,5 +1,18 @@
 # Native release status — consolidated draft PR #29
 
+## Recovery for downloads already in the queue
+
+Source discovery records an existing transfer as queued. An eligible source
+failure can put that song back into discovery, including checkpoints from
+earlier builds that treated the transfer as already present. A song saved
+offline does not need another search. A failure while search is paused saves
+the pending lookup for when the user resumes. Existing search reservations,
+the three-attempt recovery limit and the current song's retry time carry
+forward.
+
+New Swift regression cases cover resuming a failed song after a pause and
+recovering from an older checkpoint. The native runner requires Xcode.
+
 ## Empty and partial download responses
 
 Background and direct imports reject an empty download with an explicit
