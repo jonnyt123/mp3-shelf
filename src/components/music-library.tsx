@@ -11,11 +11,28 @@ function Artwork({track,size="small"}:{track:Track;size?:"small"|"large"}){const
 const slides=[{icon:"♫",title:"Your music, finally organized",copy:"Import a whole group of MP3s once. MP3 Shelf keeps them together so you can stop hunting through Files."},{icon:"⌕",title:"Find any track fast",copy:"Search titles and artists, build playlists, rename tracks and keep everything available offline."},{icon:"↻",title:"Built for listening",copy:"Use shuffle, repeat and automatic next-track playback from an app made to feel at home on iPhone."}];
 function formatTime(seconds:number){if(!Number.isFinite(seconds))return"0:00";const minutes=Math.floor(seconds/60),rest=Math.floor(seconds%60);return `${minutes}:${String(rest).padStart(2,"0")}`}
 export function MusicLibrary(){
- const[tracks,setTracks]=useState<Track[]>([]),[query,setQuery]=useState(""),[current,setCurrent]=useState<Track|null>(null),[audioUrl,setAudioUrl]=useState<string>(),[busy,setBusy]=useState(true),[shuffle,setShuffle]=useState(false),[repeat,setRepeat]=useState<RepeatMode>("off"),[playlists,setPlaylists]=useState<Playlist[]>([]),[activePlaylist,setActivePlaylist]=useState("all"),[addingTrack,setAddingTrack]=useState<Track|null>(null),[onboarding,setOnboarding]=useState(false),[slide,setSlide]=useState(0),[fullPlayer,setFullPlayer]=useState(false),[elapsed,setElapsed]=useState(0),[duration,setDuration]=useState(0),[playing,setPlaying]=useState(false),[volume,setVolume]=useState(1),[supportsVolume,setSupportsVolume]=useState(true),[airPlayAvailable,setAirPlayAvailable]=useState(false),[airPlayActive,setAirPlayActive]=useState(false),[storageOpen,setStorageOpen]=useState(false),[storageStats,setStorageStats]=useState<StorageStats|null>(null),[transferBusy,setTransferBusy]=useState(false),[backupStatus,setBackupStatus]=useState("");const input=useRef<HTMLInputElement>(null),restoreInput=useRef<HTMLInputElement>(null),audio=useRef<HTMLAudioElement>(null),gestureStart=useRef<{x:number;y:number}|null>(null);
+ const[playlistsHydrated,setPlaylistsHydrated]=useState(false);const[tracks,setTracks]=useState<Track[]>([]),[query,setQuery]=useState(""),[current,setCurrent]=useState<Track|null>(null),[audioUrl,setAudioUrl]=useState<string>(),[busy,setBusy]=useState(true),[shuffle,setShuffle]=useState(false),[repeat,setRepeat]=useState<RepeatMode>("off"),[playlists,setPlaylists]=useState<Playlist[]>([]),[activePlaylist,setActivePlaylist]=useState("all"),[addingTrack,setAddingTrack]=useState<Track|null>(null),[onboarding,setOnboarding]=useState(false),[slide,setSlide]=useState(0),[fullPlayer,setFullPlayer]=useState(false),[elapsed,setElapsed]=useState(0),[duration,setDuration]=useState(0),[playing,setPlaying]=useState(false),[volume,setVolume]=useState(1),[supportsVolume,setSupportsVolume]=useState(true),[airPlayAvailable,setAirPlayAvailable]=useState(false),[airPlayActive,setAirPlayActive]=useState(false),[storageOpen,setStorageOpen]=useState(false),[storageStats,setStorageStats]=useState<StorageStats|null>(null),[transferBusy,setTransferBusy]=useState(false),[backupStatus,setBackupStatus]=useState("");const input=useRef<HTMLInputElement>(null),restoreInput=useRef<HTMLInputElement>(null),audio=useRef<HTMLAudioElement>(null),gestureStart=useRef<{x:number;y:number}|null>(null);
  const refresh=async()=>setTracks(await listTracks());
  const refreshStorage=async()=>{try{const estimate=await navigator.storage?.estimate?.(),persisted=typeof navigator.storage?.persisted==="function"?await navigator.storage.persisted():null;setStorageStats({usage:estimate?.usage??0,quota:estimate?.quota??0,persisted})}catch{setStorageStats({usage:0,quota:0,persisted:null})}};
- useEffect(()=>{refresh().finally(()=>setBusy(false));try{setPlaylists(JSON.parse(localStorage.getItem("mp3-shelf-playlists")??"[]"));setOnboarding(!localStorage.getItem("mp3-shelf-onboarded"))}catch{}},[]);
- useEffect(()=>{localStorage.setItem("mp3-shelf-playlists",JSON.stringify(playlists))},[playlists]);
+ useEffect(()=>{
+  refresh().finally(()=>setBusy(false));
+  // Never persist the initial empty React state before reading the saved
+  // playlists. A crash between those effects would otherwise erase them.
+  try{
+   const saved=localStorage.getItem("mp3-shelf-playlists");
+   if(saved!==null){
+    const parsed:unknown=JSON.parse(saved);
+    if(!Array.isArray(parsed)||!parsed.every(item=>item&&typeof item.id==="string"&&typeof item.name==="string"&&Array.isArray(item.trackIds)&&item.trackIds.every((id:unknown)=>typeof id==="string")))throw new Error("Invalid saved playlists.");
+    setPlaylists(parsed as Playlist[]);
+   }
+   setOnboarding(!localStorage.getItem("mp3-shelf-onboarded"));
+   setPlaylistsHydrated(true);
+  }catch{
+   // Preserve damaged or inaccessible storage for recovery; never overwrite it.
+   setBackupStatus("Saved playlists could not be loaded. Existing storage was left unchanged.");
+  }
+ },[]);
+ useEffect(()=>{if(!playlistsHydrated)return;try{localStorage.setItem("mp3-shelf-playlists",JSON.stringify(playlists))}catch{setBackupStatus("Could not save playlists. Check available device storage.")}},[playlists,playlistsHydrated]);
  useEffect(()=>()=>{if(audioUrl)URL.revokeObjectURL(audioUrl)},[audioUrl]);
  useEffect(()=>{const element=audio.current as AirPlayAudio|null;if(!element)return;element.setAttribute("x-webkit-airplay","allow");const isiOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);setSupportsVolume(!isiOS);setAirPlayAvailable(typeof element.webkitShowPlaybackTargetPicker==="function");const update=()=>setAirPlayActive(Boolean(element.webkitCurrentPlaybackTargetIsWireless));element.addEventListener("webkitcurrentplaybacktargetiswirelesschanged",update);return()=>element.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged",update)},[audioUrl]);
  const playlist=playlists.find(item=>item.id===activePlaylist),queue=useMemo(()=>playlist?tracks.filter(track=>playlist.trackIds.includes(track.id)):tracks,[playlist,tracks]),visible=useMemo(()=>queue.filter(track=>`${track.name} ${track.artist??""}`.toLowerCase().includes(query.toLowerCase().trim())),[queue,query]);
