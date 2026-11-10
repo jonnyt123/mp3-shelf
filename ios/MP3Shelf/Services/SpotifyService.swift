@@ -328,6 +328,9 @@ final class SpotifyService: NSObject, ObservableObject {
         // nonpositive lifetime would otherwise appear connected and trigger
         // repeated refresh attempts on every playlist request.
         guard !decoded.access_token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              // A token response with an unexpected scheme cannot be sent as
+              // a Bearer credential. Older fixture responses may omit the field.
+              decoded.token_type == nil || decoded.token_type?.lowercased() == "bearer",
               (1...86_400).contains(decoded.expires_in),
               let refresh = decoded.refresh_token ?? oldRefresh,
               !refresh.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -443,6 +446,7 @@ private struct SpotifyArtist: Decodable { let name: String }
 private struct SpotifyAlbum: Decodable { let name: String }
 private struct SpotifyTokenResponse: Decodable {
     let access_token: String
+    let token_type: String?
     let refresh_token: String?
     let expires_in: Int
 }
