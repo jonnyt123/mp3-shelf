@@ -47,7 +47,9 @@ export function evaluateIdentity({ current, previous, aliased, project, sha }) {
 }
 
 export function classifyProbes(probes) {
-  if (!Array.isArray(probes) || probes.length !== 3) return 'unverified';
+  if (!Array.isArray(probes) || probes.length !== 3 ||
+      probes.some(p => !p || typeof p !== 'object' || Array.isArray(p) ||
+        !Number.isInteger(p.root) || !Number.isInteger(p.worker))) return 'unverified';
   if (probes.every(p => p.root === 200 && p.worker === 200 && p.marker === true)) return 'healthy';
   // Only a persistent failure of the SAME endpoint can justify rollback.
   // Auth/SSO, network failures, or alternating transient errors on either
