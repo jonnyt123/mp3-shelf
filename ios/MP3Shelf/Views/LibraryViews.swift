@@ -693,7 +693,13 @@ struct PlaylistsView: View {
         }
         .alert("New Playlist", isPresented: $showCreate) {
             TextField("Playlist name", text: $newName)
-            Button("Create") { library.createPlaylist(newName); newName = "" }
+            Button("Create") {
+                let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                library.createPlaylist(name)
+                newName = ""
+            }
+            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) { newName = "" }
         } message: { Text("Songs stay on your device.") }
         .alert("Rename Playlist", isPresented: Binding(
