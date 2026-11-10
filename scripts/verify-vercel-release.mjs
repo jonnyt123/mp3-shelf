@@ -52,7 +52,10 @@ export function classifyProbes(probes) {
   if (!Array.isArray(probes) || probes.length !== 3 ||
       probes.some(p => !p || typeof p !== 'object' || Array.isArray(p) ||
         !Number.isInteger(p.root) || !Number.isInteger(p.worker))) return 'unverified';
-  if (probes.every(p => p.root === 200 && p.worker === 200 && p.marker === true)) return 'healthy';
+  // A caller-provided marker is not proof that either endpoint's content was
+  // validated. Require independent, explicit validation of both responses.
+  if (probes.every(p => p.root === 200 && p.worker === 200 &&
+      p.rootValid === true && p.workerValid === true && p.marker === true)) return 'healthy';
   // Only a persistent failure of the SAME endpoint can justify rollback.
   // Auth/SSO, network failures, or alternating transient errors on either
   // endpoint make the entire probe sequence inconclusive.
