@@ -633,6 +633,18 @@ struct PlaylistsView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("\(list.name), \(list.trackIDs.count) songs offline, \(list.missingTracks.count) still to find")
+                                // VoiceOver users should not need to discover a
+                                // long press to manage a playlist.
+                                .accessibilityAction(named: "Rename playlist") {
+                                    renamedName = list.name
+                                    pendingRename = list
+                                }
+                                .accessibilityAction(named: "Make local copy") {
+                                    library.duplicatePlaylist(list.id)
+                                }
+                                .accessibilityAction(named: "Delete playlist") {
+                                    pendingDelete = list
+                                }
                                 .contextMenu {
                                     Button {
                                         renamedName = list.name
