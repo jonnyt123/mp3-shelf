@@ -81,6 +81,41 @@ export function parseArguments(argv) {
   return result;
 }
 
+// Read only the first bounded bytes of a health response. A broken deployment
+// can serve arbitrarily large HTML/JS; response.text() buffers it all first.
+export async function readProbeBody(response, limit = 120000) {
+  if (!response.ok) return '';
+  const declared = response.headers?.get?.('content-length');
+  if (declared !== null && declared !== undefined && declared !== '') {
+    const size = Number(declared);
+    if (!Number.isSafeInteger(size) || size < 0 || size > limit) throw Error('Oversized or invalid health response.');
+  }
+  if (!response.body?.getReader) {
+    // Compatibility with lightweight injected test responses only.
+    const body = await response.text();
+    if (Buffer.byteLength(body, 'utf8') > limit) throw Error('Oversized health response.');
+    return body;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) throw Error('Oversized health response.');
+      chunks.push(value);
+    }
+    return new TextDecoder('utf-8', { fatal: true }).decode(
+      Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), total)
+    );
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
   validateInputs(args);
   const token = process.env.VERCEL_TOKEN;
@@ -101,7 +136,7 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
     try {
       const response = await fetcher(`https://${args.domain}${path}`, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(10000) });
       const type = response.headers?.get?.('content-type')?.split(';', 1)[0]?.trim()?.toLowerCase() ?? '';
-      return { status: response.status, type, body: response.ok ? (await response.text()).slice(0, 120000) : '' };
+      return { status: response.status, type, body: await readProbeBody(response) };
     } catch { return { status: 0, type: '', body: '' }; }
   };
   const probes = [];
