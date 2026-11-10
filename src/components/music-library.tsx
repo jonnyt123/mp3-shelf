@@ -4,7 +4,7 @@ import{nextTrackId,previousTrackId,RepeatMode}from"@/lib/queue";
 import{playerGesture}from"@/lib/gestures";
 import{createLibraryBackup,parseLibraryBackup}from"@/lib/backup";
 import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,Track}from"@/lib/tracks";
-import{parseStoredPlaylists,persistRestoredPlaylists,selectPlaylistTracks}from"@/lib/playlist-storage";
+import{cancelPlaylistRestore,parseStoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore}from"@/lib/playlist-storage";
 type Playlist={id:string;name:string;trackIds:string[]};
 type StorageStats={usage:number;quota:number;persisted:boolean|null};
 type AirPlayAudio=HTMLAudioElement&{webkitShowPlaybackTargetPicker?:()=>void;webkitCurrentPlaybackTargetIsWireless?:boolean};
@@ -16,17 +16,14 @@ export function MusicLibrary(){
  const refresh=async()=>setTracks(await listTracks());
  const refreshStorage=async()=>{try{const estimate=await navigator.storage?.estimate?.(),persisted=typeof navigator.storage?.persisted==="function"?await navigator.storage.persisted():null;setStorageStats({usage:estimate?.usage??0,quota:estimate?.quota??0,persisted})}catch{setStorageStats({usage:0,quota:0,persisted:null})}};
  useEffect(()=>{
-  void refresh().catch(()=>setBackupStatus("Could not load the offline library. Your saved files have not been changed.")).finally(()=>setBusy(false));
-  // Never persist the initial empty React state before reading the saved
-  // playlists. A crash between those effects would otherwise erase them.
-  try{
-   setPlaylists(parseStoredPlaylists(localStorage.getItem("mp3-shelf-playlists")));
+  // Reconcile crash-interrupted restores before any playlist state is writable.
+  void listTracks().then(savedTracks=>{
+   setTracks(savedTracks);
+   const recovered=recoverPlaylistRestore(localStorage,new Set(savedTracks.map(track=>track.id)),"mp3-shelf-playlists");
+   setPlaylists(recovered??parseStoredPlaylists(localStorage.getItem("mp3-shelf-playlists")));
    setOnboarding(!localStorage.getItem("mp3-shelf-onboarded"));
    setPlaylistsHydrated(true);
-  }catch{
-   // Preserve damaged or inaccessible storage for recovery; never overwrite it.
-   setBackupStatus("Saved playlists could not be loaded. Existing storage was left unchanged.");
-  }
+  }).catch(error=>setBackupStatus(error instanceof Error?error.message:"Could not recover saved playlists. Existing data was left unchanged.")).finally(()=>setBusy(false));
  },[]);
  useEffect(()=>{if(!playlistsHydrated)return;try{localStorage.setItem("mp3-shelf-playlists",JSON.stringify(playlists))}catch{setBackupStatus("Could not save playlists. Check available device storage.")}},[playlists,playlistsHydrated]);
  useEffect(()=>()=>{if(audioUrl)URL.revokeObjectURL(audioUrl)},[audioUrl]);
@@ -38,7 +35,7 @@ export function MusicLibrary(){
  async function onImport(event:ChangeEvent<HTMLInputElement>){const files=Array.from(event.target.files??[]);if(!files.length)return;setBusy(true);try{await importTracks(files);await refresh()}catch(error){setBackupStatus(error instanceof Error?`Import failed: ${error.message}`:"Import failed. Existing music was not removed.")}finally{setBusy(false);event.target.value=""}}
  function openStorage(){setStorageOpen(true);setBackupStatus("");void refreshStorage()}
  function exportBackup(){setTransferBusy(true);setBackupStatus("");try{const backup=createLibraryBackup(tracks,playlists),url=URL.createObjectURL(backup),link=document.createElement("a");link.href=url;link.download=`mp3-shelf-${new Date().toISOString().slice(0,10)}.mp3shelf`;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);setBackupStatus(`Backup ready · ${formatBytes(backup.size)}`)}catch(error){setBackupStatus(error instanceof Error?error.message:"Could not create the backup.")}finally{setTransferBusy(false)}}
- async function restoreBackup(event:ChangeEvent<HTMLInputElement>){const file=event.target.files?.[0];if(!file)return;setTransferBusy(true);setBackupStatus("Checking backup…");try{const backup=await parseLibraryBackup(file);if(!playlistsHydrated)throw new Error("Saved playlists are unavailable. Restore was stopped to protect existing data.");const addedTracks=await restoreTracks(backup.tracks);const restoredPlaylists=persistRestoredPlaylists(localStorage,"mp3-shelf-playlists",backup.playlists);setPlaylists(restoredPlaylists);await refresh();await refreshStorage();setBackupStatus(`Added ${addedTracks} new ${addedTracks===1?"track":"tracks"} (${backup.tracks.length-addedTracks} already saved); processed ${backup.playlists.length} ${backup.playlists.length===1?"playlist":"playlists"}.`)}catch(error){setBackupStatus(error instanceof Error?error.message:"Could not restore this backup.")}finally{setTransferBusy(false);event.target.value=""}}
+ async function restoreBackup(event:ChangeEvent<HTMLInputElement>){const file=event.target.files?.[0];if(!file)return;setTransferBusy(true);setBackupStatus("Checking backup…");try{const backup=await parseLibraryBackup(file);if(!playlistsHydrated)throw new Error("Saved playlists are unavailable. Restore was stopped to protect existing data.");stagePlaylistRestore(localStorage,backup.tracks,backup.playlists);let addedTracks:number;try{addedTracks=await restoreTracks(backup.tracks)}catch(error){cancelPlaylistRestore(localStorage);throw error}const restoredPlaylists=recoverPlaylistRestore(localStorage,new Set((await listTracks()).map(track=>track.id)),"mp3-shelf-playlists");if(!restoredPlaylists)throw new Error("Restore journal was not saved.");setPlaylists(restoredPlaylists);await refresh();await refreshStorage();setBackupStatus(`Added ${addedTracks} new ${addedTracks===1?"track":"tracks"} (${backup.tracks.length-addedTracks} already saved); processed ${backup.playlists.length} ${backup.playlists.length===1?"playlist":"playlists"}.`)}catch(error){setBackupStatus(error instanceof Error?error.message:"Could not restore this backup.")}finally{setTransferBusy(false);event.target.value=""}}
  function play(track:Track){if(audioUrl)URL.revokeObjectURL(audioUrl);setElapsed(0);setDuration(0);setCurrent(track);setAudioUrl(URL.createObjectURL(track.blob))}
  function move(direction:"next"|"previous"){if(!current)return;const ids=queue.map(track=>track.id),id=direction==="next"?nextTrackId(ids,current.id,{shuffle,repeat}):previousTrackId(ids,current.id),target=tracks.find(track=>track.id===id);if(target)play(target)}
  async function remove(track:Track){await removeTrack(track.id);setPlaylists(items=>items.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==track.id)})));if(current?.id===track.id){setCurrent(null);setAudioUrl(undefined)}await refresh()}
