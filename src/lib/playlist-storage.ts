@@ -55,7 +55,9 @@ export function stagePlaylistRestore(storage:Pick<Storage,"getItem"|"setItem">,t
  parseStoredPlaylists(JSON.stringify(playlists));
  const ids=tracks.map(track=>track.id);
  if(ids.some(id=>typeof id!=="string"||!id.trim())||new Set(ids).size!==ids.length)throw new Error("Invalid backup track IDs.");
- const intent=JSON.stringify({version:1,trackIds:ids,playlists} satisfies RestoreJournal);\n if(pending!==null){if(pending!==intent)throw new Error("Finish the pending backup restore using the original backup before importing another.");return}\n storage.setItem(RESTORE_JOURNAL_KEY,intent);
+ const intent=JSON.stringify({version:1,trackIds:ids,playlists} satisfies RestoreJournal);
+ if(pending!==null){if(pending!==intent)throw new Error("Finish the pending backup restore using the original backup before importing another.");return}
+ storage.setItem(RESTORE_JOURNAL_KEY,intent);
 }
 
 /** Never publish playlist references until every backup track is present.
