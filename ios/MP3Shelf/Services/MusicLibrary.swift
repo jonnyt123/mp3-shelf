@@ -382,6 +382,9 @@ final class MusicLibrary: ObservableObject {
             }
             if let temporary { try? manager.removeItem(at: temporary) }
         }
+        // Track imports above are individually durable. Playlist edits below
+        // are not: retain the last committed snapshot until their final write.
+        let committedPlaylists = playlists
         for item in archive.manifest.playlists {
             // Web backups use string playlist IDs, not necessarily UUIDs.
             // Keep their source ID so restoring the same archive again (or
@@ -429,9 +432,18 @@ final class MusicLibrary: ObservableObject {
         // The ordinary save() helper logs failures because most UI edits are
         // synchronous, but backup restore is throwing and must report storage
         // exhaustion or file-protection errors to its caller.
-        reconcileMissingSongs()
-        try requireLibraryPersistence()
-        try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
+        // Do not call reconcileMissingSongs() here: it calls save(), which
+        // swallows write failures and could publish a partially restored catalog.
+        // Reconcile in memory, then commit exactly once. A failed commit must
+        // leave the active playlists identical to their last durable state.
+        playlists = reconciledPlaylists(using: tracks)
+        do {
+            try requireLibraryPersistence()
+            try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
+        } catch {
+            playlists = committedPlaylists
+            throw error
+        }
         return report
     }
 
