@@ -25,7 +25,7 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
   if(!playlist.id?.trim()||!playlist.name?.trim())throw new Error("Cannot back up a playlist without an ID and name.");
   if(playlistIds.has(playlist.id))throw new Error("Duplicate playlist ID in library backup.");
   playlistIds.add(playlist.id);
-  if(!Array.isArray(playlist.trackIds)||!playlist.trackIds.every(id=>typeof id==="string"))throw new Error("Cannot back up a playlist with invalid track references.");
+  if(!Array.isArray(playlist.trackIds)||!playlist.trackIds.every(id=>typeof id==="string"&&Boolean(id.trim())))throw new Error("Cannot back up a playlist with invalid track references.");
  }
  const payload:Blob[]=[];let offset=0;
  const archivedTracks=tracks.map(track=>{
@@ -81,7 +81,7 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
   return{id,name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName),artist:optionalString(value.artist),album:optionalString(value.album),size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
  });
  const playlists=parsed.playlists.map((value,index)=>{
-  if(!isRecord(value)||!Array.isArray(value.trackIds)||!value.trackIds.every(id=>typeof id==="string"))throw new Error(`Invalid playlist ${index+1} in backup.`);
+  if(!isRecord(value)||!Array.isArray(value.trackIds)||!value.trackIds.every(id=>typeof id==="string"&&Boolean(id.trim())))throw new Error(`Invalid playlist ${index+1} in backup.`);
   const id=requiredString(value.id,"playlist ID");
   if(playlistIds.has(id))throw new Error("Duplicate playlist ID in backup.");
   playlistIds.add(id);
