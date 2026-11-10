@@ -354,7 +354,7 @@ struct LibraryView: View {
             .font(.system(.subheadline, design: .rounded, weight: .semibold))
             .foregroundStyle(selected ? ShelfTheme.background : .white.opacity(0.82))
             .padding(.horizontal, 18)
-            .padding(.vertical, 11)
+            .frame(minHeight: 44)
             .background(selected ? ShelfTheme.accent : ShelfTheme.elevated,
                         in: Capsule())
             .overlay(Capsule().strokeBorder(
@@ -362,6 +362,7 @@ struct LibraryView: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(selected ? "Currently showing \(label.lowercased())" : "Show \(label.lowercased())")
     }
 }
 
