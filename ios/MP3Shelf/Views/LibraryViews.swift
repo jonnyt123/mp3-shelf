@@ -684,19 +684,18 @@ struct PlaylistsView: View {
             Text(list.name)
                 .font(.system(.subheadline, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
-                .lineLimit(1)
-            HStack(spacing: 5) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(ShelfTheme.mint)
-                Text("\(list.trackIDs.count) offline")
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                Label("\(list.trackIDs.count) offline", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(ShelfTheme.subdued)
                 if !list.missingTracks.isEmpty {
-                    Text("· \(list.missingTracks.count) to find")
+                    Text("\(list.missingTracks.count) to find")
                         .foregroundStyle(ShelfTheme.coral)
                 }
             }
-            .font(.caption2.weight(.medium))
-            .lineLimit(1)
+            .font(.caption.weight(.medium))
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
