@@ -75,6 +75,9 @@ final class SpotifyService: NSObject, ObservableObject {
                 session = browser
                 if !browser.start() { continuation.resume(throwing: SpotifyError.loginFailed) }
             }
+            // Only clear the browser belonging to this authorization attempt.
+            // A newer sign-in must retain its own session reference.
+            guard signInGeneration == authorizationGeneration else { throw SpotifyError.notConnected }
             session = nil
             guard callback.scheme == "mp3shelf-auth", callback.host == "callback",
                   let receivedState = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "state" })?.value,
@@ -82,6 +85,11 @@ final class SpotifyService: NSObject, ObservableObject {
             let query = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
             if let error = query.first(where: { $0.name == "error" })?.value { throw SpotifyError.api(error) }
             guard let code = query.first(where: { $0.name == "code" })?.value else { throw SpotifyError.badCallback }
+            // Disconnect can cancel the browser while its completion is queued.
+            // Do not exchange a stale authorization code or perform an OAuth
+            // request after the user has explicitly revoked this sign-in.
+            try Task.checkCancellation()
+            guard signInGeneration == authorizationGeneration else { throw SpotifyError.notConnected }
             let newTokens = try await exchangeToken([
                 "grant_type": "authorization_code", "code": code, "redirect_uri": Self.redirectURI,
                 "client_id": id, "code_verifier": verifier
@@ -97,9 +105,13 @@ final class SpotifyService: NSObject, ObservableObject {
             store(tokens: newTokens)
             try await refreshPlaylists()
         } catch {
-            session = nil
-            if (error as NSError).code != ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                message = error.localizedDescription
+            // A superseded attempt must not clear a newer browser or publish
+            // a stale error after disconnect/reconnect.
+            if signInGeneration == authorizationGeneration {
+                session = nil
+                if (error as NSError).code != ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                    message = error.localizedDescription
+                }
             }
         }
     }
