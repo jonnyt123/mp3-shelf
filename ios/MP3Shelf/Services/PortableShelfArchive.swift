@@ -226,9 +226,11 @@ enum PortableShelfArchive {
             }
         }
         mediaRanges.sort { $0.start < $1.start }
-        for index in 1..<mediaRanges.count {
-            guard mediaRanges[index - 1].end <= mediaRanges[index].start else {
-                throw ArchiveError.invalidRange
+        if mediaRanges.count > 1 {
+            for index in 1..<mediaRanges.count {
+                guard mediaRanges[index - 1].end <= mediaRanges[index].start else {
+                    throw ArchiveError.invalidRange
+                }
             }
         }
         var playlistIDs = Set<String>()
