@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {parseStoredPlaylists,selectPlaylistTracks} from "./playlist-storage";
+import {parseStoredPlaylists,persistRestoredPlaylists,selectPlaylistTracks} from "./playlist-storage";
 describe("persistent playlist hydration",()=>{
  it("loads existing playlists without dropping order or track references",()=>{
   const saved=[{id:"mix",name:"Road trip",trackIds:["a","b"]}];
@@ -22,5 +22,28 @@ describe("large offline playlist selection",()=>{
   const result=selectPlaylistTracks(tracks,ids);
   expect(result).toHaveLength(10000);
   expect(result[9999]).toBe(tracks[9999]);
+ });
+});
+
+describe("playlist restore commit",()=>{
+ it("preserves existing order and overwrites matching IDs after a successful write",()=>{
+  const storage=new Map([["playlists",JSON.stringify([{id:"existing",name:"Old",trackIds:["a"]}])]]);
+  const adapter={getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>{storage.set(key,value)}};
+  const next=persistRestoredPlaylists(adapter,"playlists",[{id:"existing",name:"Updated",trackIds:["b"]},{id:"new",name:"New",trackIds:[]}]);
+  expect(next).toEqual([{id:"existing",name:"Updated",trackIds:["b"]},{id:"new",name:"New",trackIds:[]}]);
+  expect(parseStoredPlaylists(storage.get("playlists")!)).toEqual(next);
+ });
+ it("does not claim success or replace the existing playlists when storage is full",()=>{
+  const saved=JSON.stringify([{id:"safe",name:"Saved",trackIds:["audio"]}]);
+  let writes=0;
+  const storage={getItem:()=>saved,setItem:()=>{writes++;throw new DOMException("Storage full","QuotaExceededError")}};
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[{id:"restored",name:"Restored",trackIds:[]}])).toThrow();
+  expect(writes).toBe(1);
+  expect(storage.getItem()).toBe(saved);
+ });
+ it("refuses to overwrite malformed existing playlists",()=>{
+  let wrote=false;
+  expect(()=>persistRestoredPlaylists({getItem:()=>"{bad",setItem:()=>{wrote=true}},"playlists",[])).toThrow();
+  expect(wrote).toBe(false);
  });
 });
