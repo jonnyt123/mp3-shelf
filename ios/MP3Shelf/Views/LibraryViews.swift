@@ -44,7 +44,31 @@ struct LibraryView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(ShelfTheme.accent)
         }
+        .frame(minHeight: 44)
         .accessibilityLabel("Sort songs by \(sortMode.rawValue)")
+        .accessibilityHint("Choose the order of songs in your library")
+    }
+
+    private var filterControls: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 10) {
+                    filterChoices
+                }
+            } else {
+                HStack(spacing: 10) {
+                    filterChoices
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private var filterChoices: some View {
+        filterButton("All music", selected: !favoritesOnly) { favoritesOnly = false }
+        filterButton("Favorites", symbol: "heart.fill", selected: favoritesOnly) {
+            favoritesOnly = true
+        }
     }
 
     private var browsingPlaybackControls: some View {
@@ -96,16 +120,7 @@ struct LibraryView: View {
                                 sortMenu
                             }
                         }
-                        HStack(spacing: 10) {
-                            filterButton("All music", selected: !favoritesOnly) {
-                                favoritesOnly = false
-                            }
-                            filterButton("Favorites", symbol: "heart.fill",
-                                         selected: favoritesOnly) {
-                                favoritesOnly = true
-                            }
-                            Spacer()
-                        }
+                        filterControls
                         browsingPlaybackControls
                         if displayed.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
@@ -278,13 +293,7 @@ struct LibraryView: View {
                             .scrollIndicators(.hidden)
                         }
                     }
-                    HStack(spacing: 10) {
-                        filterButton("All music", selected: !favoritesOnly) { favoritesOnly = false }
-                        filterButton("Favorites", symbol: "heart.fill",
-                                     selected: favoritesOnly) { favoritesOnly = true }
-                        Spacer(minLength: 0)
-                    }
-                    .accessibilityElement(children: .contain)
+                    filterControls
 
                     VStack(alignment: .leading, spacing: 13) {
                         HStack(spacing: 12) {
