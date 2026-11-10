@@ -447,16 +447,31 @@ final class MusicLibrary: ObservableObject {
     }
 
     func importLyrics(from url: URL, for trackID: UUID) throws {
+        // Do not overwrite an existing sidecar while protected storage or
+        // catalog persistence is unavailable. A failed save must leave the
+        // previous lyrics and their persisted reference untouched.
+        try requireLibraryPersistence()
         guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         guard ["lrc", "txt"].contains(url.pathExtension.lowercased()) else { throw LyricsError.unsupported }
         let data = try Data(contentsOf: url)
         guard data.count <= 512_000, String(data: data, encoding: .utf8) != nil else { throw LyricsError.unsupported }
-        let filename = trackID.uuidString + ".lrc"
-        try data.write(to: lyricsDirectory.appendingPathComponent(filename), options: .atomic)
-        tracks[index].lyricsFileName = filename
-        save()
+
+        let filename = trackID.uuidString + "-" + UUID().uuidString + ".lrc"
+        let destination = lyricsDirectory.appendingPathComponent(filename)
+        try data.write(to: destination, options: .atomic)
+        do {
+            var updatedTracks = tracks
+            updatedTracks[index].lyricsFileName = filename
+            try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+            tracks = updatedTracks
+        } catch {
+            // Only delete the new, unreferenced sidecar. The previous lyrics
+            // and catalog remain available for recovery.
+            try? manager.removeItem(at: destination)
+            throw error
+        }
     }
 
     private func refreshTrackIndexIfNeeded() {
