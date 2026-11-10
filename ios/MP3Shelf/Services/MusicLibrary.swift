@@ -1150,6 +1150,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func rename(_ track: MusicTrack, title: String, artist: String) {
+        guard isLibraryPersistenceSafe else { return }
         guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanTitle.isEmpty else { return }
@@ -1159,12 +1160,14 @@ final class MusicLibrary: ObservableObject {
     }
 
     func toggleFavorite(_ id: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
         tracks[index].isFavorite.toggle()
         save()
     }
 
     func removeTrack(_ id: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         guard let track = song(with: id) else { return }
         try? manager.removeItem(at: fileURL(for: track))
         if let artwork = track.artworkFileName {
@@ -1180,6 +1183,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func createPlaylist(_ name: String) {
+        guard isLibraryPersistenceSafe else { return }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
         playlists.append(MusicPlaylist(name: clean))
@@ -1187,12 +1191,14 @@ final class MusicLibrary: ObservableObject {
     }
 
     func duplicatePlaylist(_ id: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         guard let original = playlists.first(where: { $0.id == id }) else { return }
         playlists.append(original.localCopy())
         save()
     }
 
     func renamePlaylist(_ id: UUID, to name: String) {
+        guard isLibraryPersistenceSafe else { return }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, let index = playlists.firstIndex(where: { $0.id == id }) else { return }
         playlists[index].name = clean
@@ -1200,6 +1206,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func deletePlaylist(_ id: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         stopBackgroundTransfers(for: id)
         playlists.removeAll { $0.id == id }
         discoveryJobs.removeAll { $0.playlistID == id }
@@ -1208,6 +1215,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func addTrack(_ trackID: UUID, to playlistID: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }),
               !playlists[index].trackIDs.contains(trackID) else { return }
         playlists[index].trackIDs.append(trackID)
@@ -1215,6 +1223,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func removeTrack(_ trackID: UUID, from playlistID: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].trackIDs.removeAll { $0 == trackID }
         if let track = song(with: trackID),
