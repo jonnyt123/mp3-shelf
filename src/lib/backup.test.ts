@@ -40,4 +40,14 @@ describe("MP3 Shelf backups",()=>{
   await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Empty track 1 audio");
  });
 
+ it("refuses to export records that the restore parser would reject",()=>{
+  const makeTrack=(id:string,bytes:number[]):Track=>({id,name:"Song",size:bytes.length,type:"audio/mpeg",importedAt:123,blob:new Blob([new Uint8Array(bytes)])});
+  const song=makeTrack("song-1",[1,2,3]);
+  expect(()=>createLibraryBackup([song,makeTrack("song-1",[4])],[])).toThrow("Duplicate track ID");
+  expect(()=>createLibraryBackup([makeTrack("empty",[])],[])).toThrow("empty audio");
+  expect(()=>createLibraryBackup([{...song,artwork:new Blob([])}],[])).toThrow("empty artwork");
+  expect(()=>createLibraryBackup([song],[{id:"mix",name:"Mix",trackIds:["song-1"]},{id:"mix",name:"Other",trackIds:[]}])).toThrow("Duplicate playlist ID");
+  expect(()=>createLibraryBackup([{...song,name:"  "}],[])).toThrow("without an ID and name");
+ });
+
 });
