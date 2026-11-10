@@ -657,7 +657,8 @@ struct PlaylistsView: View {
                                     playlistCard(list, index: index)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("\(list.name), \(list.trackIDs.count) songs offline, \(list.missingTracks.count) still to find")
+                                .accessibilityLabel("\(list.name), \(list.trackIDs.count) saved songs, \(list.missingTracks.count) recordings still to find")
+                                .accessibilityHint("Open playlist to see songs and download status")
                                 // VoiceOver users should not need to discover a
                                 // long press to manage a playlist.
                                 .accessibilityAction(named: "Rename playlist") {
@@ -779,7 +780,7 @@ struct PlaylistsView: View {
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 3) {
-                Label("\(list.trackIDs.count) offline", systemImage: "checkmark.circle.fill")
+                Label("\(list.trackIDs.count) saved", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(ShelfTheme.subdued)
                 if !list.missingTracks.isEmpty {
                     Text("\(list.missingTracks.count) to find")
