@@ -4,7 +4,7 @@ import{nextTrackId,previousTrackId,RepeatMode}from"@/lib/queue";
 import{playerGesture}from"@/lib/gestures";
 import{createLibraryBackup,parseLibraryBackup}from"@/lib/backup";
 import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,Track}from"@/lib/tracks";
-import{commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore}from"@/lib/playlist-storage";
+import{commitPlaylistEdit as persistPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore}from"@/lib/playlist-storage";
 type Playlist={id:string;name:string;trackIds:string[]};
 type StorageStats={usage:number;quota:number;persisted:boolean|null};
 type AirPlayAudio=HTMLAudioElement&{webkitShowPlaybackTargetPicker?:()=>void;webkitCurrentPlaybackTargetIsWireless?:boolean};
@@ -25,7 +25,7 @@ export function MusicLibrary(){
    setPlaylistsHydrated(true);
   }).catch(error=>setBackupStatus(error instanceof Error?error.message:"Could not recover saved playlists. Existing data was left unchanged.")).finally(()=>setBusy(false));
  },[]);
- function commitPlaylistEdit(next:Playlist[]){if(!playlistsHydrated){setBackupStatus("Saved playlists are unavailable. Changes were not applied.");return false}try{setPlaylists(commitPlaylistEdit(localStorage,"mp3-shelf-playlists",next));return true}catch{setBackupStatus("Could not save playlists. Your playlist change was not applied.");return false}}
+ function commitPlaylistEdit(next:Playlist[]){if(!playlistsHydrated){setBackupStatus("Saved playlists are unavailable. Changes were not applied.");return false}try{setPlaylists(persistPlaylistEdit(localStorage,"mp3-shelf-playlists",next));return true}catch{setBackupStatus("Could not save playlists. Your playlist change was not applied.");return false}}
  useEffect(()=>()=>{if(audioUrl)URL.revokeObjectURL(audioUrl)},[audioUrl]);
  useEffect(()=>{const element=audio.current as AirPlayAudio|null;if(!element)return;element.setAttribute("x-webkit-airplay","allow");const isiOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);setSupportsVolume(!isiOS);setAirPlayAvailable(typeof element.webkitShowPlaybackTargetPicker==="function");const update=()=>setAirPlayActive(Boolean(element.webkitCurrentPlaybackTargetIsWireless));element.addEventListener("webkitcurrentplaybacktargetiswirelesschanged",update);return()=>element.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged",update)},[audioUrl]);
  const playlist=playlists.find(item=>item.id===activePlaylist),queue=useMemo(()=>playlist?selectPlaylistTracks(tracks,playlist.trackIds):tracks,[playlist,tracks]),visible=useMemo(()=>queue.filter(track=>`${track.name} ${track.artist??""}`.toLowerCase().includes(query.toLowerCase().trim())),[queue,query]);
