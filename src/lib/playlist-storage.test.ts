@@ -78,7 +78,18 @@ describe("crash-safe backup restoration journal",()=>{
   expect(JSON.parse(storage.getItem("playlists")!)[0].trackIds).toEqual(["a"]);
   expect(hasPendingPlaylistRestore(storage)).toBe(true);
   expect(()=>stagePlaylistRestore(storage,[{id:"different"}],incoming)).toThrow("original backup");
-  expect(()=>stagePlaylistRestore(storage,[{id:"b"}],incoming)).not.toThrow();
+  expect(stagePlaylistRestore(storage,[{id:"b"}],incoming)).toBe(false);
+ });
+ it("retains an existing interrupted restore journal when the same backup is retried and audio storage fails",()=>{
+  const storage=store();
+  expect(stagePlaylistRestore(storage,[{id:"b"}],incoming)).toBe(true);
+  const original=storage.getItem("mp3-shelf-restore-pending");
+  const newlyStaged=stagePlaylistRestore(storage,[{id:"b"}],incoming);
+  expect(newlyStaged).toBe(false);
+  // A failed retry must not call cancelPlaylistRestore on another run's journal.
+  if(newlyStaged)cancelPlaylistRestore(storage);
+  expect(storage.getItem("mp3-shelf-restore-pending")).toBe(original);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
  });
  it("retains pending recovery after playlist quota failure",()=>{
   const storage=store();
