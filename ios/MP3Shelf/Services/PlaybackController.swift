@@ -194,6 +194,11 @@ final class PlaybackController: NSObject, ObservableObject {
         if outgoingPlayer != nil { cancelFade(); audioPlayer?.volume = 1 }
         audioPlayer?.pause()
         isPlaying = false
+        // A paused player needs no 200 ms polling. Keeping the timer alive
+        // wastes wakeups while the app is backgrounded or the phone is locked.
+        positionTimer?.invalidate()
+        positionTimer = nil
+        currentTime = audioPlayer?.currentTime ?? currentTime
         updateNowPlaying()
     }
 
@@ -325,7 +330,9 @@ final class PlaybackController: NSObject, ObservableObject {
         positionTimer?.invalidate()
         positionTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let player = self.audioPlayer else { return }
+                // A previously queued timer callback can run after pause().
+                // Never restart crossfade or mutate playback state while paused.
+                guard let self, self.isPlaying, let player = self.audioPlayer else { return }
                 self.currentTime = player.currentTime
                 if self.isPlaying && self.playbackError == nil && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
                    self.outgoingPlayer == nil && self.canCrossfade() && player.duration > self.crossfadeSeconds + 1 &&
