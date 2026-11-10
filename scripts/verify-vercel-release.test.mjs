@@ -5,7 +5,7 @@ const sha = 'a'.repeat(40);
 const valid = { deployment: 'dpl_Current123', previous: 'dpl_Previous123', project: 'prj_Shelf123', team: 'team_Account123', sha, domain: 'mp3-shelf.vercel.app' };
 const identity = {
   current: { id: valid.deployment, projectId: valid.project, target: 'production', readyState: 'READY', meta: { githubCommitSha: sha, githubCommitRef: 'main', githubRepo: 'mp3-shelf', githubOrg: 'jonnyt123' } },
-  previous: { id: valid.previous, projectId: valid.project, target: 'production', readyState: 'READY' },
+  previous: { id: valid.previous, projectId: valid.project, target: 'production', readyState: 'READY', meta: { githubCommitSha: 'b'.repeat(40), githubCommitRef: 'main', githubRepo: 'mp3-shelf', githubOrg: 'jonnyt123' } },
   aliased: { id: valid.deployment }, project: valid.project, sha
 };
 test('accepts valid exact SHA-bound production identity', () => { validateInputs(valid); assert.deepEqual(evaluateIdentity(identity), []); });
@@ -104,4 +104,37 @@ test('accepts Vercel deployment responses with nested project id', () => {
     current: { ...identity.current, projectId: undefined, project: { id: valid.project } },
     previous: { ...identity.previous, projectId: undefined, project: { id: valid.project } } };
   assert.deepEqual(evaluateIdentity(fromVercel), []);
+});
+
+test('rejects rollback targets from another repo, branch, missing source or identical SHA', () => {
+  for (const prior of [
+    { ...identity.previous, meta: { ...identity.previous.meta, githubOrg: 'other-owner' } },
+    { ...identity.previous, meta: { ...identity.previous.meta, githubRepo: 'other-repo' } },
+    { ...identity.previous, meta: { ...identity.previous.meta, githubCommitRef: 'feature/unreviewed' } },
+    { ...identity.previous, meta: { ...identity.previous.meta, githubCommitSha: sha } },
+    { ...identity.previous, meta: {} },
+    { ...identity.previous, meta: undefined },
+  ]) {
+    assert.match(evaluateIdentity({ ...identity, previous: prior }).join(' '), /Rollback target.*Git source/);
+  }
+});
+test('rejects unsafe rollback identity before probing or making production writes', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const calls = [];
+    const fetcher = async (url, options = {}) => {
+      calls.push({ url, method: options.method ?? 'GET' });
+      if (url.includes(valid.deployment)) return { ok: true, json: async () => identity.current };
+      if (url.includes(valid.previous)) return { ok: true, json: async () => ({ ...identity.previous, meta: { ...identity.previous.meta, githubOrg: 'other-owner' } }) };
+      if (url.includes(valid.domain)) return { ok: true, json: async () => identity.aliased };
+      throw Error('Production probe or rollback must not be reached');
+    };
+    const result = await runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'BLOCKED_IDENTITY');
+    assert.match(result.errors.join(' '), /Rollback target/);
+    assert.equal(calls.length, 3);
+    assert.equal(calls.filter(c => c.method === 'POST').length, 0);
+  } finally {
+    if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old;
+  }
 });
