@@ -11,7 +11,9 @@ export function validateInputs({ deployment, previous, project, team, sha, domai
   if (!ID.test(project ?? '') || !project.startsWith('prj_')) throw Error('Invalid project ID.');
   if (!ID.test(team ?? '') || !team.startsWith('team_')) throw Error('Invalid team ID.');
   if (!SHA.test(sha ?? '')) throw Error('Expected exact 40-character Git SHA.');
-  if (typeof domain !== 'string' || !/^[a-z\d](?:[a-z\d.-]*[a-z\d])?$/.test(domain) || !domain.includes('.') || domain.includes('..')) throw Error('Expected a production hostname, not a URL.');
+  // Never probe a caller-selected hostname to authorize changes to this project's production alias.
+  // A healthy or failing unrelated host is not evidence about MP3 Shelf.
+  if (domain !== 'mp3-shelf.vercel.app') throw Error('Expected the canonical MP3 Shelf production hostname.');
 }
 
 export function evaluateIdentity({ current, previous, aliased, project, sha }) {
