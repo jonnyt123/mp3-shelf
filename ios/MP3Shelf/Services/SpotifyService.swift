@@ -26,6 +26,12 @@ final class SpotifyService: NSObject, ObservableObject {
     // A generation identifies the authorization session even if a provider
     // rotates back to the same refresh token after disconnect/reconnect.
     private var authorizationGeneration: UInt64 = 0
+    // Spotify API bearer credentials must not follow an HTTP redirect to a
+    // different origin. URLSession.shared follows redirects automatically.
+    private let apiRedirectGuard = SpotifyAPIRedirectGuard()
+    private lazy var apiSession = URLSession(configuration: .ephemeral,
+                                             delegate: apiRedirectGuard,
+                                             delegateQueue: nil)
 
     override init() {
         clientID = UserDefaults.standard.string(forKey: Self.clientIDKey) ?? ""
@@ -188,7 +194,7 @@ final class SpotifyService: NSObject, ObservableObject {
             var request = URLRequest(url: url)
             request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 30
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await apiSession.data(for: request)
             try Task.checkCancellation()
             guard generation == authorizationGeneration, self.token != nil else { throw SpotifyError.notConnected }
             guard let response = response as? HTTPURLResponse else { throw SpotifyError.api("No HTTP response.") }
@@ -379,5 +385,19 @@ private enum SpotifyError: LocalizedError {
         case .loginFailed: return "Could not start the Spotify sign-in page."
         case .api(let description): return description
         }
+    }
+}
+
+    
+/// Refuse any redirected authenticated API request. Spotify's pagination
+/// already supplies explicit next-page URLs which are separately validated.
+/// Even a same-host redirect is rejected to avoid silently changing the
+/// resource, path or credentials carried by an authorized request.
+private final class SpotifyAPIRedirectGuard: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
