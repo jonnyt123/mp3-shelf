@@ -354,12 +354,23 @@ final class MusicLibrary: ObservableObject {
             // Web backups use string playlist IDs, not necessarily UUIDs.
             // Keep their source ID so restoring the same archive again (or
             // after an app restart) does not create another copy.
-            let resolvedTrackIDs = item.trackIds.compactMap { restoredIDs[$0] }
+            // Different archive IDs can resolve to the same local recording
+            // after byte-identical duplicate reuse. Keep one occurrence in the
+            // playlist, in first-seen archive order, even for malformed backups.
+            var resolvedTrackIDs: [UUID] = []
+            var resolvedSet = Set<UUID>()
+            for backupID in item.trackIds {
+                if let localID = restoredIDs[backupID], resolvedSet.insert(localID).inserted {
+                    resolvedTrackIDs.append(localID)
+                }
+            }
             if let index = playlists.firstIndex(where: { $0.matchesPortableBackupID(item.id) }) {
                 // A previous restore might have imported only some recordings.
                 // Complete missing links on retry, preserving user-customized order.
+                // A set also avoids quadratic lookups on very large playlists.
+                var linked = Set(playlists[index].trackIDs)
                 var addedLinks = 0
-                for id in resolvedTrackIDs where !playlists[index].trackIDs.contains(id) {
+                for id in resolvedTrackIDs where linked.insert(id).inserted {
                     playlists[index].trackIDs.append(id)
                     addedLinks += 1
                 }
