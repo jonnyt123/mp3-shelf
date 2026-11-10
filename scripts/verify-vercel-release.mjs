@@ -34,6 +34,14 @@ export function evaluateIdentity({ current, previous, aliased, project, sha }) {
       priorRepo.githubOrg !== 'jonnyt123') {
     errors.push('Rollback target has missing, incorrect or identical Git source identity.');
   }
+  // A distinct main SHA alone does not prove the deployment predates this release.
+  // Never roll traffic "back" to a newer or chronologically ambiguous build.
+  const currentCreated = current?.createdAt ?? current?.created;
+  const previousCreated = previous?.createdAt ?? previous?.created;
+  if (!Number.isSafeInteger(currentCreated) || !Number.isSafeInteger(previousCreated) ||
+      currentCreated <= 0 || previousCreated <= 0 || previousCreated >= currentCreated) {
+    errors.push('Rollback target must have a verified earlier deployment creation time.');
+  }
   if (deploymentId(previous) === deploymentId(current)) errors.push('Rollback target is current deployment.');
   return errors;
 }
