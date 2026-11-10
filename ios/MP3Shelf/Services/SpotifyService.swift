@@ -363,8 +363,7 @@ final class SpotifyService: NSObject, ObservableObject {
               (1...50).contains(limit),
               let offset = params.first(where: { $0.name == "offset" })?.value.flatMap(Int.init),
               offset >= 0,
-              let previousOffset = previous.queryItems?.first(where: { $0.name == "offset" })?.value.flatMap(Int.init) ?? 0,
-              offset > previousOffset,
+              offset > ((previous.queryItems?.first(where: { $0.name == "offset" })?.value).flatMap(Int.init) ?? 0),
               let url = components.url else {
             throw SpotifyError.api("Spotify returned an unexpected pagination URL.")
         }
