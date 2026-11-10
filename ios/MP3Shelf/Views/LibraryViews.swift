@@ -260,13 +260,14 @@ struct LibraryView: View {
                                                                   design: .rounded,
                                                                   weight: .semibold))
                                                     .foregroundStyle(.white)
-                                                    .lineLimit(1)
+                                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                                 Text(track.artist)
                                                     .font(.caption)
                                                     .foregroundStyle(ShelfTheme.subdued)
-                                                    .lineLimit(1)
+                                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                             }
-                                            .frame(width: 122, alignment: .leading)
+                                            .frame(width: dynamicTypeSize.isAccessibilitySize ? 190 : 122,
+                                                   alignment: .leading)
                                         }
                                         .buttonStyle(.plain)
                                         .accessibilityLabel("Play \(track.title) by \(track.artist)")
