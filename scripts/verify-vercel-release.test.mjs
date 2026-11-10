@@ -17,6 +17,9 @@ test('rejects preview, stale or cross-project deployments', () => {
 });
 test('rejects unsafe input and unknown arguments', () => {
   assert.throws(() => validateInputs({ ...valid, domain: 'https://evil.example/' }), /hostname/);
+  assert.throws(() => validateInputs({ ...valid, domain: 'unrelated.example.com' }), /hostname/);
+  assert.throws(() => validateInputs({ ...valid, domain: 'mp3-shelf.vercel.app.evil.example' }), /hostname/);
+  assert.throws(() => validateInputs({ ...valid, domain: 'MP3-SHELF.VERCEL.APP' }), /hostname/);
   assert.throws(() => validateInputs({ ...valid, previous: valid.deployment }), /distinct/);
   assert.throws(() => parseArguments(['--auto-rollback']), /deployment/);
   assert.throws(() => parseArguments(['--unknown', 'value']), /Invalid/);
