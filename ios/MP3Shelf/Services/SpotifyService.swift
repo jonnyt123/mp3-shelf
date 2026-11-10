@@ -213,6 +213,18 @@ final class SpotifyService: NSObject, ObservableObject {
     }
 
     private func request<T: Decodable>(_ url: URL) async throws -> T {
+        // This method attaches a bearer token. Reject any unexpected URL at
+        // the final dispatch boundary, including future callers that bypass
+        // playlist pagination validation.
+        guard let destination = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              destination.scheme?.lowercased() == "https",
+              destination.host?.lowercased() == "api.spotify.com",
+              destination.user == nil, destination.password == nil,
+              destination.port == nil || destination.port == 443,
+              destination.fragment == nil,
+              destination.path.hasPrefix("/v1/") else {
+            throw SpotifyError.api("Spotify API URL was rejected before sending credentials.")
+        }
         guard token != nil else { throw SpotifyError.notConnected }
         let generation = authorizationGeneration
         try await ensureValidToken()
