@@ -790,18 +790,11 @@ struct PlaylistDetailView: View {
         return job.isComplete && job.queued == 0 && job.unavailable > 0
     }
 
-    private var offlineSourceCount: Int {
-        guard let playlist else { return 0 }
-        return playlist.sourceOrder.filter {
-            library.hasOfflineRecording(matching: $0)
-        }.count
-    }
-
     /// Report the real, persisted outcome for each song in the imported
     /// Spotify playlist. Downloading is not the same as already saved offline.
-    private func mp3Status(for wish: PlaylistWish, tickets: [BackgroundAudioTicket],
-                           job: SourceDiscoveryJob?, activeWishID: UUID?) -> (text: String, symbol: String) {
-        if library.hasOfflineRecording(matching: wish) {
+    private func mp3Status(for wish: PlaylistWish, isSavedOffline: Bool,
+                           tickets: [BackgroundAudioTicket], job: SourceDiscoveryJob?, activeWishID: UUID?) -> (text: String, symbol: String) {
+        if isSavedOffline {
             return ("Saved offline as an audio file", "checkmark.circle.fill")
         }
         if let ticket = tickets.first(where: {
@@ -876,6 +869,10 @@ struct PlaylistDetailView: View {
     var body: some View {
         List {
             if let playlist {
+                // Single consistent offline snapshot for progress and per-song actions.
+                let savedWishIDs = Set(playlist.sourceOrder.compactMap { wish in
+                    library.hasOfflineRecording(matching: wish) ? wish.id : nil
+                })
                 Section {
                     let availableTracks = library.songs(in: playlist)
                     HStack(alignment: .top, spacing: dynamicTypeSize.isAccessibilitySize ? 10 : 16) {
@@ -930,7 +927,7 @@ struct PlaylistDetailView: View {
                     library.automaticDownloadProgress?.playlistID == playlistID ||
                     BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
                     Section("FIND YOUR MUSIC") {
-                        let savedSourceCount = offlineSourceCount
+                        let savedSourceCount = savedWishIDs.count
                         VStack(alignment: .leading, spacing: 9) {
                             PremiumEyebrow(title: "OFFLINE SOURCE MATCHING", color: ShelfTheme.mint)
                             Text("\(savedSourceCount) of \(playlist.sourceOrder.count) songs saved offline")
@@ -1116,7 +1113,9 @@ struct PlaylistDetailView: View {
                                     .font(.subheadline.bold())
                                 Text(wish.artist)
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                let status = mp3Status(for: wish, tickets: ticketsByWishID[wish.id] ?? [],
+                                let isSavedOffline = savedWishIDs.contains(wish.id)
+                                let status = mp3Status(for: wish, isSavedOffline: isSavedOffline,
+                                                       tickets: ticketsByWishID[wish.id] ?? [],
                                                        job: discoveryJob, activeWishID: activeWishID)
                                 Label(status.text, systemImage: status.symbol)
                                     .font(.caption.weight(.medium))
@@ -1151,13 +1150,13 @@ struct PlaylistDetailView: View {
                                     SongSourceDiagnosticsView(wish: wish, details: details)
                                 }
                                 if let choices = discoveryJob?.recordingCandidates?[wish.id.uuidString],
-                                   !choices.isEmpty, !library.hasOfflineRecording(matching: wish) {
+                                   !choices.isEmpty, !isSavedOffline {
                                     Button("Review recording matches") { reviewingRecording = wish }
                                         .font(.caption.weight(.semibold))
                                         .frame(minHeight: 44)
                                         .accessibilityLabel("Review recording matches for \(wish.title)")
                                 }
-                                if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) == nil {
+                                if !isSavedOffline {
                                     Button { manuallyAdding = wish } label: {
                                         Label("Attach an audio-file link",
                                               systemImage: "link.badge.plus")
