@@ -25,9 +25,14 @@ test('rejects unsafe input and unknown arguments', () => {
   assert.throws(() => parseArguments(['--unknown', 'value']), /Invalid/);
 });
 test('healthy requires three complete checks', () => {
-  const pass = { root: 200, worker: 200, marker: true };
+  const pass = { root: 200, worker: 200, rootValid: true, workerValid: true, marker: true };
   assert.equal(classifyProbes([pass, pass, pass]), 'healthy');
   assert.equal(classifyProbes([pass, pass]), 'unverified');
+  // A forged aggregate marker must never certify a response without both
+  // independently validated HTML and service-worker signatures.
+  assert.equal(classifyProbes(Array(3).fill({ ...pass, rootValid: false })), 'unverified');
+  assert.equal(classifyProbes(Array(3).fill({ ...pass, workerValid: false })), 'unverified');
+  assert.equal(classifyProbes(Array(3).fill({ root: 200, worker: 200, marker: true })), 'unverified');
   assert.equal(classifyProbes([pass, { ...pass, marker: false }, pass]), 'unverified');
 });
 test('repeated 404 and 5xx are rollback-eligible; auth and transient failures are not', () => {
