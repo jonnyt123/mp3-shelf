@@ -143,6 +143,8 @@ final class SpotifyService: NSObject, ObservableObject {
     }
 
     func getTrackList(for playlist: SpotifyPlaylist) async throws -> [PlaylistWish] {
+        guard token != nil else { throw SpotifyError.notConnected }
+        let generation = authorizationGeneration
         guard let encodedID = playlist.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
             throw SpotifyError.badCallback
         }
@@ -154,6 +156,8 @@ final class SpotifyService: NSObject, ObservableObject {
                 throw SpotifyError.api("Spotify returned repeated or excessive track pages.")
             }
             let page: SpotifyPage<SpotifyPlaylistItem> = try await request(url)
+            try Task.checkCancellation()
+            guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
             for entry in page.items {
                 guard let track = entry.item ?? entry.track, track.type == "track" else { continue }
                 let artist = track.artists?.map(\.name).joined(separator: ", ") ?? ""
@@ -165,11 +169,15 @@ final class SpotifyService: NSObject, ObservableObject {
             next = try Self.safeNext(page.next)
             if wishes.count > 20000 { throw SpotifyError.api("The playlist contains too many tracks.") }
         }
+        try Task.checkCancellation()
+        guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
         if wishes.isEmpty { throw SpotifyError.api("No usable songs were returned. Spotify currently limits playlist access to playlists you own or collaborate on.") }
         return wishes
     }
 
     private func request<T: Decodable>(_ url: URL) async throws -> T {
+        guard token != nil else { throw SpotifyError.notConnected }
+        let generation = authorizationGeneration
         try await ensureValidToken()
         // Bound both authorization replay and server-directed rate-limit retries.
         var authorizationRetries = 0
@@ -181,6 +189,8 @@ final class SpotifyService: NSObject, ObservableObject {
             request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 30
             let (data, response) = try await URLSession.shared.data(for: request)
+            try Task.checkCancellation()
+            guard generation == authorizationGeneration, self.token != nil else { throw SpotifyError.notConnected }
             guard let response = response as? HTTPURLResponse else { throw SpotifyError.api("No HTTP response.") }
             switch response.statusCode {
             case 200...299: return try JSONDecoder().decode(T.self, from: data)
