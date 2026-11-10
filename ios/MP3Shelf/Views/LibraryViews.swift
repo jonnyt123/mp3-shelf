@@ -850,6 +850,7 @@ struct PlaylistDetailView: View {
         List {
             if let playlist {
                 Section {
+                    let availableTracks = library.songs(in: playlist)
                     HStack(spacing: 16) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 20)
@@ -874,20 +875,23 @@ struct PlaylistDetailView: View {
                     }
                     .padding(.vertical, 12)
                     HStack(spacing: 12) {
-                        Button { if let first = library.songs(in: playlist).first { playback.play(first, queue: library.songs(in: playlist)) } } label: {
+                        Button {
+                            if let first = availableTracks.first {
+                                playback.play(first, queue: availableTracks)
+                            }
+                        } label: {
                             Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent).tint(ShelfTheme.accent)
                         Button {
-                            let all = library.songs(in: playlist)
-                            if let track = all.randomElement() {
+                            if let track = availableTracks.randomElement() {
                                 playback.isShuffled = true
-                                playback.play(track, queue: all)
+                                playback.play(track, queue: availableTracks)
                             }
                         } label: { Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity) }
                             .buttonStyle(.bordered)
                     }
-                    .disabled(playlist.trackIDs.isEmpty)
+                    .disabled(availableTracks.isEmpty)
                     if playlist.appleMusicLibraryID != nil {
                         Label("Imported from your Apple Music library", systemImage: "music.note.list")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
@@ -1055,8 +1059,12 @@ struct PlaylistDetailView: View {
                     .listRowBackground(ShelfTheme.surface)
                 }
                 Section("AVAILABLE OFFLINE") {
-                    ForEach(library.songs(in: playlist)) { track in
-                        MusicTrackRow(track: track, context: library.songs(in: playlist), renaming: $editing)
+                    // Resolve the playlist once for this render. Calling songs(in:)
+                    // for every row repeatedly scans all playlist IDs and
+                    // creates a new queue for each track in large collections.
+                    let availableTracks = library.songs(in: playlist)
+                    ForEach(availableTracks) { track in
+                        MusicTrackRow(track: track, context: availableTracks, renaming: $editing)
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             .swipeActions {
