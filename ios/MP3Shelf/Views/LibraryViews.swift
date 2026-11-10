@@ -1120,10 +1120,14 @@ struct PlaylistDetailView: View {
                                         ProgressView(value: Double(received), total: Double(total))
                                             .tint(ShelfTheme.accent)
                                             .accessibilityLabel("Download progress for \(wish.title)")
+                                            .accessibilityValue("\(Int(min(100, max(0, Double(received) / Double(total) * 100)))) percent")
                                     }
                                     if ticket.status == .failed || ticket.status == .cancelled {
                                         Button(transfers.isResolvingSource(ticket.id) ? "Refreshing audio source…" : "Retry MP3 download") { transfers.retry(ticket.id) }
                                             .font(.caption.weight(.semibold))
+                                            .frame(minHeight: 44)
+                                            .accessibilityLabel("Retry download for \(wish.title)")
+                                            .accessibilityHint("Try downloading this recording again")
                                             .disabled(!transfers.canRetry(ticket.id))
                                     }
                                     if ticket.status == .queued || ticket.status == .imported {
@@ -1140,6 +1144,8 @@ struct PlaylistDetailView: View {
                                    !choices.isEmpty, !library.hasOfflineRecording(matching: wish) {
                                     Button("Review recording matches") { reviewingRecording = wish }
                                         .font(.caption.weight(.semibold))
+                                        .frame(minHeight: 44)
+                                        .accessibilityLabel("Review recording matches for \(wish.title)")
                                 }
                                 if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) == nil {
                                     Button { manuallyAdding = wish } label: {
@@ -1147,6 +1153,8 @@ struct PlaylistDetailView: View {
                                               systemImage: "link.badge.plus")
                                     }
                                     .font(.caption.weight(.semibold))
+                                    .frame(minHeight: 44)
+                                    .accessibilityLabel("Attach audio-file link for \(wish.title)")
                                     .accessibilityHint("Download a matching audio file and attach it to this missing song.")
                                 }
                                 if let url = wish.spotifyURL, let link = URL(string: url) {
