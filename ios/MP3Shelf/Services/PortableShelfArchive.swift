@@ -254,20 +254,31 @@ enum PortableShelfArchive {
             .appendingPathComponent(UUID().uuidString + "." + ext)
         let input = try FileHandle(forReadingFrom: archive.url)
         defer { try? input.close() }
-        FileManager.default.createFile(atPath: target.path, contents: nil)
-        let output = try FileHandle(forWritingTo: target)
-        defer { try? output.close() }
-        try input.seek(toOffset: archive.payloadOffset + UInt64(part.offset))
-        var remaining = part.length
-        while remaining > 0 {
-            let amount = Int(min(remaining, 64 * 1024))
-            guard let data = try input.read(upToCount: amount), !data.isEmpty else {
-                throw ArchiveError.invalidRange
-            }
-            try output.write(contentsOf: data)
-            remaining -= Int64(data.count)
+        guard part.offset >= 0, part.length > 0, part.length <= maxTrackBytes,
+              UInt64(part.offset) <= UInt64.max - archive.payloadOffset else {
+            throw ArchiveError.invalidRange
         }
-        return target
+        // A backup may be replaced or truncated after open(). Never leave a
+        // partially extracted recording in the temporary directory on failure.
+        FileManager.default.createFile(atPath: target.path, contents: nil)
+        do {
+            let output = try FileHandle(forWritingTo: target)
+            defer { try? output.close() }
+            try input.seek(toOffset: archive.payloadOffset + UInt64(part.offset))
+            var remaining = part.length
+            while remaining > 0 {
+                let amount = Int(min(remaining, 64 * 1024))
+                guard let data = try input.read(upToCount: amount), !data.isEmpty else {
+                    throw ArchiveError.invalidRange
+                }
+                try output.write(contentsOf: data)
+                remaining -= Int64(data.count)
+            }
+            return target
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            throw error
+        }
     }
 
     static func readBytes(_ part: Part, from archive: Opened) throws -> Data {
