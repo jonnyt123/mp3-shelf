@@ -69,14 +69,12 @@ if [[ "$MODE" == node-only || "$MODE" == web || "$MODE" == all ]]; then
   run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs
 fi
 if [[ "$MODE" == web || "$MODE" == all ]]; then
-  if true; then
-    # Always reconcile installed dependencies with the lockfile; an existing
-    # node_modules directory is not proof that dependencies match this SHA.
-    if [[ "$OFFLINE" == true ]]; then
+  # Always reconcile installed dependencies with the lockfile; an existing
+  # node_modules directory is not proof that dependencies match this SHA.
+  if [[ "$OFFLINE" == true ]]; then
       run npm-ci-offline npm ci --offline --no-audit --no-fund
     else
       run npm-ci npm ci --prefer-offline --no-audit --no-fund
-    fi
   fi
   run npm-test npm test
   run npm-typecheck npm run typecheck
