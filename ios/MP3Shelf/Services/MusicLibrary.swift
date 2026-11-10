@@ -1291,7 +1291,31 @@ final class MusicLibrary: ObservableObject {
     func removeTrack(_ id: UUID) {
         guard isLibraryPersistenceSafe else { return }
         guard let track = song(with: id) else { return }
-        try? manager.removeItem(at: fileURL(for: track))
+        // Commit the catalog change before deleting user-owned audio. If the
+        // database is protected, full, or otherwise unwritable, leave both the
+        // recording and its playlist references untouched.
+        let remainingTracks = tracks.filter { $0.id != id }
+        var remainingPlaylists = playlists
+        for index in remainingPlaylists.indices {
+            remainingPlaylists[index].trackIDs.removeAll { $0 == id }
+        }
+        do {
+            try PersistedLibrary(tracks: remainingTracks, playlists: remainingPlaylists)
+                .write(to: databaseURL)
+        } catch {
+            libraryStorageError = "Could not save the music library. The recording was not deleted."
+            print("MP3 Shelf refused to delete audio before saving its catalog: \\(error)")
+            return
+        }
+        tracks = remainingTracks
+        playlists = remainingPlaylists
+        // A crash here may leave an orphan file, never a catalog referencing
+        // audio already deleted. Sidecar removal remains best effort.
+        do {
+            try manager.removeItem(at: fileURL(for: track))
+        } catch {
+            print("MP3 Shelf retained an orphaned audio file after catalog removal: \\(error)")
+        }
         if let artwork = track.artworkFileName {
             artworkCache.removeObject(forKey: artwork as NSString)
             try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artwork))
@@ -1299,8 +1323,6 @@ final class MusicLibrary: ObservableObject {
         if let lyrics = track.lyricsFileName {
             try? manager.removeItem(at: lyricsDirectory.appendingPathComponent(lyrics))
         }
-        tracks.removeAll { $0.id == id }
-        for index in playlists.indices { playlists[index].trackIDs.removeAll { $0 == id } }
         reconcileMissingSongs()
     }
 
