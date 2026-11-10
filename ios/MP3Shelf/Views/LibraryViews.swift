@@ -1167,8 +1167,15 @@ struct PlaylistDetailView: View {
                                     .accessibilityHint("Download a matching audio file and attach it to this missing song.")
                                 }
                                 if let url = wish.spotifyURL, let link = URL(string: url) {
-                                    Link("View original on Spotify", destination: link)
-                                        .font(.caption)
+                                    Link(destination: link) {
+                                        Label("View original on Spotify", systemImage: "arrow.up.right.square")
+                                            .font(.caption.weight(.medium))
+                                            .frame(minHeight: 44, alignment: .leading)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .accessibilityLabel("View \(wish.title) by \(wish.artist) on Spotify")
+                                    .accessibilityHint("Opens the original song outside MP3 Shelf")
                                 }
                             }
                             .padding(.vertical, 5)
