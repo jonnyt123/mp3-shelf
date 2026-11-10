@@ -31,8 +31,8 @@ test('healthy requires three complete checks', () => {
   assert.equal(classifyProbes([pass, { ...pass, marker: false }, pass]), 'unverified');
 });
 test('repeated 404 and 5xx are rollback-eligible; auth and transient failures are not', () => {
-  assert.equal(classifyProbes(Array(3).fill({ root: 503, worker: 200, marker: false })), 'repeatable-server-failure');
-  assert.equal(classifyProbes(Array(3).fill({ root: 200, worker: 404, marker: false })), 'repeatable-server-failure');
+  assert.equal(classifyProbes(Array(3).fill({ root: 503, worker: 200, workerValid: true, marker: false })), 'repeatable-server-failure');
+  assert.equal(classifyProbes(Array(3).fill({ root: 200, worker: 404, rootValid: true, marker: false })), 'repeatable-server-failure');
   assert.equal(classifyProbes(Array(3).fill({ root: 403, worker: 403, marker: false })), 'unverified');
   assert.equal(classifyProbes([{ root: 503, worker: 200 }, { root: 200, worker: 200 }, { root: 503, worker: 200 }]), 'unverified');
   assert.equal(classifyProbes(Array(3).fill({ root: 0, worker: 0 })), 'unverified');
@@ -232,6 +232,29 @@ test('JavaScript with unrelated content cannot impersonate the MP3 Shelf offline
       return net.fetcher(url, options);
     };
     const result = await runReleaseCheck(valid, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'BLOCKED_UNVERIFIED');
+    assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});
+
+test('a persistent 5xx with an invalid 200 sibling endpoint never authorizes rollback', () => {
+  assert.equal(classifyProbes(Array(3).fill({ root: 503, worker: 200, workerValid: false })), 'unverified');
+  assert.equal(classifyProbes(Array(3).fill({ root: 200, worker: 404, rootValid: false })), 'unverified');
+  assert.equal(classifyProbes(Array(3).fill({ root: 503, worker: 200 })), 'unverified');
+});
+
+test('a fake worker returning HTTP 200 during a persistent homepage failure blocks rollback', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork({ bad: true });
+    const fetcher = async (url, options) => {
+      if (new URL(url).pathname === '/sw.js') {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' },
+          text: async () => '<title>MP3 Shelf</title><body>Sign in</body>' };
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} });
     assert.equal(result.status, 'BLOCKED_UNVERIFIED');
     assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
   } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
