@@ -1012,6 +1012,8 @@ struct PlaylistDetailView: View {
                                     Button("Resume Source Discovery") {
                                         library.resumeSourceDiscovery(for: playlistID)
                                     }
+                                    .frame(minHeight: 44)
+                                    .accessibilityHint("Continue searching for missing songs")
                                 } else if (library.isOnWiFi ||
                                             (library.isOnCellular &&
                                              library.cellularApproved(for: playlistID))) &&
@@ -1021,6 +1023,8 @@ struct PlaylistDetailView: View {
                                         Button("Resume Search") {
                                             library.resumeSourceDiscovery(for: playlistID)
                                         }
+                                        .frame(minHeight: 44)
+                                        .accessibilityHint("Search again for missing recordings")
                                     }
                                 }
                             }
@@ -1032,11 +1036,20 @@ struct PlaylistDetailView: View {
                             if progress.isRunning {
                                 ProgressView(value: Double(progress.processed),
                                              total: Double(max(progress.total, 1)))
-                                Text(progress.currentSong)
-                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    .accessibilityLabel("Source discovery progress")
+                                    .accessibilityValue("\(progress.processed) of \(progress.total) songs checked")
+                                if !progress.currentSong.isEmpty {
+                                    Text(progress.currentSong)
+                                        .font(.caption)
+                                        .foregroundStyle(ShelfTheme.subdued)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .accessibilityLabel("Checking \(progress.currentSong)")
+                                }
                                 Button("Pause Source Discovery", role: .cancel) {
                                     library.pauseSourceDiscovery(for: playlistID)
                                 }
+                                .frame(minHeight: 44)
+                                .accessibilityHint("Stops searching for new audio sources without cancelling downloads already queued")
                             } else {
                                 Text(progress.wasCancelled ? "Source discovery stopped." :
                                      library.discoveryJob(for: playlistID)?.nextLookupAt != nil
@@ -1052,6 +1065,8 @@ struct PlaylistDetailView: View {
                                     Button("Retry unmatched songs") {
                                         library.startAutomaticDownloads(for: playlistID)
                                     }
+                                    .frame(minHeight: 44)
+                                    .accessibilityHint("Search again for recordings not yet saved offline")
                                 }
                             }
                         } else {
@@ -1070,6 +1085,8 @@ struct PlaylistDetailView: View {
                             Button("Cancel background transfers", role: .destructive) {
                                 library.stopBackgroundTransfers(for: playlistID)
                             }
+                            .frame(minHeight: 44)
+                            .accessibilityHint("Stops queued and active audio downloads for this playlist")
                             Text("Downloads can continue after you lock your iPhone. Source discovery resumes only when MP3 Shelf is open.")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
