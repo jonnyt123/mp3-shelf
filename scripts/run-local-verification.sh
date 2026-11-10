@@ -103,4 +103,11 @@ if [[ "$MODE" == native || "$MODE" == all ]]; then
   native_args=()
   [[ "$SMOKE" != true ]] || native_args+=(--smoke)
   run native-local-release bash ios/scripts/verify-local-release.sh "${native_args[@]}"
+  # Native builds can rewrite tracked project settings; refuse stale evidence.
+  STEP=post-native-checkout-integrity
+  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain)" ]]; then
+    echo 'ERROR: Native verification changed the candidate commit or tracked checkout; results are not release evidence.' >&2
+    exit 2
+  fi
+  COMPLETED+=("$STEP")
 fi
