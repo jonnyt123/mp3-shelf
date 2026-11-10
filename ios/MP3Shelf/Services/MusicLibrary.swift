@@ -195,6 +195,9 @@ final class MusicLibrary: ObservableObject {
     /// Creates the same v1 .mp3shelf archive used by the browser PWA.
     /// No Spotify tokens, account secrets or discovery queue internals are exported.
     func exportPortableBackup() async throws -> URL {
+        // A protected or damaged catalog can make the in-memory library appear
+        // empty. Never export that fallback as an apparently valid backup.
+        try requireLibraryPersistence()
         let items = tracks.map { track in
             let lyrics = track.lyricsFileName.flatMap {
                 try? String(contentsOf: lyricsDirectory.appendingPathComponent($0), encoding: .utf8)
