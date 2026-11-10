@@ -14,3 +14,9 @@ export function parseStoredPlaylists(raw:string|null):StoredPlaylist[]{
  for(const item of value){if(ids.has(item.id))throw new Error("Duplicate saved playlist ID.");ids.add(item.id)}
  return value as StoredPlaylist[];
 }
+
+/** Preserve library order while filtering by playlist membership in linear time. */
+export function selectPlaylistTracks<T extends {id:string}>(tracks:readonly T[],trackIds:readonly string[]):T[]{
+ const selected=new Set(trackIds);
+ return tracks.filter(track=>selected.has(track.id));
+}
