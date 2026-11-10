@@ -101,6 +101,12 @@ final class MusicLibrary: ObservableObject {
     /// A visible, active SwiftUI scene owns unbounded source lookups. iOS may
     /// create MusicLibrary for a background URLSession callback without a scene.
     func setForegroundDiscoveryEnabled(_ enabled: Bool) {
+        // Foreground activation is the first safe opportunity to retry an
+        // iOS protected-file read after a locked background launch. Retry even
+        // when the discovery flag was already enabled on a previous scene.
+        if enabled && !isLibraryPersistenceSafe {
+            recoverLibraryIfAccessible()
+        }
         guard foregroundDiscoveryEnabled != enabled else { return }
         foregroundDiscoveryEnabled = enabled
         if enabled {
@@ -454,6 +460,42 @@ final class MusicLibrary: ObservableObject {
     func songs(in playlist: MusicPlaylist) -> [MusicTrack] {
         refreshTrackIndexIfNeeded()
         return playlist.trackIDs.compactMap { indexedTracksByID[$0] }
+    }
+
+    /// Recover only from the saved on-disk snapshot. Never merge an in-memory
+    /// empty fallback into an existing catalog, and never write during retry.
+    /// A corrupt catalog stays blocked until it can be repaired independently.
+    @discardableResult
+    func recoverLibraryIfAccessible() -> Bool {
+        guard !isLibraryPersistenceSafe else { return true }
+        do {
+            // If startup failed while creating storage directories, a missing
+            // catalog is not proof of first launch. Only recover a real file.
+            guard manager.fileExists(atPath: databaseURL.path),
+                  let restored = try PersistedLibrary.readIfPresent(from: databaseURL) else {
+                return false
+            }
+            tracks = restored.tracks
+            playlists = restored.playlists
+            isLibraryPersistenceSafe = true
+            libraryStorageError = nil
+            // Discovery checkpoints may also have been protected at startup.
+            if let saved = try? Data(contentsOf: discoveryURL),
+               let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
+                discoveryJobs = decoded.compactMap { checkpoint in
+                    guard let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) else { return nil }
+                    var repaired = checkpoint
+                    repaired.repairPersistedCheckpoint()
+                    repaired.refreshMissingWishes(playlist.missingTracks)
+                    return repaired
+                }
+            }
+            return true
+        } catch {
+            // Do not discard metadata or weaken the guard on a failed retry.
+            print("MP3 Shelf could not reopen the saved library: \(error)")
+            return false
+        }
     }
 
     private func requireLibraryPersistence() throws {
