@@ -36,6 +36,9 @@ describe("MP3 Shelf backups",()=>{
   manifest.playlists.push({...manifest.playlists[0]});
   await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Duplicate playlist ID");
   manifest.playlists.pop();
+  manifest.playlists[0].trackIds=["  "];
+  await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Invalid playlist 1");
+  manifest.playlists[0].trackIds=["song-1"];
   manifest.tracks[0].audio.length=0;
   await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Empty track 1 audio");
  });
@@ -51,6 +54,7 @@ describe("MP3 Shelf backups",()=>{
   expect(()=>createLibraryBackup([{...song,importedAt:Number.NaN}],[])).toThrow("invalid import date");
   expect(()=>createLibraryBackup([{...song,importedAt:Number.POSITIVE_INFINITY}],[])).toThrow("invalid import date");
   expect(()=>createLibraryBackup([song],[{id:"mix",name:"Mix",trackIds:[123] as unknown as string[]}])).toThrow("invalid track references");
+  expect(()=>createLibraryBackup([song],[{id:"mix",name:"Mix",trackIds:["  "]}])).toThrow("invalid track references");
  });
 
 });
