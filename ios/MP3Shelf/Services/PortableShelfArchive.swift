@@ -322,9 +322,21 @@ enum PortableShelfArchive {
     }
 
     static func readBytes(_ part: Part, from archive: Opened) throws -> Data {
+        // Only small artwork/metadata slices belong in memory. A malformed
+        // Part must not turn a backup restore into an unbounded allocation or
+        // overflow the seek offset before the file is read.
+        guard part.offset >= 0, part.length > 0, part.length <= 20 * 1024 * 1024,
+              UInt64(part.offset) <= UInt64.max - archive.payloadOffset else {
+            throw ArchiveError.invalidRange
+        }
         let handle = try FileHandle(forReadingFrom: archive.url)
         defer { try? handle.close() }
-        try handle.seek(toOffset: archive.payloadOffset + UInt64(part.offset))
+        let size = try handle.seekToEnd()
+        let start = archive.payloadOffset + UInt64(part.offset)
+        guard start <= size, UInt64(part.length) <= size - start else {
+            throw ArchiveError.invalidRange
+        }
+        try handle.seek(toOffset: start)
         guard let data = try handle.read(upToCount: Int(part.length)),
               data.count == Int(part.length) else { throw ArchiveError.invalidRange }
         return data
