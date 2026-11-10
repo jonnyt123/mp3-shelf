@@ -218,7 +218,10 @@ final class SpotifyService: NSObject, ObservableObject {
         refreshTask = task
         // Clear the shared task on success and failure; failed refreshes must
         // not permanently poison subsequent reconnect/retry attempts.
-        defer { refreshTask = nil }
+        defer {
+            // A stale waiter must not clear a newer session's refresh task.
+            if generation == authorizationGeneration { refreshTask = nil }
+        }
         let fresh = try await task.value
         try Task.checkCancellation()
         // Disconnect or a new sign-in may have happened during the request.
