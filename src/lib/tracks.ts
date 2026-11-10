@@ -7,7 +7,16 @@ export async function listTracks():Promise<Track[]>{const db=await openDatabase(
 export async function importTracks(files:File[]):Promise<number>{
  const audio=files.filter(file=>file.type.startsWith("audio/")||/\.mp3$/i.test(file.name));
  if(!audio.length)return 0;
- const prepared=await Promise.all(audio.map(async file=>({file,metadata:await readAudioMetadata(file)})));
+ // Bound concurrent 2 MiB ID3 reads: a large Files selection must not launch
+ // hundreds of arrayBuffer allocations simultaneously on memory-limited iPhones.
+ const prepared=new Array<{file:File;metadata:Awaited<ReturnType<typeof readAudioMetadata>>}>(audio.length);
+ let cursor=0;
+ await Promise.all(Array.from({length:Math.min(4,audio.length)},async()=>{
+  while(cursor<audio.length){
+   const index=cursor++;
+   prepared[index]={file:audio[index],metadata:await readAudioMetadata(audio[index])};
+  }
+ }));
  const db=await openDatabase();
  try{
   const transaction=db.transaction(STORE,"readwrite");
