@@ -301,6 +301,23 @@ test('health probes reject oversized content-length without reading the body', a
   assert.equal(read, false);
 });
 
+test('non-2xx health responses cancel the stream without consuming error pages', async () => {
+  const { readProbeBody } = await import('./verify-vercel-release.mjs');
+  for (const status of [404, 503]) {
+    let cancelled = false;
+    let pulled = false;
+    const body = new ReadableStream({
+      pull(controller) { pulled = true; controller.enqueue(new Uint8Array(1)); },
+      cancel() { cancelled = true; }
+    }, { highWaterMark: 0 });
+    const response = { ok: false, status, body, headers: { get: () => null },
+      text: async () => { throw Error('must not buffer failed response'); } };
+    assert.equal(await readProbeBody(response), '');
+    assert.equal(cancelled, true);
+    assert.equal(pulled, false);
+  }
+});
+
 test('oversized declared health response cancels its stream before reading', async () => {
   const { readProbeBody } = await import('./verify-vercel-release.mjs');
   let cancelled = false;
