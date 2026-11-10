@@ -33,6 +33,14 @@ test('repeated 404 and 5xx are rollback-eligible; auth and transient failures ar
   assert.equal(classifyProbes(Array(3).fill({ root: 403, worker: 403, marker: false })), 'unverified');
   assert.equal(classifyProbes([{ root: 503, worker: 200 }, { root: 200, worker: 200 }, { root: 503, worker: 200 }]), 'unverified');
   assert.equal(classifyProbes(Array(3).fill({ root: 0, worker: 0 })), 'unverified');
+  // Never route production away because one endpoint is failing while the
+  // other is behind SSO or unreachable; never conflate alternating failures.
+  assert.equal(classifyProbes(Array(3).fill({ root: 403, worker: 503 })), 'unverified');
+  assert.equal(classifyProbes(Array(3).fill({ root: 503, worker: 401 })), 'unverified');
+  assert.equal(classifyProbes(Array(3).fill({ root: 503, worker: 0 })), 'unverified');
+  assert.equal(classifyProbes([
+    { root: 503, worker: 200 }, { root: 200, worker: 503 }, { root: 503, worker: 200 },
+  ]), 'unverified');
 });
 
 import { runReleaseCheck } from './verify-vercel-release.mjs';
