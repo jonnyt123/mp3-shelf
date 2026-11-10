@@ -317,13 +317,23 @@ enum PortableShelfArchive {
               UInt64(part.offset) <= UInt64.max - archive.payloadOffset else {
             throw ArchiveError.invalidRange
         }
-        // A backup may be replaced or truncated after open(). Never leave a
-        // partially extracted recording in the temporary directory on failure.
-        FileManager.default.createFile(atPath: target.path, contents: nil)
+        // open() validates the archive at inspection time, but Files may
+        // replace or truncate it before extraction. Check the live handle
+        // before creating any output, and reject impossible seek arithmetic.
+        let size = try input.seekToEnd()
+        let start = archive.payloadOffset + UInt64(part.offset)
+        guard start <= size, UInt64(part.length) <= size - start else {
+            throw ArchiveError.invalidRange
+        }
+        try input.seek(toOffset: start)
+        // A backup may still be truncated while streaming. Remove partial
+        // output on every read/write failure rather than importing bad audio.
+        guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
         do {
             let output = try FileHandle(forWritingTo: target)
             defer { try? output.close() }
-            try input.seek(toOffset: archive.payloadOffset + UInt64(part.offset))
             var remaining = part.length
             while remaining > 0 {
                 let amount = Int(min(remaining, 64 * 1024))
