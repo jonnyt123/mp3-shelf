@@ -450,6 +450,18 @@ struct MusicTrackRow: View {
             .accessibilityHint(track.id == playback.currentTrackID
                                ? "Restart the current song"
                                : "Start playback from this song")
+            // The row's playback button is the primary VoiceOver element.
+            // Expose its management actions without requiring navigation to
+            // the separate, visually small ellipsis menu.
+            .accessibilityAction(named: track.isFavorite ? "Remove from favorites" : "Add to favorites") {
+                library.toggleFavorite(track.id)
+            }
+            .accessibilityAction(named: "Edit song details") {
+                renaming = track
+            }
+            .accessibilityAction(named: "Delete download") {
+                confirmDelete = true
+            }
             Menu {
                 Button { library.toggleFavorite(track.id) } label: {
                     Label(track.isFavorite ? "Remove favorite" : "Favorite", systemImage: track.isFavorite ? "heart.slash" : "heart")
