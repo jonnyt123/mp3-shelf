@@ -189,7 +189,7 @@ final class SpotifyService: NSObject, ObservableObject {
                     durationSeconds: track.duration_ms.map { Double($0) / 1000.0 },
                     artistNames: track.artists?.map(\.name)))
             }
-            next = try Self.safeNext(page.next)
+            next = try Self.safeNext(page.next, for: url)
             if wishes.count > 20000 { throw SpotifyError.api("The playlist contains too many tracks.") }
         }
         try Task.checkCancellation()
