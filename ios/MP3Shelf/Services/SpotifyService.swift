@@ -100,6 +100,8 @@ final class SpotifyService: NSObject, ObservableObject {
 
     func disconnect() {
         authorizationGeneration &+= 1
+        session?.cancel()
+        session = nil
         refreshTask?.cancel()
         refreshTask = nil
         token = nil
@@ -110,6 +112,7 @@ final class SpotifyService: NSObject, ObservableObject {
 
     func refreshPlaylists() async throws {
         guard token != nil else { throw SpotifyError.notConnected }
+        let generation = authorizationGeneration
         var next: URL? = URL(string: "https://api.spotify.com/v1/me/playlists?limit=50")
         var found: [SpotifyPlaylist] = []
         var visitedPages = Set<URL>()
@@ -122,6 +125,8 @@ final class SpotifyService: NSObject, ObservableObject {
             next = try Self.safeNext(page.next)
             if found.count > 10000 { throw SpotifyError.api("Too many playlists to import in one request.") }
         }
+        try Task.checkCancellation()
+        guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
         playlists = found
     }
 
