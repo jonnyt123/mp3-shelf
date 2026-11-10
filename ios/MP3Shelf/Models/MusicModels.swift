@@ -279,6 +279,13 @@ struct PersistedLibrary: Codable {
     var tracks: [MusicTrack]
     var playlists: [MusicPlaylist]
 
+    /// Only a truly absent catalog means first launch. An existing but unreadable
+    /// or malformed library must throw instead of masquerading as an empty one.
+    static func readIfPresent(from url: URL) throws -> Self? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try JSONDecoder().decode(Self.self, from: Data(contentsOf: url))
+    }
+
     func write(to url: URL) throws {
         do {
             try JSONEncoder().encode(self).write(to: url, options: .atomic)
