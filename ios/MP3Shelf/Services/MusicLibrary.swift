@@ -105,7 +105,10 @@ final class MusicLibrary: ObservableObject {
         // iOS protected-file read after a locked background launch. Retry even
         // when the discovery flag was already enabled on a previous scene.
         if enabled && !isLibraryPersistenceSafe {
-            recoverLibraryIfAccessible()
+            let recovered = recoverLibraryIfAccessible()
+            if recovered && foregroundDiscoveryEnabled {
+                resumePendingDiscovery()
+            }
         }
         guard foregroundDiscoveryEnabled != enabled else { return }
         foregroundDiscoveryEnabled = enabled
