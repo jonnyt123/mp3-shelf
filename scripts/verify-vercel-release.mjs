@@ -141,7 +141,12 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
   const api = async (path, options = {}) => {
     const url = `https://api.vercel.com${path}${path.includes('?') ? '&' : '?'}teamId=${encodeURIComponent(args.team)}`;
     const response = await fetcher(url, { ...options, redirect: 'error', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw Error(`Vercel API returned HTTP ${response.status} for ${options.method ?? 'GET'}.`);
+    if (!response.ok) {
+      // API failures may include large streaming HTML/error bodies. The status
+      // is sufficient to block release; cancel without buffering the payload.
+      if (response.body?.cancel) await response.body.cancel().catch(() => {});
+      throw Error(`Vercel API returned HTTP ${response.status} for ${options.method ?? 'GET'}.`);
+    }
     return response.json();
   };
   const current = await api(`/v13/deployments/${args.deployment}`);
