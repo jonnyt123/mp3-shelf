@@ -96,7 +96,12 @@ export async function readProbeBody(response, limit = 120000) {
   const declared = response.headers?.get?.('content-length');
   if (declared !== null && declared !== undefined && declared !== '') {
     const size = Number(declared);
-    if (!Number.isSafeInteger(size) || size < 0 || size > limit) throw Error('Oversized or invalid health response.');
+    if (!Number.isSafeInteger(size) || size < 0 || size > limit) {
+      // A rejected Content-Length must also stop the underlying network
+      // stream; otherwise repeated health probes can leave open downloads.
+      if (response.body?.cancel) await response.body.cancel().catch(() => {});
+      throw Error('Oversized or invalid health response.');
+    }
   }
   if (!response.body?.getReader) {
     // Compatibility with lightweight injected test responses only.
