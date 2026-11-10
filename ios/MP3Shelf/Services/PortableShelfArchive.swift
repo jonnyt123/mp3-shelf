@@ -380,12 +380,27 @@ enum PortableShelfArchive {
         guard let second = try? FileHandle(forReadingFrom: secondURL) else { return false }
         defer { try? second.close() }
         do {
-            while true {
-                let firstChunk = try first.read(upToCount: 64 * 1024) ?? Data()
-                let secondChunk = try second.read(upToCount: 64 * 1024) ?? Data()
-                guard firstChunk == secondChunk else { return false }
-                if firstChunk.isEmpty { return true }
+            // Reject different lengths immediately and cap the comparison to
+            // the sizes observed at open. A concurrently growing source must
+            // never turn duplicate detection into an unbounded read.
+            let firstLength = try first.seekToEnd()
+            let secondLength = try second.seekToEnd()
+            guard firstLength == secondLength else { return false }
+            try first.seek(toOffset: 0)
+            try second.seek(toOffset: 0)
+            var remaining = firstLength
+            while remaining > 0 {
+                let amount = Int(min(remaining, 64 * 1024))
+                guard let a = try first.read(upToCount: amount),
+                      let b = try second.read(upToCount: amount),
+                      a.count == amount, b.count == amount, a == b else {
+                    return false
+                }
+                remaining -= UInt64(amount)
             }
+            // A source that grew while comparing is not a stable duplicate.
+            return (try first.read(upToCount: 1) ?? Data()).isEmpty &&
+                   (try second.read(upToCount: 1) ?? Data()).isEmpty
         } catch {
             return false
         }
