@@ -373,15 +373,22 @@ struct MusicTrackRow: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var confirmDelete = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         HStack(spacing: 12) {
             Button { playback.play(track, queue: context) } label: {
                 HStack(spacing: 12) {
                     ArtworkTile(track: track)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(track.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                        Text(track.artist).font(.caption).foregroundStyle(ShelfTheme.subdued).lineLimit(1)
+                        Text(track.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                        Text(track.artist)
+                            .font(.caption)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                     }
                     Spacer(minLength: 0)
                     if track.id == playback.currentTrackID {
