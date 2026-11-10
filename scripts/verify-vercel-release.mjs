@@ -96,13 +96,17 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
   const probe = async (path) => {
     try {
       const response = await fetcher(`https://${args.domain}${path}`, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(10000) });
-      return { status: response.status, body: response.ok ? (await response.text()).slice(0, 120000) : '' };
-    } catch { return { status: 0, body: '' }; }
+      const type = response.headers?.get?.('content-type')?.split(';', 1)[0]?.trim()?.toLowerCase() ?? '';
+      return { status: response.status, type, body: response.ok ? (await response.text()).slice(0, 120000) : '' };
+    } catch { return { status: 0, type: '', body: '' }; }
   };
   const probes = [];
   for (let attempt = 0; attempt < 3; attempt++) {
     const [root, worker] = await Promise.all([probe('/'), probe('/sw.js')]);
-    probes.push({ root: root.status, worker: worker.status, marker: root.body.includes('MP3 Shelf') && worker.body.length > 50 });
+    probes.push({ root: root.status, worker: worker.status,
+      marker: root.type === 'text/html' && root.body.includes('MP3 Shelf') &&
+        ['text/javascript', 'application/javascript'].includes(worker.type) &&
+        worker.body.includes('mp3-shelf-v2') && worker.body.includes('precacheAppShell') });
     if (attempt < 2) await sleep(1500);
   }
   const classification = classifyProbes(probes);
@@ -114,7 +118,9 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
   // Require a fresh, independently observed failure before changing traffic.
   const [latestRoot, latestWorker] = await Promise.all([probe('/'), probe('/sw.js')]);
   const latest = { root: latestRoot.status, worker: latestWorker.status,
-    marker: latestRoot.body.includes('MP3 Shelf') && latestWorker.body.length > 50 };
+    marker: latestRoot.type === 'text/html' && latestRoot.body.includes('MP3 Shelf') &&
+      ['text/javascript', 'application/javascript'].includes(latestWorker.type) &&
+      latestWorker.body.includes('mp3-shelf-v2') && latestWorker.body.includes('precacheAppShell') };
   const persistentEndpoint = endpoint =>
     probes.every(p => [404, 500, 502, 503, 504].includes(p[endpoint])) &&
     [404, 500, 502, 503, 504].includes(latest[endpoint]);
