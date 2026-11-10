@@ -259,3 +259,31 @@ test('a fake worker returning HTTP 200 during a persistent homepage failure bloc
     assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
   } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
 });
+
+
+test('health probes reject oversized content-length without reading the body', async () => {
+  const { readProbeBody } = await import('./verify-vercel-release.mjs');
+  let read = false;
+  const response = { ok: true, headers: { get: () => '120001' },
+    text: async () => { read = true; return 'MP3 Shelf'; } };
+  await assert.rejects(readProbeBody(response), /Oversized/);
+  assert.equal(read, false);
+});
+
+test('streamed health responses are capped and cancelled on overflow', async () => {
+  const { readProbeBody } = await import('./verify-vercel-release.mjs');
+  let cancelled = false;
+  const stream = new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(120001)); },
+    cancel() { cancelled = true; }
+  });
+  const response = { ok: true, headers: { get: () => null }, body: stream };
+  await assert.rejects(readProbeBody(response), /Oversized/);
+  assert.equal(cancelled, true);
+});
+
+test('bounded streamed health responses decode normally', async () => {
+  const { readProbeBody } = await import('./verify-vercel-release.mjs');
+  const response = new Response('MP3 Shelf', { headers: { 'content-type': 'text/html' } });
+  assert.equal(await readProbeBody(response), 'MP3 Shelf');
+});
