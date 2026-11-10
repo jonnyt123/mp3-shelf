@@ -145,7 +145,7 @@ final class SpotifyService: NSObject, ObservableObject {
             }
             let page: SpotifyPage<SpotifyPlaylist> = try await request(url)
             found.append(contentsOf: page.items)
-            next = try Self.safeNext(page.next)
+            next = try Self.safeNext(page.next, for: url)
             if found.count > 10000 { throw SpotifyError.api("Too many playlists to import in one request.") }
         }
         try Task.checkCancellation()
@@ -343,18 +343,28 @@ final class SpotifyService: NSObject, ObservableObject {
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
 
-    private static func safeNext(_ string: String?) throws -> URL? {
+    private static func safeNext(_ string: String?, for current: URL) throws -> URL? {
         guard let string else { return nil }
-        // Pagination links are supplied by the API, but are still untrusted
-        // redirect destinations for requests carrying the OAuth bearer token.
-        // Reject credentials, alternate ports and non-Spotify API paths.
+        // An API response must not redirect our bearer token to a different
+        // Spotify endpoint (including account or playlist metadata endpoints).
+        // The next page must advance the cursor of this exact collection.
         guard let components = URLComponents(string: string),
+              let previous = URLComponents(url: current, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https",
               components.host?.lowercased() == "api.spotify.com",
               components.user == nil, components.password == nil,
               components.port == nil || components.port == 443,
               components.fragment == nil,
-              components.path.hasPrefix("/v1/"),
+              components.path == previous.path,
+              let params = components.queryItems,
+              params.count == 2,
+              Set(params.map(\.name)) == Set(["limit", "offset"]),
+              let limit = params.first(where: { $0.name == "limit" })?.value.flatMap(Int.init),
+              (1...50).contains(limit),
+              let offset = params.first(where: { $0.name == "offset" })?.value.flatMap(Int.init),
+              offset >= 0,
+              let previousOffset = previous.queryItems?.first(where: { $0.name == "offset" })?.value.flatMap(Int.init) ?? 0,
+              offset > previousOffset,
               let url = components.url else {
             throw SpotifyError.api("Spotify returned an unexpected pagination URL.")
         }
