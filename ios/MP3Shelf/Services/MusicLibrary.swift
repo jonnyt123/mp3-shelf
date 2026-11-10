@@ -370,8 +370,13 @@ final class MusicLibrary: ObservableObject {
             playlists.append(playlist)
             report.playlistsAdded += 1
         }
+        // A restore is not complete until playlist links are durably saved.
+        // The ordinary save() helper logs failures because most UI edits are
+        // synchronous, but backup restore is throwing and must report storage
+        // exhaustion or file-protection errors to its caller.
         reconcileMissingSongs()
-        save()
+        try requireLibraryPersistence()
+        try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
         return report
     }
 
