@@ -49,6 +49,20 @@ describe("playlist restore commit",()=>{
   expect(writes).toBe(1);
   expect(storage.getItem()).toBe(saved);
  });
+ it("rejects duplicate or malformed incoming playlist IDs without touching saved playlists",()=>{
+  const saved=JSON.stringify([{id:"safe",name:"My playlist",trackIds:["audio"]}]);
+  let writes=0;
+  const storage={getItem:()=>saved,setItem:()=>{writes++}};
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[
+   {id:"collision",name:"First",trackIds:[]},
+   {id:"collision",name:"Second",trackIds:[]}
+  ])).toThrow("Duplicate saved playlist ID");
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[
+   {id:"new",name:"Bad",trackIds:[""]}
+  ])).toThrow("Invalid saved playlists");
+  expect(writes).toBe(0);
+  expect(storage.getItem()).toBe(saved);
+ });
  it("refuses to overwrite malformed existing playlists",()=>{
   let wrote=false;
   expect(()=>persistRestoredPlaylists({getItem:()=>"{bad",setItem:()=>{wrote=true}},"playlists",[])).toThrow();
