@@ -92,7 +92,12 @@ export function parseArguments(argv) {
 // Read only the first bounded bytes of a health response. A broken deployment
 // can serve arbitrarily large HTML/JS; response.text() buffers it all first.
 export async function readProbeBody(response, limit = 120000) {
-  if (!response.ok) return '';
+  if (!response.ok) {
+    // Failed health endpoints can stream arbitrarily large error pages.
+    // Stop the response body immediately; status alone is sufficient evidence.
+    if (response.body?.cancel) await response.body.cancel().catch(() => {});
+    return '';
+  }
   const declared = response.headers?.get?.('content-length');
   if (declared !== null && declared !== undefined && declared !== '') {
     const size = Number(declared);
