@@ -4,6 +4,7 @@ import{nextTrackId,previousTrackId,RepeatMode}from"@/lib/queue";
 import{playerGesture}from"@/lib/gestures";
 import{createLibraryBackup,parseLibraryBackup}from"@/lib/backup";
 import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,Track}from"@/lib/tracks";
+import{parseStoredPlaylists}from"@/lib/playlist-storage";
 type Playlist={id:string;name:string;trackIds:string[]};
 type StorageStats={usage:number;quota:number;persisted:boolean|null};
 type AirPlayAudio=HTMLAudioElement&{webkitShowPlaybackTargetPicker?:()=>void;webkitCurrentPlaybackTargetIsWireless?:boolean};
@@ -19,12 +20,7 @@ export function MusicLibrary(){
   // Never persist the initial empty React state before reading the saved
   // playlists. A crash between those effects would otherwise erase them.
   try{
-   const saved=localStorage.getItem("mp3-shelf-playlists");
-   if(saved!==null){
-    const parsed:unknown=JSON.parse(saved);
-    if(!Array.isArray(parsed)||!parsed.every(item=>item&&typeof item.id==="string"&&typeof item.name==="string"&&Array.isArray(item.trackIds)&&item.trackIds.every((id:unknown)=>typeof id==="string")))throw new Error("Invalid saved playlists.");
-    setPlaylists(parsed as Playlist[]);
-   }
+   setPlaylists(parseStoredPlaylists(localStorage.getItem("mp3-shelf-playlists")));
    setOnboarding(!localStorage.getItem("mp3-shelf-onboarded"));
    setPlaylistsHydrated(true);
   }catch{
