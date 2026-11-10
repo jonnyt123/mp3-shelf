@@ -19,9 +19,10 @@ export function evaluateIdentity({ current, previous, aliased, project, sha }) {
   const deploymentId = d => d?.id ?? d?.uid;
   const target = d => d?.target;
   const ready = d => d?.readyState ?? d?.state;
+  const ownedProject = d => d?.projectId ?? d?.project?.id;
   const repo = current?.meta ?? {};
   if (deploymentId(aliased) !== deploymentId(current)) errors.push('Production alias does not point to expected deployment.');
-  if (current?.projectId !== project || previous?.projectId !== project) errors.push('Deployment project does not match.');
+  if (ownedProject(current) !== project || ownedProject(previous) !== project) errors.push('Deployment project does not match.');
   if (target(current) !== 'production' || target(previous) !== 'production') errors.push('Both deployments must be production builds.');
   if (ready(current) !== 'READY' || ready(previous) !== 'READY') errors.push('Both deployments must be READY.');
   if (repo.githubCommitSha !== sha || repo.githubCommitRef !== 'main' || repo.githubRepo !== 'mp3-shelf' || repo.githubOrg !== 'jonnyt123') errors.push('Current production deployment has incorrect Git source identity.');
