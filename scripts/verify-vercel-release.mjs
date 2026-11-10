@@ -122,7 +122,7 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
   if (!token) throw Error('VERCEL_TOKEN must be set in the execution environment (never in source).');
   const api = async (path, options = {}) => {
     const url = `https://api.vercel.com${path}${path.includes('?') ? '&' : '?'}teamId=${encodeURIComponent(args.team)}`;
-    const response = await fetcher(url, { ...options, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15000) });
+    const response = await fetcher(url, { ...options, redirect: 'error', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw Error(`Vercel API returned HTTP ${response.status} for ${options.method ?? 'GET'}.`);
     return response.json();
   };
