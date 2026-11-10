@@ -23,6 +23,9 @@ final class SpotifyService: NSObject, ObservableObject {
     private var token: SpotifyTokens?
     // Coalesce overlapping refreshes so a rotated refresh token is never reused.
     private var refreshTask: Task<SpotifyTokens, Error>?
+    // A generation identifies the authorization session even if a provider
+    // rotates back to the same refresh token after disconnect/reconnect.
+    private var authorizationGeneration: UInt64 = 0
 
     override init() {
         clientID = UserDefaults.standard.string(forKey: Self.clientIDKey) ?? ""
@@ -75,6 +78,8 @@ final class SpotifyService: NSObject, ObservableObject {
                 "grant_type": "authorization_code", "code": code, "redirect_uri": Self.redirectURI,
                 "client_id": id, "code_verifier": verifier
             ], oldRefresh: nil)
+            // Sign-in establishes a new session; invalidate stale refresh completions.
+            authorizationGeneration &+= 1
             store(tokens: newTokens)
             try await refreshPlaylists()
         } catch {
@@ -86,6 +91,7 @@ final class SpotifyService: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        authorizationGeneration &+= 1
         refreshTask?.cancel()
         refreshTask = nil
         token = nil
@@ -202,6 +208,7 @@ final class SpotifyService: NSObject, ObservableObject {
         }
         guard let existing = token else { throw SpotifyError.notConnected }
         let id = clientID
+        let generation = authorizationGeneration
         let task = Task<SpotifyTokens, Error> {
             try await exchangeToken([
                 "grant_type": "refresh_token", "refresh_token": existing.refreshToken,
@@ -216,7 +223,8 @@ final class SpotifyService: NSObject, ObservableObject {
         try Task.checkCancellation()
         // Disconnect or a new sign-in may have happened during the request.
         // A cancelled shared refresh must never restore a disconnected session.
-        guard refreshTask != nil, token?.refreshToken == existing.refreshToken else {
+        guard generation == authorizationGeneration,
+              refreshTask != nil, token?.refreshToken == existing.refreshToken else {
             throw SpotifyError.notConnected
         }
         store(tokens: fresh)
