@@ -149,9 +149,7 @@ final class MusicLibrary: ObservableObject {
             try manager.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
             try manager.createDirectory(at: artworkDirectory, withIntermediateDirectories: true)
             try manager.createDirectory(at: lyricsDirectory, withIntermediateDirectories: true)
-            if manager.fileExists(atPath: databaseURL.path) {
-                let data = try Data(contentsOf: databaseURL)
-                let saved = try JSONDecoder().decode(PersistedLibrary.self, from: data)
+            if let saved = try PersistedLibrary.readIfPresent(from: databaseURL) {
                 // Keep metadata even when a recording is temporarily unavailable
                 // (Files, protection or storage interruption). Removing its entry
                 // here would permanently erase its identity on the next save.
