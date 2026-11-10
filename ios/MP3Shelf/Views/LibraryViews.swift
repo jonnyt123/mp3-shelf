@@ -397,6 +397,8 @@ struct MusicTrackRow: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Play \(track.title) by \(track.artist)")
+            .accessibilityHint(track.id == playback.currentTrackID ? "Restart the current song" : "Start playback from this song")
             Menu {
                 Button { library.toggleFavorite(track.id) } label: {
                     Label(track.isFavorite ? "Remove favorite" : "Favorite", systemImage: track.isFavorite ? "heart.slash" : "heart")
@@ -429,9 +431,11 @@ struct MusicTrackRow: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .foregroundStyle(ShelfTheme.subdued)
-                    .frame(width: 36, height: 44)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
+            .accessibilityLabel("More options for \(track.title) by \(track.artist)")
+            .accessibilityHint("Favorite, add to playlist, edit, share or delete this download")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
