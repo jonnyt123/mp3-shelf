@@ -50,6 +50,10 @@ final class MusicLibrary: ObservableObject {
     }()
     @Published private(set) var playlists: [MusicPlaylist] = []
     @Published var isImporting = false
+    // Fail closed if the saved catalog exists but cannot be read (for example,
+    // while iOS file protection is active). Never replace it with an empty one.
+    @Published private(set) var libraryStorageError: String?
+    private var isLibraryPersistenceSafe = false
     @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
@@ -145,11 +149,16 @@ final class MusicLibrary: ObservableObject {
             try manager.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
             try manager.createDirectory(at: artworkDirectory, withIntermediateDirectories: true)
             try manager.createDirectory(at: lyricsDirectory, withIntermediateDirectories: true)
-            if let data = try? Data(contentsOf: databaseURL) {
+            if manager.fileExists(atPath: databaseURL.path) {
+                let data = try Data(contentsOf: databaseURL)
                 let saved = try JSONDecoder().decode(PersistedLibrary.self, from: data)
-                tracks = saved.tracks.filter { manager.fileExists(atPath: musicDirectory.appendingPathComponent($0.fileName).path) }
+                // Keep metadata even when a recording is temporarily unavailable
+                // (Files, protection or storage interruption). Removing its entry
+                // here would permanently erase its identity on the next save.
+                tracks = saved.tracks
                 playlists = saved.playlists
             }
+            isLibraryPersistenceSafe = true
             if let saved = try? Data(contentsOf: discoveryURL),
                let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
                 discoveryJobs = decoded.compactMap { checkpoint in
@@ -162,6 +171,8 @@ final class MusicLibrary: ObservableObject {
                 }
             }
         } catch {
+            isLibraryPersistenceSafe = false
+            libraryStorageError = "Saved music library could not be opened. Your existing files and playlists are preserved, but changes are disabled until storage becomes available."
             print("MP3 Shelf could not initialize local storage: \(error)")
         }
         networkMonitor.pathUpdateHandler = { [weak self] path in
@@ -201,6 +212,7 @@ final class MusicLibrary: ObservableObject {
     /// Adds valid files from a browser or native backup without deleting
     /// anything already on this iPhone. Archive metadata is validated first.
     func importPortableBackup(from url: URL) async throws -> ImportReport {
+        try requireLibraryPersistence()
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         let archive = try PortableShelfArchive.open(url)
@@ -446,7 +458,18 @@ final class MusicLibrary: ObservableObject {
         return playlist.trackIDs.compactMap { indexedTracksByID[$0] }
     }
 
+    private func requireLibraryPersistence() throws {
+        guard isLibraryPersistenceSafe else {
+            throw NSError(domain: PersistedLibrary.writeFailureDomain, code: 2,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            libraryStorageError ?? "The existing music library is unavailable; changes are disabled to prevent data loss."])
+        }
+    }
+
     func save() {
+        // A headless iOS background wake can occur before protected files are
+        // accessible. Never replace an unreadable catalog with an empty snapshot.
+        guard isLibraryPersistenceSafe else { return }
         do {
             try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
         } catch {
@@ -476,6 +499,7 @@ final class MusicLibrary: ObservableObject {
                                expectedDuration: TimeInterval? = nil,
                                matching wish: PlaylistWish? = nil,
                                attribution: AudioSourceAttribution? = nil) throws -> Bool {
+        try requireLibraryPersistence()
         // A different import may have saved this recording while a download
         // or AAC conversion was suspended. Recheck at the library write boundary.
         if let wish, hasOfflineRecording(matching: wish) { return false }
