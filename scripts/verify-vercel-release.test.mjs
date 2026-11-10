@@ -77,7 +77,6 @@ test('repeated 404 and 5xx are rollback-eligible; auth and transient failures ar
   ]), 'unverified');
 });
 
-import { runReleaseCheck } from './verify-vercel-release.mjs';
 
 function fakeNetwork({ bad = false, auth = false, stale = false, rollback = false } = {}) {
   const calls = [];
