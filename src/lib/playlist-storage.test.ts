@@ -26,12 +26,20 @@ describe("large offline playlist selection",()=>{
 });
 
 describe("playlist restore commit",()=>{
- it("preserves existing order and overwrites matching IDs after a successful write",()=>{
+ it("preserves local playlist edits and adds missing backup links after a successful write",()=>{
   const storage=new Map([["playlists",JSON.stringify([{id:"existing",name:"Old",trackIds:["a"]}])]]);
   const adapter={getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>{storage.set(key,value)}};
   const next=persistRestoredPlaylists(adapter,"playlists",[{id:"existing",name:"Updated",trackIds:["b"]},{id:"new",name:"New",trackIds:[]}]);
-  expect(next).toEqual([{id:"existing",name:"Updated",trackIds:["b"]},{id:"new",name:"New",trackIds:[]}]);
+  expect(next).toEqual([{id:"existing",name:"Old",trackIds:["a","b"]},{id:"new",name:"New",trackIds:[]}]);
   expect(parseStoredPlaylists(storage.get("playlists")!)).toEqual(next);
+ });
+ it("is idempotent and never reorders or deletes locally edited playlist tracks",()=>{
+  const storage=new Map([["playlists",JSON.stringify([{id:"mix",name:"My edited mix",trackIds:["local","shared"]}])]]);
+  const adapter={getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>{storage.set(key,value)}};
+  const incoming=[{id:"mix",name:"Outdated backup name",trackIds:["shared","archived","archived"]}];
+  const first=persistRestoredPlaylists(adapter,"playlists",incoming);
+  expect(first).toEqual([{id:"mix",name:"My edited mix",trackIds:["local","shared","archived"]}]);
+  expect(persistRestoredPlaylists(adapter,"playlists",incoming)).toEqual(first);
  });
  it("does not claim success or replace the existing playlists when storage is full",()=>{
   const saved=JSON.stringify([{id:"safe",name:"Saved",trackIds:["audio"]}]);
