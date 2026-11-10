@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {parseStoredPlaylists,persistRestoredPlaylists,selectPlaylistTracks} from "./playlist-storage";
+import {cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore} from "./playlist-storage";
 describe("persistent playlist hydration",()=>{
  it("loads existing playlists without dropping order or track references",()=>{
   const saved=[{id:"mix",name:"Road trip",trackIds:["a","b"]}];
@@ -53,5 +53,41 @@ describe("playlist restore commit",()=>{
   let wrote=false;
   expect(()=>persistRestoredPlaylists({getItem:()=>"{bad",setItem:()=>{wrote=true}},"playlists",[])).toThrow();
   expect(wrote).toBe(false);
+ });
+});
+
+describe("crash-safe backup restoration journal",()=>{
+ function store(){
+  const data=new Map<string,string>([["playlists",JSON.stringify([{id:"local",name:"Edited",trackIds:["a"]}])]]);
+  return{getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)},removeItem:(key:string)=>{data.delete(key)}};
+ }
+ const incoming=[{id:"local",name:"Old",trackIds:["b"]},{id:"new",name:"New",trackIds:["b"]}];
+ it("recovers after audio commits but before playlists are saved, without reverting local edits",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,[{id:"b"}],incoming);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  const result=recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists");
+  expect(result).toEqual([{id:"local",name:"Edited",trackIds:["a","b"]},{id:"new",name:"New",trackIds:["b"]}]);
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+  expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")).toBeNull();
+ });
+ it("never publishes playlist links if a crash happened before audio insertion",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,[{id:"b"}],incoming);
+  expect(()=>recoverPlaylistRestore(storage,new Set(["a"]),"playlists")).toThrow("interrupted");
+  expect(JSON.parse(storage.getItem("playlists")!)[0].trackIds).toEqual(["a"]);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  expect(()=>stagePlaylistRestore(storage,[{id:"different"}],incoming)).toThrow("original backup");
+  expect(()=>stagePlaylistRestore(storage,[{id:"b"}],incoming)).not.toThrow();
+ });
+ it("retains pending recovery after playlist quota failure",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,[{id:"b"}],incoming);
+  const failed={...storage,setItem:(key:string,value:string)=>{if(key==="playlists")throw new Error("QuotaExceeded");storage.setItem(key,value)}};
+  expect(()=>recoverPlaylistRestore(failed,new Set(["a","b"]),"playlists")).toThrow("QuotaExceeded");
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  expect(JSON.parse(storage.getItem("playlists")!)[0].trackIds).toEqual(["a"]);
+  cancelPlaylistRestore(storage);
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
  });
 });
