@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { validateInputs, evaluateIdentity, classifyProbes, parseArguments } from './verify-vercel-release.mjs';
+import { validateInputs, evaluateIdentity, classifyProbes, parseArguments, readProbeBody, runReleaseCheck } from './verify-vercel-release.mjs';
 const sha = 'a'.repeat(40);
 const valid = { deployment: 'dpl_Current123', previous: 'dpl_Previous123', project: 'prj_Shelf123', team: 'team_Account123', sha, domain: 'mp3-shelf.vercel.app' };
 const identity = {
