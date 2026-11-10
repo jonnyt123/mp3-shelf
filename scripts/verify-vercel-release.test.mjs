@@ -8,6 +8,25 @@ const identity = {
   previous: { id: valid.previous, createdAt: 1000, projectId: valid.project, target: 'production', readyState: 'READY', meta: { githubCommitSha: 'b'.repeat(40), githubCommitRef: 'main', githubRepo: 'mp3-shelf', githubOrg: 'jonnyt123' } },
   aliased: { id: valid.deployment }, project: valid.project, sha
 };
+test('Vercel API HTTP failure cancels its response stream without reading it or probing production', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    let cancelled = 0;
+    let read = 0;
+    let requests = 0;
+    const fetcher = async () => {
+      requests++;
+      return { ok: false, status: 503, body: { cancel: async () => { cancelled++; } },
+        json: async () => { read++; throw Error('Must not parse failed API body'); },
+        text: async () => { read++; throw Error('Must not buffer failed API body'); } };
+    };
+    await assert.rejects(runReleaseCheck(valid, { fetcher }), /Vercel API returned HTTP 503/);
+    assert.equal(requests, 1);
+    assert.equal(cancelled, 1);
+    assert.equal(read, 0);
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});
+
 test('accepts valid exact SHA-bound production identity', () => { validateInputs(valid); assert.deepEqual(evaluateIdentity(identity), []); });
 test('rejects substituted current or rollback deployment IDs', () => {
   const expected = { ...identity, deployment: valid.deployment, previousDeployment: valid.previous };
