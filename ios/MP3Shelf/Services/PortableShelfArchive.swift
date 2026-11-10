@@ -127,9 +127,28 @@ enum PortableShelfArchive {
                 audio: audio, artwork: artwork
             ))
         }
-        let portableIDs = Dictionary(uniqueKeysWithValues: inputs.map {
-            ($0.track.id, $0.track.portableBackupID ?? $0.track.id.uuidString)
-        })
+        // Restored libraries can contain conflicting legacy portable IDs.
+        // Dictionary(uniqueKeysWithValues:) traps on duplicate local UUIDs;
+        // duplicate portable IDs would instead produce a backup that open()
+        // rejects. Fail with a recoverable error before publishing anything.
+        var portableIDs: [UUID: String] = [:]
+        var usedPortableIDs = Set<String>()
+        for item in inputs {
+            let id = item.track.portableBackupID ?? item.track.id.uuidString
+            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  portableIDs.updateValue(id, forKey: item.track.id) == nil,
+                  usedPortableIDs.insert(id).inserted else {
+                throw ArchiveError.invalidManifest
+            }
+        }
+        var usedPlaylistIDs = Set<String>()
+        for list in playlists {
+            let id = list.portableBackupID ?? list.id.uuidString
+            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  usedPlaylistIDs.insert(id).inserted else {
+                throw ArchiveError.invalidManifest
+            }
+        }
         let lists = playlists.map { list in
             let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
             return Playlist(
