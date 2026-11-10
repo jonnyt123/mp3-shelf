@@ -78,15 +78,25 @@ describe("crash-safe backup restoration journal",()=>{
  const incoming=[{id:"local",name:"Old",trackIds:["b"]},{id:"new",name:"New",trackIds:["b"]}];
  it("rejects corrupt destination playlists before staging any audio restore",()=>{
   const storage=store();
-  storage.setItem("mp3-shelf-playlists","{damaged");
-  const original=storage.getItem("mp3-shelf-playlists");
-  expect(()=>stagePlaylistRestore(storage,[{id:"b"}],incoming)).toThrow();
+  storage.setItem("playlists","{damaged");
+  const original=storage.getItem("playlists");
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toThrow();
   expect(hasPendingPlaylistRestore(storage)).toBe(false);
-  expect(storage.getItem("mp3-shelf-playlists")).toBe(original);
+  expect(storage.getItem("playlists")).toBe(original);
+ });
+ it("validates the actual destination key, not a hardcoded production key",()=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-playlists",JSON.stringify([{id:"unrelated",name:"Other",trackIds:[]}]));
+  storage.setItem("playlists","{broken");
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toThrow();
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+  storage.setItem("playlists",JSON.stringify([{id:"local",name:"Edited",trackIds:["a"]}]));
+  storage.setItem("mp3-shelf-playlists","{broken");
+  expect(stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toBe(true);
  });
  it("recovers after audio commits but before playlists are saved, without reverting local edits",()=>{
   const storage=store();
-  stagePlaylistRestore(storage,[{id:"b"}],incoming);
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
   expect(hasPendingPlaylistRestore(storage)).toBe(true);
   const result=recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists");
   expect(result).toEqual([{id:"local",name:"Edited",trackIds:["a","b"]},{id:"new",name:"New",trackIds:["b"]}]);
@@ -95,18 +105,18 @@ describe("crash-safe backup restoration journal",()=>{
  });
  it("never publishes playlist links if a crash happened before audio insertion",()=>{
   const storage=store();
-  stagePlaylistRestore(storage,[{id:"b"}],incoming);
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
   expect(()=>recoverPlaylistRestore(storage,new Set(["a"]),"playlists")).toThrow("interrupted");
   expect(JSON.parse(storage.getItem("playlists")!)[0].trackIds).toEqual(["a"]);
   expect(hasPendingPlaylistRestore(storage)).toBe(true);
-  expect(()=>stagePlaylistRestore(storage,[{id:"different"}],incoming)).toThrow("original backup");
-  expect(stagePlaylistRestore(storage,[{id:"b"}],incoming)).toBe(false);
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"different"}],incoming)).toThrow("original backup");
+  expect(stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toBe(false);
  });
  it("retains an existing interrupted restore journal when the same backup is retried and audio storage fails",()=>{
   const storage=store();
-  expect(stagePlaylistRestore(storage,[{id:"b"}],incoming)).toBe(true);
+  expect(stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toBe(true);
   const original=storage.getItem("mp3-shelf-restore-pending");
-  const newlyStaged=stagePlaylistRestore(storage,[{id:"b"}],incoming);
+  const newlyStaged=stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
   expect(newlyStaged).toBe(false);
   // A failed retry must not call cancelPlaylistRestore on another run's journal.
   if(newlyStaged)cancelPlaylistRestore(storage);
@@ -115,7 +125,7 @@ describe("crash-safe backup restoration journal",()=>{
  });
  it("retains pending recovery after playlist quota failure",()=>{
   const storage=store();
-  stagePlaylistRestore(storage,[{id:"b"}],incoming);
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
   const failed={...storage,setItem:(key:string,value:string)=>{if(key==="playlists")throw new Error("QuotaExceeded");storage.setItem(key,value)}};
   expect(()=>recoverPlaylistRestore(failed,new Set(["a","b"]),"playlists")).toThrow("QuotaExceeded");
   expect(hasPendingPlaylistRestore(storage)).toBe(true);
