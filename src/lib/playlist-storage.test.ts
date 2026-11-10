@@ -33,6 +33,16 @@ describe("playlist restore commit",()=>{
   expect(next).toEqual([{id:"existing",name:"Old",trackIds:["a","b"]},{id:"new",name:"New",trackIds:[]}]);
   expect(parseStoredPlaylists(storage.get("playlists")!)).toEqual(next);
  });
+ it("deduplicates track references when importing a new playlist without changing existing playlist order",()=>{
+  const saved=[{id:"existing",name:"Keep",trackIds:["local","local"]}];
+  const data=new Map([["playlists",JSON.stringify(saved)]]);
+  const storage={getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)}};
+  const incoming=[{id:"new",name:"Imported",trackIds:["a","b","a","c","b"]}];
+  const result=persistRestoredPlaylists(storage,"playlists",incoming);
+  expect(result).toEqual([...saved,{id:"new",name:"Imported",trackIds:["a","b","c"]}]);
+  expect(persistRestoredPlaylists(storage,"playlists",incoming)).toEqual(result);
+  expect(parseStoredPlaylists(data.get("playlists")!)).toEqual(result);
+ });
  it("is idempotent and never reorders or deletes locally edited playlist tracks",()=>{
   const storage=new Map([["playlists",JSON.stringify([{id:"mix",name:"My edited mix",trackIds:["local","shared"]}])]]);
   const adapter={getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>{storage.set(key,value)}};
