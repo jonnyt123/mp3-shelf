@@ -140,24 +140,38 @@ final class SpotifyService: NSObject, ObservableObject {
 
     private func request<T: Decodable>(_ url: URL) async throws -> T {
         try await ensureValidToken()
-        guard let token else { throw SpotifyError.notConnected }
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 30
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let response = response as? HTTPURLResponse else { throw SpotifyError.api("No HTTP response.") }
-        switch response.statusCode {
-        case 200...299: return try JSONDecoder().decode(T.self, from: data)
-        case 401: throw SpotifyError.api("Spotify authorization expired. Disconnect and reconnect your account.")
-        case 403: throw SpotifyError.api("Spotify denied access to this playlist. It may not be owned by you or shared with you as a collaborator, or your Spotify account isn't allowed in this developer app.")
-        case 429: throw SpotifyError.api("Spotify rate limit reached. Try importing again later.")
-        default: throw SpotifyError.api("Spotify request failed (HTTP \(response.statusCode)).")
+        // A token may be revoked server-side before its advertised expiry.
+        // Retry a 401 once with a fresh token; never loop indefinitely.
+        for attempt in 0..<2 {
+            guard let token else { throw SpotifyError.notConnected }
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
+            request.timeoutInterval = 30
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let response = response as? HTTPURLResponse else { throw SpotifyError.api("No HTTP response.") }
+            switch response.statusCode {
+            case 200...299: return try JSONDecoder().decode(T.self, from: data)
+            case 401:
+                guard attempt == 0 else {
+                    throw SpotifyError.api("Spotify authorization expired. Disconnect and reconnect your account.")
+                }
+                try await refreshAccessToken()
+            case 403: throw SpotifyError.api("Spotify denied access to this playlist. It may not be owned by you or shared with you as a collaborator, or your Spotify account isn't allowed in this developer app.")
+            case 429: throw SpotifyError.api("Spotify rate limit reached. Try importing again later.")
+            default: throw SpotifyError.api("Spotify request failed (HTTP \(response.statusCode)).")
+            }
         }
+        throw SpotifyError.api("Spotify authorization expired.")
     }
 
     private func ensureValidToken() async throws {
         guard let existing = token else { throw SpotifyError.notConnected }
         guard Date().addingTimeInterval(60) >= existing.expiresAt else { return }
+        try await refreshAccessToken()
+    }
+
+    private func refreshAccessToken() async throws {
+        guard let existing = token else { throw SpotifyError.notConnected }
         let fresh = try await exchangeToken([
             "grant_type": "refresh_token", "refresh_token": existing.refreshToken,
             "client_id": clientID
