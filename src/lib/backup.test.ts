@@ -48,6 +48,9 @@ describe("MP3 Shelf backups",()=>{
   expect(()=>createLibraryBackup([{...song,artwork:new Blob([])}],[])).toThrow("empty artwork");
   expect(()=>createLibraryBackup([song],[{id:"mix",name:"Mix",trackIds:["song-1"]},{id:"mix",name:"Other",trackIds:[]}])).toThrow("Duplicate playlist ID");
   expect(()=>createLibraryBackup([{...song,name:"  "}],[])).toThrow("without an ID and name");
+  expect(()=>createLibraryBackup([{...song,importedAt:Number.NaN}],[])).toThrow("invalid import date");
+  expect(()=>createLibraryBackup([{...song,importedAt:Number.POSITIVE_INFINITY}],[])).toThrow("invalid import date");
+  expect(()=>createLibraryBackup([song],[{id:"mix",name:"Mix",trackIds:[123] as unknown as string[]}])).toThrow("invalid track references");
  });
 
 });
