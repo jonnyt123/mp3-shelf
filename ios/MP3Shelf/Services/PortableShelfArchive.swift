@@ -151,8 +151,20 @@ enum PortableShelfArchive {
         let JSON = try JSONEncoder().encode(manifest)
         guard !JSON.isEmpty, JSON.count <= maxManifestBytes else { throw ArchiveError.oversized }
 
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-        let output = try FileHandle(forWritingTo: destination)
+        // Write to a sibling temporary file first: failed source reads, disk-full
+        // errors or interrupted exports must not leave a corrupt final archive.
+        // Refuse to overwrite an existing user backup.
+        let manager = FileManager.default
+        guard !manager.fileExists(atPath: destination.path) else {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        let staging = destination.deletingLastPathComponent()
+            .appendingPathComponent("." + destination.lastPathComponent + "." + UUID().uuidString + ".partial")
+        guard manager.createFile(atPath: staging.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        do {
+        let output = try FileHandle(forWritingTo: staging)
         defer { try? output.close() }
         try output.write(contentsOf: magic)
         let n = UInt32(JSON.count)
@@ -171,6 +183,18 @@ enum PortableShelfArchive {
                     try output.write(contentsOf: chunk)
                 }
             }
+        }
+        try output.synchronize()
+        try output.close()
+        // Recheck before publication. Moving within the same directory avoids
+        // exposing a partially written archive to Files or backup importers.
+        guard !manager.fileExists(atPath: destination.path) else {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        try manager.moveItem(at: staging, to: destination)
+        } catch {
+            try? manager.removeItem(at: staging)
+            throw error
         }
     }
 
