@@ -301,6 +301,20 @@ test('health probes reject oversized content-length without reading the body', a
   assert.equal(read, false);
 });
 
+test('oversized declared health response cancels its stream before reading', async () => {
+  const { readProbeBody } = await import('./verify-vercel-release.mjs');
+  let cancelled = false;
+  let pulled = false;
+  const stream = new ReadableStream({
+    pull(controller) { pulled = true; controller.enqueue(new Uint8Array(1)); },
+    cancel() { cancelled = true; }
+  }, { highWaterMark: 0 });
+  const response = { ok: true, headers: { get: () => '120001' }, body: stream };
+  await assert.rejects(readProbeBody(response), /Oversized/);
+  assert.equal(cancelled, true);
+  assert.equal(pulled, false);
+});
+
 test('streamed health responses are capped and cancelled on overflow', async () => {
   const { readProbeBody } = await import('./verify-vercel-release.mjs');
   let cancelled = false;
