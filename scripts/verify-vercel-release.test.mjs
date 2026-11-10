@@ -304,7 +304,7 @@ test('authenticated Vercel metadata requests explicitly refuse redirects', async
     };
     const result = await runReleaseCheck(valid, { fetcher, sleep: async () => {} });
     assert.equal(result.status, 'PASS');
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 4); // Alias revalidated after health probes.
   } finally {
     if (old === undefined) delete process.env.VERCEL_TOKEN;
     else process.env.VERCEL_TOKEN = old;
@@ -327,6 +327,31 @@ test('Vercel API redirects fail closed before any production health probe or rol
     );
     assert.equal(requests.length, 1);
     assert.equal(requests[0].options.method ?? 'GET', 'GET');
+  } finally {
+    if (old === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = old;
+  }
+});
+
+test('healthy probes cannot certify a SHA after the production alias changes', async () => {
+  const old = process.env.VERCEL_TOKEN;
+  process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork();
+    let aliasReads = 0;
+    const fetcher = async (url, options) => {
+      if (new URL(url).pathname === `/v13/deployments/${valid.domain}`) {
+        aliasReads++;
+        if (aliasReads === 2) {
+          return { ok: true, status: 200, json: async () => ({ id: 'dpl_Other123' }) };
+        }
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck(valid, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'BLOCKED_RACE');
+    assert.equal(aliasReads, 2);
+    assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
   } finally {
     if (old === undefined) delete process.env.VERCEL_TOKEN;
     else process.env.VERCEL_TOKEN = old;
