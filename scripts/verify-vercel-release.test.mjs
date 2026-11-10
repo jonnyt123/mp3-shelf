@@ -55,13 +55,13 @@ function fakeNetwork({ bad = false, auth = false, stale = false, rollback = fals
     const path = new URL(url).pathname;
     calls.push({ path, method: options.method ?? 'GET' });
     const json = x => ({ ok: true, status: 200, json: async () => x });
-    const html = (status, body) => ({ ok: status === 200, status, text: async () => body });
+    const html = (status, body, type) => ({ ok: status === 200, status, headers: { get: name => name.toLowerCase() === 'content-type' ? type : null }, text: async () => body });
     if (path === `/v13/deployments/${valid.deployment}`) return json({ ...identity.current, meta: { ...identity.current.meta, githubCommitSha: stale ? 'b'.repeat(40) : sha } });
     if (path === `/v13/deployments/${valid.previous}`) return json(identity.previous);
     if (path === `/v13/deployments/${valid.domain}`) return json({ id: routed ? valid.previous : valid.deployment });
     if (path === `/v9/projects/${valid.project}/rollback/${valid.previous}`) { routed = true; return json({ status: 'accepted' }); }
-    if (path === '/') return html(auth ? 403 : bad ? 503 : 200, auth ? 'Forbidden' : bad ? 'Service unavailable' : '<title>MP3 Shelf</title>');
-    if (path === '/sw.js') return html(200, 'self.addEventListener("fetch", () => { /* offline app */ });'.repeat(4));
+    if (path === '/') return html(auth ? 403 : bad ? 503 : 200, auth ? 'Forbidden' : bad ? 'Service unavailable' : '<title>MP3 Shelf</title>', 'text/html; charset=utf-8');
+    if (path === '/sw.js') return html(200, 'const CACHE_NAME = "mp3-shelf-v2"; function precacheAppShell() {} self.addEventListener("fetch", () => {});', 'text/javascript; charset=utf-8');
     throw Error(`Unexpected request to ${url}`);
   };
   return { fetcher, calls };
@@ -174,7 +174,7 @@ test('recovered production failure cannot trigger automatic rollback', async () 
     const fetcher = async (url, options) => {
       if (new URL(url).pathname === '/') {
         rootProbes++;
-        if (rootProbes === 4) return { ok: true, status: 200, text: async () => '<title>MP3 Shelf</title>' };
+        if (rootProbes === 4) return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<title>MP3 Shelf</title>' };
       }
       return net.fetcher(url, options);
     };
@@ -199,6 +199,40 @@ test('auth barrier appearing on final pre-rollback probe blocks traffic mutation
     };
     const result = await runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} });
     assert.equal(result.status, 'BLOCKED_RECOVERED_OR_UNVERIFIED');
+    assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});
+
+test('a login HTML response masquerading as the service worker never passes production health', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork();
+    const fetcher = async (url, options) => {
+      if (new URL(url).pathname === '/sw.js') {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' },
+          text: async () => '<html><title>MP3 Shelf</title><body>Sign in to continue</body></html>' };
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'BLOCKED_UNVERIFIED');
+    assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});
+
+test('JavaScript with unrelated content cannot impersonate the MP3 Shelf offline worker', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork();
+    const fetcher = async (url, options) => {
+      if (new URL(url).pathname === '/sw.js') {
+        return { ok: true, status: 200, headers: { get: () => 'application/javascript' },
+          text: async () => 'self.addEventListener("fetch", () => {});' };
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck(valid, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'BLOCKED_UNVERIFIED');
     assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
   } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
 });
