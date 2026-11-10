@@ -25,7 +25,16 @@ export async function restoreTracks(tracks:Track[]):Promise<number>{
   const completed=finish(transaction);
   try{
    const store=transaction.objectStore(STORE);
-   for(const track of tracks)store.put(track);
+   // A backup may reuse an existing ID for different audio. Never replace
+   // user-owned recordings during restore; only insert genuinely missing IDs.
+   // Queue reads and conditional adds within the same transaction so the
+   // existing record remains authoritative even when a second restore races.
+   for(const track of tracks){
+    const request=store.get(track.id);
+    request.onsuccess=()=>{
+     if(request.result===undefined)store.add(track);
+    };
+   }
   }catch(error){
    try{transaction.abort()}catch{/* Transaction already inactive. */}
    await completed.catch(()=>{});
