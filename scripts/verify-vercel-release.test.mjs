@@ -154,3 +154,11 @@ test('rejects newer, same-age and missing-timestamp rollback targets', () => {
   }
   assert.match(evaluateIdentity({ ...identity, current: { ...identity.current, createdAt: undefined } }).join(' '), /earlier deployment creation time/);
 });
+
+test('malformed health probes fail closed without throwing or authorizing rollback', () => {
+  for (const probes of [null, [], [null, null, null], [undefined, {}, {}],
+    [{ root: '503', worker: 200 }, { root: 503, worker: 200 }, { root: 503, worker: 200 }],
+    Array(3).fill({ root: NaN, worker: 200 }), Array(3).fill({ root: 503, worker: undefined })]) {
+    assert.equal(classifyProbes(probes), 'unverified');
+  }
+});
