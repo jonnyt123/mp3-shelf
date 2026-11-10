@@ -53,12 +53,12 @@ type RestoreJournal={version:1;trackIds:string[];playlists:StoredPlaylist[]};
 
 /** Durable intent is written before any IndexedDB inserts. If the browser
  * terminates between stores, startup can finish the playlist half safely. */
-export function stagePlaylistRestore(storage:Pick<Storage,"getItem"|"setItem">,tracks:readonly {id:string}[],playlists:readonly StoredPlaylist[]):boolean{
+export function stagePlaylistRestore(storage:Pick<Storage,"getItem"|"setItem">,key:string,tracks:readonly {id:string}[],playlists:readonly StoredPlaylist[]):boolean{
  const pending=storage.getItem(RESTORE_JOURNAL_KEY);
  // Validate the destination before any IndexedDB audio insertion. Otherwise a
  // corrupt local playlist record is only discovered during final commit, after
  // potentially gigabytes of restored audio have already been persisted.
- parseStoredPlaylists(storage.getItem("mp3-shelf-playlists"));
+ parseStoredPlaylists(storage.getItem(key));
  parseStoredPlaylists(JSON.stringify(playlists));
  const ids=tracks.map(track=>track.id);
  if(ids.some(id=>typeof id!=="string"||!id.trim())||new Set(ids).size!==ids.length)throw new Error("Invalid backup track IDs.");
