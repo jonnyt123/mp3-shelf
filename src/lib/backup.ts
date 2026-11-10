@@ -91,5 +91,13 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
  for(let i=1;i<usedRanges.length;i++){
   if(usedRanges[i].start<usedRanges[i-1].end)throw new Error("Overlapping audio or artwork data in backup.");
  }
+ // The v1 writer packs all media contiguously. Reject incomplete payloads and
+ // unreferenced bytes instead of silently restoring a partial/corrupt archive.
+ let expectedOffset=0;
+ for(const range of usedRanges){
+  if(range.start!==expectedOffset)throw new Error("Missing or unreferenced media data in backup.");
+  expectedOffset=range.end;
+ }
+ if(expectedOffset!==payloadSize)throw new Error("Missing or unreferenced media data in backup.");
  return{tracks,playlists};
 }
