@@ -39,10 +39,6 @@ DIRTY=unknown
 if [[ "$COMMIT" != unknown ]]; then DIRTY=no; [[ -z "$(git status --porcelain)" ]] || DIRTY=yes; fi
 STEP=none; COMPLETED=()
 # Release evidence must be bound to a reproducible, clean Git commit.
-if [[ "$MODE" != node-only && ( "$COMMIT" == unknown || "$DIRTY" != no ) ]]; then
-  echo "ERROR: Refusing release verification without a clean Git checkout at a known commit." >&2
-  exit 2
-fi
 report() {
   code=$?
   {
@@ -59,6 +55,11 @@ report() {
   } | tee "$OUT/QA_RECORD.txt"
 }
 trap report EXIT
+if [[ "$MODE" != node-only && ( "$COMMIT" == unknown || "$DIRTY" != no ) ]]; then
+  STEP=checkout-preflight
+  echo "ERROR: Refusing release verification without a clean Git checkout at a known commit." >&2
+  exit 2
+fi
 run() {
   STEP="$1"; shift
   echo "==> $STEP"
@@ -66,7 +67,7 @@ run() {
   COMPLETED+=("$STEP")
 }
 if [[ "$MODE" == node-only || "$MODE" == web || "$MODE" == all ]]; then
-  run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs
+  run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs scripts/run-local-verification.test.mjs
 fi
 if [[ "$MODE" == web || "$MODE" == all ]]; then
   # Always reconcile installed dependencies with the lockfile; an existing
