@@ -41,7 +41,15 @@ export function evaluateIdentity({ current, previous, aliased, project, sha }) {
 export function classifyProbes(probes) {
   if (!Array.isArray(probes) || probes.length !== 3) return 'unverified';
   if (probes.every(p => p.root === 200 && p.worker === 200 && p.marker === true)) return 'healthy';
-  if (probes.every(p => [404, 500, 502, 503, 504].includes(p.root) || [404, 500, 502, 503, 504].includes(p.worker))) return 'repeatable-server-failure';
+  // Only a persistent failure of the SAME endpoint can justify rollback.
+  // Auth/SSO, network failures, or alternating transient errors on either
+  // endpoint make the entire probe sequence inconclusive.
+  const serverError = status => [404, 500, 502, 503, 504].includes(status);
+  const acceptable = status => status === 200 || serverError(status);
+  if (probes.every(p => acceptable(p.root) && acceptable(p.worker)) &&
+      (probes.every(p => serverError(p.root)) || probes.every(p => serverError(p.worker)))) {
+    return 'repeatable-server-failure';
+  }
   return 'unverified'; // Includes auth/SSO, network errors, content mismatches and transient failures.
 }
 
