@@ -43,6 +43,22 @@ describe("MP3 Shelf backups",()=>{
   await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Empty track 1 audio");
  });
 
+ it("rejects unreferenced payload bytes and missing media gaps",async()=>{
+  const track:Track={id:"song",name:"Song",size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])};
+  const valid=createLibraryBackup([track],[]);
+  await expect(parseLibraryBackup(new Blob([valid,new Uint8Array([99])]))).rejects.toThrow("unreferenced media");
+  const bytes=new Uint8Array(await valid.arrayBuffer());
+  const headerSize=new TextEncoder().encode("MP3SHELF1\\n").length+4;
+  const manifestSize=new DataView(bytes.buffer).getUint32(headerSize-4,true);
+  const manifest=JSON.parse(new TextDecoder().decode(bytes.slice(headerSize,headerSize+manifestSize)));
+  manifest.tracks[0].audio.offset=1;
+  manifest.tracks[0].audio.length=2;
+  const json=new TextEncoder().encode(JSON.stringify(manifest));
+  const header=bytes.slice(0,headerSize);
+  new DataView(header.buffer).setUint32(headerSize-4,json.length,true);
+  await expect(parseLibraryBackup(new Blob([header,json,bytes.slice(headerSize+manifestSize)]))).rejects.toThrow("unreferenced media");
+ });
+
  it("refuses to export records that the restore parser would reject",()=>{
   const makeTrack=(id:string,bytes:number[]):Track=>({id,name:"Song",size:bytes.length,type:"audio/mpeg",importedAt:123,blob:new Blob([new Uint8Array(bytes)])});
   const song=makeTrack("song-1",[1,2,3]);
