@@ -48,7 +48,7 @@ describe("MP3 Shelf backups",()=>{
   const valid=createLibraryBackup([track],[]);
   await expect(parseLibraryBackup(new Blob([valid,new Uint8Array([99])]))).rejects.toThrow("unreferenced media");
   const bytes=new Uint8Array(await valid.arrayBuffer());
-  const headerSize=new TextEncoder().encode("MP3SHELF1\\n").length+4;
+  const headerSize=new TextEncoder().encode("MP3SHELF1\n").length+4;
   const manifestSize=new DataView(bytes.buffer).getUint32(headerSize-4,true);
   const manifest=JSON.parse(new TextDecoder().decode(bytes.slice(headerSize,headerSize+manifestSize)));
   manifest.tracks[0].audio.offset=1;
