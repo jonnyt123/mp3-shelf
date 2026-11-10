@@ -12,6 +12,19 @@ type BackupTrack={id:string;name:string;originalName?:string;artist?:string;albu
 type Manifest={schema:"mp3-shelf-backup";version:1;createdAt:string;tracks:BackupTrack[];playlists:BackupPlaylist[]};
 
 export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):Blob{
+ const trackIds=new Set<string>(),playlistIds=new Set<string>();
+ for(const track of tracks){
+  if(!track.id?.trim()||!track.name?.trim())throw new Error("Cannot back up a track without an ID and name.");
+  if(trackIds.has(track.id))throw new Error("Duplicate track ID in library backup.");
+  trackIds.add(track.id);
+  if(!track.blob||track.blob.size===0)throw new Error("Cannot back up an empty audio recording.");
+  if(track.artwork&&track.artwork.size===0)throw new Error("Cannot back up empty artwork.");
+ }
+ for(const playlist of playlists){
+  if(!playlist.id?.trim()||!playlist.name?.trim())throw new Error("Cannot back up a playlist without an ID and name.");
+  if(playlistIds.has(playlist.id))throw new Error("Duplicate playlist ID in library backup.");
+  playlistIds.add(playlist.id);
+ }
  const payload:Blob[]=[];let offset=0;
  const archivedTracks=tracks.map(track=>{
   const audio={offset,length:track.blob.size,type:track.type||track.blob.type||"audio/mpeg"};payload.push(track.blob);offset+=track.blob.size;
