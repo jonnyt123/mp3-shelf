@@ -4,8 +4,8 @@ import { validateInputs, evaluateIdentity, classifyProbes, parseArguments } from
 const sha = 'a'.repeat(40);
 const valid = { deployment: 'dpl_Current123', previous: 'dpl_Previous123', project: 'prj_Shelf123', team: 'team_Account123', sha, domain: 'mp3-shelf.vercel.app' };
 const identity = {
-  current: { id: valid.deployment, projectId: valid.project, target: 'production', readyState: 'READY', meta: { githubCommitSha: sha, githubCommitRef: 'main', githubRepo: 'mp3-shelf', githubOrg: 'jonnyt123' } },
-  previous: { id: valid.previous, projectId: valid.project, target: 'production', readyState: 'READY', meta: { githubCommitSha: 'b'.repeat(40), githubCommitRef: 'main', githubRepo: 'mp3-shelf', githubOrg: 'jonnyt123' } },
+  current: { id: valid.deployment, createdAt: 2000, projectId: valid.project, target: 'production', readyState: 'READY', meta: { githubCommitSha: sha, githubCommitRef: 'main', githubRepo: 'mp3-shelf', githubOrg: 'jonnyt123' } },
+  previous: { id: valid.previous, createdAt: 1000, projectId: valid.project, target: 'production', readyState: 'READY', meta: { githubCommitSha: 'b'.repeat(40), githubCommitRef: 'main', githubRepo: 'mp3-shelf', githubOrg: 'jonnyt123' } },
   aliased: { id: valid.deployment }, project: valid.project, sha
 };
 test('accepts valid exact SHA-bound production identity', () => { validateInputs(valid); assert.deepEqual(evaluateIdentity(identity), []); });
@@ -145,4 +145,12 @@ test('rejects unsafe rollback identity before probing or making production write
   } finally {
     if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old;
   }
+});
+
+test('rejects newer, same-age and missing-timestamp rollback targets', () => {
+  for (const createdAt of [2000, 3000, undefined, null, '1000', -1]) {
+    const prior = { ...identity.previous, createdAt };
+    assert.match(evaluateIdentity({ ...identity, previous: prior }).join(' '), /earlier deployment creation time/);
+  }
+  assert.match(evaluateIdentity({ ...identity, current: { ...identity.current, createdAt: undefined } }).join(' '), /earlier deployment creation time/);
 });
