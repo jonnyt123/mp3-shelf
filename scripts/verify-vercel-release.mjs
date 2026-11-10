@@ -108,9 +108,22 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
   if (classification !== 'repeatable-server-failure') return { status: 'BLOCKED_UNVERIFIED', probes, reason: 'Authentication, network or content evidence is inconclusive; no rollback attempted.' };
   if (!args.autoRollback) return { status: 'FAILED_DRY_RUN', probes, reason: 'Repeatable HTTP errors; --auto-rollback not set.' };
 
+  // The initial three failures may have recovered while the release guard waited.
+  // Require a fresh, independently observed failure before changing traffic.
+  const [latestRoot, latestWorker] = await Promise.all([probe('/'), probe('/sw.js')]);
+  const latest = { root: latestRoot.status, worker: latestWorker.status,
+    marker: latestRoot.body.includes('MP3 Shelf') && latestWorker.body.length > 50 };
+  const persistentEndpoint = endpoint =>
+    probes.every(p => [404, 500, 502, 503, 504].includes(p[endpoint])) &&
+    [404, 500, 502, 503, 504].includes(latest[endpoint]);
+  const acceptable = status => status === 200 || [404, 500, 502, 503, 504].includes(status);
+  if ((!persistentEndpoint('root') && !persistentEndpoint('worker')) ||
+      !acceptable(latest.root) || !acceptable(latest.worker)) {
+    return { status: 'BLOCKED_RECOVERED_OR_UNVERIFIED', probes: [...probes, latest] };
+  }
   // Re-check the alias immediately before routing traffic away. Never roll back if changed.
   const live = await api(`/v13/deployments/${args.domain}`);
-  if ((live.id ?? live.uid) !== args.deployment) return { status: 'BLOCKED_RACE', probes };
+  if ((live.id ?? live.uid) !== args.deployment) return { status: 'BLOCKED_RACE', probes: [...probes, latest] };
   await api(`/v9/projects/${args.project}/rollback/${args.previous}`, { method: 'POST', body: '{}' });
   for (let attempt = 0; attempt < 10; attempt++) {
     await sleep(2000);
