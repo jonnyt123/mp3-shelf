@@ -303,21 +303,34 @@ final class MusicLibrary: ObservableObject {
                         providerName: attribution.provider
                     )
                 }
+                // Audio has already been durably imported. Optional sidecar
+                // failures must not abort playlist relinking or misreport the
+                // recording as missing. Report each failure for user recovery.
                 if let artwork = archived.artwork {
-                    let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
-                    if UIImage(data: bytes) != nil {
-                        let filename = tracks[index].id.uuidString + ".img"
-                        try bytes.write(to: artworkDirectory.appendingPathComponent(filename),
-                                        options: .atomic)
-                        tracks[index].artworkFileName = filename
-                        artworkCache.removeObject(forKey: filename as NSString)
+                    do {
+                        let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
+                        if UIImage(data: bytes) != nil {
+                            let filename = tracks[index].id.uuidString + ".img"
+                            try bytes.write(to: artworkDirectory.appendingPathComponent(filename),
+                                            options: .atomic)
+                            tracks[index].artworkFileName = filename
+                            artworkCache.removeObject(forKey: filename as NSString)
+                        } else {
+                            report.errors.append("\(archived.name): invalid cover artwork; audio restored.")
+                        }
+                    } catch {
+                        report.errors.append("\(archived.name): cover artwork not restored (\(error.localizedDescription)); audio restored.")
                     }
                 }
                 if let lyrics = archived.lyrics, !lyrics.isEmpty {
-                    let filename = tracks[index].id.uuidString + ".lrc"
-                    try Data(lyrics.utf8).write(
-                        to: lyricsDirectory.appendingPathComponent(filename), options: .atomic)
-                    tracks[index].lyricsFileName = filename
+                    do {
+                        let filename = tracks[index].id.uuidString + ".lrc"
+                        try Data(lyrics.utf8).write(
+                            to: lyricsDirectory.appendingPathComponent(filename), options: .atomic)
+                        tracks[index].lyricsFileName = filename
+                    } catch {
+                        report.errors.append("\(archived.name): lyrics not restored (\(error.localizedDescription)); audio restored.")
+                    }
                 }
                 save()
             } catch {
