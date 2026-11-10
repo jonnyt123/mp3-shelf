@@ -799,11 +799,11 @@ struct PlaylistDetailView: View {
 
     /// Report the real, persisted outcome for each song in the imported
     /// Spotify playlist. Downloading is not the same as already saved offline.
-    private func mp3Status(for wish: PlaylistWish) -> (text: String, symbol: String) {
+    private func mp3Status(for wish: PlaylistWish, tickets: [BackgroundAudioTicket]) -> (text: String, symbol: String) {
         if library.hasOfflineRecording(matching: wish) {
             return ("Saved offline as an audio file", "checkmark.circle.fill")
         }
-        if let ticket = transfers.ticketsForPlaylist(playlistID).first(where: {
+        if let ticket = tickets.first(where: {
             $0.requested.matchesSourceRequest(wish)
         }) {
             switch ticket.status {
@@ -1100,21 +1100,24 @@ struct PlaylistDetailView: View {
                 }
                 if !playlist.sourceOrder.isEmpty {
                     Section("SONG-BY-SONG MP3 RESULTS") {
+                        // One transfer snapshot per section evaluation, not an O(n)
+                        // downloader lookup for every imported playlist entry.
+                        let tickets = transfers.ticketsForPlaylist(playlistID)
+                        let ticketsByWishID = Dictionary(grouping: tickets, by: { $0.requested.id })
                         ForEach(playlist.sourceOrder) { wish in
                             VStack(alignment: .leading, spacing: 7) {
                                 Text(wish.title)
                                     .font(.subheadline.bold())
                                 Text(wish.artist)
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                let status = mp3Status(for: wish)
+                                let status = mp3Status(for: wish, tickets: ticketsByWishID[wish.id] ?? [])
                                 Label(status.text, systemImage: status.symbol)
                                     .font(.caption.weight(.medium))
                                     .foregroundStyle(status.text.contains("failed") ||
                                                      status.text.contains("No qualifying")
                                         ? ShelfTheme.coral : ShelfTheme.mint)
                                     .accessibilityLabel("\(wish.title): \(status.text)")
-                                if let ticket = transfers.ticketsForPlaylist(playlistID)
-                                    .first(where: { $0.requested.id == wish.id }) {
+                                if let ticket = ticketsByWishID[wish.id]?.first {
                                     if ticket.status == .queued, let total = ticket.totalBytes,
                                        total > 0, let received = ticket.bytesReceived {
                                         ProgressView(value: Double(received), total: Double(total))
