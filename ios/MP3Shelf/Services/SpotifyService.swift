@@ -213,8 +213,10 @@ final class SpotifyService: NSObject, ObservableObject {
         // not permanently poison subsequent reconnect/retry attempts.
         defer { refreshTask = nil }
         let fresh = try await task.value
+        try Task.checkCancellation()
         // Disconnect or a new sign-in may have happened during the request.
-        guard token?.refreshToken == existing.refreshToken else {
+        // A cancelled shared refresh must never restore a disconnected session.
+        guard refreshTask != nil, token?.refreshToken == existing.refreshToken else {
             throw SpotifyError.notConnected
         }
         store(tokens: fresh)
