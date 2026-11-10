@@ -152,9 +152,11 @@ final class SpotifyService: NSObject, ObservableObject {
 
     private func request<T: Decodable>(_ url: URL) async throws -> T {
         try await ensureValidToken()
-        // A token may be revoked server-side before its advertised expiry.
-        // Retry a 401 once with a fresh token; never loop indefinitely.
-        for attempt in 0..<2 {
+        // Bound both authorization replay and server-directed rate-limit retries.
+        var authorizationRetries = 0
+        var rateLimitRetries = 0
+        while true {
+            try Task.checkCancellation()
             guard let token else { throw SpotifyError.notConnected }
             var request = URLRequest(url: url)
             request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
@@ -164,19 +166,27 @@ final class SpotifyService: NSObject, ObservableObject {
             switch response.statusCode {
             case 200...299: return try JSONDecoder().decode(T.self, from: data)
             case 401:
-                guard attempt == 0 else {
+                guard authorizationRetries == 0 else {
                     throw SpotifyError.api("Spotify authorization expired. Disconnect and reconnect your account.")
                 }
+                authorizationRetries += 1
                 // Another request may already have replaced the rejected token.
                 if self.token?.accessToken == token.accessToken {
                     try await refreshAccessToken()
                 }
             case 403: throw SpotifyError.api("Spotify denied access to this playlist. It may not be owned by you or shared with you as a collaborator, or your Spotify account isn't allowed in this developer app.")
-            case 429: throw SpotifyError.api("Spotify rate limit reached. Try importing again later.")
+            case 429:
+                // Only honor short, valid Retry-After delays; never spin or sleep indefinitely.
+                guard rateLimitRetries < 2,
+                      let header = response.value(forHTTPHeaderField: "Retry-After")?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      let seconds = Int(header), (1...10).contains(seconds) else {
+                    throw SpotifyError.api("Spotify rate limit reached. Try importing again later.")
+                }
+                rateLimitRetries += 1
+                try await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
             default: throw SpotifyError.api("Spotify request failed (HTTP \(response.statusCode)).")
             }
         }
-        throw SpotifyError.api("Spotify authorization expired.")
     }
 
     private func ensureValidToken() async throws {
