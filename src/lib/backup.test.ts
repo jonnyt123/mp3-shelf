@@ -18,4 +18,26 @@ describe("MP3 Shelf backups",()=>{
   const valid=createLibraryBackup([],[]);
   await expect(parseLibraryBackup(valid.slice(0,valid.size-1))).rejects.toThrow();
  });
+ it("rejects overlapping binary ranges and duplicate IDs before restoring",async()=>{
+  const track:Track={id:"song-1",name:"First",size:4,type:"audio/mpeg",importedAt:123,blob:new Blob([new Uint8Array([1,2,3,4])]),artwork:new Blob([new Uint8Array([5,6])])};
+  const original=createLibraryBackup([track],[{id:"mix-1",name:"Mix",trackIds:["song-1"]}]);
+  const bytes=new Uint8Array(await original.arrayBuffer());
+  const headerSize=new TextEncoder().encode("MP3SHELF1\\n").length+4;
+  const manifestSize=new DataView(bytes.buffer).getUint32(headerSize-4,true);
+  const manifest=JSON.parse(new TextDecoder().decode(bytes.slice(headerSize,headerSize+manifestSize)));
+  const payload=bytes.slice(headerSize+manifestSize);
+  const corrupt=(value:unknown)=>{const json=new TextEncoder().encode(JSON.stringify(value));const header=bytes.slice(0,headerSize);new DataView(header.buffer).setUint32(headerSize-4,json.length,true);return new Blob([header,json,payload])};
+  manifest.tracks[0].artwork.offset=2;
+  await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Overlapping");
+  manifest.tracks[0].artwork.offset=4;
+  manifest.tracks.push({...manifest.tracks[0]});
+  await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Duplicate track ID");
+  manifest.tracks.pop();
+  manifest.playlists.push({...manifest.playlists[0]});
+  await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Duplicate playlist ID");
+  manifest.playlists.pop();
+  manifest.tracks[0].audio.length=0;
+  await expect(parseLibraryBackup(corrupt(manifest))).rejects.toThrow("Empty track 1 audio");
+ });
+
 });
