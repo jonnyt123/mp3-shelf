@@ -47,7 +47,11 @@ final class SpotifyService: NSObject, ObservableObject {
         isBusy = true
         // A disconnect or another authorization invalidates this in-flight login.
         let signInGeneration = authorizationGeneration
-        defer { isBusy = false }
+        // A cancelled browser may finish after a replacement sign-in has begun.
+        // Its defer must not clear the replacement attempt's busy indicator.
+        defer {
+            if signInGeneration == authorizationGeneration { isBusy = false }
+        }
         do {
             let verifier = Self.makeVerifier()
             let challenge = Data(SHA256.hash(data: Data(verifier.utf8)))
@@ -120,6 +124,7 @@ final class SpotifyService: NSObject, ObservableObject {
         authorizationGeneration &+= 1
         session?.cancel()
         session = nil
+        isBusy = false
         refreshTask?.cancel()
         refreshTask = nil
         token = nil
