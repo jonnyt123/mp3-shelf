@@ -58,7 +58,11 @@ export function classifyProbes(probes) {
   // endpoint make the entire probe sequence inconclusive.
   const serverError = status => [404, 500, 502, 503, 504].includes(status);
   const acceptable = status => status === 200 || serverError(status);
-  if (probes.every(p => acceptable(p.root) && acceptable(p.worker)) &&
+  // A 200 on the other endpoint must be validated content, not an SSO page
+  // or unrelated JavaScript. Such ambiguity cannot authorize rollback.
+  if (probes.every(p => acceptable(p.root) && acceptable(p.worker) &&
+      (p.root !== 200 || p.rootValid === true) &&
+      (p.worker !== 200 || p.workerValid === true)) &&
       (probes.every(p => serverError(p.root)) || probes.every(p => serverError(p.worker)))) {
     return 'repeatable-server-failure';
   }
@@ -103,10 +107,11 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
   const probes = [];
   for (let attempt = 0; attempt < 3; attempt++) {
     const [root, worker] = await Promise.all([probe('/'), probe('/sw.js')]);
+    const rootValid = root.type === 'text/html' && root.body.includes('MP3 Shelf');
+    const workerValid = ['text/javascript', 'application/javascript'].includes(worker.type) &&
+      worker.body.includes('mp3-shelf-v2') && worker.body.includes('precacheAppShell');
     probes.push({ root: root.status, worker: worker.status,
-      marker: root.type === 'text/html' && root.body.includes('MP3 Shelf') &&
-        ['text/javascript', 'application/javascript'].includes(worker.type) &&
-        worker.body.includes('mp3-shelf-v2') && worker.body.includes('precacheAppShell') });
+      rootValid, workerValid, marker: rootValid && workerValid });
     if (attempt < 2) await sleep(1500);
   }
   const classification = classifyProbes(probes);
@@ -117,16 +122,20 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
   // The initial three failures may have recovered while the release guard waited.
   // Require a fresh, independently observed failure before changing traffic.
   const [latestRoot, latestWorker] = await Promise.all([probe('/'), probe('/sw.js')]);
+  const latestRootValid = latestRoot.type === 'text/html' && latestRoot.body.includes('MP3 Shelf');
+  const latestWorkerValid = ['text/javascript', 'application/javascript'].includes(latestWorker.type) &&
+    latestWorker.body.includes('mp3-shelf-v2') && latestWorker.body.includes('precacheAppShell');
   const latest = { root: latestRoot.status, worker: latestWorker.status,
-    marker: latestRoot.type === 'text/html' && latestRoot.body.includes('MP3 Shelf') &&
-      ['text/javascript', 'application/javascript'].includes(latestWorker.type) &&
-      latestWorker.body.includes('mp3-shelf-v2') && latestWorker.body.includes('precacheAppShell') };
+    rootValid: latestRootValid, workerValid: latestWorkerValid,
+    marker: latestRootValid && latestWorkerValid };
   const persistentEndpoint = endpoint =>
     probes.every(p => [404, 500, 502, 503, 504].includes(p[endpoint])) &&
     [404, 500, 502, 503, 504].includes(latest[endpoint]);
   const acceptable = status => status === 200 || [404, 500, 502, 503, 504].includes(status);
   if ((!persistentEndpoint('root') && !persistentEndpoint('worker')) ||
-      !acceptable(latest.root) || !acceptable(latest.worker)) {
+      !acceptable(latest.root) || !acceptable(latest.worker) ||
+      (latest.root === 200 && !latest.rootValid) ||
+      (latest.worker === 200 && !latest.workerValid)) {
     return { status: 'BLOCKED_RECOVERED_OR_UNVERIFIED', probes: [...probes, latest] };
   }
   // Re-check the alias immediately before routing traffic away. Never roll back if changed.
