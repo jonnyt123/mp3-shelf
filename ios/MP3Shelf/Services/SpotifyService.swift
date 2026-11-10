@@ -324,7 +324,15 @@ final class SpotifyService: NSObject, ObservableObject {
             throw SpotifyError.api("Spotify token request failed. Check your Client ID and exact registered redirect URI.")
         }
         let decoded = try JSONDecoder().decode(SpotifyTokenResponse.self, from: data)
-        guard let refresh = decoded.refresh_token ?? oldRefresh else { throw SpotifyError.badCallback }
+        // Do not persist an unusable token response. An empty access token or
+        // nonpositive lifetime would otherwise appear connected and trigger
+        // repeated refresh attempts on every playlist request.
+        guard !decoded.access_token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (1...86_400).contains(decoded.expires_in),
+              let refresh = decoded.refresh_token ?? oldRefresh,
+              !refresh.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SpotifyError.api("Spotify returned unusable authorization credentials. Reconnect your account.")
+        }
         return SpotifyTokens(accessToken: decoded.access_token, refreshToken: refresh,
                              expiresAt: Date().addingTimeInterval(TimeInterval(decoded.expires_in)))
     }
