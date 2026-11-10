@@ -34,7 +34,7 @@ export function persistRestoredPlaylists(
  const merged=new Map(existing.map(item=>[item.id,item]));
  for(const item of incoming){
   const saved=merged.get(item.id);
-  if(!saved){merged.set(item.id,item);continue}
+  if(!saved){merged.set(item.id,{...item,trackIds:[...new Set(item.trackIds)]});continue}
   // A backup may be older than the user's local playlist. Restore missing
   // links without reverting a rename, removing songs, or reordering edits.
   const known=new Set(saved.trackIds);
