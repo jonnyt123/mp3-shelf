@@ -76,6 +76,14 @@ describe("crash-safe backup restoration journal",()=>{
   return{getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)},removeItem:(key:string)=>{data.delete(key)}};
  }
  const incoming=[{id:"local",name:"Old",trackIds:["b"]},{id:"new",name:"New",trackIds:["b"]}];
+ it("rejects corrupt destination playlists before staging any audio restore",()=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-playlists","{damaged");
+  const original=storage.getItem("mp3-shelf-playlists");
+  expect(()=>stagePlaylistRestore(storage,[{id:"b"}],incoming)).toThrow();
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+  expect(storage.getItem("mp3-shelf-playlists")).toBe(original);
+ });
  it("recovers after audio commits but before playlists are saved, without reverting local edits",()=>{
   const storage=store();
   stagePlaylistRestore(storage,[{id:"b"}],incoming);
