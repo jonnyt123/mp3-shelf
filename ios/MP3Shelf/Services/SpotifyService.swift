@@ -366,6 +366,8 @@ final class SpotifyService: NSObject, ObservableObject {
               (1...50).contains(previousLimit),
               let previousOffset = previous.queryItems?.first(where: { $0.name == "offset" })?.value.flatMap(Int.init) ?? Optional(0),
               limit == previousLimit,
+              // A short nonterminal page would silently skip playlist items.
+              returnedItems == previousLimit,
               previousOffset >= 0,
               previousOffset <= Int.max - limit,
               // A valid next page must not skip songs or silently change the
