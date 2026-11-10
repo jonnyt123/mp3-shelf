@@ -333,18 +333,20 @@ final class MusicLibrary: ObservableObject {
                         providerName: attribution.provider
                     )
                 }
-                // Audio has already been durably imported. Optional sidecar
-                // failures must not abort playlist relinking or misreport the
-                // recording as missing. Report each failure for user recovery.
+                // Imported audio is already durable. Never overwrite existing
+                // artwork/lyrics sidecars before their new catalog references
+                // are durable: a failed catalog write must preserve old bytes.
+                // Optional sidecar failures are reported without losing audio.
+                var createdSidecars: [URL] = []
                 if let artwork = archived.artwork {
                     do {
                         let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
                         if UIImage(data: bytes) != nil {
-                            let filename = tracks[index].id.uuidString + ".img"
-                            try bytes.write(to: artworkDirectory.appendingPathComponent(filename),
-                                            options: .atomic)
+                            let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".img"
+                            let destination = artworkDirectory.appendingPathComponent(filename)
+                            try bytes.write(to: destination, options: .atomic)
+                            createdSidecars.append(destination)
                             tracks[index].artworkFileName = filename
-                            artworkCache.removeObject(forKey: filename as NSString)
                         } else {
                             report.errors.append("\(archived.name): invalid cover artwork; audio restored.")
                         }
@@ -354,15 +356,28 @@ final class MusicLibrary: ObservableObject {
                 }
                 if let lyrics = archived.lyrics, !lyrics.isEmpty {
                     do {
-                        let filename = tracks[index].id.uuidString + ".lrc"
-                        try Data(lyrics.utf8).write(
-                            to: lyricsDirectory.appendingPathComponent(filename), options: .atomic)
+                        let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".lrc"
+                        let destination = lyricsDirectory.appendingPathComponent(filename)
+                        try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                        createdSidecars.append(destination)
                         tracks[index].lyricsFileName = filename
                     } catch {
                         report.errors.append("\(archived.name): lyrics not restored (\(error.localizedDescription)); audio restored.")
                     }
                 }
-                save()
+                do {
+                    // save() only logs errors; archive restore must surface them.
+                    try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
+                } catch {
+                    // Reload the last committed catalog, retaining the already
+                    // imported recording while discarding uncommitted metadata.
+                    if let committed = try? PersistedLibrary.readIfPresent(from: databaseURL) {
+                        tracks = committed.tracks
+                        playlists = committed.playlists
+                    }
+                    for sidecar in createdSidecars { try? manager.removeItem(at: sidecar) }
+                    throw error
+                }
             } catch {
                 report.errors.append("\(archived.name): \(error.localizedDescription)")
             }
