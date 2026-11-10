@@ -150,7 +150,15 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
     if (attempt < 2) await sleep(1500);
   }
   const classification = classifyProbes(probes);
-  if (classification === 'healthy') return { status: 'PASS', deployment: args.deployment, sha: args.sha, probes };
+  if (classification === 'healthy') {
+    // A production alias can move while the three health probes run. Health
+    // from a different deployment must never validate the requested SHA.
+    const verifiedAlias = await api(`/v13/deployments/${args.domain}`);
+    if ((verifiedAlias.id ?? verifiedAlias.uid) !== args.deployment) {
+      return { status: 'BLOCKED_RACE', probes, reason: 'Production alias changed during health verification.' };
+    }
+    return { status: 'PASS', deployment: args.deployment, sha: args.sha, probes };
+  }
   if (classification !== 'repeatable-server-failure') return { status: 'BLOCKED_UNVERIFIED', probes, reason: 'Authentication, network or content evidence is inconclusive; no rollback attempted.' };
   if (!args.autoRollback) return { status: 'FAILED_DRY_RUN', probes, reason: 'Repeatable HTTP errors; --auto-rollback not set.' };
 
