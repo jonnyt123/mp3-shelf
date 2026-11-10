@@ -176,7 +176,15 @@ final class SpotifyService: NSObject, ObservableObject {
         else {
             throw SpotifyError.api("Enter a valid open.spotify.com/playlist/… share link.")
         }
-        return try await request(url)
+        let generation = authorizationGeneration
+        let playlist: SpotifyPlaylist = try await request(url)
+        // A pasted-link lookup can outlive disconnect or account switching.
+        // Do not return metadata fetched under an obsolete authorization.
+        try Task.checkCancellation()
+        guard generation == authorizationGeneration, token != nil else {
+            throw SpotifyError.notConnected
+        }
+        return playlist
     }
 
     func getTrackList(for playlist: SpotifyPlaylist) async throws -> [PlaylistWish] {
