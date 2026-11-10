@@ -21,6 +21,19 @@ describe("restore failure safety",()=>{
   expect(Array.from(new Uint8Array(await saved!.blob.arrayBuffer()))).toEqual([1,2,3]);
   await removeTrack(id);
  });
+ it("counts only newly committed recordings across repeated restores",async()=>{
+  const first=makeTrack("restore-count-existing");
+  const second=makeTrack("restore-count-new");
+  try{
+   expect(await restoreTracks([first])).toBe(1);
+   expect(await restoreTracks([first,second])).toBe(1);
+   expect(await restoreTracks([first,second])).toBe(0);
+   expect((await listTracks()).filter(t=>t.id.startsWith("restore-count-"))).toHaveLength(2);
+  }finally{
+   await removeTrack(first.id);
+   await removeTrack(second.id);
+  }
+ });
  it("never overwrites an existing recording with conflicting backup bytes",async()=>{
   const existing=makeTrack("restore-collision");
   const conflicting={...makeTrack("restore-collision"),name:"Wrong recording",blob:new Blob([new Uint8Array([9,9,9])])};
