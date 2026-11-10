@@ -9,6 +9,17 @@ describe("restore failure safety",()=>{
   await expect(restoreTracks([makeTrack("duplicate-restore"),makeTrack("duplicate-restore")])).rejects.toThrow("duplicate track ID");
   expect((await listTracks()).some(t=>t.id==="duplicate-restore")).toBe(false);
  });
+ it("never overwrites an existing recording with conflicting backup bytes",async()=>{
+  const existing=makeTrack("restore-collision");
+  const conflicting={...makeTrack("restore-collision"),name:"Wrong recording",blob:new Blob([new Uint8Array([9,9,9])])};
+  await restoreTracks([existing]);
+  await restoreTracks([conflicting,makeTrack("restore-new")]);
+  const saved=(await listTracks()).find(track=>track.id==="restore-collision");
+  expect(saved?.name).toBe("restore-collision");
+  expect(Array.from(new Uint8Array(await saved!.blob.arrayBuffer()))).toEqual([1,2,3]);
+  expect((await listTracks()).some(track=>track.id==="restore-new")).toBe(true);
+  await removeTrack("restore-collision");await removeTrack("restore-new");
+ });
  it("aborts all writes when a later track is not structured-cloneable",async()=>{
   const bad={...makeTrack("bad-restore"),uncloneable:()=>{}} as Track;
   await expect(restoreTracks([makeTrack("new-restore"),bad])).rejects.toThrow();
