@@ -94,7 +94,11 @@ final class SpotifyService: NSObject, ObservableObject {
         guard token != nil else { throw SpotifyError.notConnected }
         var next: URL? = URL(string: "https://api.spotify.com/v1/me/playlists?limit=50")
         var found: [SpotifyPlaylist] = []
+        var visitedPages = Set<URL>()
         while let url = next {
+            guard visitedPages.insert(url).inserted, visitedPages.count <= 250 else {
+                throw SpotifyError.api("Spotify returned repeated or excessive playlist pages.")
+            }
             let page: SpotifyPage<SpotifyPlaylist> = try await request(url)
             found.append(contentsOf: page.items)
             next = try Self.safeNext(page.next)
@@ -121,7 +125,11 @@ final class SpotifyService: NSObject, ObservableObject {
         }
         var next: URL? = URL(string: "https://api.spotify.com/v1/playlists/\(encodedID)/items?limit=50")
         var wishes: [PlaylistWish] = []
+        var visitedPages = Set<URL>()
         while let url = next {
+            guard visitedPages.insert(url).inserted, visitedPages.count <= 500 else {
+                throw SpotifyError.api("Spotify returned repeated or excessive track pages.")
+            }
             let page: SpotifyPage<SpotifyPlaylistItem> = try await request(url)
             for entry in page.items {
                 guard let track = entry.item ?? entry.track, track.type == "track" else { continue }
