@@ -228,6 +228,15 @@ final class MusicLibrary: ObservableObject {
         let archive = try PortableShelfArchive.open(url)
         var report = ImportReport()
         var restoredIDs: [String: UUID] = [:]
+        // Index candidate sizes once per restore instead of scanning every
+        // recording for each archive entry (quadratic on large libraries).
+        // Verify actual bytes before reuse; equal sizes are not identity.
+        var recordingsBySize: [Int64: [MusicTrack]] = [:]
+        for track in tracks {
+            if let size = try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                recordingsBySize[Int64(size), default: []].append(track)
+            }
+        }
         for archived in archive.manifest.tracks {
             var temporary: URL?
             do {
@@ -246,11 +255,8 @@ final class MusicLibrary: ObservableObject {
                 // potentially large track; never trust names or portable IDs
                 // without checking the actual bytes.
                 let extractedSize = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-                if extractedSize >= 0, let existing = tracks.first(where: { candidate in
-                    let stored = fileURL(for: candidate)
-                    return ((try? stored.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -2) == extractedSize &&
-                        PortableShelfArchive.audioFilesIdentical(file, stored)
-                }) {
+                if extractedSize >= 0, let existing = recordingsBySize[Int64(extractedSize)]?
+                    .first(where: { PortableShelfArchive.audioFilesIdentical(file, fileURL(for: $0)) }) {
                     restoredIDs[archived.id] = existing.id
                     report.skipped += 1
                     continue
@@ -280,6 +286,9 @@ final class MusicLibrary: ObservableObject {
                     continue
                 }
                 guard let index = tracks.indices.last else { continue }
+                if extractedSize >= 0 {
+                    recordingsBySize[Int64(extractedSize), default: []].append(tracks[index])
+                }
                 restoredIDs[archived.id] = tracks[index].id
                 // If the archived identifier belongs to a different local
                 // recording, keep this song's new UUID as its export identity.
