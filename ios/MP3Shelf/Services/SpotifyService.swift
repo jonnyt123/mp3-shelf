@@ -106,8 +106,22 @@ final class SpotifyService: NSObject, ObservableObject {
             }
             // Sign-in establishes a new session; invalidate stale refresh completions.
             authorizationGeneration &+= 1
+            let connectedGeneration = authorizationGeneration
             store(tokens: newTokens)
-            try await refreshPlaylists()
+            // The sign-in generation is intentionally obsolete after token
+            // installation. Release the busy indicator for the new session,
+            // otherwise the old defer leaves the Connect button stuck busy.
+            isBusy = false
+            do {
+                try await refreshPlaylists()
+            } catch {
+                // A successful OAuth exchange is still a connected account.
+                // Playlist access can fail independently (403, 429, network).
+                // Do not hide that failure or clear a newer session's state.
+                if connectedGeneration == authorizationGeneration {
+                    message = error.localizedDescription
+                }
+            }
         } catch {
             // A superseded attempt must not clear a newer browser or publish
             // a stale error after disconnect/reconnect.
