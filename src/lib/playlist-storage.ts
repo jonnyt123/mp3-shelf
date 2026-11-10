@@ -27,6 +27,9 @@ export function persistRestoredPlaylists(
  storage:Pick<Storage,"getItem"|"setItem">, key:string,
  incoming:readonly StoredPlaylist[]
 ):StoredPlaylist[]{
+ // Validate backup playlists before writing. Invalid IDs must not silently
+ // merge into the user\'s current playlists.
+ parseStoredPlaylists(JSON.stringify(incoming));
  const existing=parseStoredPlaylists(storage.getItem(key));
  const merged=new Map(existing.map(item=>[item.id,item]));
  for(const item of incoming){
