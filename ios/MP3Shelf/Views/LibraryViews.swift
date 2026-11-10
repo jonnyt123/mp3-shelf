@@ -443,8 +443,13 @@ struct MusicTrackRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Play \(track.title) by \(track.artist)")
-            .accessibilityHint(track.id == playback.currentTrackID ? "Restart the current song" : "Start playback from this song")
+            .accessibilityLabel(track.id == playback.currentTrackID
+                                ? "Now playing: \(track.title) by \(track.artist)"
+                                : "Play \(track.title) by \(track.artist)")
+            .accessibilityValue(track.duration.shelfClock)
+            .accessibilityHint(track.id == playback.currentTrackID
+                               ? "Restart the current song"
+                               : "Start playback from this song")
             Menu {
                 Button { library.toggleFavorite(track.id) } label: {
                     Label(track.isFavorite ? "Remove favorite" : "Favorite", systemImage: track.isFavorite ? "heart.slash" : "heart")
