@@ -55,6 +55,7 @@ export async function restoreTracks(tracks:Track[]):Promise<number>{
   // structured-clone failure must abort the entire transaction, not partially
   // restore a library.
   const completed=finish(transaction);
+  let inserted=0;
   try{
    const store=transaction.objectStore(STORE);
    // A backup may reuse an existing ID for different audio. Never replace
@@ -64,7 +65,9 @@ export async function restoreTracks(tracks:Track[]):Promise<number>{
    for(const track of tracks){
     const request=store.get(track.id);
     request.onsuccess=()=>{
-     if(request.result===undefined)store.add(track);
+     if(request.result!==undefined)return;
+     const add=store.add(track);
+     add.onsuccess=()=>{inserted++};
     };
    }
   }catch(error){
@@ -73,7 +76,7 @@ export async function restoreTracks(tracks:Track[]):Promise<number>{
    throw error;
   }
   await completed;
-  return tracks.length;
+  return inserted;
  }finally{db.close()}
 }
 export function formatBytes(bytes:number):string{if(bytes<=0)return "0 KB";if(bytes<1024*1024)return `${Math.max(1,Math.round(bytes/1024))} KB`;if(bytes<1024*1024*1024)return `${(bytes/1024/1024).toFixed(1)} MB`;return `${(bytes/1024/1024/1024).toFixed(1)} GB`}
