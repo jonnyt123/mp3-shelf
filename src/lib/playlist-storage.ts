@@ -20,3 +20,19 @@ export function selectPlaylistTracks<T extends {id:string}>(tracks:readonly T[],
  const selected=new Set(trackIds);
  return tracks.filter(track=>selected.has(track.id));
 }
+
+/** Commit playlist restoration before publishing it to React state. A failed
+ * localStorage write must never be reported as a successful playlist restore. */
+export function persistRestoredPlaylists(
+ storage:Pick<Storage,"getItem"|"setItem">, key:string,
+ incoming:readonly StoredPlaylist[]
+):StoredPlaylist[]{
+ const existing=parseStoredPlaylists(storage.getItem(key));
+ const merged=new Map(existing.map(item=>[item.id,item]));
+ for(const item of incoming)merged.set(item.id,item);
+ const next=[...merged.values()];
+ // Verify the entire merged representation before mutating persistent storage.
+ parseStoredPlaylists(JSON.stringify(next));
+ storage.setItem(key,JSON.stringify(next));
+ return next;
+}
