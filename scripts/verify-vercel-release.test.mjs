@@ -162,3 +162,40 @@ test('malformed health probes fail closed without throwing or authorizing rollba
     assert.equal(classifyProbes(probes), 'unverified');
   }
 });
+
+test('recovered production failure cannot trigger automatic rollback', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork({ bad: true });
+    let rootProbes = 0;
+    const fetcher = async (url, options) => {
+      if (new URL(url).pathname === '/') {
+        rootProbes++;
+        if (rootProbes === 4) return { ok: true, status: 200, text: async () => '<title>MP3 Shelf</title>' };
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'BLOCKED_RECOVERED_OR_UNVERIFIED');
+    assert.equal(rootProbes, 4);
+    assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});
+
+test('auth barrier appearing on final pre-rollback probe blocks traffic mutation', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork({ bad: true });
+    let rootProbes = 0;
+    const fetcher = async (url, options) => {
+      if (new URL(url).pathname === '/') {
+        rootProbes++;
+        if (rootProbes === 4) return { ok: false, status: 403, text: async () => 'Forbidden' };
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'BLOCKED_RECOVERED_OR_UNVERIFIED');
+    assert.equal(net.calls.filter(c => c.method === 'POST').length, 0);
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});
