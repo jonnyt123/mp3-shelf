@@ -1633,8 +1633,9 @@ struct WebAudioDiscoveryView: View {
                                     .disabled(inspectingWishes.contains(wish.id))
                                     if inspectingWishes.contains(wish.id) {
                                         ProgressView(value: Double(inspectedCount[wish.id] ?? 0),
-                                                     total: Double(candidates.count))
-                                            .accessibilityLabel("Inspecting music webpages")
+                                                     total: Double(max(1, candidates.count)))
+                                            .accessibilityLabel("Inspecting music webpages for \(wish.title) by \(wish.artist)")
+                                            .accessibilityValue("\(inspectedCount[wish.id] ?? 0) of \(candidates.count) candidate pages inspected")
                                         Text("Only direct audio files advertised in page HTML are listed.")
                                             .font(.caption2).foregroundStyle(.secondary)
                                     }
