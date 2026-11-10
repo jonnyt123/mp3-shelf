@@ -90,7 +90,7 @@ enum PortableShelfArchive {
     }
 
     static func export(_ inputs: [MediaInput], playlists: [MusicPlaylist], to destination: URL) throws {
-        var parts: [(url: URL?, bytes: Data?)] = []
+        var parts: [(url: URL?, bytes: Data?, expectedLength: Int64)] = []
         var offset: Int64 = 0
         var tracks: [Track] = []
 
@@ -101,14 +101,14 @@ enum PortableShelfArchive {
             guard length > 0, length <= maxTrackBytes else { throw ArchiveError.oversized }
             let audio = Part(offset: offset, length: length,
                              type: audioMIME(for: item.audioURL.pathExtension))
-            parts.append((item.audioURL, nil))
+            parts.append((item.audioURL, nil, length))
             offset += length
 
             var artwork: Part?
             if let bytes = item.artwork, !bytes.isEmpty {
                 guard bytes.count <= 20 * 1024 * 1024 else { throw ArchiveError.oversized }
                 artwork = Part(offset: offset, length: Int64(bytes.count), type: "image/jpeg")
-                parts.append((nil, bytes))
+                parts.append((nil, bytes, Int64(bytes.count)))
                 offset += Int64(bytes.count)
             }
             let source = item.track.sourceAttribution
@@ -179,8 +179,18 @@ enum PortableShelfArchive {
             } else if let url = part.url {
                 let input = try FileHandle(forReadingFrom: url)
                 defer { try? input.close() }
-                while let chunk = try input.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                // The manifest uses the size measured before export. Reject
+                // truncated or growing source files instead of publishing an
+                // archive with incorrect offsets and corrupted later tracks.
+                var remaining = part.expectedLength
+                while remaining > 0 {
+                    let chunk = try input.read(upToCount: Int(min(remaining, 64 * 1024))) ?? Data()
+                    guard !chunk.isEmpty else { throw ArchiveError.invalidRange }
                     try output.write(contentsOf: chunk)
+                    remaining -= Int64(chunk.count)
+                }
+                guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
+                    throw ArchiveError.invalidRange
                 }
             }
         }
