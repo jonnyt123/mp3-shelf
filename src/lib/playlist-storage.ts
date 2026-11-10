@@ -44,3 +44,40 @@ export function persistRestoredPlaylists(
  storage.setItem(key,JSON.stringify(next));
  return next;
 }
+
+const RESTORE_JOURNAL_KEY="mp3-shelf-restore-pending";
+type RestoreJournal={version:1;trackIds:string[];playlists:StoredPlaylist[]};
+
+/** Durable intent is written before any IndexedDB inserts. If the browser
+ * terminates between stores, startup can finish the playlist half safely. */
+export function stagePlaylistRestore(storage:Pick<Storage,"getItem"|"setItem">,tracks:readonly {id:string}[],playlists:readonly StoredPlaylist[]):void{
+ if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)throw new Error("A previous backup restore is pending. Reopen the library to recover it first.");
+ parseStoredPlaylists(JSON.stringify(playlists));
+ const ids=tracks.map(track=>track.id);
+ if(ids.some(id=>typeof id!=="string"||!id.trim())||new Set(ids).size!==ids.length)throw new Error("Invalid backup track IDs.");
+ storage.setItem(RESTORE_JOURNAL_KEY,JSON.stringify({version:1,trackIds:ids,playlists} satisfies RestoreJournal));
+}
+
+/** Never publish playlist references until every backup track is present.
+ * Replaying is idempotent and retains edits made to existing playlists. */
+export function recoverPlaylistRestore(storage:Pick<Storage,"getItem"|"setItem"|"removeItem">,availableTrackIds:ReadonlySet<string>,key:string):StoredPlaylist[]|null{
+ const raw=storage.getItem(RESTORE_JOURNAL_KEY);
+ if(raw===null)return null;
+ const parsed:unknown=JSON.parse(raw);
+ if(!parsed||typeof parsed!=="object")throw new Error("Invalid pending restore journal.");
+ const journal=parsed as Partial<RestoreJournal>;
+ if(journal.version!==1||!Array.isArray(journal.trackIds)||!Array.isArray(journal.playlists)||
+    journal.trackIds.some(id=>typeof id!=="string"||!id.trim())||
+    new Set(journal.trackIds).size!==journal.trackIds.length)throw new Error("Invalid pending restore journal.");
+ parseStoredPlaylists(JSON.stringify(journal.playlists));
+ if(!journal.trackIds.every(id=>availableTrackIds.has(id)))throw new Error("A backup restore was interrupted before all recordings were saved. Reimport the backup to finish safely.");
+ const result=persistRestoredPlaylists(storage,key,journal.playlists);
+ storage.removeItem(RESTORE_JOURNAL_KEY);
+ return result;
+}
+
+/** A failed IndexedDB transaction has not inserted anything; clear only the
+ * intent we own, leaving existing playlists and audio untouched. */
+export function cancelPlaylistRestore(storage:Pick<Storage,"removeItem">):void{
+ storage.removeItem(RESTORE_JOURNAL_KEY);
+}
