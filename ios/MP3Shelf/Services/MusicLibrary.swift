@@ -308,6 +308,7 @@ final class MusicLibrary: ObservableObject {
                     recordingsBySize[Int64(extractedSize), default: []].append(tracks[index])
                 }
                 restoredIDs[archived.id] = tracks[index].id
+                let committedTrack = tracks[index]
                 // If the archived identifier belongs to a different local
                 // recording, keep this song's new UUID as its export identity.
                 if !tracks.contains(where: {
@@ -369,12 +370,10 @@ final class MusicLibrary: ObservableObject {
                     // save() only logs errors; archive restore must surface them.
                     try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
                 } catch {
-                    // Reload the last committed catalog, retaining the already
-                    // imported recording while discarding uncommitted metadata.
-                    if let committed = try? PersistedLibrary.readIfPresent(from: databaseURL) {
-                        tracks = committed.tracks
-                        playlists = committed.playlists
-                    }
+                    // Audio was committed by addLocalAudio before metadata edits.
+                    // Restore that exact in-memory snapshot even if disk reads
+                    // are now blocked by file protection or storage failure.
+                    tracks[index] = committedTrack
                     for sidecar in createdSidecars { try? manager.removeItem(at: sidecar) }
                     throw error
                 }
