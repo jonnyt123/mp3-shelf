@@ -38,6 +38,11 @@ COMMIT="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
 DIRTY=unknown
 if [[ "$COMMIT" != unknown ]]; then DIRTY=no; [[ -z "$(git status --porcelain)" ]] || DIRTY=yes; fi
 STEP=none; COMPLETED=()
+# Release evidence must be bound to a reproducible, clean Git commit.
+if [[ "$MODE" != node-only && ( "$COMMIT" == unknown || "$DIRTY" != no ) ]]; then
+  echo "ERROR: Refusing release verification without a clean Git checkout at a known commit." >&2
+  exit 2
+fi
 report() {
   code=$?
   {
@@ -64,7 +69,9 @@ if [[ "$MODE" == node-only || "$MODE" == web || "$MODE" == all ]]; then
   run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs
 fi
 if [[ "$MODE" == web || "$MODE" == all ]]; then
-  if [[ ! -d node_modules ]]; then
+  if true; then
+    # Always reconcile installed dependencies with the lockfile; an existing
+    # node_modules directory is not proof that dependencies match this SHA.
     if [[ "$OFFLINE" == true ]]; then
       run npm-ci-offline npm ci --offline --no-audit --no-fund
     else
