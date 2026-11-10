@@ -258,6 +258,18 @@ final class MusicLibrary: ObservableObject {
                 if extractedSize >= 0, let existing = recordingsBySize[Int64(extractedSize)]?
                     .first(where: { PortableShelfArchive.audioFilesIdentical(file, fileURL(for: $0)) }) {
                     restoredIDs[archived.id] = existing.id
+                    // Byte-identical reuse must also retain the browser's
+                    // portable identity for a later native re-export. Never
+                    // replace an established identity or steal another song's.
+                    if let index = tracks.firstIndex(where: { $0.id == existing.id }),
+                       tracks[index].portableBackupID == nil,
+                       !tracks.contains(where: {
+                           $0.id != existing.id &&
+                           ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
+                       }) {
+                        tracks[index].portableBackupID = archived.id
+                        try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
+                    }
                     report.skipped += 1
                     continue
                 }
