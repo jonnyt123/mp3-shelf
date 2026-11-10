@@ -190,7 +190,11 @@ final class SpotifyService: NSObject, ObservableObject {
         var rateLimitRetries = 0
         while true {
             try Task.checkCancellation()
-            guard let token else { throw SpotifyError.notConnected }
+            // ensureValidToken(), a 401 refresh, or a 429 sleep may suspend
+            // this request. Never send the next page with credentials from
+            // a different account that signed in while it was suspended.
+            guard generation == authorizationGeneration,
+                  let token else { throw SpotifyError.notConnected }
             var request = URLRequest(url: url)
             request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 30
