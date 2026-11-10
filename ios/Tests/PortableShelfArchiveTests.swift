@@ -282,6 +282,24 @@ struct PortableShelfArchiveTests {
         let portableArchive = try PortableShelfArchive.open(portableURL)
         assert(portableArchive.manifest.tracks.first?.id == "web-song-1")
         assert(portableArchive.manifest.playlists.first?.trackIds == ["web-song-1"])
+        // When restore reuses byte-identical audio already on disk, the
+        // original local UUID remains stable but the web ID must survive
+        // persistence and re-export for browser playlist interoperability.
+        var reusedSong = song
+        assert(PortableShelfArchive.audioFilesIdentical(audio, identicalAudio))
+        reusedSong.portableBackupID = "web-song-1"
+        let persistedReuse = try JSONEncoder().encode(reusedSong)
+        let reopenedReuse = try JSONDecoder().decode(MusicTrack.self, from: persistedReuse)
+        assert(reopenedReuse.id == song.id)
+        assert(reopenedReuse.portableBackupID == "web-song-1")
+        let reusedURL = folder.appendingPathComponent("reused-identities.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: reopenedReuse, audioURL: identicalAudio, artwork: nil, lyrics: nil)
+        ], playlists: [portableList], to: reusedURL)
+        let reusedArchive = try PortableShelfArchive.open(reusedURL)
+        assert(reusedArchive.manifest.tracks.first?.id == "web-song-1")
+        assert(reusedArchive.manifest.playlists.first?.trackIds == ["web-song-1"])
+
 
         // Legacy on-device song data without the new ID decodes normally.
         let persistedTrack = try JSONEncoder().encode(portableSong)
