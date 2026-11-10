@@ -259,13 +259,19 @@ enum PortableShelfArchive {
                 throw ArchiveError.oversized
             }
         }
+        // Every payload byte must be accounted for by exactly one media
+        // slice. Bounds and overlap checks alone permit hidden trailing data
+        // or gaps that a restore would silently ignore.
         mediaRanges.sort { $0.start < $1.start }
-        if mediaRanges.count > 1 {
-            for index in 1..<mediaRanges.count {
-                guard mediaRanges[index - 1].end <= mediaRanges[index].start else {
-                    throw ArchiveError.invalidRange
-                }
+        var expectedStart: Int64 = 0
+        for range in mediaRanges {
+            guard range.start == expectedStart else {
+                throw ArchiveError.invalidRange
             }
+            expectedStart = range.end
+        }
+        guard expectedStart == payloadSize else {
+            throw ArchiveError.invalidRange
         }
         var playlistIDs = Set<String>()
         for playlist in manifest.playlists {
