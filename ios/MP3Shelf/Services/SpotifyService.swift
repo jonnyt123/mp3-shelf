@@ -21,6 +21,8 @@ final class SpotifyService: NSObject, ObservableObject {
     private let keychainAccount = "spotify.oauth.tokens.v1"
     private var session: ASWebAuthenticationSession?
     private var token: SpotifyTokens?
+    // Coalesce overlapping refreshes so a rotated refresh token is never reused.
+    private var refreshTask: Task<SpotifyTokens, Error>?
 
     override init() {
         clientID = UserDefaults.standard.string(forKey: Self.clientIDKey) ?? ""
@@ -84,6 +86,8 @@ final class SpotifyService: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        refreshTask?.cancel()
+        refreshTask = nil
         token = nil
         playlists = []
         isConnected = false
@@ -163,7 +167,10 @@ final class SpotifyService: NSObject, ObservableObject {
                 guard attempt == 0 else {
                     throw SpotifyError.api("Spotify authorization expired. Disconnect and reconnect your account.")
                 }
-                try await refreshAccessToken()
+                // Another request may already have replaced the rejected token.
+                if self.token?.accessToken == token.accessToken {
+                    try await refreshAccessToken()
+                }
             case 403: throw SpotifyError.api("Spotify denied access to this playlist. It may not be owned by you or shared with you as a collaborator, or your Spotify account isn't allowed in this developer app.")
             case 429: throw SpotifyError.api("Spotify rate limit reached. Try importing again later.")
             default: throw SpotifyError.api("Spotify request failed (HTTP \(response.statusCode)).")
@@ -179,11 +186,27 @@ final class SpotifyService: NSObject, ObservableObject {
     }
 
     private func refreshAccessToken() async throws {
+        if let refreshTask {
+            _ = try await refreshTask.value
+            return
+        }
         guard let existing = token else { throw SpotifyError.notConnected }
-        let fresh = try await exchangeToken([
-            "grant_type": "refresh_token", "refresh_token": existing.refreshToken,
-            "client_id": clientID
-        ], oldRefresh: existing.refreshToken)
+        let id = clientID
+        let task = Task<SpotifyTokens, Error> {
+            try await exchangeToken([
+                "grant_type": "refresh_token", "refresh_token": existing.refreshToken,
+                "client_id": id
+            ], oldRefresh: existing.refreshToken)
+        }
+        refreshTask = task
+        // Clear the shared task on success and failure; failed refreshes must
+        // not permanently poison subsequent reconnect/retry attempts.
+        defer { refreshTask = nil }
+        let fresh = try await task.value
+        // Disconnect or a new sign-in may have happened during the request.
+        guard token?.refreshToken == existing.refreshToken else {
+            throw SpotifyError.notConnected
+        }
         store(tokens: fresh)
     }
 
