@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore} from "./playlist-storage";
+import {commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore} from "./playlist-storage";
 describe("persistent playlist hydration",()=>{
  it("loads existing playlists without dropping order or track references",()=>{
   const saved=[{id:"mix",name:"Road trip",trackIds:["a","b"]}];
@@ -144,3 +144,24 @@ describe("crash-safe backup restoration journal",()=>{
   expect(hasPendingPlaylistRestore(storage)).toBe(false);
  });
 });
+
+ describe("durable ordinary playlist edits",()=>{
+  it("writes a valid edit before returning it to the UI",()=>{
+   const data=new Map<string,string>();
+   const next=[{id:"mix",name:"Favorites",trackIds:["a","b"]}];
+   const saved=commitPlaylistEdit({setItem:(key,value)=>{data.set(key,value)}},"playlists",next);
+   expect(saved).toEqual(next);
+   expect(parseStoredPlaylists(data.get("playlists")!)).toEqual(next);
+  });
+  it("does not publish an edit when the device refuses the storage write",()=>{
+   const old=JSON.stringify([{id:"mix",name:"Keep",trackIds:["a"]}]);
+   const data=new Map([["playlists",old]]);
+   expect(()=>commitPlaylistEdit({setItem:()=>{throw new DOMException("Full","QuotaExceededError")}},"playlists",[{id:"mix",name:"New",trackIds:["b"]}])).toThrow();
+   expect(data.get("playlists")).toBe(old);
+  });
+  it("rejects duplicate IDs before attempting a write",()=>{
+   let writes=0;
+   expect(()=>commitPlaylistEdit({setItem:()=>{writes++}},"playlists",[{id:"a",name:"A",trackIds:[]},{id:"a",name:"B",trackIds:[]}])).toThrow("Duplicate saved playlist ID");
+   expect(writes).toBe(0);
+  });
+ });
