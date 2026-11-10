@@ -93,3 +93,11 @@ export function cancelPlaylistRestore(storage:Pick<Storage,"removeItem">):void{
 }
 
 export function hasPendingPlaylistRestore(storage:Pick<Storage,"getItem">):boolean{return storage.getItem(RESTORE_JOURNAL_KEY)!==null}
+
+/** Persist before updating UI state; quota failures must not create phantom edits. */
+export function commitPlaylistEdit(storage:Pick<Storage,"setItem">,key:string,next:readonly StoredPlaylist[]):StoredPlaylist[]{
+ const serialized=JSON.stringify(next);
+ parseStoredPlaylists(serialized);
+ storage.setItem(key,serialized);
+ return [...next];
+}
