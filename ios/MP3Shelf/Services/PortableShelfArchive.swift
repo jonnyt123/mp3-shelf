@@ -201,6 +201,10 @@ enum PortableShelfArchive {
         let payloadSize = Int64(size - payloadOffset)
         // A malformed backup must not silently alias two song IDs, discard
         // playlist links, or create unpredictable duplicate collections.
+        // Every media slice must own distinct payload bytes. Bounds checks alone
+        // allow two tracks (or artwork and audio) to alias the same recording.
+        // Collect half-open ranges, then reject overlaps in O(n log n).
+        var mediaRanges: [(start: Int64, end: Int64)] = []
         var trackIDs = Set<String>()
         for track in manifest.tracks {
             guard !track.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -209,12 +213,22 @@ enum PortableShelfArchive {
                   track.audio.length > 0, track.audio.length <= maxTrackBytes,
                   track.importedAt.isFinite else { throw ArchiveError.invalidManifest }
             try validate(track.audio, payloadSize: payloadSize)
+            mediaRanges.append((track.audio.offset, track.audio.offset + track.audio.length))
             if let artwork = track.artwork {
                 guard artwork.length <= 20 * 1024 * 1024 else { throw ArchiveError.oversized }
                 try validate(artwork, payloadSize: payloadSize)
+                if artwork.length > 0 {
+                    mediaRanges.append((artwork.offset, artwork.offset + artwork.length))
+                }
             }
             if let lyrics = track.lyrics, Data(lyrics.utf8).count > 500 * 1024 {
                 throw ArchiveError.oversized
+            }
+        }
+        mediaRanges.sort { $0.start < $1.start }
+        for index in 1..<mediaRanges.count {
+            guard mediaRanges[index - 1].end <= mediaRanges[index].start else {
+                throw ArchiveError.invalidRange
             }
         }
         var playlistIDs = Set<String>()

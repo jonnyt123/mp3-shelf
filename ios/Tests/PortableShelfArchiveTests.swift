@@ -181,6 +181,50 @@ struct PortableShelfArchiveTests {
             }
         }
 
+        // In-range slices may still overlap: the browser and native readers
+        // must reject them before restoring any user-owned audio.
+        var aliasingTracks = webObject
+        var secondTrack = webTracks[0]
+        secondTrack["id"] = "web-song-2"
+        aliasingTracks["tracks"] = [webTracks[0], secondTrack]
+        var aliasingArtwork = webObject
+        var artworkTrack = webTracks[0]
+        artworkTrack["artwork"] = ["offset": 3, "length": 4, "type": "image/jpeg"] as [String: Any]
+        aliasingArtwork["tracks"] = [artworkTrack]
+        var adjacentArtwork = webObject
+        var adjacentTrack = webTracks[0]
+        adjacentTrack["artwork"] = ["offset": 11, "length": 4, "type": "image/jpeg"] as [String: Any]
+        adjacentArtwork["tracks"] = [adjacentTrack]
+        for (name, malformed, expectedRejection) in [
+            ("overlapping-tracks", aliasingTracks, true),
+            ("overlapping-artwork", aliasingArtwork, true),
+            ("adjacent-artwork", adjacentArtwork, false)
+        ] {
+            let json = try JSONSerialization.data(withJSONObject: malformed)
+            let length = UInt32(json.count)
+            var bytes = PortableShelfArchive.magic
+            bytes.append(contentsOf: [
+                UInt8(length & 0xFF), UInt8((length >> 8) & 0xFF),
+                UInt8((length >> 16) & 0xFF), UInt8((length >> 24) & 0xFF)
+            ])
+            bytes.append(json)
+            bytes.append(originalBytes)
+            bytes.append(Data([0xFF, 0xD8, 0xFF, 0xD9]))
+            let path = folder.appendingPathComponent(name + ".mp3shelf")
+            try bytes.write(to: path)
+            if expectedRejection {
+                do {
+                    _ = try PortableShelfArchive.open(path)
+                    fatalError("Accepted overlapping media: \\(name)")
+                } catch PortableShelfArchive.ArchiveError.invalidRange {
+                    // Expected: both parts individually fit but overlap.
+                }
+            } else {
+                let valid = try PortableShelfArchive.open(path)
+                assert(valid.manifest.tracks.count == 1)
+            }
+        }
+
         // A damaged playlist reference must be rejected before any songs
         // are imported, rather than silently producing an incomplete list.
         var brokenReference = webObject
