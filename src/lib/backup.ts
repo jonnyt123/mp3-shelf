@@ -47,15 +47,34 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
  let parsed:unknown;try{parsed=JSON.parse(await file.slice(headerLength,headerLength+manifestLength).text())}catch{throw new Error("The backup manifest is damaged.")}
  if(!isRecord(parsed)||parsed.schema!=="mp3-shelf-backup"||parsed.version!==1||!Array.isArray(parsed.tracks)||!Array.isArray(parsed.playlists))throw new Error("This backup version is not supported.");
  const payloadStart=headerLength+manifestLength,payloadSize=file.size-payloadStart;
+ const usedRanges:{start:number;end:number;label:string}[]=[];
+ const trackIds=new Set<string>();
+ const playlistIds=new Set<string>();
+ function registerPart(part:BinaryPart,label:string):void{
+  if(part.length===0)throw new Error(`Empty ${label} data in backup.`);
+  usedRanges.push({start:part.offset,end:part.offset+part.length,label});
+ }
  const tracks=parsed.tracks.map((value,index)=>{
   if(!isRecord(value))throw new Error(`Invalid track ${index+1} in backup.`);
   const audio=readPart(value.audio,payloadSize,"audio"),artwork=value.artwork===undefined?undefined:readPart(value.artwork,payloadSize,"artwork");
+  const id=requiredString(value.id,"track ID");
+  if(trackIds.has(id))throw new Error("Duplicate track ID in backup.");
+  trackIds.add(id);
+  registerPart(audio,`track ${index+1} audio`);
+  if(artwork)registerPart(artwork,`track ${index+1} artwork`);
   const blob=file.slice(payloadStart+audio.offset,payloadStart+audio.offset+audio.length,audio.type);
-  return{id:requiredString(value.id,"track ID"),name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName),artist:optionalString(value.artist),album:optionalString(value.album),size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
+  return{id,name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName),artist:optionalString(value.artist),album:optionalString(value.album),size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
  });
  const playlists=parsed.playlists.map((value,index)=>{
   if(!isRecord(value)||!Array.isArray(value.trackIds)||!value.trackIds.every(id=>typeof id==="string"))throw new Error(`Invalid playlist ${index+1} in backup.`);
-  return{id:requiredString(value.id,"playlist ID"),name:requiredString(value.name,"playlist name"),trackIds:value.trackIds};
+  const id=requiredString(value.id,"playlist ID");
+  if(playlistIds.has(id))throw new Error("Duplicate playlist ID in backup.");
+  playlistIds.add(id);
+  return{id,name:requiredString(value.name,"playlist name"),trackIds:value.trackIds};
  });
+ usedRanges.sort((a,b)=>a.start-b.start);
+ for(let i=1;i<usedRanges.length;i++){
+  if(usedRanges[i].start<usedRanges[i-1].end)throw new Error("Overlapping audio or artwork data in backup.");
+ }
  return{tracks,playlists};
 }
