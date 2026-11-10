@@ -17,6 +17,7 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
   if(!track.id?.trim()||!track.name?.trim())throw new Error("Cannot back up a track without an ID and name.");
   if(trackIds.has(track.id))throw new Error("Duplicate track ID in library backup.");
   trackIds.add(track.id);
+  if(!Number.isFinite(track.importedAt))throw new Error("Cannot back up a track with an invalid import date.");
   if(!track.blob||track.blob.size===0)throw new Error("Cannot back up an empty audio recording.");
   if(track.artwork&&track.artwork.size===0)throw new Error("Cannot back up empty artwork.");
  }
@@ -24,6 +25,7 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
   if(!playlist.id?.trim()||!playlist.name?.trim())throw new Error("Cannot back up a playlist without an ID and name.");
   if(playlistIds.has(playlist.id))throw new Error("Duplicate playlist ID in library backup.");
   playlistIds.add(playlist.id);
+  if(!Array.isArray(playlist.trackIds)||!playlist.trackIds.every(id=>typeof id==="string"))throw new Error("Cannot back up a playlist with invalid track references.");
  }
  const payload:Blob[]=[];let offset=0;
  const archivedTracks=tracks.map(track=>{
