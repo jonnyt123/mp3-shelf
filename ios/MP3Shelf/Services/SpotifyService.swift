@@ -270,7 +270,9 @@ final class SpotifyService: NSObject, ObservableObject {
         var body = URLComponents()
         body.queryItems = fields.sorted(by: { $0.key < $1.key }).map { URLQueryItem(name: $0.key, value: $0.value) }
         request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // The token endpoint receives authorization codes and refresh tokens.
+        // Never allow a redirect to forward either credential to another host.
+        let (data, response) = try await apiSession.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw SpotifyError.api("Spotify token request failed. Check your Client ID and exact registered redirect URI.")
         }
