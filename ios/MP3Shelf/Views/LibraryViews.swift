@@ -314,10 +314,21 @@ struct LibraryView: View {
                     filterControls
 
                     VStack(alignment: .leading, spacing: 13) {
-                        HStack(spacing: 12) {
-                            PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
-                                                  detail: "\(displayed.count) songs")
-                            sortMenu
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
+                                                          detail: "\(displayed.count) songs")
+                                    sortMenu
+                                }
+                            } else {
+                                HStack(spacing: 12) {
+                                    PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
+                                                          detail: "\(displayed.count) songs")
+                                    Spacer(minLength: 8)
+                                    sortMenu
+                                }
+                            }
                         }
                         browsingPlaybackControls
                         if displayed.isEmpty {
