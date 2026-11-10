@@ -190,10 +190,16 @@ final class SpotifyService: NSObject, ObservableObject {
     func getTrackList(for playlist: SpotifyPlaylist) async throws -> [PlaylistWish] {
         guard token != nil else { throw SpotifyError.notConnected }
         let generation = authorizationGeneration
-        guard let encodedID = playlist.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
-            throw SpotifyError.badCallback
+        // Playlist IDs are opaque Spotify base62 identifiers, never URL paths.
+        // Reject malformed metadata before constructing an authenticated URL:
+        // urlPathAllowed permits '/' and can otherwise change the endpoint.
+        guard playlist.id.count == 22,
+              playlist.id.utf8.allSatisfy({
+                  (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+              }) else {
+            throw SpotifyError.api("Spotify returned an invalid playlist identifier.")
         }
-        var next: URL? = URL(string: "https://api.spotify.com/v1/playlists/\(encodedID)/items?limit=50")
+        var next: URL? = URL(string: "https://api.spotify.com/v1/playlists/\(playlist.id)/items?limit=50")
         var wishes: [PlaylistWish] = []
         var visitedPages = Set<URL>()
         while let url = next {
