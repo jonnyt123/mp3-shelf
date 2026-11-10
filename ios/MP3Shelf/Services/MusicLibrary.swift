@@ -240,13 +240,16 @@ final class MusicLibrary: ObservableObject {
                 let rawName = initialName.flatMap { $0.isEmpty ? nil : $0 }
                     ?? archived.name + "." + ext
                 let original = URL(fileURLWithPath: rawName).lastPathComponent
-                // Match an existing recording by its portable identity only
-                // when the bytes still match. A reused ID with different audio
-                // must not silently link a playlist to the wrong song.
-                if let existing = tracks.first(where: { candidate in
-                    (candidate.portableBackupID == archived.id ||
-                     candidate.id.uuidString == archived.id) &&
-                    PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
+                // An earlier restore may have imported these exact audio bytes
+                // under a different filename, or the user may have renamed the
+                // recording. Compare same-sized files before copying another
+                // potentially large track; never trust names or portable IDs
+                // without checking the actual bytes.
+                let extractedSize = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+                if extractedSize >= 0, let existing = tracks.first(where: { candidate in
+                    let stored = fileURL(for: candidate)
+                    return ((try? stored.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -2) == extractedSize &&
+                        PortableShelfArchive.audioFilesIdentical(file, stored)
                 }) {
                     restoredIDs[archived.id] = existing.id
                     report.skipped += 1
