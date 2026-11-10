@@ -145,7 +145,7 @@ final class SpotifyService: NSObject, ObservableObject {
             }
             let page: SpotifyPage<SpotifyPlaylist> = try await request(url)
             found.append(contentsOf: page.items)
-            next = try Self.safeNext(page.next, for: url)
+            next = try Self.safeNext(page.next, for: url, returnedItems: page.items.count)
             if found.count > 10000 { throw SpotifyError.api("Too many playlists to import in one request.") }
         }
         try Task.checkCancellation()
@@ -189,7 +189,7 @@ final class SpotifyService: NSObject, ObservableObject {
                     durationSeconds: track.duration_ms.map { Double($0) / 1000.0 },
                     artistNames: track.artists?.map(\.name)))
             }
-            next = try Self.safeNext(page.next, for: url)
+            next = try Self.safeNext(page.next, for: url, returnedItems: page.items.count)
             if wishes.count > 20000 { throw SpotifyError.api("The playlist contains too many tracks.") }
         }
         try Task.checkCancellation()
@@ -343,7 +343,7 @@ final class SpotifyService: NSObject, ObservableObject {
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
 
-    private static func safeNext(_ string: String?, for current: URL) throws -> URL? {
+    private static func safeNext(_ string: String?, for current: URL, returnedItems: Int) throws -> URL? {
         guard let string else { return nil }
         // An API response must not redirect our bearer token to a different
         // Spotify endpoint (including account or playlist metadata endpoints).
