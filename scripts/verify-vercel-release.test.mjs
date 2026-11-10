@@ -287,3 +287,48 @@ test('bounded streamed health responses decode normally', async () => {
   const response = new Response('MP3 Shelf', { headers: { 'content-type': 'text/html' } });
   assert.equal(await readProbeBody(response), 'MP3 Shelf');
 });
+
+test('authenticated Vercel metadata requests explicitly refuse redirects', async () => {
+  const old = process.env.VERCEL_TOKEN;
+  process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const calls = [];
+    const network = fakeNetwork();
+    const fetcher = async (url, options = {}) => {
+      if (new URL(url).host === 'api.vercel.com') {
+        calls.push(options);
+        assert.equal(options.redirect, 'error');
+        assert.equal(options.headers.Authorization, 'Bearer fixture');
+      }
+      return network.fetcher(url, options);
+    };
+    const result = await runReleaseCheck(valid, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'PASS');
+    assert.equal(calls.length, 3);
+  } finally {
+    if (old === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = old;
+  }
+});
+
+test('Vercel API redirects fail closed before any production health probe or rollback', async () => {
+  const old = process.env.VERCEL_TOKEN;
+  process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const requests = [];
+    const fetcher = async (url, options = {}) => {
+      requests.push({ url, options });
+      assert.equal(options.redirect, 'error');
+      return { ok: false, status: 302 };
+    };
+    await assert.rejects(
+      runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} }),
+      /HTTP 302/
+    );
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].options.method ?? 'GET', 'GET');
+  } finally {
+    if (old === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = old;
+  }
+});
