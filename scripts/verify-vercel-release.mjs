@@ -21,11 +21,19 @@ export function evaluateIdentity({ current, previous, aliased, project, sha }) {
   const ready = d => d?.readyState ?? d?.state;
   const ownedProject = d => d?.projectId ?? d?.project?.id;
   const repo = current?.meta ?? {};
+  const priorRepo = previous?.meta ?? {};
   if (deploymentId(aliased) !== deploymentId(current)) errors.push('Production alias does not point to expected deployment.');
   if (ownedProject(current) !== project || ownedProject(previous) !== project) errors.push('Deployment project does not match.');
   if (target(current) !== 'production' || target(previous) !== 'production') errors.push('Both deployments must be production builds.');
   if (ready(current) !== 'READY' || ready(previous) !== 'READY') errors.push('Both deployments must be READY.');
   if (repo.githubCommitSha !== sha || repo.githubCommitRef !== 'main' || repo.githubRepo !== 'mp3-shelf' || repo.githubOrg !== 'jonnyt123') errors.push('Current production deployment has incorrect Git source identity.');
+  // A READY deployment in the same Vercel project is not necessarily a safe
+  // rollback target; it must be an earlier build of this repository's main.
+  if (!SHA.test(priorRepo.githubCommitSha ?? '') || priorRepo.githubCommitSha === sha ||
+      priorRepo.githubCommitRef !== 'main' || priorRepo.githubRepo !== 'mp3-shelf' ||
+      priorRepo.githubOrg !== 'jonnyt123') {
+    errors.push('Rollback target has missing, incorrect or identical Git source identity.');
+  }
   if (deploymentId(previous) === deploymentId(current)) errors.push('Rollback target is current deployment.');
   return errors;
 }
