@@ -257,7 +257,6 @@ final class MusicLibrary: ObservableObject {
                 let extractedSize = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
                 if extractedSize >= 0, let existing = recordingsBySize[Int64(extractedSize)]?
                     .first(where: { PortableShelfArchive.audioFilesIdentical(file, fileURL(for: $0)) }) {
-                    restoredIDs[archived.id] = existing.id
                     // Byte-identical reuse must also retain the browser's
                     // portable identity for a later native re-export. Never
                     // replace an established identity or steal another song's.
@@ -267,9 +266,12 @@ final class MusicLibrary: ObservableObject {
                            $0.id != existing.id &&
                            ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
                        }) {
-                        tracks[index].portableBackupID = archived.id
-                        try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
+                        var updatedTracks = tracks
+                        updatedTracks[index].portableBackupID = archived.id
+                        try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+                        tracks = updatedTracks
                     }
+                    restoredIDs[archived.id] = existing.id
                     report.skipped += 1
                     continue
                 }
@@ -286,14 +288,18 @@ final class MusicLibrary: ObservableObject {
                         candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame &&
                         PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
                     }) {
-                        restoredIDs[archived.id] = tracks[index].id
                         if !tracks.contains(where: {
                             $0.id != tracks[index].id &&
                             ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
                         }) {
-                            tracks[index].portableBackupID = archived.id
-                            save()
+                            if tracks[index].portableBackupID == nil {
+                                var updatedTracks = tracks
+                                updatedTracks[index].portableBackupID = archived.id
+                                try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+                                tracks = updatedTracks
+                            }
                         }
+                        restoredIDs[archived.id] = tracks[index].id
                     }
                     continue
                 }
