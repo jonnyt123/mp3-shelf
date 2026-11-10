@@ -98,3 +98,10 @@ test('auth barrier and stale SHA never cause rollback even with auto flag', asyn
     }
   } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
 });
+
+test('accepts Vercel deployment responses with nested project id', () => {
+  const fromVercel = { ...identity,
+    current: { ...identity.current, projectId: undefined, project: { id: valid.project } },
+    previous: { ...identity.previous, projectId: undefined, project: { id: valid.project } } };
+  assert.deepEqual(evaluateIdentity(fromVercel), []);
+});
