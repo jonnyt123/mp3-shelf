@@ -3,6 +3,20 @@ import{describe,expect,it}from"vitest";
 import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,Track}from"./tracks";
 describe("track library",()=>{it("imports MP3s, ignores other files, and removes a track",async()=>{const mp3=new File([new Uint8Array([1,2,3])],"demo.mp3",{type:"audio/mpeg",lastModified:10}),text=new File(["no"],"notes.txt",{type:"text/plain"});expect(await importTracks([mp3,text])).toBe(1);const tracks=await listTracks();expect(tracks).toHaveLength(1);expect(tracks[0].name).toBe("demo");await removeTrack(tracks[0].id);expect(await listTracks()).toHaveLength(0)});it("restores a track atomically into IndexedDB",async()=>{const track:Track={id:"restored",name:"Restored song",size:3,type:"audio/mpeg",importedAt:50,blob:new Blob([new Uint8Array([4,5,6])])};expect(await restoreTracks([track])).toBe(1);expect((await listTracks()).find(item=>item.id==="restored")?.name).toBe("Restored song");await removeTrack("restored")});it("formats file sizes",()=>{expect(formatBytes(0)).toBe("0 KB");expect(formatBytes(1048576)).toBe("1.0 MB");expect(formatBytes(1073741824)).toBe("1.0 GB")})});
 
+describe("bulk import bounded metadata work",()=>{
+ it("imports a large Files selection without dropping tracks or changing selection order",async()=>{
+  const files=Array.from({length:128},(_,i)=>new File([new Uint8Array([1,2,3])],`bulk-${i}.mp3`,{type:"audio/mpeg",lastModified:123}));
+  try{
+   expect(await importTracks(files)).toBe(128);
+   const saved=await listTracks();
+   for(const file of files)expect(saved.some(track=>track.id===`${file.name}:3:123`)).toBe(true);
+   expect(await importTracks(files)).toBe(0);
+  }finally{
+   for(const file of files)await removeTrack(`${file.name}:3:123`);
+  }
+ });
+});
+
 describe("restore failure safety",()=>{
  const makeTrack=(id:string):Track=>({id,name:id,size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])});
  it("rejects duplicate backup IDs without writing",async()=>{
