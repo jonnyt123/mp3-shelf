@@ -39,6 +39,8 @@ final class SpotifyService: NSObject, ObservableObject {
         guard !id.isEmpty else { message = "Enter a Spotify Developer Client ID first."; return }
         guard !isBusy else { return }
         isBusy = true
+        // A disconnect or another authorization invalidates this in-flight login.
+        let signInGeneration = authorizationGeneration
         defer { isBusy = false }
         do {
             let verifier = Self.makeVerifier()
@@ -78,6 +80,12 @@ final class SpotifyService: NSObject, ObservableObject {
                 "grant_type": "authorization_code", "code": code, "redirect_uri": Self.redirectURI,
                 "client_id": id, "code_verifier": verifier
             ], oldRefresh: nil)
+            // The user may have disconnected while the browser or token exchange
+            // was suspended. Never resurrect credentials after that action.
+            try Task.checkCancellation()
+            guard signInGeneration == authorizationGeneration else {
+                throw SpotifyError.notConnected
+            }
             // Sign-in establishes a new session; invalidate stale refresh completions.
             authorizationGeneration &+= 1
             store(tokens: newTokens)
