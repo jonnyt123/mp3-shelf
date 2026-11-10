@@ -81,6 +81,16 @@ if [[ "$MODE" == web || "$MODE" == all ]]; then
   run npm-typecheck npm run typecheck
   run npm-build npm run build
 fi
+# A successful build must still correspond to the exact clean source checkout.
+# Tests/build tools may rewrite tracked files or change HEAD during execution.
+if [[ "$MODE" == web || "$MODE" == all ]]; then
+  STEP=post-web-checkout-integrity
+  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain)" ]]; then
+    echo 'ERROR: Web verification changed the candidate commit or tracked checkout; results are not release evidence.' >&2
+    exit 2
+  fi
+  COMPLETED+=("$STEP")
+fi
 if [[ "$MODE" == native || "$MODE" == all ]]; then
   if [[ "$(uname -s)" != Darwin || ! -x "$(command -v xcodebuild || echo /nonexistent)" ]]; then
     echo 'ERROR: Native verification needs a Mac with full Xcode; not verified here.' >&2
