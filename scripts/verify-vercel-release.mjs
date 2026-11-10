@@ -16,7 +16,7 @@ export function validateInputs({ deployment, previous, project, team, sha, domai
   if (domain !== 'mp3-shelf.vercel.app') throw Error('Expected the canonical MP3 Shelf production hostname.');
 }
 
-export function evaluateIdentity({ current, previous, aliased, project, sha }) {
+export function evaluateIdentity({ current, previous, aliased, project, sha, deployment, previousDeployment }) {
   const errors = [];
   const deploymentId = d => d?.id ?? d?.uid;
   const target = d => d?.target;
@@ -24,6 +24,11 @@ export function evaluateIdentity({ current, previous, aliased, project, sha }) {
   const ownedProject = d => d?.projectId ?? d?.project?.id;
   const repo = current?.meta ?? {};
   const priorRepo = previous?.meta ?? {};
+  // The Vercel API response must match the exact IDs that were requested.
+  // A proxy, stale cache or incorrect fixture must not substitute another
+  // deployment as the current release or the rollback destination.
+  if (deployment && deploymentId(current) !== deployment) errors.push('Current deployment response ID does not match the requested release.');
+  if (previousDeployment && deploymentId(previous) !== previousDeployment) errors.push('Previous deployment response ID does not match the requested rollback target.');
   if (deploymentId(aliased) !== deploymentId(current)) errors.push('Production alias does not point to expected deployment.');
   if (ownedProject(current) !== project || ownedProject(previous) !== project) errors.push('Deployment project does not match.');
   if (target(current) !== 'production' || target(previous) !== 'production') errors.push('Both deployments must be production builds.');
@@ -132,7 +137,8 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
   const current = await api(`/v13/deployments/${args.deployment}`);
   const previous = await api(`/v13/deployments/${args.previous}`);
   const aliased = await api(`/v13/deployments/${args.domain}`);
-  const errors = evaluateIdentity({ current, previous, aliased, project: args.project, sha: args.sha });
+  const errors = evaluateIdentity({ current, previous, aliased, project: args.project, sha: args.sha,
+    deployment: args.deployment, previousDeployment: args.previous });
   if (errors.length) return { status: 'BLOCKED_IDENTITY', errors };
 
   const probe = async (path) => {
