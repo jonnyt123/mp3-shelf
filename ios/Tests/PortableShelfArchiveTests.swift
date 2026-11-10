@@ -30,6 +30,23 @@ struct PortableShelfArchiveTests {
         let database = folder.appendingPathComponent("library.json")
         let snapshot = PersistedLibrary(tracks: [song], playlists: [list, appleList])
         try snapshot.write(to: database)
+        // A new install may create its first library, but an unreadable or
+        // corrupt existing catalog must never be mistaken for a new install.
+        let neverCreated = folder.appendingPathComponent("library-not-created.json")
+        let firstLaunch = try PersistedLibrary.readIfPresent(from: neverCreated)\n        assert(firstLaunch == nil)
+        let fromDisk = try PersistedLibrary.readIfPresent(from: database)
+        assert(fromDisk?.tracks == snapshot.tracks)
+        let damaged = folder.appendingPathComponent("library-corrupt.json")
+        let damagedBytes = Data("{incomplete-library".utf8)
+        try damagedBytes.write(to: damaged)
+        do {
+            _ = try PersistedLibrary.readIfPresent(from: damaged)
+            fatalError("An existing corrupt catalog must throw, not start empty")
+        } catch DecodingError.dataCorrupted {
+            // Expected: preserve the saved bytes and disable persistence.
+        }
+        let unchangedDamagedBytes = try Data(contentsOf: damaged)\n        assert(unchangedDamagedBytes == damagedBytes)
+        // Existing catalog paths are never replaced as a side effect of read.
         let savedDatabase = try Data(contentsOf: database)
         let reopened = try JSONDecoder().decode(PersistedLibrary.self, from: Data(contentsOf: database))
         assert(reopened.tracks == snapshot.tracks && reopened.playlists == snapshot.playlists)
