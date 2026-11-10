@@ -49,6 +49,25 @@ struct LibraryView: View {
         .accessibilityHint("Choose the order of songs in your library")
     }
 
+    private var searchHeading: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            PremiumEyebrow(title: "SEARCH YOUR LIBRARY")
+            Text("Search results")
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var searchSortSummary: some View {
+        VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 9) {
+            Text("\(displayed.count) found")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(ShelfTheme.subdued)
+            sortMenu
+        }
+    }
+
     private var filterControls: some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
@@ -105,19 +124,18 @@ struct LibraryView: View {
             VStack(alignment: .leading, spacing: 26) {
                 if isSearching {
                     VStack(alignment: .leading, spacing: 15) {
-                        HStack(alignment: .firstTextBaseline) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                PremiumEyebrow(title: "SEARCH YOUR LIBRARY")
-                                Text("Search results")
-                                    .font(.system(.title2, design: .rounded, weight: .bold))
-                                    .foregroundStyle(.white)
-                            }
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: 9) {
-                                Text("\(displayed.count) found")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(ShelfTheme.subdued)
-                                sortMenu
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    searchHeading
+                                    searchSortSummary
+                                }
+                            } else {
+                                HStack(alignment: .firstTextBaseline) {
+                                    searchHeading
+                                    Spacer(minLength: 8)
+                                    searchSortSummary
+                                }
                             }
                         }
                         filterControls
