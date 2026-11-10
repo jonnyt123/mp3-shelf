@@ -780,6 +780,7 @@ struct PlaylistDetailView: View {
     @State private var manuallyAdding: PlaylistWish?
     @State private var showWebDiscovery = false
     @State private var reviewingRecording: PlaylistWish?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
@@ -846,12 +847,38 @@ struct PlaylistDetailView: View {
         return ("Awaiting MP3 source search", "magnifyingglass")
     }
 
+    private func playlistPlayButton(_ tracks: [MusicTrack]) -> some View {
+        Button {
+            if let first = tracks.first { playback.play(first, queue: tracks) }
+        } label: {
+            Label("Play", systemImage: "play.fill")
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(ShelfTheme.accent)
+        .disabled(tracks.isEmpty)
+    }
+
+    private func playlistShuffleButton(_ tracks: [MusicTrack]) -> some View {
+        Button {
+            if let track = tracks.randomElement() {
+                playback.isShuffled = true
+                playback.play(track, queue: tracks)
+            }
+        } label: {
+            Label("Shuffle", systemImage: "shuffle")
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .disabled(tracks.isEmpty)
+    }
+
     var body: some View {
         List {
             if let playlist {
                 Section {
                     let availableTracks = library.songs(in: playlist)
-                    HStack(spacing: 16) {
+                    HStack(alignment: .top, spacing: dynamicTypeSize.isAccessibilitySize ? 10 : 16) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 20)
                                 .fill(LinearGradient(
@@ -861,37 +888,33 @@ struct PlaylistDetailView: View {
                                 .font(.system(size: 34, weight: .light))
                                 .foregroundStyle(.white)
                         }
-                        .frame(width: 82, height: 82)
+                        .frame(width: dynamicTypeSize.isAccessibilitySize ? 56 : 82,
+                               height: dynamicTypeSize.isAccessibilitySize ? 56 : 82)
+                        .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 6) {
                             PremiumEyebrow(title: "YOUR PLAYLIST", color: ShelfTheme.coral)
                             Text(playlist.name)
                                 .font(.system(.title2, design: .rounded, weight: .bold))
                                 .foregroundStyle(.white)
-                                .lineLimit(2)
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                .fixedSize(horizontal: false, vertical: true)
                             Text("\(playlist.trackIDs.count) offline · \(playlist.missingTracks.count) missing")
                                 .font(.caption)
                                 .foregroundStyle(ShelfTheme.subdued)
                         }
                     }
                     .padding(.vertical, 12)
-                    HStack(spacing: 12) {
-                        Button {
-                            if let first = availableTracks.first {
-                                playback.play(first, queue: availableTracks)
-                            }
-                        } label: {
-                            Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 10) {
+                            playlistPlayButton(availableTracks)
+                            playlistShuffleButton(availableTracks)
                         }
-                        .buttonStyle(.borderedProminent).tint(ShelfTheme.accent)
-                        Button {
-                            if let track = availableTracks.randomElement() {
-                                playback.isShuffled = true
-                                playback.play(track, queue: availableTracks)
-                            }
-                        } label: { Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity) }
-                            .buttonStyle(.bordered)
+                    } else {
+                        HStack(spacing: 12) {
+                            playlistPlayButton(availableTracks)
+                            playlistShuffleButton(availableTracks)
+                        }
                     }
-                    .disabled(availableTracks.isEmpty)
                     if playlist.appleMusicLibraryID != nil {
                         Label("Imported from your Apple Music library", systemImage: "music.note.list")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
