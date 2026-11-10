@@ -282,7 +282,17 @@ final class SpotifyService: NSObject, ObservableObject {
 
     private static func safeNext(_ string: String?) throws -> URL? {
         guard let string else { return nil }
-        guard let url = URL(string: string), url.scheme == "https", url.host == "api.spotify.com" else {
+        // Pagination links are supplied by the API, but are still untrusted
+        // redirect destinations for requests carrying the OAuth bearer token.
+        // Reject credentials, alternate ports and non-Spotify API paths.
+        guard let components = URLComponents(string: string),
+              components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == "api.spotify.com",
+              components.user == nil, components.password == nil,
+              components.port == nil || components.port == 443,
+              components.fragment == nil,
+              components.path.hasPrefix("/v1/"),
+              let url = components.url else {
             throw SpotifyError.api("Spotify returned an unexpected pagination URL.")
         }
         return url
