@@ -608,7 +608,20 @@ struct PlaylistsView: View {
                     Toggle("Sort alphabetically", isOn: $sortAlphabetically)
                         .tint(ShelfTheme.accent)
                     if !library.playlists.isEmpty && visiblePlaylists.isEmpty {
-                        Text("No playlists match your search.").foregroundStyle(ShelfTheme.subdued)
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("No playlists match your search.")
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                playlistQuery = ""
+                            } label: {
+                                Label("Clear playlist search", systemImage: "xmark.circle")
+                                    .frame(minHeight: 44)
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityHint("Show all playlists again")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if library.playlists.isEmpty {
                         VStack(alignment: .leading, spacing: 13) {
@@ -688,7 +701,10 @@ struct PlaylistsView: View {
                     Image(systemName: "plus").foregroundStyle(ShelfTheme.accent)
                         .font(.system(size: 16, weight: .bold))
                 }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .accessibilityLabel("Create a playlist")
+                .accessibilityHint("Open the new playlist dialog")
             }
         }
         .alert("New Playlist", isPresented: $showCreate) {
