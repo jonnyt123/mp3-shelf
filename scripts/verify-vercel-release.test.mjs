@@ -9,6 +9,32 @@ const identity = {
   aliased: { id: valid.deployment }, project: valid.project, sha
 };
 test('accepts valid exact SHA-bound production identity', () => { validateInputs(valid); assert.deepEqual(evaluateIdentity(identity), []); });
+test('rejects substituted current or rollback deployment IDs', () => {
+  const expected = { ...identity, deployment: valid.deployment, previousDeployment: valid.previous };
+  assert.deepEqual(evaluateIdentity(expected), []);
+  assert.match(evaluateIdentity({ ...expected, current: { ...identity.current, id: 'dpl_Substituted' },
+    aliased: { id: 'dpl_Substituted' } }).join(' '), /Current deployment response ID/);
+  assert.match(evaluateIdentity({ ...expected, previous: { ...identity.previous, id: 'dpl_Substituted' } }).join(' '),
+    /Previous deployment response ID/);
+});
+
+test('substituted rollback response blocks all production probes and writes', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork();
+    const fetcher = async (url, options) => {
+      if (new URL(url).pathname === `/v13/deployments/${valid.previous}`) {
+        return { ok: true, status: 200, json: async () => ({ ...identity.previous, id: 'dpl_OtherRollback' }) };
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} });
+    assert.equal(result.status, 'BLOCKED_IDENTITY');
+    assert.match(result.errors.join(' '), /Previous deployment response ID/);
+    assert.equal(net.calls.filter(c => c.path === '/' || c.path === '/sw.js' || c.method === 'POST').length, 0);
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});
+
 test('rejects preview, stale or cross-project deployments', () => {
   assert.match(evaluateIdentity({ ...identity, current: { ...identity.current, target: 'preview' } }).join(' '), /production/);
   assert.match(evaluateIdentity({ ...identity, previous: { ...identity.previous, projectId: 'prj_Other' } }).join(' '), /project/);
