@@ -708,7 +708,9 @@ struct PlaylistsView: View {
         )) {
             TextField("Playlist name", text: $renamedName)
             Button("Save") {
-                if let playlist = pendingRename { library.renamePlaylist(playlist.id, to: renamedName) }
+                let name = renamedName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                if let playlist = pendingRename { library.renamePlaylist(playlist.id, to: name) }
                 pendingRename = nil
             }
             .disabled(renamedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
