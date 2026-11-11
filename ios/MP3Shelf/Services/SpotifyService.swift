@@ -317,7 +317,21 @@ final class SpotifyService: NSObject, ObservableObject {
 
     private func refreshAccessToken() async throws {
         if let refreshTask {
-            _ = try await refreshTask.value
+            // The shared network task may complete before its owner persists
+            // the rotated token. Every waiter must reconcile that result
+            // before returning to an authenticated API request; otherwise
+            // concurrent playlist pages can reuse the rejected access token.
+            let generation = authorizationGeneration
+            let previous = token?.refreshToken
+            let fresh = try await refreshTask.value
+            try Task.checkCancellation()
+            guard generation == authorizationGeneration,
+                  let previous, token?.refreshToken == previous else {
+                throw SpotifyError.notConnected
+            }
+            if token?.accessToken != fresh.accessToken {
+                try store(tokens: fresh)
+            }
             return
         }
         guard let existing = token else { throw SpotifyError.notConnected }
