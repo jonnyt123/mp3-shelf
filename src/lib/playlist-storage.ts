@@ -90,6 +90,12 @@ export function recoverPlaylistRestore(storage:Pick<Storage,"getItem"|"setItem"|
  // Legacy version-1 journals without a key remain readable.
  if(journal.key!==undefined&&journal.key!==key)throw new Error("Pending backup restore belongs to a different playlist storage key.");
  if(!journal.trackIds.every(id=>availableTrackIds.has(id)))throw new Error("A backup restore was interrupted before all recordings were saved. Reimport the backup to finish safely.");
+ // A backup may contain playlist links to recordings that were never included
+ // in the archive (or were removed locally). Publishing those links would
+ // create permanently unplayable entries even when the imported tracks exist.
+ // Preserve the recovery intent so a complete archive can be retried safely.
+ if(journal.playlists.some(playlist=>playlist.trackIds.some(id=>!availableTrackIds.has(id))))
+  throw new Error("A backup playlist references missing audio. Reimport a complete backup before restoring playlists.");
  const result=persistRestoredPlaylists(storage,key,journal.playlists);
  storage.removeItem(RESTORE_JOURNAL_KEY);
  return result;
