@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 // A single cancellable SwiftUI task owns each refresh. Returning to the foreground
 // triggers a fresh scan even when the library's track identifiers are unchanged.
 private struct OfflineCountRefreshKey: Equatable {
-    let trackIDs: [String]
+    let trackIDs: [UUID]
     let scenePhase: ScenePhase
 }
 
