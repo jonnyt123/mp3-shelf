@@ -90,20 +90,34 @@ struct LibraryView: View {
     }
 
     private var searchHeading: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 8) {
             PremiumEyebrow(title: "SEARCH YOUR LIBRARY")
             Text("Search results")
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
+            // Keep a recovery action in the scroll content even when the
+            // navigation search field is offscreen or the keyboard is hidden.
+            Button {
+                searchText = ""
+            } label: {
+                Label("Clear song search", systemImage: "xmark.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(ShelfTheme.accent)
+            .accessibilityHint("Show your complete music library")
         }
     }
 
     private var searchSortSummary: some View {
         VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 9) {
-            Text("\(displayed.count) found")
+            Text("\(displayed.count) of \(library.tracks.count) songs found")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(ShelfTheme.subdued)
+                .accessibilityLabel("\(displayed.count) matching songs out of \(library.tracks.count)")
+                .accessibilityAddTraits(.updatesFrequently)
             sortMenu
         }
     }
@@ -188,16 +202,29 @@ struct LibraryView: View {
                                     .font(.system(.headline, design: .rounded, weight: .bold))
                                     .foregroundStyle(.white)
                                 Text(favoritesOnly
-                                     ? "Try All music or a different song, artist or album."
+                                     ? "No favorites match this search. Try All music or a different song, artist or album."
                                      : "Try a different song, artist or album.")
                                     .font(.subheadline)
                                     .foregroundStyle(ShelfTheme.subdued)
-                                Button("Show all music") {
+                                if favoritesOnly {
+                                    Button {
+                                        favoritesOnly = false
+                                    } label: {
+                                        Label("Search all music", systemImage: "music.note.list")
+                                            .frame(minHeight: 44)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityHint("Keep the search and include songs that are not favorites")
+                                }
+                                Button {
                                     searchText = ""
                                     favoritesOnly = false
+                                } label: {
+                                    Label("Show complete library", systemImage: "arrow.uturn.backward")
+                                        .frame(minHeight: 44)
                                 }
                                 .buttonStyle(.bordered)
-                                .frame(minHeight: 44)
+                                .accessibilityHint("Clear the search and Favorites filter")
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(22)
