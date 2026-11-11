@@ -1,46 +1,54 @@
-# MP3 Shelf
+# MP3 Shelf — Native iPhone App
 
-The native iPhone project is in [`ios`](ios/README.md). The consolidated candidate
-includes an app-owned recording matcher, on-device audio extraction, background
-downloads and MP3 conversion. See the native README for setup and the remaining
-Mac/iPhone verification gates. The web app described below does not include this
-native extraction engine.
+**MP3 Shelf is a SwiftUI iOS app built in Xcode.** This repository's iOS-only candidate contains no Next.js application, Vercel deployment, browser frontend, Node package installation, or Supabase web configuration.
 
-An iPhone-first, installable web app that imports many MP3s in one Files picker and keeps them in a searchable offline library. It includes persistent playlists, shuffle, repeat-one/repeat-all, previous/next controls, and automatic next-track playback.
+## Open the Xcode project
 
-MP3 Shelf reads ID3 title, artist, album, and embedded cover artwork locally during import. It also includes first-launch onboarding, track renaming, and playlist reordering.
+1. On a Mac, download this branch's ZIP or clone the repository.
+2. Open **[ios/MP3Shelf.xcodeproj](ios/MP3Shelf.xcodeproj)** in Xcode.
+3. Select the **MP3Shelf** scheme and an iPhone Simulator, then build/run.
+4. For a real iPhone, configure Apple signing in Xcode. See **[ios/README.md](ios/README.md)** and **[ios/Install on iPhone.command](ios/Install%20on%20iPhone.command)**.
 
-Tap the mini-player to open a full-screen now-playing view with large artwork, elapsed and remaining time, precise scrubbing, and complete playback controls.
+The app targets **iOS 17 or later** (as configured in the Xcode project). The existing macOS GitHub workflow selects **Xcode 16.4**. Native package dependencies are managed by Xcode/Swift Package Manager.
 
-Safari users can open the native AirPlay destination picker from the full player. Desktop browsers also get an in-app volume slider; iPhone displays side-button volume guidance because iOS controls media volume at the system level.
+## What is included
 
-Media Session integration supplies title, artist, album artwork, playback state, position, seeking, and previous/next actions to supported Lock Screen and system media controls. In the full player, swipe down across the artwork to close or swipe horizontally to change tracks.
+- Offline local recording import, playback, playlists, search, shuffle and repeat.
+- Spotify and Apple Music **playlist metadata** import, with independently resolved eligible recording sources and background transfers.
+- Portable library archive import/export and native playback/data-integrity safeguards.
+- SwiftUI player and library screens, bundled assets, focused Swift tests, and Mac verification scripts.
 
-Open **Storage & backup** from the top-right menu to see music usage, total origin storage, and the allowance reported by the browser. Exports use MP3 Shelf's `.mp3shelf` archive format, which preserves MP3 bytes, artwork, metadata, and playlists without base64 expansion. Restore validates the complete archive manifest before atomically adding or updating tracks; it does not delete music already on the device.
+Spotify and Apple Music streams are not archived as third-party audio; the native app uses its own local recordings and permitted independent sources.
 
-## Run locally
+## Repository layout
 
-```bash
-npm install
-npm run dev
+```text
+ios/
+  MP3Shelf.xcodeproj/         Xcode project (open this)
+  MP3Shelf/                   SwiftUI app, models, services, resources
+  Tests/                      Native regression suites
+  Packages/                   Local Swift packages
+  scripts/                    Native QA and device utilities
+  README.md                   Full native setup and verification
+.github/workflows/
+  ios-build.yml               Native Xcode / Swift verification only
 ```
 
-On iPhone, deploy over HTTPS, open it in Safari, then use **Share → Add to Home Screen**.
+## Verify locally
 
-The service worker pre-caches the rendered app shell, including Next.js JavaScript and CSS, then caches same-origin assets as they are requested. Imported MP3 blobs remain in IndexedDB, so the installed app and its library can launch and play without a network connection after one successful online visit.
+On a Mac with Xcode, use **`ios/Verify MP3 Shelf.command`** for the local release smoke check. The native project can also be built using:
 
-## What iOS allows
-
-Safari cannot scan Files automatically. The user must grant access through Apple's picker. MP3 Shelf uses multiple selection so a group can be imported at once, then stores copies in IndexedDB. Clearing Safari website data or iOS storage eviction can remove local tracks.
-
-## Optional Supabase sync
-
-The MVP is local-first and needs no account. `supabase/migrations/0001_cloud_library.sql` defines a private per-user catalog and Storage bucket for later cloud sync. Large audio uploads should use Supabase's TUS resumable endpoint.
-
-## Verification
-
-```bash
-npm test
-npm run typecheck
-npm run build
+```sh
+xcodebuild -project ios/MP3Shelf.xcodeproj -scheme MP3Shelf \
+  -configuration Debug -sdk iphonesimulator \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO build
 ```
+
+Other focused native checks and fixture-proof commands are documented in [ios/README.md](ios/README.md).
+
+## Release and branch status
+
+**Native build and physical-iPhone acceptance are not confirmed by this repository migration.** [Issue #6](https://github.com/jonnyt123/mp3-shelf/issues/6) remains the hardware release gate. The consolidated iOS candidate [PR #29](https://github.com/jonnyt123/mp3-shelf/pull/29), the playback/archive work [PR #30](https://github.com/jonnyt123/mp3-shelf/pull/30), and other open native PRs retain their independent review and integration requirements.
+
+This branch is an **Xcode-only source-layout candidate**, not a signed or production-approved iPhone build. No releases or deployments are implied.

@@ -3,9 +3,6 @@ on:
   pull_request:
     paths:
       - 'ios/**'
-      - 'src/lib/backup.ts'
-      - 'src/lib/backup.test.ts'
-      - 'src/lib/tracks.ts'
       - '.github/workflows/ios-build.yml'
   workflow_dispatch:
 # A new UI revision supersedes older screenshot runs for this PR.
@@ -18,6 +15,14 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Xcode-only repository structure
+        run: |
+          test -f ios/MP3Shelf.xcodeproj/project.pbxproj
+          test -f ios/MP3Shelf/MP3ShelfApp.swift
+          test -f ios/MP3Shelf/Services/MusicLibrary.swift
+          test -f ios/MP3Shelf/Services/PortableShelfArchive.swift
+          test ! -e package.json
+          test ! -d src
       - name: Select Xcode 16
         run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
       - name: Validate physical-iPhone signing helper
@@ -52,15 +57,6 @@ jobs:
       - name: Cross-platform archive round-trip regression tests
         run: |
           swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PortableShelfArchive.swift ios/Tests/PortableShelfArchiveTests.swift -o /tmp/mp3shelf-archive && /tmp/mp3shelf-archive
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - name: Browser portable-backup interoperability and TypeScript checks
-        run: |
-          npm ci
-          npm run test -- src/lib/backup.test.ts
-          npm run typecheck
       - name: Install and launch iPhone Simulator app
         timeout-minutes: 18
         run: |

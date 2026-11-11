@@ -1,8 +1,16 @@
-node_modules/
-.next/
-.vercel/
-*.tsbuildinfo
+# Xcode / Swift build outputs
+.DS_Store
+**/build/
+**/DerivedData/
+*.xcuserstate
+**/*.xcworkspace/xcuserdata/
+**/*.xcodeproj/xcuserdata/
+.swiftpm/
+**/.swiftpm/
+
+# Local signing material and credentials
 .env
-.env.local
-.env.*.local
-mp3-shelf-source.zip
+.env.*
+*.p12
+*.mobileprovision
+*.cer
