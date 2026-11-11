@@ -1325,6 +1325,10 @@ final class MusicLibrary: ObservableObject {
         for index in remainingPlaylists.indices {
             remainingPlaylists[index].trackIDs.removeAll { $0 == id }
         }
+        // Reconcile source-backed playlists in the SAME durable transaction.
+        // A second best-effort save after deleting audio could leave the live
+        // playlist state different from the last committed catalog.
+        remainingPlaylists = reconciledPlaylists(using: remainingTracks, from: remainingPlaylists)
         do {
             try PersistedLibrary(tracks: remainingTracks, playlists: remainingPlaylists)
                 .write(to: databaseURL)
@@ -1355,7 +1359,6 @@ final class MusicLibrary: ObservableObject {
            !remainingTracks.contains(where: { $0.lyricsFileName == lyrics }) {
             try? manager.removeItem(at: lyricsDirectory.appendingPathComponent(lyrics))
         }
-        reconcileMissingSongs()
     }
 
     func createPlaylist(_ name: String) {
@@ -1517,11 +1520,12 @@ final class MusicLibrary: ObservableObject {
         save()
     }
 
-    private func reconciledPlaylists(using updatedTracks: [MusicTrack]) -> [MusicPlaylist] {
+    private func reconciledPlaylists(using updatedTracks: [MusicTrack],
+                                     from sourcePlaylists: [MusicPlaylist]? = nil) -> [MusicPlaylist] {
         let allTracksIndex = OfflineTrackIndex(tracks: updatedTracks)
         let available = updatedTracks.filter { manager.fileExists(atPath: fileURL(for: $0).path) }
         let availableIndex = OfflineTrackIndex(tracks: available)
-        var updated = playlists
+        var updated = sourcePlaylists ?? playlists
         for index in updated.indices where !updated[index].sourceOrder.isEmpty {
             let existing = updated[index].trackIDs
             var ordered: [UUID] = []
