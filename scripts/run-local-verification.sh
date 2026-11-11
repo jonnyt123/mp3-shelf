@@ -37,7 +37,7 @@ OUT="$(mktemp -d "${TMPDIR:-/tmp}/mp3-shelf-verification.XXXXXXXX")"
 COMMIT="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
 DIRTY=unknown
 if [[ "$COMMIT" != unknown ]]; then DIRTY=no; [[ -z "$(git status --porcelain)" ]] || DIRTY=yes; fi
-STEP=none; COMPLETED=()
+STEP=none; COMPLETED=(); RECEIPT_STEPS=()
 # Release evidence must be bound to a reproducible, clean Git commit.
 report() {
   code=$?
@@ -53,6 +53,10 @@ report() {
     echo "Logs: $OUT"
     [[ "$code" == 0 ]] && echo 'Local execution: PASS (only for completed steps)' || echo 'Local execution: FAIL'
   } | tee "$OUT/QA_RECORD.txt"
+  # Local receipt is not branch-protection, deployment or device acceptance.
+  if [[ "$COMMIT" != unknown && "$DIRTY" == no ]]; then
+    node "$ROOT/scripts/local-evidence.mjs" "$OUT/local-evidence.json" "$COMMIT" "$DIRTY" "$MODE" "$code" "$OUT" "${RECEIPT_STEPS[@]}" || true
+  fi
 }
 trap report EXIT
 if [[ "$MODE" != node-only && ( "$COMMIT" == unknown || "$DIRTY" != no ) ]]; then
@@ -63,11 +67,16 @@ fi
 run() {
   STEP="$1"; shift
   echo "==> $STEP"
-  "$@" 2>&1 | tee "$OUT/$STEP.log"
-  COMPLETED+=("$STEP")
+  if "$@" 2>&1 | tee "$OUT/$STEP.log"; then
+    COMPLETED+=("$STEP")
+    RECEIPT_STEPS+=("$STEP:1")
+  else
+    RECEIPT_STEPS+=("$STEP:0")
+    return 1
+  fi
 }
 if [[ "$MODE" == node-only || "$MODE" == web || "$MODE" == all ]]; then
-  run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs scripts/run-local-verification.test.mjs
+  run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs scripts/run-local-verification.test.mjs scripts/local-evidence.test.mjs
 fi
 if [[ "$MODE" == web || "$MODE" == all ]]; then
   # Always reconcile installed dependencies with the lockfile; an existing
@@ -90,6 +99,8 @@ if [[ "$MODE" == web || "$MODE" == all ]]; then
     exit 2
   fi
   COMPLETED+=("$STEP")
+  printf 'PASS: clean checkout and expected SHA\n' > "$OUT/$STEP.log"
+  RECEIPT_STEPS+=("$STEP:1")
 fi
 if [[ "$MODE" == native || "$MODE" == all ]]; then
   if [[ "$(uname -s)" != Darwin || ! -x "$(command -v xcodebuild || echo /nonexistent)" ]]; then
@@ -110,4 +121,6 @@ if [[ "$MODE" == native || "$MODE" == all ]]; then
     exit 2
   fi
   COMPLETED+=("$STEP")
+  printf 'PASS: clean checkout and expected SHA\n' > "$OUT/$STEP.log"
+  RECEIPT_STEPS+=("$STEP:1")
 fi
