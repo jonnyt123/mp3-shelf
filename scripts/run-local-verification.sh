@@ -40,7 +40,28 @@ if [[ "$COMMIT" != unknown ]]; then DIRTY=no; [[ -z "$(git status --porcelain)" 
 STEP=none; COMPLETED=(); RECEIPT_STEPS=()
 # Release evidence must be bound to a reproducible, clean Git commit.
 report() {
-  code=$?
+  local code=$?
+  local receipt_state='NOT_CREATED'
+  # Preserve the underlying command's failure. However, a clean successful
+  # verification must not exit 0 if its required evidence cannot be produced.
+  # Previously "|| true" discarded receipt failures while the summary still
+  # advertised PASS, allowing an apparently green but unreviewable run.
+  trap - EXIT
+  if [[ "$COMMIT" != unknown && "$DIRTY" == no ]]; then
+    if node "$ROOT/scripts/local-evidence.mjs" "$OUT/local-evidence.json" "$COMMIT" "$DIRTY" "$MODE" "$code" "$OUT" "${RECEIPT_STEPS[@]}"; then
+      receipt_state='CREATED'
+    else
+      receipt_state='FAILED'
+      if [[ "$code" -eq 0 ]]; then
+        code=1
+        echo 'ERROR: Verification commands succeeded but receipt generation failed; refusing PASS.' >&2
+      fi
+    fi
+  else
+    receipt_state='UNAVAILABLE_UNCLEAN_CHECKOUT'
+    # Node-only development checks are still runnable on a dirty checkout,
+    # but must not be misrepresented as clean, SHA-bound release evidence.
+  fi
   {
     echo "Mode: $MODE"
     echo "Candidate commit: $COMMIT"
@@ -48,15 +69,19 @@ report() {
     echo "Completed: ${COMPLETED[*]:-none}"
     echo "Last attempted: $STEP"
     echo "Exit status: $code"
+    echo "SHA-bound receipt: $receipt_state"
     echo "Native physical iPhone acceptance: NOT TESTED"
     echo "GitHub Actions minutes used: ZERO"
     echo "Logs: $OUT"
-    [[ "$code" == 0 ]] && echo 'Local execution: PASS (only for completed steps)' || echo 'Local execution: FAIL'
+    if [[ "$code" -eq 0 && "$receipt_state" == CREATED ]]; then
+      echo 'Local execution: PASS (only for completed steps; not release approval)'
+    elif [[ "$code" -eq 0 ]]; then
+      echo 'Local execution: DEVELOPMENT CHECKS PASSED; NO RELEASE EVIDENCE'
+    else
+      echo 'Local execution: FAIL'
+    fi
   } | tee "$OUT/QA_RECORD.txt"
-  # Local receipt is not branch-protection, deployment or device acceptance.
-  if [[ "$COMMIT" != unknown && "$DIRTY" == no ]]; then
-    node "$ROOT/scripts/local-evidence.mjs" "$OUT/local-evidence.json" "$COMMIT" "$DIRTY" "$MODE" "$code" "$OUT" "${RECEIPT_STEPS[@]}" || true
-  fi
+  exit "$code"
 }
 trap report EXIT
 if [[ "$MODE" != node-only && ( "$COMMIT" == unknown || "$DIRTY" != no ) ]]; then

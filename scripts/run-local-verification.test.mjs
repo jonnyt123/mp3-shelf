@@ -24,3 +24,19 @@ test('unknown mode refused, not treated as web test', () => {
   assert.equal(r.status, 2);
   assert.match(r.stderr, /Unknown argument/);
 });
+
+test('runner never masks failed release receipt generation', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  assert.match(source, /receipt_state='FAILED'/);
+  assert.match(source, /Verification commands succeeded but receipt generation failed/);
+  assert.doesNotMatch(source, /local-evidence\\.mjs[^\\n]*\\|\\| true/);
+  assert.match(source, /trap - EXIT/);
+  assert.match(source, /exit "\\$code"/);
+});
+test('node-only dirty checkout is explicitly excluded from release evidence', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  assert.match(source, /UNAVAILABLE_UNCLEAN_CHECKOUT/);
+  assert.match(source, /DEVELOPMENT CHECKS PASSED; NO RELEASE EVIDENCE/);
+});
