@@ -41,6 +41,12 @@ export function readPersistedReceipt(path) {
         final.dev !== opened.dev || final.ino !== opened.ino ||
         final.mtimeMs !== opened.mtimeMs || final.ctimeMs !== opened.ctimeMs ||
         final.nlink !== 1) throw Error('Receipt changed during reading.');
+    // The descriptor can remain valid after the pathname is replaced. Refuse
+    // evidence whose original path no longer identifies the inspected inode.
+    const current = lstatSync(path);
+    if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 ||
+        current.dev !== opened.dev || current.ino !== opened.ino)
+      throw Error('Receipt pathname changed during reading.');
     return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'));
   } finally { closeSync(fd); }
 }
@@ -192,6 +198,12 @@ function readLogFingerprint(path) {
         final.ino !== opened.ino || final.mtimeMs !== opened.mtimeMs ||
         final.ctimeMs !== opened.ctimeMs || final.nlink !== 1)
       throw Error('Step log changed during verification.');
+    // A rename or symlink swap leaves the open descriptor readable. Ensure
+    // the named log still resolves to the bytes we just fingerprinted.
+    const current = lstatSync(path);
+    if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 ||
+        current.dev !== opened.dev || current.ino !== opened.ino)
+      throw Error('Step log pathname changed during verification.');
     return { bytes, sha256: hash.digest('hex') };
   } finally { closeSync(fd); }
 }
