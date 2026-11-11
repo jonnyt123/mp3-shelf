@@ -1381,15 +1381,18 @@ final class MusicLibrary: ObservableObject {
 
     /// Playlist edits must be durable before SwiftUI observes the new state.
     /// A failed atomic catalog write leaves the previous playlist snapshot intact.
-    private func commitPlaylistEdit(_ updated: [MusicPlaylist]) {
-        guard isLibraryPersistenceSafe else { return }
+    @discardableResult
+    private func commitPlaylistEdit(_ updated: [MusicPlaylist]) -> Bool {
+        guard isLibraryPersistenceSafe else { return false }
         do {
             try PersistedLibrary(tracks: tracks, playlists: updated).write(to: databaseURL)
             playlists = updated
             libraryStorageError = nil
+            return true
         } catch {
             libraryStorageError = "Could not save playlist changes. Your previous playlists were preserved."
             print("MP3 Shelf could not persist playlist edit: \(error)")
+            return false
         }
     }
 
@@ -1508,22 +1511,31 @@ final class MusicLibrary: ObservableObject {
                     pair.0.artistNames != pair.1.artistNames || pair.0.appleMusicItemID != pair.1.appleMusicItemID
                 })
             if listChanged {
-                if automaticDownloadProgress?.playlistID == old.id {
-                    automaticDownloadTask?.cancel()
-                }
                 // Distinguish manually added local files from tracks that
                 // belonged to the previous Spotify source-order mapping.
                 let formerlySourced = Set(old.sourceOrder.compactMap {
                     indexedByTitle.reusableTrack(for: $0)?.id
                 })
-                playlists[index].trackIDs.removeAll { formerlySourced.contains($0) }
-                playlists[index].sourceOrder = updated
-                playlists[index].name = displayName
-                playlists[index].sourceURL = sourceURL
-                playlists[index].appleMusicLibraryID = appleID
-                reconcileMissingSongs()
+                var candidate = playlists
+                candidate[index].trackIDs.removeAll { formerlySourced.contains($0) }
+                candidate[index].sourceOrder = updated
+                candidate[index].name = displayName
+                candidate[index].sourceURL = sourceURL
+                candidate[index].appleMusicLibraryID = appleID
+                candidate = reconciledPlaylists(using: tracks, from: candidate)
+                guard commitPlaylistEdit(candidate) else {
+                    return PlaylistImportReport(playlistID: old.id, playlistName: old.name,
+                                                matched: old.trackIDs.count, missing: old.missingTracks.count)
+                }
+                if automaticDownloadProgress?.playlistID == old.id {
+                    automaticDownloadTask?.cancel()
+                }
             } else {
-                reconcileMissingSongs()
+                let candidate = reconciledPlaylists(using: tracks)
+                guard commitPlaylistEdit(candidate) else {
+                    return PlaylistImportReport(playlistID: old.id, playlistName: old.name,
+                                                matched: old.trackIDs.count, missing: old.missingTracks.count)
+                }
             }
             var hasNewLookups = false
             if let jobIndex = discoveryJobs.firstIndex(where: { $0.playlistID == old.id }) {
@@ -1559,8 +1571,11 @@ final class MusicLibrary: ObservableObject {
                 playlist.missingTracks.append(wish)
             }
         }
-        playlists.append(playlist)
-        save()
+        guard commitPlaylistEdit(playlists + [playlist]) else {
+            // Preserve the previous catalog; the storage error is exposed to the UI.
+            return PlaylistImportReport(playlistID: playlist.id, playlistName: playlist.name,
+                                        matched: 0, missing: wishes.count)
+        }
         return PlaylistImportReport(playlistID: playlist.id, playlistName: playlist.name,
                                     matched: playlist.trackIDs.count,
                                     missing: playlist.missingTracks.count)
