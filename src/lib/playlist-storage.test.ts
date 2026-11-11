@@ -639,6 +639,38 @@ describe("restore merge concurrent-write protection",()=>{
 });
 
 
+describe("deletion snapshot byte-equivalence",()=>{
+ const initial=[{id:"mix",name:"Keep",trackIds:["song","other"]}];
+ function fixture(raw:string){
+  const data=new Map<string,string>([["playlists",raw]]);
+  return {getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}};
+ }
+ it("accepts valid pretty-printed playlist JSON without a false concurrent-write conflict",async()=>{
+  const storage=fixture(JSON.stringify(initial,null,2));
+  let calls=0;
+  const result=await deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{calls++});
+  expect(calls).toBe(1);
+  expect(result).toEqual([{id:"mix",name:"Keep",trackIds:["other"]}]);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("still aborts if persisted bytes change while staging deletion",async()=>{
+  const storage=fixture(JSON.stringify(initial,null,2));
+  let calls=0;
+  const racing={...storage,setItem:(key:string,value:string)=>{
+   storage.setItem(key,value);
+   if(key==="mp3-shelf-delete-recovery")
+    storage.setItem("playlists",JSON.stringify([{id:"mix",name:"Remote",trackIds:["song","other","new"]}]));
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(racing,"playlists",initial,"song",async()=>{calls++}))
+   .rejects.toThrow("Playlists changed while staging deletion");
+  expect(calls).toBe(0);
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0].name).toBe("Remote");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
+
 describe("deletion journal staging conflict regression",()=>{
  const initial=[{id:"mix",name:"Original",trackIds:["song","other"]}];
  function fixture(){
