@@ -122,6 +122,20 @@ export function cancelPlaylistRestore(storage:Pick<Storage,"removeItem">):void{
  storage.removeItem(RESTORE_JOURNAL_KEY);
 }
 
+/** Cancel only the exact restore intent this import staged. A second tab may
+ * replace the journal while IndexedDB restore is awaiting completion; never
+ * erase that newer intent after the first import fails. */
+export function cancelOwnedPlaylistRestore(
+ storage:Pick<Storage,"getItem"|"removeItem">,
+ key:string,tracks:readonly {id:string}[],playlists:readonly StoredPlaylist[]
+):boolean{
+ const expected=JSON.stringify({version:1,key,trackIds:tracks.map(track=>track.id),playlists} satisfies RestoreJournal);
+ const current=storage.getItem(RESTORE_JOURNAL_KEY);
+ if(current!==expected)return false;
+ storage.removeItem(RESTORE_JOURNAL_KEY);
+ return true;
+}
+
 export function hasPendingPlaylistRestore(storage:Pick<Storage,"getItem">):boolean{return storage.getItem(RESTORE_JOURNAL_KEY)!==null}
 
 /** Merge an edit against the latest durable playlist state rather than a
