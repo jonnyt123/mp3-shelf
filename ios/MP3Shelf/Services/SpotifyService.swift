@@ -284,6 +284,7 @@ final class SpotifyService: NSObject, ObservableObject {
         // Bound both authorization replay and server-directed rate-limit retries.
         var authorizationRetries = 0
         var rateLimitRetries = 0
+        var transientServerRetries = 0
         while true {
             try Task.checkCancellation()
             // ensureValidToken(), a 401 refresh, or a 429 sleep may suspend
@@ -311,14 +312,28 @@ final class SpotifyService: NSObject, ObservableObject {
                 }
             case 403: throw SpotifyError.api("Spotify denied access to this playlist. It may not be owned by you or shared with you as a collaborator, or your Spotify account isn't allowed in this developer app.")
             case 429:
-                // Only honor short, valid Retry-After delays; never spin or sleep indefinitely.
+                // Retry-After may legally be zero when the rate-limit window
+                // has just elapsed. Still bound immediate retries to avoid a
+                // busy loop; reject long or malformed delays rather than
+                // keeping a playlist import suspended indefinitely.
                 guard rateLimitRetries < 2,
                       let header = response.value(forHTTPHeaderField: "Retry-After")?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      let seconds = Int(header), (1...10).contains(seconds) else {
+                      let seconds = Int(header), (0...10).contains(seconds) else {
                     throw SpotifyError.api("Spotify rate limit reached. Try importing again later.")
                 }
                 rateLimitRetries += 1
-                try await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                // A zero-second provider hint still gets a short delay.
+                try await Task.sleep(nanoseconds: UInt64(max(1, seconds)) * 1_000_000_000)
+            case 500...599:
+                // Playlist metadata reads are idempotent GET requests. A
+                // transient provider outage should not discard a large import
+                // on the first failure, but retries must remain bounded and
+                // cancellable. Never retry permanent 4xx responses here.
+                guard transientServerRetries < 2 else {
+                    throw SpotifyError.api("Spotify is temporarily unavailable (HTTP \(response.statusCode)). Try importing again later.")
+                }
+                transientServerRetries += 1
+                try await Task.sleep(nanoseconds: UInt64(transientServerRetries) * 1_000_000_000)
             default: throw SpotifyError.api("Spotify request failed (HTTP \(response.statusCode)).")
             }
         }
