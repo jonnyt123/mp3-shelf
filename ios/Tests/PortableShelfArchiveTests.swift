@@ -27,6 +27,34 @@ struct PortableShelfArchiveTests {
         appleList.sourceOrder = [PlaylistWish(title: "Test song", artist: "Local artist", album: "Album",
             durationSeconds: 55, artistNames: ["Local artist"],
             appleMusicItemID: AppleMusicLibraryIdentity.key(namespace: appleNamespace, persistentID: 10))]
+        // Two different portable playlists can legitimately use an archive
+        // UUID that is already a local UUID for another playlist. The explicit
+        // portable ID must win, and the second restore must get a distinct
+        // local ID without changing either archive's identity.
+        let occupiedID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+        var existingPortable = MusicPlaylist(id: occupiedID, name: "Existing imported list")
+        existingPortable.portableBackupID = "original-browser-list"
+        assert(existingPortable.matchesPortableBackupID("original-browser-list"))
+        assert(!existingPortable.matchesPortableBackupID(occupiedID.uuidString))
+        let collisionID = MusicPlaylist.restoredLocalID(
+            for: occupiedID.uuidString, existing: [existingPortable])
+        assert(collisionID != occupiedID)
+        var secondPortable = MusicPlaylist(id: collisionID, name: "Different imported list")
+        secondPortable.portableBackupID = occupiedID.uuidString
+        assert(secondPortable.matchesPortableBackupID(occupiedID.uuidString))
+        assert(!existingPortable.matchesPortableBackupID(occupiedID.uuidString))
+        assert(MusicPlaylist.restoredLocalID(
+            for: "another-web-list", existing: [existingPortable, secondPortable])
+            != occupiedID)
+        let availableID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+        assert(MusicPlaylist.restoredLocalID(
+            for: availableID.uuidString, existing: [existingPortable, secondPortable])
+            == availableID)
+        let legacyLocal = MusicPlaylist(id: occupiedID, name: "Legacy native list")
+        assert(legacyLocal.matchesPortableBackupID(occupiedID.uuidString))
+        assert(!legacyLocal.matchesPortableBackupID("unrelated-browser-list"))
+        print("PASS: portable playlist ID collision preserves both independent identities")
+
         let database = folder.appendingPathComponent("library.json")
         let snapshot = PersistedLibrary(tracks: [song], playlists: [list, appleList])
         try snapshot.write(to: database)

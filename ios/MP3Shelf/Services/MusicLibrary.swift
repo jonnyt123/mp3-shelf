@@ -415,7 +415,10 @@ final class MusicLibrary: ObservableObject {
                 if addedLinks > 0 { report.playlistsUpdated += 1 }
                 continue
             }
-            let id = UUID(uuidString: item.id) ?? UUID()
+            // An archive ID can parse as a UUID already occupied by a
+            // different local playlist. Do not create duplicate local IDs:
+            // they make playlist selection, edits and later restores ambiguous.
+            let id = MusicPlaylist.restoredLocalID(for: item.id, existing: candidatePlaylists)
             var playlist = MusicPlaylist(id: id, name: item.name)
             playlist.portableBackupID = item.id
             playlist.sourceURL = item.sourceURL

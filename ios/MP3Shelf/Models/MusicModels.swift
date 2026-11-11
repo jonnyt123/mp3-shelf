@@ -270,7 +270,25 @@ struct MusicPlaylist: Identifiable, Codable, Hashable {
     }
 
     func matchesPortableBackupID(_ backupID: String) -> Bool {
-        portableBackupID == backupID || UUID(uuidString: backupID) == id
+        // A browser restore may have assigned a different portable identity
+        // to a playlist whose local UUID happens to match another archive.
+        // Once a portable identity is established, it is authoritative.
+        if let portableBackupID { return portableBackupID == backupID }
+        return UUID(uuidString: backupID) == id
+    }
+
+    /// Restore a portable playlist without reusing another playlist's local
+    /// UUID. The original archive identity is stored separately and survives
+    /// re-export, so the new UUID does not break repeat-restore matching.
+    static func restoredLocalID(for portableID: String, existing: [MusicPlaylist]) -> UUID {
+        if let proposed = UUID(uuidString: portableID),
+           !existing.contains(where: { $0.id == proposed }) {
+            return proposed
+        }
+        var fresh = UUID()
+        let occupied = Set(existing.map(\.id))
+        while occupied.contains(fresh) { fresh = UUID() }
+        return fresh
     }
 }
 
