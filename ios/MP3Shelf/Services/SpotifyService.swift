@@ -158,6 +158,13 @@ final class SpotifyService: NSObject, ObservableObject {
                 throw SpotifyError.api("Spotify returned repeated or excessive playlist pages.")
             }
             let page: SpotifyPage<SpotifyPlaylist> = try await request(url)
+            // Account switching can occur while a page is in flight. Reject
+            // its result immediately, before fetching another page using
+            // credentials from the replacement account.
+            try Task.checkCancellation()
+            guard generation == authorizationGeneration, token != nil else {
+                throw SpotifyError.notConnected
+            }
             found.append(contentsOf: page.items)
             next = try Self.safeNext(page.next, for: url, returnedItems: page.items.count)
             if found.count > 10000 { throw SpotifyError.api("Too many playlists to import in one request.") }
