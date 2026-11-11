@@ -380,7 +380,7 @@ final class SpotifyService: NSObject, ObservableObject {
                 throw SpotifyError.api("Spotify authorization is no longer valid. Disconnect and reconnect your account.")
             }
             guard isRefreshGrant, retryCount < 2 else {
-                throw SpotifyError.api("Spotify token request failed (HTTP \\(http.statusCode)). Try reconnecting if it persists.")
+                throw SpotifyError.api("Spotify token request failed (HTTP \(http.statusCode)). Try reconnecting if it persists.")
             }
             let delay: Int
             if http.statusCode == 429 {
@@ -395,7 +395,7 @@ final class SpotifyService: NSObject, ObservableObject {
                 // permanent client errors and no unbounded provider traffic.
                 delay = retryCount + 1
             } else {
-                throw SpotifyError.api("Spotify token request failed (HTTP \\(http.statusCode)).")
+                throw SpotifyError.api("Spotify token request failed (HTTP \(http.statusCode)).")
             }
             retryCount += 1
             try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
