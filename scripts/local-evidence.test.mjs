@@ -254,3 +254,28 @@ test('receipt pathname replacement is rejected when new target is unsafe', () =>
   linkSync(original, alias);
   assert.throws(() => readPersistedReceipt(original), /bounded, regular, unlinked/);
 }));
+
+test('independent verifier refuses unrecognized top-level release approval fields', () => fixture(dir => {
+  const receipt = buildLocalReceipt(args(dir));
+  assert.deepEqual(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }), []);
+  for (const extra of [
+    { releaseApproved: true },
+    { deployment: { approved: true, production: true } },
+    { checks: { mandatory: 'PASS' } }
+  ]) {
+    const forged = { ...receipt, ...extra };
+    assert.match(verifyLocalReceipt(forged, { expectedSha: sha, logDir: dir }).join(' '),
+      /Unexpected receipt field/);
+  }
+}));
+
+test('independent verifier rejects extra approval metadata on a successful step', () => fixture(dir => {
+  const receipt = buildLocalReceipt(args(dir));
+  const forged = {
+    ...receipt,
+    steps: receipt.steps.map((step, index) =>
+      index === 0 ? { ...step, trustedCI: true, releaseApproved: true } : step)
+  };
+  assert.match(verifyLocalReceipt(forged, { expectedSha: sha, logDir: dir }).join(' '),
+    /Malformed or unsuccessful receipt step/);
+}));
