@@ -1310,8 +1310,17 @@ final class MusicLibrary: ObservableObject {
     func toggleFavorite(_ id: UUID) {
         guard isLibraryPersistenceSafe else { return }
         guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
-        tracks[index].isFavorite.toggle()
-        save()
+        var updatedTracks = tracks
+        updatedTracks[index].isFavorite.toggle()
+        // Publish the favorite change only after the catalog is durable.
+        // A best-effort save previously left an unsaved favorite visible.
+        do {
+            try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+            tracks = updatedTracks
+        } catch {
+            libraryStorageError = "Could not save the favorite change. Your music library was preserved."
+            print("MP3 Shelf could not persist favorite change: \(error)")
+        }
     }
 
     func removeTrack(_ id: UUID) {
