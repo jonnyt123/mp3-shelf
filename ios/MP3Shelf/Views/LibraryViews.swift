@@ -1,6 +1,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// A single cancellable SwiftUI task owns each refresh. Returning to the foreground
+// triggers a fresh scan even when the library's track identifiers are unchanged.
+private struct OfflineCountRefreshKey: Equatable {
+    let trackIDs: [String]
+    let scenePhase: ScenePhase
+}
+
 struct LibraryView: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
@@ -25,12 +32,22 @@ struct LibraryView: View {
     // A nil count is deliberately not presented as zero while scanning.
     private func refreshOfflineRecordingCount() async {
         let urls = library.tracks.map { library.fileURL(for: $0) }
-        let count = await Task.detached(priority: .utility) {
-            urls.reduce(into: 0) { total, url in
-                if FileManager.default.fileExists(atPath: url.path) { total += 1 }
+        let scan = Task.detached(priority: .utility) { () -> Int? in
+            var count = 0
+            for url in urls {
+                if Task.isCancelled { return nil }
+                if FileManager.default.fileExists(atPath: url.path) { count += 1 }
             }
-        }.value
-        guard !Task.isCancelled else { return }
+            return count
+        }
+        // Cancelling the SwiftUI task also cancels the detached filesystem scan.
+        // This prevents a superseded scan from competing with the current one.
+        let count = await withTaskCancellationHandler {
+            await scan.value
+        } onCancel: {
+            scan.cancel()
+        }
+        guard !Task.isCancelled, let count else { return }
         offlineRecordingCount = count
     }
 
@@ -225,14 +242,13 @@ struct LibraryView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
-                                .task(id: library.tracks.map(\.id)) {
+                                .task(id: OfflineCountRefreshKey(
+                                    trackIDs: library.tracks.map(\.id),
+                                    scenePhase: scenePhase
+                                )) {
+                                    guard scenePhase == .active else { return }
                                     offlineRecordingCount = nil
                                     await refreshOfflineRecordingCount()
-                                }
-                                .onChange(of: scenePhase) { _, phase in
-                                    if phase == .active {
-                                        Task { await refreshOfflineRecordingCount() }
-                                    }
                                 }
                         }
                         Spacer(minLength: 0)
