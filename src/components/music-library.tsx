@@ -4,7 +4,7 @@ import{nextTrackId,previousTrackId,RepeatMode}from"@/lib/queue";
 import{playerGesture}from"@/lib/gestures";
 import{createLibraryBackup,parseLibraryBackup}from"@/lib/backup";
 import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,Track}from"@/lib/tracks";
-import{commitPlaylistEdit as persistPlaylistEdit,deleteTrackWithPlaylistCleanup,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore}from"@/lib/playlist-storage";
+import{commitPlaylistEdit as persistPlaylistEdit,deleteTrackWithPlaylistCleanup,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,recoverPlaylistRestore,recoverFailedTrackDeletion,selectPlaylistTracks,stagePlaylistRestore}from"@/lib/playlist-storage";
 type Playlist={id:string;name:string;trackIds:string[]};
 type StorageStats={usage:number;quota:number;persisted:boolean|null};
 type AirPlayAudio=HTMLAudioElement&{webkitShowPlaybackTargetPicker?:()=>void;webkitCurrentPlaybackTargetIsWireless?:boolean};
@@ -19,7 +19,9 @@ export function MusicLibrary(){
   // Reconcile crash-interrupted restores before any playlist state is writable.
   void listTracks().then(savedTracks=>{
    setTracks(savedTracks);
-   const recovered=recoverPlaylistRestore(localStorage,new Set(savedTracks.map(track=>track.id)),"mp3-shelf-playlists");
+   const audioIds=new Set(savedTracks.map(track=>track.id));
+   recoverFailedTrackDeletion(localStorage,audioIds);
+   const recovered=recoverPlaylistRestore(localStorage,audioIds,"mp3-shelf-playlists");
    setPlaylists(recovered??parseStoredPlaylists(localStorage.getItem("mp3-shelf-playlists")));
    setOnboarding(!localStorage.getItem("mp3-shelf-onboarded"));
    setPlaylistsHydrated(true);
