@@ -675,11 +675,14 @@ final class MusicLibrary: ObservableObject {
         let allowed = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
         guard allowed.contains(extensionName) else { throw MusicLibraryError.unsupportedFormat }
         let fileSize = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-        // Avoid importing the same file more than once, without treating all tracks with the same title as duplicates.
-        if fileSize >= 0 && tracks.contains(where: { track in
+        // Detect identical audio even when Files renamed the source (for example,
+        // "song (1).mp3"). Names and metadata are not reliable content identities.
+        // Compare only equal-sized candidates; the archive comparator streams in
+        // bounded chunks rather than loading entire recordings into memory.
+        // An unreadable candidate is never considered a duplicate.
+        if fileSize > 0 && tracks.contains(where: { track in
             let existingURL = fileURL(for: track)
-            return track.originalFileName.caseInsensitiveCompare(originalName) == .orderedSame &&
-                ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -2) == fileSize &&
+            return ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) == fileSize &&
                 PortableShelfArchive.audioFilesIdentical(sourceURL, existingURL)
         }) { return false }
 
