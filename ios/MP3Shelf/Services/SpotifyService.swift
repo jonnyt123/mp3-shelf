@@ -641,6 +641,36 @@ private struct SpotifyTrack: Decodable {
     let album: SpotifyAlbum?
     let external_urls: SpotifyURLContainer?
     let duration_ms: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, type, artists, album, external_urls, duration_ms
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // A missing or non-string title is not a usable recording identity.
+        // Optional evidence, however, can be malformed in otherwise valid
+        // Spotify entries. Preserve valid artists rather than discarding the
+        // entire song when one credited artist is redacted or malformed.
+        name = try container.decode(String.self, forKey: .name)
+        type = try? container.decode(String.self, forKey: .type)
+        album = try? container.decode(SpotifyAlbum.self, forKey: .album)
+        external_urls = try? container.decode(SpotifyURLContainer.self, forKey: .external_urls)
+        duration_ms = try? container.decode(Int.self, forKey: .duration_ms)
+
+        if var entries = try? container.nestedUnkeyedContainer(forKey: .artists) {
+            var validArtists: [SpotifyArtist] = []
+            while !entries.isAtEnd {
+                let entry = try entries.superDecoder()
+                if let artist = try? SpotifyArtist(from: entry) {
+                    validArtists.append(artist)
+                }
+            }
+            artists = validArtists
+        } else {
+            artists = nil
+        }
+    }
 }
 private struct SpotifyArtist: Decodable { let name: String }
 private struct SpotifyAlbum: Decodable { let name: String }
