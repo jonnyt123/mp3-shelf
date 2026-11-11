@@ -639,12 +639,17 @@ final class MusicLibrary: ObservableObject {
         defer { isImporting = false }
         var report = ImportReport()
         for source in urls {
+            // A defer in this loop's enclosing function would retain every
+            // security-scoped Files grant until the entire batch finished.
+            // Release each grant before starting the next recording, including
+            // failed copies, invalid audio and duplicate imports.
             let accessing = source.startAccessingSecurityScopedResource()
-            defer { if accessing { source.stopAccessingSecurityScopedResource() } }
             do {
+                defer { if accessing { source.stopAccessingSecurityScopedResource() } }
                 let outcome = try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent)
                 if outcome { report.imported += 1 } else { report.skipped += 1 }
             } catch {
+                if accessing { source.stopAccessingSecurityScopedResource() }
                 report.errors.append(source.lastPathComponent + ": " + error.localizedDescription)
             }
         }
