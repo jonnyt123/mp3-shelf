@@ -325,13 +325,18 @@ final class SpotifyService: NSObject, ObservableObject {
             let previous = token?.refreshToken
             let fresh = try await refreshTask.value
             try Task.checkCancellation()
-            guard generation == authorizationGeneration,
-                  let previous, token?.refreshToken == previous else {
+            guard generation == authorizationGeneration, let previous,
+                  let current = token else {
                 throw SpotifyError.notConnected
             }
-            if token?.accessToken != fresh.accessToken {
-                try store(tokens: fresh)
+            // The owner may already have persisted the rotated refresh
+            // token. Treat that as success, not an account switch. If a
+            // different token won the race, never overwrite its credentials.
+            if current.accessToken == fresh.accessToken { return }
+            guard current.refreshToken == previous else {
+                throw SpotifyError.notConnected
             }
+            try store(tokens: fresh)
             return
         }
         guard let existing = token else { throw SpotifyError.notConnected }
