@@ -487,6 +487,7 @@ final class MusicLibrary: ObservableObject {
         let data = try Data(contentsOf: url)
         guard data.count <= 512_000, String(data: data, encoding: .utf8) != nil else { throw LyricsError.unsupported }
 
+        let previousLyrics = tracks[index].lyricsFileName
         let filename = trackID.uuidString + "-" + UUID().uuidString + ".lrc"
         let destination = lyricsDirectory.appendingPathComponent(filename)
         try data.write(to: destination, options: .atomic)
@@ -495,6 +496,17 @@ final class MusicLibrary: ObservableObject {
             updatedTracks[index].lyricsFileName = filename
             try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
             tracks = updatedTracks
+            // Cleanup follows the durable catalog write. Restored/legacy
+            // recordings can share a lyrics filename; preserve shared files.
+            if let previousLyrics,
+               previousLyrics != filename,
+               !updatedTracks.contains(where: { $0.lyricsFileName == previousLyrics }) {
+                do {
+                    try manager.removeItem(at: lyricsDirectory.appendingPathComponent(previousLyrics))
+                } catch {
+                    print("MP3 Shelf retained an unreferenced lyrics sidecar: \\(error)")
+                }
+            }
         } catch {
             // Only delete the new, unreferenced sidecar. The previous lyrics
             // and catalog remain available for recovery.
