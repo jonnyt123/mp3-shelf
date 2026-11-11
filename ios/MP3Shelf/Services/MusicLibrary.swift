@@ -637,7 +637,9 @@ final class MusicLibrary: ObservableObject {
                 report.errors.append(source.lastPathComponent + ": " + error.localizedDescription)
             }
         }
-        if report.imported > 0 { reconcileMissingSongs() }
+        // Each successful import commits its playlist reconciliation together
+        // with the track. Never perform a second nonthrowing save here: that
+        // could leave the visible playlists ahead of the durable catalog.
         return report
     }
 
@@ -701,7 +703,10 @@ final class MusicLibrary: ObservableObject {
                 track.sourceAttribution = attribution
             }
             let updatedTracks = tracks + [track]
-            let updatedPlaylists = wish == nil ? playlists : reconciledPlaylists(using: updatedTracks)
+            // Local Files imports can satisfy missing source-playlist wishes
+            // too. Persist the new recording and resolved playlist links in a
+            // single catalog transaction, regardless of the import origin.
+            let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
             // Report import success only after the complete record is written.
             // A failed write must leave both the live and saved library intact.
             try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists).write(to: databaseURL)
