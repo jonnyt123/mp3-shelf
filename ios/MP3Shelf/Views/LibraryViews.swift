@@ -332,10 +332,21 @@ struct LibraryView: View {
                         }
                         browsingPlaybackControls
                         if displayed.isEmpty {
-                            EmptyShelfView(
-                                title: "No favorites yet",
-                                subtitle: "Tap the heart on a song to collect it here.",
-                                symbol: "heart")
+                            VStack(alignment: .leading, spacing: 12) {
+                                EmptyShelfView(
+                                    title: "No favorites yet",
+                                    subtitle: "Tap the heart on a song to collect it here.",
+                                    symbol: "heart")
+                                Button {
+                                    favoritesOnly = false
+                                } label: {
+                                    Label("Show all music", systemImage: "music.note.list")
+                                        .frame(minHeight: 44)
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(ShelfTheme.accent)
+                                .accessibilityHint("Switch from Favorites to all saved songs")
+                            }
                         } else {
                             LazyVStack(spacing: 9) {
                                 ForEach(displayed) { track in
@@ -352,6 +363,7 @@ struct LibraryView: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .background(PremiumBackdrop())
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
@@ -363,7 +375,10 @@ struct LibraryView: View {
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(ShelfTheme.accent)
                 }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .accessibilityLabel("Import audio files")
+                .accessibilityHint("Choose audio files stored on your iPhone")
                 .disabled(library.isImporting)
             }
         }
