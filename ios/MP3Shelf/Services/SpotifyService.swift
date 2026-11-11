@@ -172,6 +172,9 @@ final class SpotifyService: NSObject, ObservableObject {
     func playlistFromLink(_ value: String) async throws -> SpotifyPlaylist {
         guard token != nil else { throw SpotifyError.notConnected }
         guard let identifier = SpotifyPlaylistLinks.playlistID(from: value),
+              // Share-link parsing is a separate trust boundary from API URL
+              // construction. Never interpolate an unchecked path component.
+              Self.isValidPlaylistID(identifier),
               let url = URL(string: "https://api.spotify.com/v1/playlists/\(identifier)")
         else {
             throw SpotifyError.api("Enter a valid open.spotify.com/playlist/… share link.")
@@ -193,10 +196,7 @@ final class SpotifyService: NSObject, ObservableObject {
         // Playlist IDs are opaque Spotify base62 identifiers, never URL paths.
         // Reject malformed metadata before constructing an authenticated URL:
         // urlPathAllowed permits '/' and can otherwise change the endpoint.
-        guard playlist.id.count == 22,
-              playlist.id.utf8.allSatisfy({
-                  (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
-              }) else {
+        guard Self.isValidPlaylistID(playlist.id) else {
             throw SpotifyError.api("Spotify returned an invalid playlist identifier.")
         }
         var next: URL? = URL(string: "https://api.spotify.com/v1/playlists/\(playlist.id)/items?limit=50")
@@ -224,6 +224,12 @@ final class SpotifyService: NSObject, ObservableObject {
         guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
         if wishes.isEmpty { throw SpotifyError.api("No usable songs were returned. Spotify currently limits playlist access to playlists you own or collaborate on.") }
         return wishes
+    }
+
+    private static func isValidPlaylistID(_ id: String) -> Bool {
+        id.utf8.count == 22 && id.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+        }
     }
 
     private func request<T: Decodable>(_ url: URL) async throws -> T {
