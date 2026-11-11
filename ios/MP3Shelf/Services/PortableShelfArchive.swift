@@ -142,27 +142,52 @@ enum PortableShelfArchive {
                 audio: audio, artwork: artwork
             ))
         }
-        // Restored libraries can contain conflicting legacy portable IDs.
-        // Dictionary(uniqueKeysWithValues:) traps on duplicate local UUIDs;
-        // duplicate portable IDs would instead produce a backup that open()
-        // rejects. Fail with a recoverable error before publishing anything.
+        // A legacy restore may contain two different local songs with the
+        // same portable ID, or a portable ID equal to another song's UUID.
+        // Preserve the first valid identity and give later collisions a fresh
+        // export-only ID. Never mutate the on-device library to make a backup.
+        // Reject duplicate local UUIDs: playlist references would be ambiguous.
         var portableIDs: [UUID: String] = [:]
         var usedPortableIDs = Set<String>()
         for item in inputs {
-            let id = item.track.portableBackupID ?? item.track.id.uuidString
-            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  portableIDs.updateValue(id, forKey: item.track.id) == nil,
-                  usedPortableIDs.insert(id).inserted else {
+            guard portableIDs[item.track.id] == nil else {
                 throw ArchiveError.invalidManifest
             }
+            let preferred = item.track.portableBackupID ?? item.track.id.uuidString
+            let id: String
+            if !preferred.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               usedPortableIDs.insert(preferred).inserted {
+                id = preferred
+            } else {
+                var replacement = UUID().uuidString
+                while !usedPortableIDs.insert(replacement).inserted {
+                    replacement = UUID().uuidString
+                }
+                id = replacement
+            }
+            portableIDs[item.track.id] = id
         }
+        // Apply the resolved IDs to the manifest and its playlist links.
+        // The audio bytes and sidecar offsets are not changed.
+        for index in tracks.indices {
+            tracks[index].id = portableIDs[inputs[index].track.id]!
+        }
+        var playlistIDs: [String] = []
         var usedPlaylistIDs = Set<String>()
         for list in playlists {
-            let id = list.portableBackupID ?? list.id.uuidString
-            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  usedPlaylistIDs.insert(id).inserted else {
-                throw ArchiveError.invalidManifest
+            let preferred = list.portableBackupID ?? list.id.uuidString
+            let id: String
+            if !preferred.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               usedPlaylistIDs.insert(preferred).inserted {
+                id = preferred
+            } else {
+                var replacement = UUID().uuidString
+                while !usedPlaylistIDs.insert(replacement).inserted {
+                    replacement = UUID().uuidString
+                }
+                id = replacement
             }
+            playlistIDs.append(id)
         }
         // Keep playlist references and names valid under the same constraints
         // enforced by open(). A backup must always be readable after export.
@@ -171,10 +196,10 @@ enum PortableShelfArchive {
         }) else {
             throw ArchiveError.invalidManifest
         }
-        let lists = playlists.map { list in
+        let lists = playlists.enumerated().map { index, list in
             let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
             return Playlist(
-                id: list.portableBackupID ?? list.id.uuidString, name: list.name,
+                id: playlistIDs[index], name: list.name,
                 // Never serialize dangling links to missing recordings.
                 trackIds: list.trackIDs.compactMap { portableIDs[$0] },
                 sourceURL: list.sourceURL,

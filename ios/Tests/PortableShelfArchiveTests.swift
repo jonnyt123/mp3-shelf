@@ -329,6 +329,71 @@ struct PortableShelfArchiveTests {
         assert(reusedArchive.manifest.playlists.first?.trackIds == ["web-song-1"])
 
 
+        // Conflicting legacy portable identities must not make an otherwise
+        // valid offline library impossible to back up. All recordings remain
+        // distinct and every playlist link resolves to its own audio.
+        var conflictA = song
+        conflictA.portableBackupID = "shared-legacy-id"
+        var conflictB = song
+        conflictB.id = UUID()
+        conflictB.portableBackupID = "shared-legacy-id"
+        var collisionList = MusicPlaylist(name: "Collision playlist")
+        collisionList.trackIDs = [conflictA.id, conflictB.id]
+        let collisionURL = folder.appendingPathComponent("collision-recovery.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: conflictA, audioURL: audio, artwork: nil, lyrics: nil),
+            .init(track: conflictB, audioURL: identicalAudio, artwork: nil, lyrics: nil)
+        ], playlists: [collisionList], to: collisionURL)
+        let recovered = try PortableShelfArchive.open(collisionURL)
+        let exportedIDs = recovered.manifest.tracks.map(\.id)
+        assert(exportedIDs.count == 2 && Set(exportedIDs).count == 2)
+        assert(exportedIDs[0] == "shared-legacy-id")
+        assert(recovered.manifest.playlists[0].trackIds == exportedIDs)
+        assert(try Data(contentsOf: PortableShelfArchive.extract(
+            recovered.manifest.tracks[0].audio, from: recovered, extensionName: "mp3")) == originalBytes)
+        assert(try Data(contentsOf: PortableShelfArchive.extract(
+            recovered.manifest.tracks[1].audio, from: recovered, extensionName: "mp3")) == originalBytes)
+        // An explicit browser ID can collide with another local UUID.
+        conflictB.portableBackupID = conflictA.id.uuidString
+        conflictA.portableBackupID = "browser-a"
+        let uuidCollisionURL = folder.appendingPathComponent("uuid-collision.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: conflictA, audioURL: audio, artwork: nil, lyrics: nil),
+            .init(track: conflictB, audioURL: identicalAudio, artwork: nil, lyrics: nil)
+        ], playlists: [collisionList], to: uuidCollisionURL)
+        let uuidRecovered = try PortableShelfArchive.open(uuidCollisionURL)
+        assert(Set(uuidRecovered.manifest.tracks.map(\.id)).count == 2)
+        // Duplicate playlist portable IDs are also repaired in the exported
+        // manifest without changing local playlist UUIDs or their contents.
+        var collisionListB = MusicPlaylist(name: "Second collision playlist")
+        collisionList.portableBackupID = "duplicate-playlist-id"
+        collisionListB.portableBackupID = "duplicate-playlist-id"
+        collisionListB.trackIDs = [conflictB.id]
+        let playlistCollisionURL = folder.appendingPathComponent("playlist-collision.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: conflictA, audioURL: audio, artwork: nil, lyrics: nil),
+            .init(track: conflictB, audioURL: identicalAudio, artwork: nil, lyrics: nil)
+        ], playlists: [collisionList, collisionListB], to: playlistCollisionURL)
+        let recoveredPlaylists = try PortableShelfArchive.open(playlistCollisionURL)
+        assert(Set(recoveredPlaylists.manifest.playlists.map(\.id)).count == 2)
+        assert(recoveredPlaylists.manifest.playlists[0].id == "duplicate-playlist-id")
+        assert(recoveredPlaylists.manifest.playlists[1].trackIds ==
+            [recoveredPlaylists.manifest.tracks[1].id])
+        // Two local entries with the same UUID cannot be disambiguated.
+        var repeatedLocal = conflictB
+        repeatedLocal.id = conflictA.id
+        let invalidDuplicateURL = folder.appendingPathComponent("duplicate-local-uuid.mp3shelf")
+        do {
+            try PortableShelfArchive.export([
+                .init(track: conflictA, audioURL: audio, artwork: nil, lyrics: nil),
+                .init(track: repeatedLocal, audioURL: identicalAudio, artwork: nil, lyrics: nil)
+            ], playlists: [], to: invalidDuplicateURL)
+            fatalError("Duplicate local UUID must fail before publishing backup")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            assert(!FileManager.default.fileExists(atPath: invalidDuplicateURL.path))
+        }
+        print("PASS: conflicting legacy export IDs preserve recordings and playlist links")
+
         // Legacy on-device song data without the new ID decodes normally.
         let persistedTrack = try JSONEncoder().encode(portableSong)
         var legacyTrack = try JSONSerialization.jsonObject(with: persistedTrack)
