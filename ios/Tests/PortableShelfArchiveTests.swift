@@ -397,6 +397,21 @@ struct PortableShelfArchiveTests {
         assert(explicitSong.portableBackupID == fallbackSong.id.uuidString)
         assert(fallbackPlaylist.portableBackupID == nil)
         print("PASS: explicit portable IDs win over earlier native UUID fallbacks")
+        // Exporting the same collision-repaired library again must preserve
+        // archive identities. Random repair IDs previously created a new
+        // playlist on each restore even though its local UUID was unchanged.
+        let repeatedReservedURL = folder.appendingPathComponent("reserved-explicit-identities-again.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: fallbackSong, audioURL: audio, artwork: nil, lyrics: nil),
+            .init(track: explicitSong, audioURL: identicalAudio, artwork: nil, lyrics: nil)
+        ], playlists: [fallbackPlaylist, explicitPlaylist], to: repeatedReservedURL)
+        let repeatedReserved = try PortableShelfArchive.open(repeatedReservedURL)
+        assert(repeatedReserved.manifest.tracks.map(\.id) == reservedTracks.map(\.id))
+        assert(repeatedReserved.manifest.playlists.map(\.id) == reservedLists.map(\.id))
+        assert(repeatedReserved.manifest.playlists.map(\.trackIds) == reservedLists.map(\.trackIds))
+        assert(reservedTracks[0].id.hasPrefix("mp3shelf-track-"))
+        assert(reservedLists[0].id.hasPrefix("mp3shelf-playlist-"))
+        print("PASS: repeated collision-repaired exports retain stable IDs and playlist links")
 
         // Duplicate playlist portable IDs are also repaired in the exported
         // manifest without changing local playlist UUIDs or their contents.

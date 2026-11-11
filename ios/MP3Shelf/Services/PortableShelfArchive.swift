@@ -93,7 +93,8 @@ enum PortableShelfArchive {
     /// explicit portable identity owned by a different track or playlist.
     /// Duplicate explicit IDs keep their first occurrence; all fallback IDs
     /// avoid every reserved explicit ID, even when it appears later in input.
-    private static func resolvedArchiveIDs(_ candidates: [(localID: UUID, portableID: String?)]) -> [String] {
+    private static func resolvedArchiveIDs(_ candidates: [(localID: UUID, portableID: String?)],
+                                           namespace: String) -> [String] {
         let reserved = Set(candidates.compactMap { candidate -> String? in
             guard let id = candidate.portableID,
                   !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -112,11 +113,19 @@ enum PortableShelfArchive {
             if !reserved.contains(fallback), assigned.insert(fallback).inserted {
                 return fallback
             }
-            var fresh = UUID().uuidString
-            while reserved.contains(fresh) || !assigned.insert(fresh).inserted {
-                fresh = UUID().uuidString
+            // A random replacement changes on every export. Stable IDs
+            // allow repeated backups of a repaired legacy library to restore
+            // into the same playlist instead of creating duplicate collections.
+            // Namespace track and playlist IDs independently, and probe only
+            // when an explicit ID already occupies the deterministic value.
+            let stem = "mp3shelf-\(namespace)-\(candidate.localID.uuidString)"
+            var replacement = stem
+            var suffix = 1
+            while reserved.contains(replacement) || !assigned.insert(replacement).inserted {
+                replacement = stem + "-\(suffix)"
+                suffix += 1
             }
-            return fresh
+            return replacement
         }
     }
 
@@ -182,7 +191,7 @@ enum PortableShelfArchive {
         // fallbacks. Input order must not steal a later browser identity.
         let exportedTrackIDs = resolvedArchiveIDs(inputs.map {
             (localID: $0.track.id, portableID: $0.track.portableBackupID)
-        })
+        }, namespace: "track")
         var portableIDs: [UUID: String] = [:]
         for (item, id) in zip(inputs, exportedTrackIDs) {
             portableIDs[item.track.id] = id
@@ -192,7 +201,7 @@ enum PortableShelfArchive {
         }
         let playlistIDs = resolvedArchiveIDs(playlists.map {
             (localID: $0.id, portableID: $0.portableBackupID)
-        })
+        }, namespace: "playlist")
         // Keep playlist references and names valid under the same constraints
         // enforced by open(). A backup must always be readable after export.
         guard playlists.allSatisfy({
