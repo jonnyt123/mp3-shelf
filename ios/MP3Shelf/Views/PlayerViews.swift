@@ -115,6 +115,7 @@ struct NowPlayingView: View {
     @State private var scrubbingTrackID: UUID?
     @State private var showLyrics = false
     @State private var showQueue = false
+    @AccessibilityFocusState private var queueButtonFocused: Bool
     private let seekStep: TimeInterval = 15
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -157,7 +158,7 @@ struct NowPlayingView: View {
                                             .font(.system(.title2, design: .rounded, weight: .bold))
                                             .foregroundStyle(.white)
                                             .lineLimit(2)
-                                            .minimumScaleFactor(0.8)
+                                            .fixedSize(horizontal: false, vertical: true)
                                         Text(track.artist)
                                             .font(.headline.weight(.regular))
                                             .foregroundStyle(ShelfTheme.subdued)
@@ -324,6 +325,8 @@ struct NowPlayingView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Manage playing queue")
+                                 .accessibilityHint("Review and reorder upcoming songs")
+                                 .accessibilityFocused($queueButtonFocused)
 
                                 if !playback.upcomingTracks.isEmpty {
                                     VStack(alignment: .leading, spacing: 12) {
@@ -355,6 +358,7 @@ struct NowPlayingView: View {
                                             }
                                             .buttonStyle(.plain)
                                             .accessibilityLabel("Play next: \(next.title) by \(next.artist)")
+                                             .accessibilityHint("Start this queued recording now")
                                         }
                                     }
                                     .padding(.top, 24)
@@ -412,6 +416,9 @@ struct NowPlayingView: View {
                 if let id = playback.currentTrackID { LyricsView(songID: id) }
             }
             .onChange(of: playback.currentTrackID) { _, _ in draggingTime = nil }
+             .onChange(of: showQueue) { _, presented in
+                 if !presented { queueButtonFocused = true }
+             }
             .sheet(isPresented: $showQueue) {
                 PlaybackQueueSheet()
                     .environmentObject(library)
