@@ -366,9 +366,19 @@ enum PortableShelfArchive {
             throw ArchiveError.invalidRange
         }
         try handle.seek(toOffset: start)
-        guard let data = try handle.read(upToCount: Int(part.length)),
-              data.count == Int(part.length) else { throw ArchiveError.invalidRange }
-        return data
+        // FileHandle.read(upToCount:) may return fewer bytes than requested
+        // without reaching EOF. Accumulate bounded metadata slices until the
+        // declared range is complete; never accept a truncated sidecar.
+        var result = Data()
+        result.reserveCapacity(Int(part.length))
+        var remaining = Int(part.length)
+        while remaining > 0 {
+            guard let chunk = try handle.read(upToCount: min(remaining, 64 * 1024)),
+                  !chunk.isEmpty else { throw ArchiveError.invalidRange }
+            result.append(chunk)
+            remaining -= chunk.count
+        }
+        return result
     }
 
     /// Compare recordings byte-for-byte without loading either audio file into memory.
