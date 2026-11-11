@@ -121,8 +121,7 @@ struct LibraryView: View {
         }
     }
 
-    private var searchSortSummary: some View {
-        let matchingCount = displayed.count
+    private func searchSortSummary(matchingCount: Int) -> some View {
         return VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 9) {
             Text(isSearchUpdating ? "Updating search…" : "\(matchingCount) of \(library.tracks.count) songs found")
                 .font(.caption.monospacedDigit())
@@ -155,7 +154,7 @@ struct LibraryView: View {
         }
     }
 
-    private var browsingPlaybackControls: some View {
+    private func browsingPlaybackControls(hasResults: Bool) -> some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading) { browsingActions }
@@ -165,7 +164,7 @@ struct LibraryView: View {
         }
         .buttonStyle(.bordered)
         .tint(ShelfTheme.accent)
-        .disabled(displayed.isEmpty || isSearchUpdating)
+        .disabled(!hasResults || isSearchUpdating)
     }
 
     @ViewBuilder private var browsingActions: some View {
@@ -186,7 +185,10 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        ScrollView {
+        // Share one sorted, filtered snapshot across the count, rows and queue.
+        // Recomputing `displayed` per row repeatedly scans large libraries.
+        let visibleTracks = displayed
+        return ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 if isSearching {
                     VStack(alignment: .leading, spacing: 15) {
@@ -194,24 +196,24 @@ struct LibraryView: View {
                             if dynamicTypeSize.isAccessibilitySize {
                                 VStack(alignment: .leading, spacing: 12) {
                                     searchHeading
-                                    searchSortSummary
+                                    searchSortSummary(matchingCount: visibleTracks.count)
                                 }
                             } else {
                                 HStack(alignment: .firstTextBaseline) {
                                     searchHeading
                                     Spacer(minLength: 8)
-                                    searchSortSummary
+                                    searchSortSummary(matchingCount: visibleTracks.count)
                                 }
                             }
                         }
                         filterControls
-                        browsingPlaybackControls
+                        browsingPlaybackControls(hasResults: !visibleTracks.isEmpty)
                         if isSearchUpdating {
                             ProgressView("Searching songs…")
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.vertical, 20)
                                 .accessibilityLabel("Searching songs")
-                        } else if displayed.isEmpty {
+                        } else if visibleTracks.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 PremiumIcon(symbol: "magnifyingglass", color: ShelfTheme.accent,
                                             size: 56)
@@ -248,8 +250,8 @@ struct LibraryView: View {
                             .premiumCard()
                         } else {
                             LazyVStack(spacing: 9) {
-                                ForEach(displayed) { track in
-                                    MusicTrackRow(track: track, context: displayed,
+                                ForEach(visibleTracks) { track in
+                                    MusicTrackRow(track: track, context: visibleTracks,
                                                   renaming: $renaming)
                                 }
                             }
@@ -419,20 +421,20 @@ struct LibraryView: View {
                             if dynamicTypeSize.isAccessibilitySize {
                                 VStack(alignment: .leading, spacing: 8) {
                                     PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
-                                                          detail: "\(displayed.count) songs")
+                                                          detail: "\(visibleTracks.count) songs")
                                     sortMenu
                                 }
                             } else {
                                 HStack(spacing: 12) {
                                     PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
-                                                          detail: "\(displayed.count) songs")
+                                                          detail: "\(visibleTracks.count) songs")
                                     Spacer(minLength: 8)
                                     sortMenu
                                 }
                             }
                         }
-                        browsingPlaybackControls
-                        if displayed.isEmpty {
+                        browsingPlaybackControls(hasResults: !visibleTracks.isEmpty)
+                        if visibleTracks.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 EmptyShelfView(
                                     title: "No favorites yet",
@@ -450,8 +452,8 @@ struct LibraryView: View {
                             }
                         } else {
                             LazyVStack(spacing: 9) {
-                                ForEach(displayed) { track in
-                                    MusicTrackRow(track: track, context: displayed,
+                                ForEach(visibleTracks) { track in
+                                    MusicTrackRow(track: track, context: visibleTracks,
                                                   renaming: $renaming)
                                 }
                             }
@@ -727,12 +729,12 @@ struct PlaylistsView: View {
 
     // Keep the result count readable and the recovery control reachable on
     // compact phones and at accessibility text sizes.
-    @ViewBuilder private var playlistSearchSummary: some View {
-        Text("\(visiblePlaylists.count) of \(library.playlists.count) playlists")
+    @ViewBuilder private func playlistSearchSummary(matchingCount: Int) -> some View {
+        Text("\(matchingCount) of \(library.playlists.count) playlists")
             .font(.subheadline.monospacedDigit())
             .foregroundStyle(ShelfTheme.subdued)
             .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel("\(visiblePlaylists.count) playlists match your search out of \(library.playlists.count)")
+            .accessibilityLabel("\(matchingCount) playlists match your search out of \(library.playlists.count)")
         if !dynamicTypeSize.isAccessibilitySize {
             Spacer(minLength: 0)
         }
@@ -749,7 +751,9 @@ struct PlaylistsView: View {
     }
 
     var body: some View {
-        ScrollView {
+        // Use the same filtered, alphabetized list for counts and the grid.
+        let playlists = visiblePlaylists
+        return ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 5) {
                     PremiumEyebrow(title: "CURATED BY YOU", color: ShelfTheme.coral)
@@ -790,16 +794,16 @@ struct PlaylistsView: View {
                         Group {
                             if dynamicTypeSize.isAccessibilitySize {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    playlistSearchSummary
+                                    playlistSearchSummary(matchingCount: playlists.count)
                                 }
                             } else {
                                 HStack(alignment: .center, spacing: 12) {
-                                    playlistSearchSummary
+                                    playlistSearchSummary(matchingCount: playlists.count)
                                 }
                             }
                         }
                     }
-                    if hasPlaylistQuery && visiblePlaylists.isEmpty {
+                    if hasPlaylistQuery && playlists.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("No playlists match your search.")
                                 .foregroundStyle(ShelfTheme.subdued)
@@ -846,9 +850,9 @@ struct PlaylistsView: View {
                         .padding(20)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .premiumCard(radius: 24)
-                    } else if !visiblePlaylists.isEmpty {
+                    } else if !playlists.isEmpty {
                         LazyVGrid(columns: columns, spacing: 13) {
-                            ForEach(Array(visiblePlaylists.enumerated()), id: \.element.id) { index, list in
+                            ForEach(Array(playlists.enumerated()), id: \.element.id) { index, list in
                                 NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
                                     playlistCard(list, index: index)
                                 }
