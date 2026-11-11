@@ -285,9 +285,8 @@ describe("track deletion consistency",()=>{
    store.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","remove"]}]));
   })).rejects.toThrow("QuotaExceededError");
   expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
-  expect(recoverFailedTrackDeletion(store,new Set(["keep"]))).toEqual([{id:"mix",name:"Other tab",trackIds:["keep","remove"]}]);
-  // Recovery cannot infer the deleted track's current IDB state from the
-  // callback alone; the actual startup path must supply real available IDs.
+  expect(recoverFailedTrackDeletion(store,new Set(["keep"]))).toEqual([{id:"mix",name:"Other tab",trackIds:["keep"]}]);
+  // Startup uses the actual surviving IndexedDB IDs to remove dangling links.
   expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
  });
  it("rejects blank track IDs before touching storage or audio",async()=>{
