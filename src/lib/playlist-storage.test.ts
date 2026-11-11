@@ -115,6 +115,28 @@ describe("crash-safe backup restoration journal",()=>{
   expect(hasPendingPlaylistRestore(storage)).toBe(true);
   expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")).not.toBeNull();
  });
+ it("rejects malformed pending journals without modifying any playlist namespace",()=>{
+  const malformed=[
+   {version:1,key:"playlists",trackIds:["a","a"],playlists:[]},
+   {version:1,key:"playlists",trackIds:[""],playlists:[]},
+   {version:1,key:"playlists",trackIds:["a"],playlists:[{id:"duplicate",name:"First",trackIds:[]},{id:"duplicate",name:"Second",trackIds:[]}]},
+   {version:1,key:"",trackIds:["a"],playlists:[]},
+   {version:2,key:"playlists",trackIds:["a"],playlists:[]}
+  ];
+  for(const journal of malformed){
+   const storage=store();
+   const before=storage.getItem("playlists");
+   storage.setItem("mp3-shelf-restore-pending",JSON.stringify(journal));
+   expect(()=>recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")).toThrow();
+   expect(storage.getItem("playlists")).toBe(before);
+   expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  }
+ });
+ it("rejects duplicate backup track IDs before creating a recovery journal",()=>{
+  const storage=store();
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"b"},{id:"b"}],incoming)).toThrow("Invalid backup track IDs");
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+ });
  it("can recover legacy version-one restore journals without a storage key",()=>{
   const storage=store();
   storage.setItem("mp3-shelf-restore-pending",JSON.stringify({version:1,trackIds:["b"],playlists:incoming}));
