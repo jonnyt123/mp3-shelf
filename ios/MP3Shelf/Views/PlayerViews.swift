@@ -456,6 +456,7 @@ struct PlaybackQueueSheet: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AccessibilityFocusState private var focusedQueueTrackID: UUID?
     @State private var pendingQueueFocusID: UUID?
+    @State private var pendingEmptyQueueFocus = false
     @AccessibilityFocusState private var emptyQueueFocused: Bool
 
     // Keep VoiceOver on the nearest surviving queue action after a deletion.
@@ -463,6 +464,7 @@ struct PlaybackQueueSheet: View {
     private func removeFromQueue(_ trackID: UUID, at index: Int, in upcoming: [MusicTrack]) {
         let remaining = upcoming.filter { $0.id != trackID }
         pendingQueueFocusID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
+        pendingEmptyQueueFocus = remaining.isEmpty
         playback.removeQueuedTrack(trackID)
     }
 
@@ -470,6 +472,7 @@ struct PlaybackQueueSheet: View {
     // reorder, rather than letting SwiftUI jump to an unrelated row.
     private func reorder(_ trackID: UUID, earlier: Bool) {
         pendingQueueFocusID = trackID
+        pendingEmptyQueueFocus = false
         playback.moveQueuedTrack(trackID, earlier: earlier)
     }
 
@@ -615,12 +618,24 @@ struct PlaybackQueueSheet: View {
                 .scrollDismissesKeyboard(.interactively)
             }
             .onChange(of: upcoming.map(\.id)) { _, currentIDs in
-                guard let target = pendingQueueFocusID else { return }
-                pendingQueueFocusID = nil
-                if currentIDs.contains(target) {
-                    focusedQueueTrackID = target
-                } else if currentIDs.isEmpty {
+                // An empty queue has no track ID to focus; retain that intent
+                // separately so removing the final song still announces the state.
+                if pendingEmptyQueueFocus && currentIDs.isEmpty {
+                    pendingEmptyQueueFocus = false
+                    pendingQueueFocusID = nil
                     emptyQueueFocused = true
+                } else if let target = pendingQueueFocusID {
+                    pendingQueueFocusID = nil
+                    pendingEmptyQueueFocus = false
+                    if currentIDs.contains(target) {
+                        focusedQueueTrackID = target
+                    } else if currentIDs.isEmpty {
+                        emptyQueueFocused = true
+                    } else if let first = currentIDs.first {
+                        // Playback can advance while the user is editing.
+                        // Never leave focus pointing at a vanished queue row.
+                        focusedQueueTrackID = first
+                    }
                 }
             }
             .navigationTitle("Your queue")
