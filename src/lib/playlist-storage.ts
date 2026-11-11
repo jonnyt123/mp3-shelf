@@ -78,6 +78,10 @@ export function stagePlaylistRestore(storage:Pick<Storage,"getItem"|"setItem">,k
 export function recoverPlaylistRestore(storage:Pick<Storage,"getItem"|"setItem"|"removeItem">,availableTrackIds:ReadonlySet<string>,key:string):StoredPlaylist[]|null{
  const raw=storage.getItem(RESTORE_JOURNAL_KEY);
  if(raw===null)return null;
+ // Do not replay a restore while deletion reconciliation still owns the
+ // playlist namespace. Resolve deletion first, then retry the restore.
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
+  throw new Error("Finish pending track deletion recovery before replaying a backup restore.");
  const parsed:unknown=JSON.parse(raw);
  if(!parsed||typeof parsed!=="object")throw new Error("Invalid pending restore journal.");
  const journal=parsed as Partial<RestoreJournal>;
@@ -143,11 +147,15 @@ export function recoverFailedTrackDeletion(
 ):StoredPlaylist[]|null{
  const raw=storage.getItem(DELETE_RECOVERY_KEY);
  if(raw===null)return null;
+ // Recovery must not resurrect references while a backup restore is staged.
+ // Preserve both journals for explicit reconciliation rather than guessing.
+ if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)
+  throw new Error("Finish pending backup restore before replaying a track deletion.");
  const value:unknown=JSON.parse(raw);
  if(!value||typeof value!=="object")throw new Error("Invalid track deletion recovery journal.");
  const entry=value as Partial<DeleteRecovery>;
- if(entry.version!==1||typeof entry.key!=="string"||!entry.key||
-    typeof entry.trackId!=="string"||!entry.trackId||
+ if(entry.version!==1||typeof entry.key!=="string"||!entry.key.trim()||
+    typeof entry.trackId!=="string"||!entry.trackId.trim()||
     !Array.isArray(entry.original))throw new Error("Invalid track deletion recovery journal.");
  parseStoredPlaylists(JSON.stringify(entry.original));
  // Audio was already deleted successfully: cleanup is final.
