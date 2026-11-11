@@ -880,3 +880,41 @@ describe("restore cancellation journal ownership",()=>{
   expect(store.getItem("mp3-shelf-restore-pending")).toBe(original);
  });
 });
+
+
+describe("deletion journal replacement during staging",()=>{
+ it("does not mutate playlists or delete audio when another tab replaces the journal",async()=>{
+  const initial=[{id:"mix",name:"Original",trackIds:["song","keep"]}];
+  const replacement=JSON.stringify({version:1,key:"playlists",trackId:"other",original:initial});
+  const data=new Map<string,string>([["playlists",JSON.stringify(initial)]]);
+  let audioDeletes=0;
+  const storage={
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{
+    data.set(key,value);
+    if(key==="mp3-shelf-delete-recovery")data.set(key,replacement);
+   },
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  const before=data.get("playlists");
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{audioDeletes++}))
+   .rejects.toThrow("journal changed during audio deletion");
+  expect(audioDeletes).toBe(0);
+  expect(data.get("playlists")).toBe(before);
+  expect(data.get("mp3-shelf-delete-recovery")).toBe(replacement);
+ });
+ it("allows normal deletion when journal ownership remains unchanged",async()=>{
+  const initial=[{id:"mix",name:"Original",trackIds:["song","keep"]}];
+  const data=new Map<string,string>([["playlists",JSON.stringify(initial)]]);
+  const storage={
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  let audioDeletes=0;
+  const result=await deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{audioDeletes++});
+  expect(audioDeletes).toBe(1);
+  expect(result[0].trackIds).toEqual(["keep"]);
+  expect(data.has("mp3-shelf-delete-recovery")).toBe(false);
+ });
+});
