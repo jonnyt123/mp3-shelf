@@ -229,11 +229,26 @@ final class SpotifyService: NSObject, ObservableObject {
             guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
             for entry in page.items {
                 guard let track = entry.item ?? entry.track, track.type == "track" else { continue }
-                let artist = track.artists?.map(\.name).joined(separator: ", ") ?? ""
-                wishes.append(PlaylistWish(title: track.name, artist: artist,
-                    album: track.album?.name ?? "", spotifyURL: track.external_urls?.spotify,
-                    durationSeconds: track.duration_ms.map { Double($0) / 1000.0 },
-                    artistNames: track.artists?.map(\.name)))
+                // Spotify may return unavailable, partially redacted, or malformed
+                // playlist entries. Never feed missing artist/title identities to
+                // automatic recording discovery: a title-only match can import a
+                // different artist's recording without the user noticing.
+                let title = track.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let artists = (track.artists ?? []).map {
+                    $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { !$0.isEmpty }
+                guard !title.isEmpty, !artists.isEmpty else { continue }
+                // Zero/negative durations are not usable matching evidence.
+                // Keep the track but omit that evidence rather than treating
+                // zero seconds as a valid full-length recording.
+                let duration = track.duration_ms.flatMap { milliseconds -> Double? in
+                    guard milliseconds > 0 else { return nil }
+                    return Double(milliseconds) / 1000.0
+                }
+                wishes.append(PlaylistWish(title: title, artist: artists.joined(separator: ", "),
+                    album: track.album?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                    spotifyURL: track.external_urls?.spotify,
+                    durationSeconds: duration, artistNames: artists))
             }
             next = try Self.safeNext(page.next, for: url, returnedItems: page.items.count)
             if wishes.count > 20000 { throw SpotifyError.api("The playlist contains too many tracks.") }
