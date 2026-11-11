@@ -228,7 +228,18 @@ final class SpotifyService: NSObject, ObservableObject {
             try Task.checkCancellation()
             guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
             for entry in page.items {
-                guard let track = entry.item ?? entry.track, track.type == "track" else { continue }
+                // The newer "item" envelope can be a podcast episode or a
+                // redacted track even when a usable legacy "track" envelope
+                // is present. Select the first *usable recording*, rather
+                // than allowing a non-track item to hide a valid fallback.
+                let track = [entry.item, entry.track].compactMap { $0 }.first { candidate in
+                    candidate.type == "track" &&
+                    !candidate.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                    (candidate.artists ?? []).contains {
+                        !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                }
+                guard let track else { continue }
                 // Spotify may return unavailable, partially redacted, or malformed
                 // playlist entries. Never feed missing artist/title identities to
                 // automatic recording discovery: a title-only match can import a
