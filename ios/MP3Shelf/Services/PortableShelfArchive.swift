@@ -369,15 +369,24 @@ enum PortableShelfArchive {
         }
         do {
             let output = try FileHandle(forWritingTo: target)
-            defer { try? output.close() }
-            var remaining = part.length
-            while remaining > 0 {
-                let amount = Int(min(remaining, 64 * 1024))
-                guard let data = try input.read(upToCount: amount), !data.isEmpty else {
-                    throw ArchiveError.invalidRange
+            // A successful write is not a successful extraction until the
+            // destination has been flushed and closed. In particular, do not
+            // hand a partially persisted audio file to the library importer.
+            do {
+                var remaining = part.length
+                while remaining > 0 {
+                    let amount = Int(min(remaining, 64 * 1024))
+                    guard let data = try input.read(upToCount: amount), !data.isEmpty else {
+                        throw ArchiveError.invalidRange
+                    }
+                    try output.write(contentsOf: data)
+                    remaining -= Int64(data.count)
                 }
-                try output.write(contentsOf: data)
-                remaining -= Int64(data.count)
+                try output.synchronize()
+                try output.close()
+            } catch {
+                try? output.close()
+                throw error
             }
             return target
         } catch {
