@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {deleteTrackWithPlaylistCleanup,recoverFailedTrackDeletion,commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore,updateStoredPlaylists} from "./playlist-storage";
+import {deleteTrackWithPlaylistCleanup,recoverFailedTrackDeletion,commitPlaylistEdit,cancelPlaylistRestore,cancelOwnedPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore,updateStoredPlaylists} from "./playlist-storage";
 describe("persistent playlist hydration",()=>{
  it("loads existing playlists without dropping order or track references",()=>{
   const saved=[{id:"mix",name:"Road trip",trackIds:["a","b"]}];
@@ -847,5 +847,36 @@ describe("asynchronous deletion journal ownership",()=>{
   const storage=store();
   await deleteTrackWithPlaylistCleanup(storage,"playlists",original,"remove",async()=>{});
   expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
+
+describe("restore cancellation journal ownership",()=>{
+ const key="playlists";
+ const tracks=[{id:"a"}];
+ const playlists=[{id:"list",name:"Keep",trackIds:["a"]}];
+ function fixture(){
+  const data=new Map<string,string>();
+  return {getItem:(k:string)=>data.get(k)??null,setItem:(k:string,v:string)=>{data.set(k,v)},removeItem:(k:string)=>{data.delete(k)}};
+ }
+ it("cancels the journal belonging to the failed import",()=>{
+  const store=fixture();
+  expect(stagePlaylistRestore(store,key,tracks,playlists)).toBe(true);
+  expect(cancelOwnedPlaylistRestore(store,key,tracks,playlists)).toBe(true);
+  expect(hasPendingPlaylistRestore(store)).toBe(false);
+ });
+ it("preserves a replacement journal written by another tab",()=>{
+  const store=fixture();
+  stagePlaylistRestore(store,key,tracks,playlists);
+  const replacement=JSON.stringify({version:1,key,trackIds:["other"],playlists:[]});
+  store.setItem("mp3-shelf-restore-pending",replacement);
+  expect(cancelOwnedPlaylistRestore(store,key,tracks,playlists)).toBe(false);
+  expect(store.getItem("mp3-shelf-restore-pending")).toBe(replacement);
+ });
+ it("does not cancel an older pending import on a failed retry",()=>{
+  const store=fixture();
+  stagePlaylistRestore(store,key,tracks,playlists);
+  const original=store.getItem("mp3-shelf-restore-pending");
+  expect(cancelOwnedPlaylistRestore(store,key,[{id:"different"}],playlists)).toBe(false);
+  expect(store.getItem("mp3-shelf-restore-pending")).toBe(original);
  });
 });
