@@ -583,3 +583,57 @@ describe("optimistic playlist edit conflict detection",()=>{
   expect(parseStoredPlaylists(values.get(key)!)).toEqual(updated);
  });
 });
+
+describe("restore merge concurrent-write protection",()=>{
+ const key="playlists";
+ const local=[{id:"mix",name:"Local",trackIds:["one"]}];
+ const backup=[{id:"mix",name:"Backup",trackIds:["two"]}];
+ it("does not overwrite a newer playlist edit while merging backup",()=>{
+  const values=new Map<string,string>([[key,JSON.stringify(local)]]);
+  const concurrent=[{id:"mix",name:"Other tab",trackIds:["one","three"]}];
+  let reads=0,writes=0;
+  const adapter={
+   getItem:(name:string)=>{
+    if(name===key&&++reads===2)values.set(key,JSON.stringify(concurrent));
+    return values.get(name)??null;
+   },
+   setItem:(name:string,value:string)=>{writes++;values.set(name,value)}
+  };
+  expect(()=>persistRestoredPlaylists(adapter,key,backup)).toThrow("Playlists changed during backup restore");
+  expect(writes).toBe(0);
+  expect(parseStoredPlaylists(values.get(key)!)).toEqual(concurrent);
+ });
+ it("retains a pending restore journal on a concurrent playlist edit",()=>{
+  const values=new Map<string,string>([[key,JSON.stringify(local)]]);
+  const pendingKey="mp3-shelf-restore-pending";
+  const adapter={
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+  stagePlaylistRestore(adapter,key,[{id:"two"}],backup);
+  const pending=values.get(pendingKey);
+  let reads=0;
+  const concurrent=[{id:"mix",name:"Updated elsewhere",trackIds:["one","three"]}];
+  const racing={
+   ...adapter,
+   getItem:(name:string)=>{
+    if(name===key&&++reads===2)values.set(key,JSON.stringify(concurrent));
+    return adapter.getItem(name);
+   }
+  };
+  expect(()=>recoverPlaylistRestore(racing,new Set(["one","two","three"]),key))
+   .toThrow("Playlists changed during backup restore");
+  expect(values.get(pendingKey)).toBe(pending);
+  expect(parseStoredPlaylists(values.get(key)!)).toEqual(concurrent);
+  expect(recoverPlaylistRestore(adapter,new Set(["one","two","three"]),key))
+   .toEqual([{id:"mix",name:"Updated elsewhere",trackIds:["one","three","two"]}]);
+  expect(values.has(pendingKey)).toBe(false);
+ });
+ it("commits a nonconflicting merge preserving local playlist metadata",()=>{
+  const values=new Map<string,string>([[key,JSON.stringify(local)]]);
+  const adapter={getItem:(name:string)=>values.get(name)??null,setItem:(name:string,value:string)=>{values.set(name,value)}};
+  expect(persistRestoredPlaylists(adapter,key,backup))
+   .toEqual([{id:"mix",name:"Local",trackIds:["one","two"]}]);
+ });
+});
