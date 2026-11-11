@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore} from "./playlist-storage";
+import {deleteTrackWithPlaylistCleanup,commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore} from "./playlist-storage";
 describe("persistent playlist hydration",()=>{
  it("loads existing playlists without dropping order or track references",()=>{
   const saved=[{id:"mix",name:"Road trip",trackIds:["a","b"]}];
@@ -165,3 +165,36 @@ describe("crash-safe backup restoration journal",()=>{
    expect(writes).toBe(0);
   });
  });
+
+describe("track deletion consistency",()=>{
+ const original=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
+ function storage(){
+  const values=new Map<string,string>([["playlists",JSON.stringify(original)]]);
+  return {values,setItem:(key:string,value:string)=>{values.set(key,value)},getItem:(key:string)=>values.get(key)??null};
+ }
+ it("persists reference cleanup before deleting the audio record",async()=>{
+  const store=storage();
+  const next=await deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{
+   expect(parseStoredPlaylists(store.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+  });
+  expect(next[0].trackIds).toEqual(["keep"]);
+ });
+ it("never deletes audio when playlist persistence fails",async()=>{
+  const store=storage();let deleted=false;
+  const failing={setItem:()=>{throw new Error("QuotaExceededError")}};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{deleted=true})).rejects.toThrow("QuotaExceededError");
+  expect(deleted).toBe(false);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
+ });
+ it("rolls back references if IndexedDB deletion rejects",async()=>{
+  const store=storage();
+  await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("IDB abort");
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
+ });
+ it("reports rollback failure without pretending deletion succeeded",async()=>{
+  const store=storage();let writes=0;
+  const failing={setItem:(key:string,value:string)=>{if(++writes===2)throw new Error("QuotaExceededError");store.setItem(key,value)}};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("rollback could not be saved");
+  expect(parseStoredPlaylists(store.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+ });
+});
