@@ -24,6 +24,8 @@ struct LibraryView: View {
         return ""
     }()
     @State private var favoritesOnly = false
+    // Avoid rescanning large collections on every intermediate keystroke.
+    @State private var settledSearchText = ""
     @State private var sortMode: LibraryTrackSort = .title
     @State private var message: String?
     @State private var renaming: MusicTrack?
@@ -68,8 +70,12 @@ struct LibraryView: View {
     }
 
     private var displayed: [MusicTrack] {
-        library.browseTracks(query: searchText, favoritesOnly: favoritesOnly,
+        library.browseTracks(query: settledSearchText, favoritesOnly: favoritesOnly,
                              order: sortMode)
+    }
+
+    private var isSearchUpdating: Bool {
+        searchText != settledSearchText
     }
 
     private var sortMenu: some View {
@@ -113,10 +119,10 @@ struct LibraryView: View {
 
     private var searchSortSummary: some View {
         VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 9) {
-            Text("\(displayed.count) of \(library.tracks.count) songs found")
+            Text(isSearchUpdating ? "Updating search…" : "\(displayed.count) of \(library.tracks.count) songs found")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(ShelfTheme.subdued)
-                .accessibilityLabel("\(displayed.count) matching songs out of \(library.tracks.count)")
+                .accessibilityLabel(isSearchUpdating ? "Updating search results" : "\(displayed.count) matching songs out of \(library.tracks.count)")
                 .accessibilityAddTraits(.updatesFrequently)
             sortMenu
         }
@@ -154,7 +160,7 @@ struct LibraryView: View {
         }
         .buttonStyle(.bordered)
         .tint(ShelfTheme.accent)
-        .disabled(displayed.isEmpty)
+        .disabled(displayed.isEmpty || isSearchUpdating)
     }
 
     @ViewBuilder private var browsingActions: some View {
@@ -167,6 +173,7 @@ struct LibraryView: View {
     }
 
     private func playDisplayed(shuffled: Bool) {
+        guard !isSearchUpdating else { return }
         let songs = displayed
         guard let first = shuffled ? songs.randomElement() : songs.first else { return }
         playback.isShuffled = shuffled
@@ -194,7 +201,12 @@ struct LibraryView: View {
                         }
                         filterControls
                         browsingPlaybackControls
-                        if displayed.isEmpty {
+                        if isSearchUpdating {
+                            ProgressView("Searching songs…")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 20)
+                                .accessibilityLabel("Searching songs")
+                        } else if displayed.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 PremiumIcon(symbol: "magnifyingglass", color: ShelfTheme.accent,
                                             size: 56)
@@ -468,6 +480,19 @@ struct LibraryView: View {
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
+        .task(id: searchText) {
+            // Clearing restores the library immediately. Superseded searches
+            // are cancelled by SwiftUI before publishing their results.
+            if !searchText.isEmpty {
+                do {
+                    try await Task.sleep(for: .milliseconds(220))
+                } catch {
+                    return
+                }
+            }
+            guard !Task.isCancelled else { return }
+            settledSearchText = searchText
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showFilePicker = true } label: {
