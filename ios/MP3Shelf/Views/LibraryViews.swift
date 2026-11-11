@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 private struct OfflineCountRefreshKey: Equatable {
     let trackIDs: [UUID]
     let scenePhase: ScenePhase
+    let manualRefresh: Int
 }
 
 struct LibraryView: View {
@@ -27,6 +28,7 @@ struct LibraryView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
     @State private var offlineRecordingCount: Int?
+    @State private var offlineCountRefreshRequest = 0
 
     // Resolve file URLs on the library's actor, then check disk off the UI thread.
     // A nil count is deliberately not presented as zero while scanning.
@@ -246,6 +248,18 @@ struct LibraryView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
+                            if !library.tracks.isEmpty {
+                                Button {
+                                    offlineCountRefreshRequest &+= 1
+                                } label: {
+                                    Label("Refresh offline availability", systemImage: "arrow.clockwise")
+                                        .font(.caption.weight(.semibold))
+                                        .frame(minHeight: 44, alignment: .leading)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.white)
+                                .accessibilityHint("Recheck recordings stored on this iPhone without connecting to the internet")
+                            }
                         }
                         Spacer(minLength: 0)
                         if !dynamicTypeSize.isAccessibilitySize {
@@ -403,7 +417,8 @@ struct LibraryView: View {
         .scrollDismissesKeyboard(.interactively)
         .task(id: OfflineCountRefreshKey(
             trackIDs: library.tracks.map(\.id),
-            scenePhase: scenePhase
+            scenePhase: scenePhase,
+            manualRefresh: offlineCountRefreshRequest
         )) {
             guard scenePhase == .active else { return }
             offlineRecordingCount = nil
