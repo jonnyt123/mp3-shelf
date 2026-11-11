@@ -199,6 +199,17 @@ export async function deleteTrackWithPlaylistCleanup(
   }
   throw error;
  }
+ // A different tab may have reattached the track while IndexedDB deletion
+ // was in flight. Its audio is now absent, so never return a playlist with
+ // dangling references. Reconcile against the *latest* persisted state and
+ // retain the journal if persistence fails, allowing startup to retry.
+ const afterDeletion=parseStoredPlaylists(storage.getItem(key));
+ if(afterDeletion.some(playlist=>playlist.trackIds.includes(trackId))){
+  const reconciled=afterDeletion.map(playlist=>({
+   ...playlist,trackIds:playlist.trackIds.filter(id=>id!==trackId)
+  }));
+  commitPlaylistEdit(storage,key,reconciled);
+ }
  // A journal cleanup failure is safe: startup sees that the audio is absent
  // and removes the intent without resurrecting any playlist references.
  storage.removeItem(DELETE_RECOVERY_KEY);
