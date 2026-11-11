@@ -141,6 +141,14 @@ export function recoverFailedTrackDeletion(
  parseStoredPlaylists(JSON.stringify(entry.original));
  // Audio was already deleted successfully: cleanup is final.
  if(!audioTrackIds.has(entry.trackId)){
+  // The deletion may have succeeded before another tab reattached the ID.
+  // Reconcile missing-audio references before clearing the durable journal.
+  const current=parseStoredPlaylists(storage.getItem(entry.key));
+  if(current.some(playlist=>playlist.trackIds.includes(entry.trackId))){
+   commitPlaylistEdit(storage,entry.key,current.map(playlist=>({
+    ...playlist,trackIds:playlist.trackIds.filter(id=>id!==entry.trackId)
+   })));
+  }
   storage.removeItem(DELETE_RECOVERY_KEY);
   return parseStoredPlaylists(storage.getItem(entry.key));
  }
