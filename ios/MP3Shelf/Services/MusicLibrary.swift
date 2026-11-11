@@ -198,14 +198,41 @@ final class MusicLibrary: ObservableObject {
         // A protected or damaged catalog can make the in-memory library appear
         // empty. Never export that fallback as an apparently valid backup.
         try requireLibraryPersistence()
-        let items = tracks.map { track in
-            let lyrics = track.lyricsFileName.flatMap {
-                try? String(contentsOf: lyricsDirectory.appendingPathComponent($0), encoding: .utf8)
+        // A sidecar reference is user-owned library data, not an optional
+        // decoding hint. Never publish a backup that silently omits referenced
+        // artwork/lyrics because the file was protected, missing or corrupt.
+        // Only a nil reference means the recording genuinely has no sidecar.
+        let items = try tracks.map { track -> PortableShelfArchive.MediaInput in
+            let lyricBytes = try PortableShelfArchive.readSidecar(
+                named: track.lyricsFileName, from: lyricsDirectory,
+                maximumBytes: 500 * 1024)
+            let lyrics: String?
+            if let lyricBytes {
+                guard let text = String(data: lyricBytes, encoding: .utf8) else {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
+                lyrics = text
+            } else {
+                lyrics = nil
+            }
+
+            let imageBytes = try PortableShelfArchive.readSidecar(
+                named: track.artworkFileName, from: artworkDirectory,
+                maximumBytes: 20 * 1024 * 1024)
+            let artwork: Data?
+            if let imageBytes {
+                guard let image = UIImage(data: imageBytes),
+                      let jpeg = image.jpegData(compressionQuality: 0.9),
+                      !jpeg.isEmpty else {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
+                artwork = jpeg
+            } else {
+                artwork = nil
             }
             return PortableShelfArchive.MediaInput(
                 track: track, audioURL: fileURL(for: track),
-                artwork: artwork(for: track)?.jpegData(compressionQuality: 0.9),
-                lyrics: lyrics
+                artwork: artwork, lyrics: lyrics
             )
         }
         let destination = manager.temporaryDirectory

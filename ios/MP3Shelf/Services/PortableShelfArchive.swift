@@ -129,6 +129,40 @@ enum PortableShelfArchive {
         }
     }
 
+    /// Read a catalog-referenced lyrics/artwork sidecar without treating an
+    /// inaccessible file as optional. Nil means no reference was saved; a
+    /// referenced but missing or damaged file must abort backup export.
+    /// Read from one handle in bounded chunks so growth/truncation is detected.
+    static func readSidecar(named fileName: String?, from directory: URL,
+                            maximumBytes: Int) throws -> Data? {
+        guard let fileName else { return nil }
+        guard !fileName.isEmpty, fileName != ".", fileName != "..",
+              !fileName.contains("/"), !fileName.contains("\\"),
+              !fileName.contains("\0"),
+              maximumBytes > 0, maximumBytes <= 20 * 1024 * 1024 else {
+            throw ArchiveError.invalidManifest
+        }
+        let url = directory.appendingPathComponent(fileName)
+        let input = try FileHandle(forReadingFrom: url)
+        defer { try? input.close() }
+        let size = try input.seekToEnd()
+        guard size <= UInt64(maximumBytes) else { throw ArchiveError.oversized }
+        try input.seek(toOffset: 0)
+        var bytes = Data()
+        bytes.reserveCapacity(Int(size))
+        var remaining = size
+        while remaining > 0 {
+            let chunk = try input.read(upToCount: Int(min(remaining, 64 * 1024))) ?? Data()
+            guard !chunk.isEmpty else { throw ArchiveError.invalidRange }
+            bytes.append(chunk)
+            remaining -= UInt64(chunk.count)
+        }
+        guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
+            throw ArchiveError.invalidRange
+        }
+        return bytes
+    }
+
     static func export(_ inputs: [MediaInput], playlists: [MusicPlaylist], to destination: URL) throws {
         var parts: [(url: URL?, bytes: Data?, expectedLength: Int64)] = []
         var offset: Int64 = 0

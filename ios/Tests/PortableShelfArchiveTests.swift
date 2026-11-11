@@ -101,6 +101,53 @@ struct PortableShelfArchiveTests {
         let databaseAfterFailure = try Data(contentsOf: database)
         assert(databaseAfterFailure == savedDatabase)
         print("PASS: library snapshots reopen intact; write/encoding errors throw and preserve saved data")
+        // A catalog-referenced sidecar must never vanish silently from a
+        // backup when protected storage, corruption or disk loss prevents read.
+        let sidecarDirectory = folder.appendingPathComponent("sidecars", isDirectory: true)
+        try FileManager.default.createDirectory(at: sidecarDirectory, withIntermediateDirectories: true)
+        let savedLyrics = sidecarDirectory.appendingPathComponent("song.lrc")
+        let expectedLyrics = Data("[00:01.00] Preserved lyric".utf8)
+        try expectedLyrics.write(to: savedLyrics)
+        let loadedLyrics = try PortableShelfArchive.readSidecar(
+            named: "song.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
+        assert(loadedLyrics == expectedLyrics)
+        assert(try PortableShelfArchive.readSidecar(
+            named: nil, from: sidecarDirectory, maximumBytes: 500 * 1024) == nil)
+        let artworkSidecar = sidecarDirectory.appendingPathComponent("saved.img")
+        let artworkBytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        try artworkBytes.write(to: artworkSidecar)
+        assert(try PortableShelfArchive.readSidecar(
+            named: "saved.img", from: sidecarDirectory,
+            maximumBytes: 20 * 1024 * 1024) == artworkBytes)
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: "lost.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
+            fatalError("Missing referenced lyrics must not become nil in backup")
+        } catch {
+            // Expected: a saved reference is different from no saved lyrics.
+        }
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: "song.lrc", from: sidecarDirectory, maximumBytes: 2)
+            fatalError("Oversized sidecar should prevent incomplete backup")
+        } catch PortableShelfArchive.ArchiveError.oversized {
+            // Expected.
+        }
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: "../song.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
+            fatalError("Sidecar must not escape the app's storage directory")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+        let corruptLyrics = sidecarDirectory.appendingPathComponent("corrupt.lrc")
+        try Data([0xFF, 0xFE]).write(to: corruptLyrics)
+        let invalidUTF8 = try PortableShelfArchive.readSidecar(
+            named: "corrupt.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)!
+        assert(String(data: invalidUTF8, encoding: .utf8) == nil)
+        assert(try Data(contentsOf: savedLyrics) == expectedLyrics)
+        print("PASS: referenced sidecars fail closed; intact bytes and valid sidecars remain safe")
+
         let archiveURL = folder.appendingPathComponent("test.mp3shelf")
         try PortableShelfArchive.export([
             .init(track: song, audioURL: audio,
