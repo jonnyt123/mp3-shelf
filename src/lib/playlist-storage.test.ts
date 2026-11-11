@@ -709,3 +709,41 @@ describe("deletion journal staging conflict regression",()=>{
   expect(store.getItem("mp3-shelf-restore-pending")).not.toBeNull();
  });
 });
+
+describe("deletion recovery concurrent-write protection",()=>{
+ function fixture(){
+  const data=new Map<string,string>([
+   ["playlists",JSON.stringify([{id:"mix",name:"Original",trackIds:["keep","deleted"]}])],
+   ["mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"deleted",original:[{id:"mix",name:"Original",trackIds:["keep","deleted"]}]})]
+  ]);
+  return {data,getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}};
+ }
+ it("preserves a concurrent edit while cleaning references to already deleted audio",()=>{
+  const storage=fixture();let reads=0;
+  const racing={...storage,getItem:(key:string)=>{
+   if(key==="playlists"&&++reads===2)
+    storage.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","deleted","new"]}]));
+   return storage.getItem(key);
+  }};
+  expect(()=>recoverFailedTrackDeletion(racing,new Set(["keep"]))).toThrow("Playlists changed during deletion recovery");
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0]).toEqual({id:"mix",name:"Other tab",trackIds:["keep","deleted","new"]});
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"]))).toEqual([{id:"mix",name:"Other tab",trackIds:["keep","new"]}]);
+ });
+ it("preserves a concurrent edit while rolling back failed audio deletion",()=>{
+  const storage=fixture();
+  storage.setItem("playlists",JSON.stringify([{id:"mix",name:"Original",trackIds:["keep"]}]));
+  let reads=0;
+  const racing={...storage,getItem:(key:string)=>{
+   if(key==="playlists"&&++reads===2)
+    storage.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","new"]}]));
+   return storage.getItem(key);
+  }};
+  expect(()=>recoverFailedTrackDeletion(racing,new Set(["keep","deleted"]))).toThrow("Playlists changed during deletion recovery");
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0].name).toBe("Other tab");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep","deleted"]))?.[0].trackIds).toContain("deleted");
+ });
+});
