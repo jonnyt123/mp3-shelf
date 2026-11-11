@@ -196,21 +196,10 @@ enum PortableShelfArchive {
             if let bytes = part.bytes {
                 try output.write(contentsOf: bytes)
             } else if let url = part.url {
-                let input = try FileHandle(forReadingFrom: url)
-                defer { try? input.close() }
-                // The manifest uses the size measured before export. Reject
-                // truncated or growing source files instead of publishing an
-                // archive with incorrect offsets and corrupted later tracks.
-                var remaining = part.expectedLength
-                while remaining > 0 {
-                    let chunk = try input.read(upToCount: Int(min(remaining, 64 * 1024))) ?? Data()
-                    guard !chunk.isEmpty else { throw ArchiveError.invalidRange }
-                    try output.write(contentsOf: chunk)
-                    remaining -= Int64(chunk.count)
-                }
-                guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
-                    throw ArchiveError.invalidRange
-                }
+                // Scope each source handle to this part. A defer directly in
+                // the export loop would keep every file descriptor open until
+                // the whole backup completes, exhausting limits on large shelves.
+                try copyAudioPart(from: url, expectedLength: part.expectedLength, to: output)
             }
         }
         try output.synchronize()
@@ -224,6 +213,27 @@ enum PortableShelfArchive {
         } catch {
             try? manager.removeItem(at: staging)
             throw error
+        }
+    }
+
+    /// Stream one source into an archive and close its descriptor before the
+    /// next source opens. A failed read or write propagates to export(), which
+    /// removes its unpublished partial archive without touching user audio.
+    private static func copyAudioPart(from url: URL, expectedLength: Int64,
+                                      to output: FileHandle) throws {
+        let input = try FileHandle(forReadingFrom: url)
+        defer { try? input.close() }
+        // The manifest records the size measured before export. Reject both
+        // shrinking and growing files to avoid misaligned payload offsets.
+        var remaining = expectedLength
+        while remaining > 0 {
+            let chunk = try input.read(upToCount: Int(min(remaining, 64 * 1024))) ?? Data()
+            guard !chunk.isEmpty else { throw ArchiveError.invalidRange }
+            try output.write(contentsOf: chunk)
+            remaining -= Int64(chunk.count)
+        }
+        guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
+            throw ArchiveError.invalidRange
         }
     }
 
