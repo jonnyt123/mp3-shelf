@@ -1301,7 +1301,8 @@ final class MusicLibrary: ObservableObject {
                                                originalName: filename + "." + actualExtension,
                                                expectedDuration: wish?.durationSeconds,
                                                matching: wish, attribution: attribution)
-        if imported && wish == nil { reconcileMissingSongs() }
+        // addLocalAudio already commits the imported recording and resolved playlist
+        // references in one atomic catalog write, including manual URL imports.
         return ImportReport(imported: imported ? 1 : 0, skipped: imported ? 0 : 1)
     }
 
@@ -1592,8 +1593,11 @@ final class MusicLibrary: ObservableObject {
     func recheckSavedAudio() { reconcileMissingSongs() }
 
     private func reconcileMissingSongs() {
-        playlists = reconciledPlaylists(using: tracks)
-        save()
+        // Rechecking offline availability must not publish unsaved playlist links.
+        // A protected or full catalog leaves the last durable snapshot visible.
+        let candidate = reconciledPlaylists(using: tracks)
+        guard candidate != playlists else { return }
+        commitPlaylistEdit(candidate)
     }
 
     private func reconciledPlaylists(using updatedTracks: [MusicTrack],
