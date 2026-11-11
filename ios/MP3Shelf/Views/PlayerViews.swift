@@ -4,29 +4,33 @@ struct MiniPlayer: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let open: () -> Void
 
     var body: some View {
         if let track = library.song(with: playback.currentTrackID) {
-            HStack(spacing: 12) {
-                HStack(spacing: 12) {
+            HStack(alignment: .center, spacing: dynamicTypeSize.isAccessibilitySize ? 6 : 12) {
+                Button(action: open) {
+                    HStack(spacing: 12) {
                     ArtworkTile(track: track, size: 48)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(track.title)
                             .font(.system(.subheadline, design: .rounded, weight: .bold))
                             .foregroundStyle(.white)
-                            .lineLimit(1)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                         Text(track.artist)
                             .font(.caption)
                             .foregroundStyle(ShelfTheme.subdued)
-                            .lineLimit(1)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                     }
                     Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
-                .onTapGesture(perform: open)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityLabel("Open Now Playing for \(track.title)")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open Now Playing for \(track.title) by \(track.artist)")
+                .accessibilityHint("Show playback controls, lyrics and the queue")
                 Button { playback.togglePlayback() } label: {
                     Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 16, weight: .bold))
@@ -44,7 +48,7 @@ struct MiniPlayer: View {
                 .accessibilityLabel("Next song")
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 11)
+            .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 8 : 11)
             .padding(.vertical, 10)
             .background {
                 RoundedRectangle(cornerRadius: 22)
