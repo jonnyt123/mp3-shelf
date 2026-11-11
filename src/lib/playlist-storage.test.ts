@@ -255,6 +255,41 @@ describe("track deletion consistency",()=>{
   expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual([{id:"mix",name:"Concurrent",trackIds:["keep","remove"]}]);
   expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
  });
+ it("removes references reattached while IndexedDB deletion is pending",async()=>{
+  const store=storage();
+  let complete!:()=>void;
+  const pending=new Promise<void>(resolve=>{complete=resolve});
+  const deletion=deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{await pending});
+  // A second tab updates the durable playlist after the pre-delete check.
+  store.setItem("playlists",JSON.stringify([
+   {id:"mix",name:"Concurrent rename",trackIds:["keep","remove","new"]},
+   {id:"other",name:"New playlist",trackIds:["remove","new"]}
+  ]));
+  complete();
+  const result=await deletion;
+  expect(result).toEqual([
+   {id:"mix",name:"Concurrent rename",trackIds:["keep","new"]},
+   {id:"other",name:"New playlist",trackIds:["new"]}
+  ]);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(result);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("retains recovery journal if post-delete reference cleanup cannot persist",async()=>{
+  const store=storage();
+  let writes=0;
+  const failing={...store,setItem:(key:string,value:string)=>{
+   if(key==="playlists"&&++writes===2)throw new Error("QuotaExceededError");
+   store.setItem(key,value);
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{
+   store.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","remove"]}]));
+  })).rejects.toThrow("QuotaExceededError");
+  expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(store,new Set(["keep"]))).toEqual([{id:"mix",name:"Other tab",trackIds:["keep","remove"]}]);
+  // Recovery cannot infer the deleted track's current IDB state from the
+  // callback alone; the actual startup path must supply real available IDs.
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
  it("rejects blank track IDs before touching storage or audio",async()=>{
   const store=storage();let deleted=false;
   await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original," ",async()=>{deleted=true})).rejects.toThrow("Invalid track ID");
