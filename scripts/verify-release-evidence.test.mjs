@@ -101,3 +101,58 @@ test("rejects missing execution evidence on every required target check", () => 
     }
   }
 });
+
+test("CLI accepts valid bounded evidence and rejects unsafe persisted input", async () => {
+  const { mkdtempSync, writeFileSync, symlinkSync, linkSync, truncateSync, rmSync, mkdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const dir = mkdtempSync(join(tmpdir(), "mp3-release-gate-"));
+  const script = fileURLToPath(new URL("./verify-release-evidence.mjs", import.meta.url));
+  const invoke = path => spawnSync(process.execPath, [script, path, sha], {
+    encoding: "utf8", timeout: 10000
+  });
+  try {
+    const valid = join(dir, "evidence.json");
+    writeFileSync(valid, JSON.stringify(web()));
+    const good = invoke(valid);
+    assert.equal(good.status, 0, good.stderr);
+    assert.match(good.stdout, /Evidence gate PASS/);
+
+    const symlink = join(dir, "symlink.json");
+    symlinkSync(valid, symlink);
+    const linked = invoke(symlink);
+    assert.equal(linked.status, 1);
+    assert.match(linked.stderr, /bounded, regular, unlinked/);
+
+    const hardlink = join(dir, "hardlink.json");
+    linkSync(valid, hardlink);
+    assert.equal(invoke(valid).status, 1);
+    assert.equal(invoke(hardlink).status, 1);
+
+    const huge = join(dir, "huge.json");
+    writeFileSync(huge, "{}");
+    truncateSync(huge, 256 * 1024 + 1);
+    const oversized = invoke(huge);
+    assert.equal(oversized.status, 1);
+    assert.match(oversized.stderr, /bounded, regular, unlinked/);
+
+    const directory = join(dir, "directory");
+    mkdirSync(directory);
+    assert.equal(invoke(directory).status, 1);
+
+    const malformed = join(dir, "malformed.json");
+    writeFileSync(malformed, "{not-json");
+    assert.equal(invoke(malformed).status, 1);
+
+    // A complete-looking file still cannot authorize release without gates.
+    const blocked = join(dir, "blocked.json");
+    writeFileSync(blocked, JSON.stringify({ ...web(), rollbackReady: false }));
+    const denied = invoke(blocked);
+    assert.equal(denied.status, 1);
+    assert.match(denied.stderr, /Rollback readiness/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
