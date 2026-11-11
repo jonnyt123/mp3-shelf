@@ -366,6 +366,38 @@ struct PortableShelfArchiveTests {
         ], playlists: [collisionList], to: uuidCollisionURL)
         let uuidRecovered = try PortableShelfArchive.open(uuidCollisionURL)
         assert(Set(uuidRecovered.manifest.tracks.map(\.id)).count == 2)
+        // A later track's explicit archive ID must outrank an earlier local
+        // UUID fallback. Previously input-order allocation stole this ID.
+        var fallbackSong = song
+        fallbackSong.portableBackupID = nil
+        var explicitSong = song
+        explicitSong.id = UUID()
+        explicitSong.portableBackupID = fallbackSong.id.uuidString
+        var fallbackPlaylist = MusicPlaylist(name: "Local fallback playlist")
+        fallbackPlaylist.trackIDs = [fallbackSong.id, explicitSong.id]
+        var explicitPlaylist = MusicPlaylist(name: "Explicit portable playlist")
+        explicitPlaylist.portableBackupID = fallbackPlaylist.id.uuidString
+        explicitPlaylist.trackIDs = [explicitSong.id]
+        let reservedIDURL = folder.appendingPathComponent("reserved-explicit-identities.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: fallbackSong, audioURL: audio, artwork: nil, lyrics: nil),
+            .init(track: explicitSong, audioURL: identicalAudio, artwork: nil, lyrics: nil)
+        ], playlists: [fallbackPlaylist, explicitPlaylist], to: reservedIDURL)
+        let reservedArchive = try PortableShelfArchive.open(reservedIDURL)
+        let reservedTracks = reservedArchive.manifest.tracks
+        let reservedLists = reservedArchive.manifest.playlists
+        assert(reservedTracks.count == 2 && reservedLists.count == 2)
+        assert(reservedTracks[0].id != fallbackSong.id.uuidString)
+        assert(reservedTracks[1].id == fallbackSong.id.uuidString)
+        assert(reservedLists[0].id != fallbackPlaylist.id.uuidString)
+        assert(reservedLists[1].id == fallbackPlaylist.id.uuidString)
+        assert(reservedLists[0].trackIds == reservedTracks.map(\.id))
+        assert(reservedLists[1].trackIds == [reservedTracks[1].id])
+        assert(fallbackSong.portableBackupID == nil)
+        assert(explicitSong.portableBackupID == fallbackSong.id.uuidString)
+        assert(fallbackPlaylist.portableBackupID == nil)
+        print("PASS: explicit portable IDs win over earlier native UUID fallbacks")
+
         // Duplicate playlist portable IDs are also repaired in the exported
         // manifest without changing local playlist UUIDs or their contents.
         var collisionListB = MusicPlaylist(name: "Second collision playlist")
