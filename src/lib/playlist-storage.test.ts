@@ -104,6 +104,23 @@ describe("crash-safe backup restoration journal",()=>{
   storage.setItem("mp3-shelf-playlists","{broken");
   expect(stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toBe(true);
  });
+ it("refuses to replay a pending restore into a different playlist namespace",()=>{
+  const storage=store();
+  const other="other-playlists";
+  storage.setItem(other,JSON.stringify([{id:"other",name:"Untouched",trackIds:["a"]}]));
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
+  const original=storage.getItem(other);
+  expect(()=>recoverPlaylistRestore(storage,new Set(["a","b"]),other)).toThrow("different playlist storage key");
+  expect(storage.getItem(other)).toBe(original);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")).not.toBeNull();
+ });
+ it("can recover legacy version-one restore journals without a storage key",()=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-restore-pending",JSON.stringify({version:1,trackIds:["b"],playlists:incoming}));
+  expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")?.[0].trackIds).toEqual(["a","b"]);
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+ });
  it("recovers after audio commits but before playlists are saved, without reverting local edits",()=>{
   const storage=store();
   stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
