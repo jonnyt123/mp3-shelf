@@ -179,6 +179,17 @@ describe("track deletion consistency",()=>{
   });
   expect(next[0].trackIds).toEqual(["keep"]);
  });
+ it("returns latest playlist edits after an asynchronous audio deletion",async()=>{
+  const store=storage();
+  let finishDeletion!:()=>void;
+  const pending=new Promise<void>(resolve=>{finishDeletion=resolve});
+  const deleting=deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{await pending});
+  // The user renames a playlist and adds another track while IDB is pending.
+  commitPlaylistEdit(store,"playlists",[{id:"mix",name:"Updated",trackIds:["keep","new"]}]);
+  finishDeletion();
+  expect(await deleting).toEqual([{id:"mix",name:"Updated",trackIds:["keep","new"]}]);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual([{id:"mix",name:"Updated",trackIds:["keep","new"]}]);
+ });
  it("never deletes audio when playlist persistence fails",async()=>{
   const store=storage();let deleted=false;
   const failing={...store,setItem:()=>{throw new Error("QuotaExceededError")}};
