@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {deleteTrackWithPlaylistCleanup,commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore} from "./playlist-storage";
+import {deleteTrackWithPlaylistCleanup,recoverFailedTrackDeletion,commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore} from "./playlist-storage";
 describe("persistent playlist hydration",()=>{
  it("loads existing playlists without dropping order or track references",()=>{
   const saved=[{id:"mix",name:"Road trip",trackIds:["a","b"]}];
@@ -170,7 +170,7 @@ describe("track deletion consistency",()=>{
  const original=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
  function storage(){
   const values=new Map<string,string>([["playlists",JSON.stringify(original)]]);
-  return {values,setItem:(key:string,value:string)=>{values.set(key,value)},getItem:(key:string)=>values.get(key)??null};
+  return {values,setItem:(key:string,value:string)=>{values.set(key,value)},getItem:(key:string)=>values.get(key)??null,removeItem:(key:string)=>{values.delete(key)}};
  }
  it("persists reference cleanup before deleting the audio record",async()=>{
   const store=storage();
@@ -181,7 +181,7 @@ describe("track deletion consistency",()=>{
  });
  it("never deletes audio when playlist persistence fails",async()=>{
   const store=storage();let deleted=false;
-  const failing={setItem:()=>{throw new Error("QuotaExceededError")}};
+  const failing={...store,setItem:()=>{throw new Error("QuotaExceededError")}};
   await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{deleted=true})).rejects.toThrow("QuotaExceededError");
   expect(deleted).toBe(false);
   expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
@@ -193,8 +193,24 @@ describe("track deletion consistency",()=>{
  });
  it("reports rollback failure without pretending deletion succeeded",async()=>{
   const store=storage();let writes=0;
-  const failing={setItem:(key:string,value:string)=>{if(++writes===2)throw new Error("QuotaExceededError");store.setItem(key,value)}};
+  const failing={...store,setItem:(key:string,value:string)=>{if(++writes===3)throw new Error("QuotaExceededError");store.setItem(key,value)}};
   await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("rollback could not be saved");
   expect(parseStoredPlaylists(store.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(store,new Set(["remove","keep"]))?.[0].trackIds).toEqual(["keep","remove"]);
+ });
+ it("reconciles after restart without discarding intervening playlist edits",async()=>{
+  const store=storage();let writes=0;
+  const failing={...store,setItem:(key:string,value:string)=>{if(++writes===3)throw new Error("QuotaExceededError");store.setItem(key,value)}};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("rollback could not be saved");
+  store.setItem("playlists",JSON.stringify([{id:"mix",name:"Renamed",trackIds:["keep","new"]}]));
+  expect(recoverFailedTrackDeletion(store,new Set(["remove","keep","new"]))).toEqual([{id:"mix",name:"Renamed",trackIds:["keep","remove","new"]}]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("does not restore references if audio was already removed before restart",async()=>{
+  const store=storage();let writes=0;
+  const failing={...store,removeItem:()=>{throw new Error("crash")}};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{})).rejects.toThrow("crash");
+  expect(recoverFailedTrackDeletion(store,new Set(["keep"]))?.[0].trackIds).toEqual(["keep"]);
  });
 });
