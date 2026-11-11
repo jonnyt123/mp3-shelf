@@ -51,7 +51,12 @@ export function verifyReleaseEvidence(evidence, expectedSha) {
     const required = requiredNames;
     for (const name of required) if (!names.has(name)) errors.push(`Missing mandatory check: ${name}.`);
   }
-  if (evidence.target === "ios" && evidence.deviceAcceptance !== true) errors.push("Physical-device acceptance is required for iOS.");
+  // A web receipt must not smuggle an unrelated physical-device approval.
+  // iOS must explicitly provide a boolean true, never a truthy alias.
+  if (evidence.target === "web" && Object.hasOwn(evidence, "deviceAcceptance"))
+    errors.push("Web evidence must not contain physical-device acceptance claims.");
+  if (evidence.target === "ios" && evidence.deviceAcceptance !== true)
+    errors.push("Physical-device acceptance is required for iOS.");
   if (evidence.branchProtectionSatisfied !== true) errors.push("Branch protection and review requirements are not verified.");
   if (evidence.rollbackReady !== true) errors.push("Rollback readiness is not verified.");
   return errors;
