@@ -456,6 +456,7 @@ struct PlaybackQueueSheet: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AccessibilityFocusState private var focusedQueueTrackID: UUID?
     @State private var pendingQueueFocusID: UUID?
+    @AccessibilityFocusState private var emptyQueueFocused: Bool
 
     // Keep VoiceOver on the nearest surviving queue action after a deletion.
     // The focus target must be applied after the queue has published its new rows.
@@ -463,6 +464,13 @@ struct PlaybackQueueSheet: View {
         let remaining = upcoming.filter { $0.id != trackID }
         pendingQueueFocusID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
         playback.removeQueuedTrack(trackID)
+    }
+
+    // Preserve the selected song as the accessibility focus target after a
+    // reorder, rather than letting SwiftUI jump to an unrelated row.
+    private func reorder(_ trackID: UUID, earlier: Bool) {
+        pendingQueueFocusID = trackID
+        playback.moveQueuedTrack(trackID, earlier: earlier)
     }
 
     var body: some View {
@@ -516,6 +524,8 @@ struct PlaybackQueueSheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(22)
                             .premiumCard()
+                            .accessibilityElement(children: .combine)
+                            .accessibilityFocused($emptyQueueFocused)
                         } else {
                             ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, track in
                                 HStack(spacing: 12) {
@@ -547,14 +557,14 @@ struct PlaybackQueueSheet: View {
                                         }
                                         if index > 0 {
                                             Button {
-                                                playback.moveQueuedTrack(track.id, earlier: true)
+                                                reorder(track.id, earlier: true)
                                             } label: {
                                                 Label("Move earlier", systemImage: "arrow.up")
                                             }
                                         }
                                         if index < upcoming.count - 1 {
                                             Button {
-                                                playback.moveQueuedTrack(track.id, earlier: false)
+                                                reorder(track.id, earlier: false)
                                             } label: {
                                                 Label("Move later", systemImage: "arrow.down")
                                             }
@@ -584,10 +594,10 @@ struct PlaybackQueueSheet: View {
                                     playback.playQueuedTrackNext(track.id)
                                 }
                                 .accessibilityAction(named: "Move earlier") {
-                                    if index > 0 { playback.moveQueuedTrack(track.id, earlier: true) }
+                                    if index > 0 { reorder(track.id, earlier: true) }
                                 }
                                 .accessibilityAction(named: "Move later") {
-                                    if index < upcoming.count - 1 { playback.moveQueuedTrack(track.id, earlier: false) }
+                                    if index < upcoming.count - 1 { reorder(track.id, earlier: false) }
                                 }
                                 .accessibilityAction(named: "Remove from queue") {
                                     removeFromQueue(track.id, at: index, in: upcoming)
@@ -609,6 +619,8 @@ struct PlaybackQueueSheet: View {
                 pendingQueueFocusID = nil
                 if currentIDs.contains(target) {
                     focusedQueueTrackID = target
+                } else if currentIDs.isEmpty {
+                    emptyQueueFocused = true
                 }
             }
             .navigationTitle("Your queue")
