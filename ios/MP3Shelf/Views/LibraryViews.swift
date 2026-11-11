@@ -18,15 +18,20 @@ struct LibraryView: View {
     @State private var message: String?
     @State private var renaming: MusicTrack?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var offlineRecordingCount: Int?
 
-    // A catalog entry is not proof that its audio file is still on disk.
-    // Keep the hero count distinct from imported playlist metadata.
-    private var offlineRecordingCount: Int {
-        library.tracks.reduce(into: 0) { count, track in
-            if FileManager.default.fileExists(atPath: library.fileURL(for: track).path) {
-                count += 1
+    // Resolve file URLs on the library's actor, then check disk off the UI thread.
+    // A nil count is deliberately not presented as zero while scanning.
+    private func refreshOfflineRecordingCount() async {
+        let urls = library.tracks.map { library.fileURL(for: $0) }
+        let count = await Task.detached(priority: .utility) {
+            urls.reduce(into: 0) { total, url in
+                if FileManager.default.fileExists(atPath: url.path) { total += 1 }
             }
-        }
+        }.value
+        guard !Task.isCancelled else { return }
+        offlineRecordingCount = count
     }
 
     private var recentlyAdded: [MusicTrack] {
@@ -215,10 +220,20 @@ struct LibraryView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(library.tracks.isEmpty
                                  ? "Your favorite songs, right on your iPhone."
-                                 : "\(library.tracks.count) songs in your library. \(offlineRecordingCount) recordings available offline.")
+                                 : "\(library.tracks.count) songs in your library. " +
+                                     (offlineRecordingCount.map { "\($0) recordings available offline." } ?? "Checking offline recordings…"))
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
+                                .task(id: library.tracks.map(\.id)) {
+                                    offlineRecordingCount = nil
+                                    await refreshOfflineRecordingCount()
+                                }
+                                .onChange(of: scenePhase) { _, phase in
+                                    if phase == .active {
+                                        Task { await refreshOfflineRecordingCount() }
+                                    }
+                                }
                         }
                         Spacer(minLength: 0)
                         if !dynamicTypeSize.isAccessibilitySize {
