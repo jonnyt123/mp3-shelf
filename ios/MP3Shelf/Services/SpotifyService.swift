@@ -94,10 +94,14 @@ final class SpotifyService: NSObject, ObservableObject {
         guard token != nil else { throw SpotifyError.notConnected }
         var next: URL? = URL(string: "https://api.spotify.com/v1/me/playlists?limit=50")
         var found: [SpotifyPlaylist] = []
+        var visitedPages = Set<String>()
         while let url = next {
+            guard visitedPages.insert(url.absoluteString).inserted else {
+                throw SpotifyError.api("Spotify returned a repeated pagination URL.")
+            }
             let page: SpotifyPage<SpotifyPlaylist> = try await request(url)
             found.append(contentsOf: page.items)
-            next = try Self.safeNext(page.next)
+            next = try Self.safeNext(page.next, relativeTo: url)
             if found.count > 10000 { throw SpotifyError.api("Too many playlists to import in one request.") }
         }
         playlists = found
@@ -121,7 +125,11 @@ final class SpotifyService: NSObject, ObservableObject {
         }
         var next: URL? = URL(string: "https://api.spotify.com/v1/playlists/\(encodedID)/items?limit=50")
         var wishes: [PlaylistWish] = []
+        var visitedPages = Set<String>()
         while let url = next {
+            guard visitedPages.insert(url.absoluteString).inserted else {
+                throw SpotifyError.api("Spotify returned a repeated pagination URL.")
+            }
             let page: SpotifyPage<SpotifyPlaylistItem> = try await request(url)
             for entry in page.items {
                 guard let track = entry.item ?? entry.track, track.type == "track" else { continue }
@@ -131,7 +139,7 @@ final class SpotifyService: NSObject, ObservableObject {
                     durationSeconds: track.duration_ms.map { Double($0) / 1000.0 },
                     artistNames: track.artists?.map(\.name)))
             }
-            next = try Self.safeNext(page.next)
+            next = try Self.safeNext(page.next, relativeTo: url)
             if wishes.count > 20000 { throw SpotifyError.api("The playlist contains too many tracks.") }
         }
         if wishes.isEmpty { throw SpotifyError.api("No usable songs were returned. Spotify currently limits playlist access to playlists you own or collaborate on.") }
@@ -237,13 +245,27 @@ final class SpotifyService: NSObject, ObservableObject {
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
 
-    private static func safeNext(_ string: String?) throws -> URL? {
-        guard let string else { return nil }
-        guard let url = URL(string: string), url.scheme == "https", url.host == "api.spotify.com" else {
+    // Spotify's paging links may be absolute or relative. Resolve them against the
+    // current API page, but never follow a link to another origin or credentials.
+    static func safeNext(_ value: String?, relativeTo currentPage: URL) throws -> URL? {
+        guard let value, !value.isEmpty else { return nil }
+        guard let components = URLComponents(string: value),
+              components.user == nil, components.password == nil,
+              components.fragment == nil,
+              let resolved = URL(string: value, relativeTo: currentPage)?.absoluteURL,
+              let scheme = resolved.scheme?.lowercased(),
+              let host = resolved.host?.lowercased(),
+              scheme == "https", host == "api.spotify.com",
+              resolved.port == nil,
+              resolved.path.hasPrefix("/v1/"),
+              !resolved.path.contains("/../"),
+              !resolved.path.contains("/./")
+        else {
             throw SpotifyError.api("Spotify returned an unexpected pagination URL.")
         }
-        return url
+        return resolved
     }
+
 }
 
 extension SpotifyService: ASWebAuthenticationPresentationContextProviding {

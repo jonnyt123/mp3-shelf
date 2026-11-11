@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'HELP'
-MP3 Shelf — signed device build and diagnostics
+MP3 Shelf — signed iPhone installation, build and diagnostics
 
 Install and launch:
   MP3SHELF_TEAM_ID=YOUR10CHARTEAMID bash ios/scripts/run-on-iphone.sh DEVICE_UDID
