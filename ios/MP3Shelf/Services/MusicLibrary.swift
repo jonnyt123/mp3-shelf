@@ -644,12 +644,16 @@ final class MusicLibrary: ObservableObject {
             // Release each grant before starting the next recording, including
             // failed copies, invalid audio and duplicate imports.
             let accessing = source.startAccessingSecurityScopedResource()
-            do {
+            let result: Result<Bool, Error> = {
                 defer { if accessing { source.stopAccessingSecurityScopedResource() } }
-                let outcome = try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent)
-                if outcome { report.imported += 1 } else { report.skipped += 1 }
-            } catch {
-                if accessing { source.stopAccessingSecurityScopedResource() }
+                return Result {
+                    try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent)
+                }
+            }()
+            switch result {
+            case .success(true): report.imported += 1
+            case .success(false): report.skipped += 1
+            case .failure(let error):
                 report.errors.append(source.lastPathComponent + ": " + error.localizedDescription)
             }
         }
