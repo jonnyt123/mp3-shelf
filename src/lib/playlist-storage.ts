@@ -232,6 +232,13 @@ export async function deleteTrackWithPlaylistCleanup(
  const intent:DeleteRecovery={version:1,key,trackId,original};
  storage.setItem(DELETE_RECOVERY_KEY,JSON.stringify(intent));
  try{
+  // Staging the journal is a separate storage write. Another tab may edit
+  // playlists between our snapshot and the cleanup commit; never overwrite
+  // that edit with the pre-journal snapshot.
+  if(storage.getItem(key)!==JSON.stringify(original))
+   throw new Error("Playlists changed while staging deletion. Retry without losing the newer edit.");
+  if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)
+   throw new Error("A backup restore started while staging deletion.");
   commitPlaylistEdit(storage,key,next);
  }catch(error){
   storage.removeItem(DELETE_RECOVERY_KEY);
