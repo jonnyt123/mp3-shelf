@@ -249,7 +249,12 @@ export async function deleteTrackWithPlaylistCleanup(
  const original=parseStoredPlaylists(baseline);
  const next=original.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==trackId)}));
  const intent:DeleteRecovery={version:1,key,trackId,original};
- storage.setItem(DELETE_RECOVERY_KEY,JSON.stringify(intent));
+ const ownedJournal=JSON.stringify(intent);
+ storage.setItem(DELETE_RECOVERY_KEY,ownedJournal);
+ const assertJournalOwnership=()=>{
+  if(storage.getItem(DELETE_RECOVERY_KEY)!==ownedJournal)
+   throw new Error("Track deletion recovery journal changed during audio deletion. Preserve the newer intent.");
+ };
  try{
   // Staging the journal is a separate storage write. Another tab may edit
   // playlists between our snapshot and the cleanup commit; never overwrite
@@ -260,6 +265,8 @@ export async function deleteTrackWithPlaylistCleanup(
    throw new Error("A backup restore started while staging deletion.");
   commitPlaylistEdit(storage,key,next);
  }catch(error){
+  // Do not erase a newer tab's recovery intent when staging fails.
+  assertJournalOwnership();
   storage.removeItem(DELETE_RECOVERY_KEY);
   throw error;
  }
@@ -271,6 +278,9 @@ export async function deleteTrackWithPlaylistCleanup(
    throw new Error("The recording was added to a playlist during deletion. Audio was preserved.");
   await deleteAudio(trackId);
  }catch(error){
+  // A different tab may have replaced the journal during the async IDB call.
+  // Recovery must not interpret its snapshot as ours or clear the new intent.
+  assertJournalOwnership();
   try{
    // Reconciliation merges against current edits, and leaves the journal
    // intact if quota/storage errors prevent the repair.
@@ -280,6 +290,8 @@ export async function deleteTrackWithPlaylistCleanup(
   }
   throw error;
  }
+ // Never reconcile or clear another tab's intent after an asynchronous write.
+ assertJournalOwnership();
  // A different tab may have reattached the track while IndexedDB deletion
  // was in flight. Its audio is now absent, so never return a playlist with
  // dangling references. Reconcile against the *latest* persisted state and
@@ -291,6 +303,8 @@ export async function deleteTrackWithPlaylistCleanup(
   }));
   commitPlaylistEdit(storage,key,reconciled);
  }
+ // Recheck ownership after reconciliation; a replacement journal must survive.
+ assertJournalOwnership();
  // A journal cleanup failure is safe: startup sees that the audio is absent
  // and removes the intent without resurrecting any playlist references.
  storage.removeItem(DELETE_RECOVERY_KEY);
