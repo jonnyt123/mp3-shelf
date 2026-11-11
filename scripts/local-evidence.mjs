@@ -241,9 +241,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       throw Error('Usage: receipt.json sha dirty mode exitCode log-directory step:success...');
     const checkoutErrors = verifyCheckoutIdentity(sha);
     if (checkoutErrors.length) throw Error(checkoutErrors.join('; '));
+    // Reject ambiguous numeric coercion and ignored colon-delimited fields.
+    if (!/^(0|[1-9][0-9]*)$/.test(code))
+      throw Error('Exit code must be a decimal integer.');
     const steps = raw.map(item => {
-      const [name, value] = item.split(':');
-      return { name, success: Number(value) };
+      const match = /^([a-z][a-z0-9-]*):([01])$/.exec(item);
+      if (!match) throw Error('Malformed step argument: expected name:0 or name:1.');
+      return { name: match[1], success: Number(match[2]) };
     });
     const receipt = buildLocalReceipt({ sha, dirty, mode, exitCode: Number(code), logDir: dir, steps });
     const encoded = JSON.stringify(receipt, null, 2) + '\n';

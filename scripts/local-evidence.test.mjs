@@ -169,6 +169,20 @@ test('receipt CLI rejects mismatched SHA, dirty checkout and tampered original l
     const verify = () => spawnSync(process.execPath, [script, '--verify', receiptPath,
       actual, outside], { cwd: dir, encoding: 'utf8' });
     assert.equal(verify().status, 0, verify().stderr);
+    for (const [exit, step] of [
+      ['0', 'node-release-safety:1:approved'],
+      ['0', 'node-release-safety:'],
+      ['0', 'node-release-safety:01'],
+      ['0x0', 'node-release-safety:1'],
+      ['1e0', 'node-release-safety:1'],
+      ['', 'node-release-safety:1']
+    ]) {
+      const rejectedPath = join(outside, 'rejected-' + exit + '-' + step.replaceAll(':', '_') + '.json');
+      const invalid = spawnSync(process.execPath, [script, rejectedPath, actual, 'no',
+        'node-only', exit, outside, step], { cwd: dir, encoding: 'utf8' });
+      assert.equal(invalid.status, 1, invalid.stderr);
+      assert.match(invalid.stderr, /Malformed step argument|Exit code must be a decimal integer|Usage:/);
+    }
     writeFileSync(join(dir, 'untracked.txt'), 'dirty\\n');
     assert.match(verifyCheckoutIdentity(actual, dir).join(' '), /not clean/);
     const rejected = verify();
