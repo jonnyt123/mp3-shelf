@@ -116,7 +116,7 @@ final class SpotifyService: NSObject, ObservableObject {
             // Sign-in establishes a new session; invalidate stale refresh completions.
             authorizationGeneration &+= 1
             let connectedGeneration = authorizationGeneration
-            store(tokens: newTokens)
+            try store(tokens: newTokens)
             // The sign-in generation is intentionally obsolete after token
             // installation. Release the busy indicator for the new session,
             // otherwise the old defer leaves the Connect button stuck busy.
@@ -342,7 +342,7 @@ final class SpotifyService: NSObject, ObservableObject {
               refreshTask != nil, token?.refreshToken == existing.refreshToken else {
             throw SpotifyError.notConnected
         }
-        store(tokens: fresh)
+        try store(tokens: fresh)
     }
 
     private func exchangeToken(_ fields: [String: String], oldRefresh: String?) async throws -> SpotifyTokens {
@@ -376,20 +376,30 @@ final class SpotifyService: NSObject, ObservableObject {
                              expiresAt: Date().addingTimeInterval(TimeInterval(decoded.expires_in)))
     }
 
-    private func store(tokens: SpotifyTokens) {
-        token = tokens
-        isConnected = true
-        if let bytes = try? JSONEncoder().encode(tokens) {
-            Self.removeTokens(account: keychainAccount)
-            let attributes: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: "MP3Shelf.Spotify",
-                kSecAttrAccount as String: keychainAccount,
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                kSecValueData as String: bytes
-            ]
-            SecItemAdd(attributes as CFDictionary, nil)
+    private func store(tokens newTokens: SpotifyTokens) throws {
+        // Preserve the last recoverable refresh token until the replacement
+        // is durably stored; never silently accept a failed Keychain write.
+        let bytes = try JSONEncoder().encode(newTokens)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "MP3Shelf.Spotify",
+            kSecAttrAccount as String: keychainAccount
+        ]
+        let update: [String: Any] = [kSecValueData as String: bytes]
+        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        if status == errSecItemNotFound {
+            var attributes = query
+            attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            attributes[kSecValueData as String] = bytes
+            let addStatus = SecItemAdd(attributes as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw SpotifyError.api("Could not securely save Spotify credentials. Reconnect and try again.")
+            }
+        } else if status != errSecSuccess {
+            throw SpotifyError.api("Could not securely update Spotify credentials. Try again after unlocking your device.")
         }
+        token = newTokens
+        isConnected = true
     }
 
     private static func loadTokens(account: String) -> SpotifyTokens? {
