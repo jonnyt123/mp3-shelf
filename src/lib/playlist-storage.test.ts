@@ -211,6 +211,38 @@ describe("track deletion consistency",()=>{
   const values=new Map<string,string>([["playlists",JSON.stringify(original)]]);
   return {values,setItem:(key:string,value:string)=>{values.set(key,value)},getItem:(key:string)=>values.get(key)??null,removeItem:(key:string)=>{values.delete(key)}};
  }
+ it("refuses audio deletion while a backup restore is staged",async()=>{
+  const store=storage();
+  const staged=stagePlaylistRestore(store,"playlists",[{id:"restored"}],[{id:"restored-list",name:"Imported",trackIds:["restored"]}]);
+  expect(staged).toBe(true);
+  let called=false;
+  await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{called=true}))
+   .rejects.toThrow("pending backup restore");
+  expect(called).toBe(false);
+  expect(hasPendingPlaylistRestore(store)).toBe(true);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
+ });
+ it("refuses backup staging during an in-flight audio deletion without replacing its journal",async()=>{
+  const store=storage();
+  let complete!:()=>void;
+  const pending=new Promise<void>(resolve=>{complete=resolve});
+  const deleting=deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{await pending});
+  const before=store.getItem("mp3-shelf-delete-recovery");
+  expect(before).not.toBeNull();
+  expect(()=>stagePlaylistRestore(store,"playlists",[{id:"restored"}],[{id:"new",name:"New",trackIds:["restored"]}]))
+   .toThrow("pending track deletion recovery");
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBe(before);
+  expect(hasPendingPlaylistRestore(store)).toBe(false);
+  complete();
+  await deleting;
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("rejects empty backup destination keys before writing recovery intent",()=>{
+  const store=storage();
+  expect(()=>stagePlaylistRestore(store," ",[{id:"restored"}],[])).toThrow("Invalid playlist storage key");
+  expect(hasPendingPlaylistRestore(store)).toBe(false);
+ });
  it("persists reference cleanup before deleting the audio record",async()=>{
   const store=storage();
   const next=await deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{
