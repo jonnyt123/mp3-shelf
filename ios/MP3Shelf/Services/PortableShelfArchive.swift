@@ -143,6 +143,25 @@ enum PortableShelfArchive {
             throw ArchiveError.invalidManifest
         }
         let url = directory.appendingPathComponent(fileName)
+        // A corrupted/restored catalog must not turn an artwork or lyrics
+        // reference into a read outside the app's sidecar directory. Do not
+        // follow symbolic links (including chains) or open directories/FIFOs.
+        // Resolve both paths before opening and require an ordinary file.
+        let root = directory.resolvingSymlinksInPath().standardizedFileURL
+        let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.deletingLastPathComponent() == root else {
+            throw ArchiveError.invalidManifest
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard (attributes[.type] as? FileAttributeType) == .typeRegular else {
+            throw ArchiveError.invalidManifest
+        }
+        // attributesOfItem follows symlinks; the original path must also be
+        // checked without following the final component.
+        let properties = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+        guard properties.isSymbolicLink != true, properties.isRegularFile == true else {
+            throw ArchiveError.invalidManifest
+        }
         let input = try FileHandle(forReadingFrom: url)
         defer { try? input.close() }
         let size = try input.seekToEnd()
