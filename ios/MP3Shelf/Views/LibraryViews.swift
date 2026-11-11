@@ -32,6 +32,10 @@ struct LibraryView: View {
     // A nil count is deliberately not presented as zero while scanning.
     private func refreshOfflineRecordingCount() async {
         let urls = library.tracks.map { library.fileURL(for: $0) }
+        if urls.isEmpty {
+            offlineRecordingCount = 0
+            return
+        }
         let scan = Task.detached(priority: .utility) { () -> Int? in
             var count = 0
             for url in urls {
@@ -242,14 +246,6 @@ struct LibraryView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
-                                .task(id: OfflineCountRefreshKey(
-                                    trackIDs: library.tracks.map(\.id),
-                                    scenePhase: scenePhase
-                                )) {
-                                    guard scenePhase == .active else { return }
-                                    offlineRecordingCount = nil
-                                    await refreshOfflineRecordingCount()
-                                }
                         }
                         Spacer(minLength: 0)
                         if !dynamicTypeSize.isAccessibilitySize {
@@ -405,6 +401,14 @@ struct LibraryView: View {
         }
         .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
+        .task(id: OfflineCountRefreshKey(
+            trackIDs: library.tracks.map(\.id),
+            scenePhase: scenePhase
+        )) {
+            guard scenePhase == .active else { return }
+            offlineRecordingCount = nil
+            await refreshOfflineRecordingCount()
+        }
         .background(PremiumBackdrop())
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
@@ -532,7 +536,11 @@ struct MusicTrackRow: View {
                     }
                 }
                 Button("Edit Details", systemImage: "pencil") { renaming = track }
-                ShareLink(item: library.fileURL(for: track)) { Label("Share Audio File", systemImage: "square.and.arrow.up") }
+                if FileManager.default.fileExists(atPath: library.fileURL(for: track).path) {
+                    ShareLink(item: library.fileURL(for: track)) {
+                        Label("Share Audio File", systemImage: "square.and.arrow.up")
+                    }
+                }
                 if let attribution = track.sourceAttribution {
                     if let sourceURL = URL(string: attribution.pageURL) {
                         Link(destination: sourceURL) {
@@ -977,7 +985,7 @@ struct PlaylistDetailView: View {
                                 .foregroundStyle(.white)
                                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text("\(playlist.trackIDs.count) offline · \(playlist.missingTracks.count) missing")
+                            Text("\(playlist.trackIDs.count) saved songs · \(playlist.missingTracks.count) recordings to find")
                                 .font(.caption)
                                 .foregroundStyle(ShelfTheme.subdued)
                         }
