@@ -227,7 +227,8 @@ export async function deleteTrackWithPlaylistCleanup(
   throw new Error("Finish the pending backup restore before deleting a recording.");
  if(typeof trackId!=="string"||!trackId.trim())throw new Error("Invalid track ID for deletion.");
  // Use the current durable state rather than a possibly stale React snapshot.
- const original=parseStoredPlaylists(storage.getItem(key));
+ const baseline=storage.getItem(key);
+ const original=parseStoredPlaylists(baseline);
  const next=original.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==trackId)}));
  const intent:DeleteRecovery={version:1,key,trackId,original};
  storage.setItem(DELETE_RECOVERY_KEY,JSON.stringify(intent));
@@ -235,7 +236,7 @@ export async function deleteTrackWithPlaylistCleanup(
   // Staging the journal is a separate storage write. Another tab may edit
   // playlists between our snapshot and the cleanup commit; never overwrite
   // that edit with the pre-journal snapshot.
-  if(storage.getItem(key)!==JSON.stringify(original))
+  if(storage.getItem(key)!==baseline)
    throw new Error("Playlists changed while staging deletion. Retry without losing the newer edit.");
   if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)
    throw new Error("A backup restore started while staging deletion.");
