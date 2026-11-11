@@ -410,9 +410,11 @@ struct PlaybackQueueSheet: View {
     @EnvironmentObject private var playback: PlaybackController
     @EnvironmentObject private var library: MusicLibrary
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        NavigationStack {
+        let upcoming = playback.queuedTracks
+        return NavigationStack {
             ZStack {
                 PremiumBackdrop()
                 ScrollView {
@@ -442,11 +444,11 @@ struct PlaybackQueueSheet: View {
 
                         PremiumSectionHeading(
                             title: "Up next",
-                            detail: "\(playback.queuedTracks.count) in queue"
+                            detail: "\(upcoming.count) in queue"
                         )
                         .padding(.top, 14)
 
-                        if playback.queuedTracks.isEmpty {
+                        if upcoming.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Image(systemName: "music.note.list")
                                     .font(.largeTitle)
@@ -462,20 +464,23 @@ struct PlaybackQueueSheet: View {
                             .padding(22)
                             .premiumCard()
                         } else {
-                            ForEach(Array(playback.queuedTracks.enumerated()), id: \.element.id) { index, track in
+                            ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, track in
                                 HStack(spacing: 12) {
                                     ArtworkTile(track: track, size: 48)
+                                        .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(track.title)
                                             .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(.white)
-                                            .lineLimit(1)
+                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                         Text(track.artist)
                                             .font(.caption)
                                             .foregroundStyle(ShelfTheme.subdued)
-                                            .lineLimit(1)
+                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                     }
-                                    Spacer(minLength: 6)
+                                    if !dynamicTypeSize.isAccessibilitySize {
+                                        Spacer(minLength: 6)
+                                    }
                                     Menu {
                                         Button {
                                             playback.play(track)
@@ -494,7 +499,7 @@ struct PlaybackQueueSheet: View {
                                                 Label("Move earlier", systemImage: "arrow.up")
                                             }
                                         }
-                                        if index < playback.queuedTracks.count - 1 {
+                                        if index < upcoming.count - 1 {
                                             Button {
                                                 playback.moveQueuedTrack(track.id, earlier: false)
                                             } label: {
@@ -515,11 +520,24 @@ struct PlaybackQueueSheet: View {
                                             .contentShape(Rectangle())
                                     }
                                     .accessibilityLabel("Queue options for \(track.title)")
+                                    .accessibilityHint("Play, reorder, or remove this song from the upcoming queue")
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .premiumCard(radius: 17)
                                 .accessibilityElement(children: .contain)
+                                .accessibilityAction(named: "Play next") {
+                                    playback.playQueuedTrackNext(track.id)
+                                }
+                                .accessibilityAction(named: "Move earlier") {
+                                    if index > 0 { playback.moveQueuedTrack(track.id, earlier: true) }
+                                }
+                                .accessibilityAction(named: "Move later") {
+                                    if index < upcoming.count - 1 { playback.moveQueuedTrack(track.id, earlier: false) }
+                                }
+                                .accessibilityAction(named: "Remove from queue") {
+                                    playback.removeQueuedTrack(track.id)
+                                }
                             }
                         }
 
@@ -530,6 +548,7 @@ struct PlaybackQueueSheet: View {
                     }
                     .padding(20)
                 }
+                .scrollDismissesKeyboard(.interactively)
             }
             .navigationTitle("Your queue")
             .navigationBarTitleDisplayMode(.inline)
