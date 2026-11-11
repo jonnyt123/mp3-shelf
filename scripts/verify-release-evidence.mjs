@@ -13,8 +13,12 @@ export function verifyReleaseEvidence(evidence, expectedSha) {
   } else {
     const names = new Set();
     for (const check of evidence.checks) {
-      if (!check || typeof check.name !== "string" || !check.name.trim() || names.has(check.name)) {
-        errors.push("Check names must be unique nonempty strings.");
+      // Never allow whitespace aliases or malformed objects to masquerade as
+      // required checks. Every mandatory name must match its exact contract.
+      if (!check || typeof check !== "object" || Array.isArray(check) ||
+          typeof check.name !== "string" || !check.name.trim() ||
+          check.name !== check.name.trim() || names.has(check.name.trim())) {
+        errors.push("Check names must be unique, exact, nonempty strings.");
         continue;
       }
       names.add(check.name);

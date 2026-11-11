@@ -49,3 +49,22 @@ test("rejects duplicate check names and invalid evidence", () => {
   assert.match(verifyReleaseEvidence(evidence, sha).join(" "), /unique/);
   assert.notDeepEqual(verifyReleaseEvidence(null, sha), []);
 });
+
+test("rejects whitespace check aliases and malformed check records without throwing", () => {
+  for (const bad of [
+    { ...check("test"), name: " test" },
+    { ...check("build"), name: "build " },
+    { ...check("typecheck"), name: "\\ttypecheck" },
+    "test",
+    ["test"],
+    null,
+  ]) {
+    const evidence = web();
+    evidence.checks[0] = bad;
+    const errors = verifyReleaseEvidence(evidence, sha);
+    assert.ok(errors.length > 0, "Malformed check must block release");
+  }
+  const duplicate = web();
+  duplicate.checks.push(check("test "));
+  assert.match(verifyReleaseEvidence(duplicate, sha).join(" "), /unique, exact/);
+});
