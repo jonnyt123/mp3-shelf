@@ -94,7 +94,22 @@ enum PortableShelfArchive {
         var offset: Int64 = 0
         var tracks: [Track] = []
 
+        // Match open() limits before writing a potentially multi-gigabyte
+        // backup. Otherwise export can succeed but its own reader rejects it.
+        guard inputs.count <= 20_000, playlists.count <= 2_000 else {
+            throw ArchiveError.invalidManifest
+        }
         for item in inputs {
+            let ext = item.audioURL.pathExtension.lowercased()
+            guard ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(ext) else {
+                throw ArchiveError.unsupportedAudio
+            }
+            guard !item.track.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ArchiveError.invalidManifest
+            }
+            if let lyrics = item.lyrics, lyrics.utf8.count > 500 * 1024 {
+                throw ArchiveError.oversized
+            }
             let bytes = try FileManager.default.attributesOfItem(
                 atPath: item.audioURL.path)[.size] as? NSNumber
             let length = bytes?.int64Value ?? -1
@@ -148,6 +163,13 @@ enum PortableShelfArchive {
                   usedPlaylistIDs.insert(id).inserted else {
                 throw ArchiveError.invalidManifest
             }
+        }
+        // Keep playlist references and names valid under the same constraints
+        // enforced by open(). A backup must always be readable after export.
+        guard playlists.allSatisfy({
+            !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else {
+            throw ArchiveError.invalidManifest
         }
         let lists = playlists.map { list in
             let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
