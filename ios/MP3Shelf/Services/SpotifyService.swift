@@ -577,7 +577,23 @@ struct SpotifyPlaylist: Identifiable, Decodable {
 }
 struct SpotifyURLContainer: Decodable { let spotify: String? }
 private struct SpotifyPage<T: Decodable>: Decodable { let items: [T]; let next: String? }
-private struct SpotifyPlaylistItem: Decodable { let item: SpotifyTrack?; let track: SpotifyTrack? }
+private struct SpotifyPlaylistItem: Decodable {
+    let item: SpotifyTrack?
+    let track: SpotifyTrack?
+
+    private enum CodingKeys: String, CodingKey { case item, track }
+
+    init(from decoder: Decoder) throws {
+        // Spotify can return unavailable, deleted or partially redacted
+        // playlist entries alongside valid songs. A malformed nested track
+        // must not discard the entire page and every subsequent page.
+        // Decode each supported envelope independently so legacy "track"
+        // entries still work if the newer "item" is unusable.
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        item = try? container.decode(SpotifyTrack.self, forKey: .item)
+        track = try? container.decode(SpotifyTrack.self, forKey: .track)
+    }
+}
 private struct SpotifyTrack: Decodable {
     let name: String
     let type: String?
