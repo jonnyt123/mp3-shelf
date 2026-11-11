@@ -7,6 +7,8 @@ private struct OfflineCountRefreshKey: Equatable {
     let trackIDs: [UUID]
     let scenePhase: ScenePhase
     let manualRefresh: Int
+    // Reconcile existing track IDs after a file import replaces missing audio.
+    let isImporting: Bool
 }
 
 struct LibraryView: View {
@@ -244,12 +246,15 @@ struct LibraryView: View {
                             Text(library.tracks.isEmpty
                                  ? "Your favorite songs, right on your iPhone."
                                  : "\(library.tracks.count) songs in your library. " +
-                                     (offlineRecordingCount.map { "\($0) recordings available offline." } ?? "Checking offline recordings…"))
+                                     (library.isImporting
+                                      ? "Importing recordings…"
+                                      : offlineRecordingCount.map { "\($0) recordings available offline." } ?? "Checking offline recordings…"))
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
                             if !library.tracks.isEmpty {
                                 Button {
+                                    offlineRecordingCount = nil
                                     offlineCountRefreshRequest &+= 1
                                 } label: {
                                     Label("Refresh offline availability", systemImage: "arrow.clockwise")
@@ -259,6 +264,7 @@ struct LibraryView: View {
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.white)
                                 .accessibilityHint("Recheck recordings stored on this iPhone without connecting to the internet")
+                                .disabled(library.isImporting || offlineRecordingCount == nil)
                             }
                         }
                         Spacer(minLength: 0)
@@ -418,9 +424,16 @@ struct LibraryView: View {
         .task(id: OfflineCountRefreshKey(
             trackIDs: library.tracks.map(\.id),
             scenePhase: scenePhase,
-            manualRefresh: offlineCountRefreshRequest
+            manualRefresh: offlineCountRefreshRequest,
+            isImporting: library.isImporting
         )) {
             guard scenePhase == .active else { return }
+            // A completed import can restore bytes for an existing track ID.
+            // Do not race the import's file writes or publish partial counts.
+            guard !library.isImporting else {
+                offlineRecordingCount = nil
+                return
+            }
             offlineRecordingCount = nil
             await refreshOfflineRecordingCount()
         }
