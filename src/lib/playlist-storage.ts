@@ -120,8 +120,21 @@ export function updateStoredPlaylists(
  storage:Pick<Storage,"getItem"|"setItem">,key:string,
  updater:(current:readonly StoredPlaylist[])=>readonly StoredPlaylist[]
 ):StoredPlaylist[]{
+ // Never allow ordinary playlist edits to race a pending audio deletion or
+ // backup restore. Both workflows have durable journals and may replay edits
+ // after a crash; a new edit during that interval could be silently lost.
+ // Read the journals before invoking the updater so rejected operations have
+ // no side effects (including an updater that allocates a new playlist ID).
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
+  throw new Error("Finish the pending track deletion before editing playlists.");
+ if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)
+  throw new Error("Finish the pending backup restore before editing playlists.");
  const current=parseStoredPlaylists(storage.getItem(key));
  const next=updater(current);
+ // An updater is synchronous, but a test adapter or storage implementation
+ // can stage a journal during the read. Fail closed before the final write.
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null||storage.getItem(RESTORE_JOURNAL_KEY)!==null)
+  throw new Error("A track deletion or backup restore started while editing playlists.");
  return commitPlaylistEdit(storage,key,next);
 }
 
