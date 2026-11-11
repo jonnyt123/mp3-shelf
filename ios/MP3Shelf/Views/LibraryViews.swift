@@ -700,7 +700,7 @@ struct PlaylistsView: View {
                                           detail: "\(library.playlists.count) collections")
                     Toggle("Sort alphabetically", isOn: $sortAlphabetically)
                         .tint(ShelfTheme.accent)
-                    if !library.playlists.isEmpty && visiblePlaylists.isEmpty {
+                    if !playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && visiblePlaylists.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("No playlists match your search.")
                                 .foregroundStyle(ShelfTheme.subdued)
@@ -716,7 +716,7 @@ struct PlaylistsView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    if library.playlists.isEmpty {
+                    if library.playlists.isEmpty && playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(alignment: .leading, spacing: 13) {
                             PremiumIcon(symbol: "square.stack.3d.up",
                                         color: ShelfTheme.accent, size: 55)
@@ -743,7 +743,7 @@ struct PlaylistsView: View {
                         .padding(20)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .premiumCard(radius: 24)
-                    } else {
+                    } else if !visiblePlaylists.isEmpty {
                         LazyVGrid(columns: columns, spacing: 13) {
                             ForEach(Array(visiblePlaylists.enumerated()), id: \.element.id) { index, list in
                                 NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
@@ -785,6 +785,7 @@ struct PlaylistsView: View {
             .padding(.bottom, 28)
         }
         .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .background(PremiumBackdrop())
         .searchable(text: $playlistQuery, prompt: "Find playlists")
         .navigationTitle("Playlists")
@@ -807,6 +808,8 @@ struct PlaylistsView: View {
                 let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return }
                 library.createPlaylist(name)
+                // Reveal the new collection even if the previous search excluded it.
+                playlistQuery = ""
                 newName = ""
             }
             .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
