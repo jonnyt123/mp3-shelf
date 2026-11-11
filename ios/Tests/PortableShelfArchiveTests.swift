@@ -349,10 +349,13 @@ struct PortableShelfArchiveTests {
         assert(exportedIDs.count == 2 && Set(exportedIDs).count == 2)
         assert(exportedIDs[0] == "shared-legacy-id")
         assert(recovered.manifest.playlists[0].trackIds == exportedIDs)
-        assert(try Data(contentsOf: PortableShelfArchive.extract(
-            recovered.manifest.tracks[0].audio, from: recovered, extensionName: "mp3")) == originalBytes)
-        assert(try Data(contentsOf: PortableShelfArchive.extract(
-            recovered.manifest.tracks[1].audio, from: recovered, extensionName: "mp3")) == originalBytes)
+        for recoveredTrack in recovered.manifest.tracks {
+            let extractedURL = try PortableShelfArchive.extract(
+                recoveredTrack.audio, from: recovered, extensionName: "mp3")
+            defer { try? FileManager.default.removeItem(at: extractedURL) }
+            let recoveredBytes = try Data(contentsOf: extractedURL)
+            assert(recoveredBytes == originalBytes)
+        }
         // An explicit browser ID can collide with another local UUID.
         conflictB.portableBackupID = conflictA.id.uuidString
         conflictA.portableBackupID = "browser-a"
