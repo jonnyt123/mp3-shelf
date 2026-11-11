@@ -556,12 +556,13 @@ struct PlaylistsView: View {
     @State private var pendingDelete: MusicPlaylist?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    // Accessibility text sizes get a full-width playlist card instead of
-    // squeezing large text into two narrow columns.
+    // Adapt to the available width: compact iPhones must not squeeze playlist
+    // names and status labels into two narrow cards. Accessibility sizes
+    // always retain a full-width card for readable multi-line content.
     private var columns: [GridItem] {
         dynamicTypeSize.isAccessibilitySize
             ? [GridItem(.flexible(), spacing: 13)]
-            : [GridItem(.flexible(), spacing: 13), GridItem(.flexible(), spacing: 13)]
+            : [GridItem(.adaptive(minimum: 170), spacing: 13)]
     }
 
     private var visiblePlaylists: [MusicPlaylist] {
