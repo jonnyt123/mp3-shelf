@@ -454,6 +454,16 @@ struct PlaybackQueueSheet: View {
     @EnvironmentObject private var library: MusicLibrary
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AccessibilityFocusState private var focusedQueueTrackID: UUID?
+    @State private var pendingQueueFocusID: UUID?
+
+    // Keep VoiceOver on the nearest surviving queue action after a deletion.
+    // The focus target must be applied after the queue has published its new rows.
+    private func removeFromQueue(_ trackID: UUID, at index: Int, in upcoming: [MusicTrack]) {
+        let remaining = upcoming.filter { $0.id != trackID }
+        pendingQueueFocusID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
+        playback.removeQueuedTrack(trackID)
+    }
 
     var body: some View {
         let upcoming = playback.queuedTracks
@@ -551,7 +561,7 @@ struct PlaybackQueueSheet: View {
                                         }
                                         Divider()
                                         Button(role: .destructive) {
-                                            playback.removeQueuedTrack(track.id)
+                                            removeFromQueue(track.id, at: index, in: upcoming)
                                         } label: {
                                             Label("Remove from queue", systemImage: "minus.circle")
                                         }
@@ -564,6 +574,7 @@ struct PlaybackQueueSheet: View {
                                     }
                                     .accessibilityLabel("Queue options for \(track.title)")
                                     .accessibilityHint("Play, reorder, or remove this song from the upcoming queue")
+                                    .accessibilityFocused($focusedQueueTrackID, equals: track.id)
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
@@ -579,7 +590,7 @@ struct PlaybackQueueSheet: View {
                                     if index < upcoming.count - 1 { playback.moveQueuedTrack(track.id, earlier: false) }
                                 }
                                 .accessibilityAction(named: "Remove from queue") {
-                                    playback.removeQueuedTrack(track.id)
+                                    removeFromQueue(track.id, at: index, in: upcoming)
                                 }
                             }
                         }
@@ -592,6 +603,13 @@ struct PlaybackQueueSheet: View {
                     .padding(20)
                 }
                 .scrollDismissesKeyboard(.interactively)
+            }
+            .onChange(of: upcoming.map(\.id)) { _, currentIDs in
+                guard let target = pendingQueueFocusID else { return }
+                pendingQueueFocusID = nil
+                if currentIDs.contains(target) {
+                    focusedQueueTrackID = target
+                }
             }
             .navigationTitle("Your queue")
             .navigationBarTitleDisplayMode(.inline)
