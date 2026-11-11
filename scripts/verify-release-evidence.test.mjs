@@ -156,3 +156,34 @@ test("CLI accepts valid bounded evidence and rejects unsafe persisted input", as
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("rejects extra checks, fabricated approvals and unknown metadata", () => {
+  const extra = web();
+  extra.checks.push(check("security-approved"));
+  assert.match(verifyReleaseEvidence(extra, sha).join(" "), /exactly the mandatory checks|Unexpected check/);
+  const topLevel = { ...web(), productionApproved: true };
+  assert.match(verifyReleaseEvidence(topLevel, sha).join(" "), /Unexpected release evidence field/);
+  const forged = web();
+  forged.checks[0].deploymentApproved = true;
+  assert.match(verifyReleaseEvidence(forged, sha).join(" "), /Unexpected metadata/);
+  const missing = web();
+  missing.checks = [check("test"), check("typecheck"), check("test")];
+  assert.match(verifyReleaseEvidence(missing, sha).join(" "), /unique|Missing mandatory check/);
+});
+
+test("CLI rejects surplus positional arguments rather than ignoring them", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const dir = mkdtempSync(join(tmpdir(), "mp3-release-extra-"));
+  try {
+    const path = join(dir, "evidence.json");
+    writeFileSync(path, JSON.stringify(web()));
+    const script = fileURLToPath(new URL("./verify-release-evidence.mjs", import.meta.url));
+    const result = spawnSync(process.execPath, [script, path, sha, "--approved"], { encoding: "utf8" });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /Usage:/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
