@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SHA-bound local observations, deliberately not a release approval.
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, openSync, readSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -24,9 +24,33 @@ export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir })
     if (seen.has(step.name)) throw Error('Duplicate step receipt.');
     seen.add(step.name);
     const file = step.name + '.log';
-    const data = readFileSync(resolve(logDir, file));
-    return { name: step.name, success: step.success === 1, bytes: data.byteLength,
-      sha256: createHash('sha256').update(data).digest('hex'), file: basename(file) };
+    const path = resolve(logDir, file);
+    // Logs may contain arbitrarily large provider/build output. Never load
+    // unbounded files into memory or follow a substituted symlink.
+    const metadata = lstatSync(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw Error('Step log must be a regular file.');
+    const fd = openSync(path, 'r');
+    try {
+      const opened = fstatSync(fd);
+      if (!opened.isFile() || opened.dev !== metadata.dev || opened.ino !== metadata.ino)
+        throw Error('Step log changed during verification.');
+      const hash = createHash('sha256');
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      let bytes = 0;
+      let count;
+      while ((count = readSync(fd, buffer, 0, buffer.length, null)) !== 0) {
+        bytes += count;
+        if (bytes > 32 * 1024 * 1024) throw Error('Step log exceeds 32 MiB receipt limit.');
+        hash.update(buffer.subarray(0, count));
+      }
+      const final = fstatSync(fd);
+      if (final.size !== bytes || final.mtimeMs !== opened.mtimeMs)
+        throw Error('Step log changed during verification.');
+      return { name: step.name, success: step.success === 1, bytes,
+        sha256: hash.digest('hex'), file: basename(file) };
+    } finally {
+      closeSync(fd);
+    }
   });
   // An npm test/build run without an actual dependency reconciliation is not
   // release evidence. Require exactly one install mode, not a skipped install

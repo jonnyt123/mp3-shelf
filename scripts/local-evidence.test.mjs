@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, truncateSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildLocalReceipt } from './local-evidence.mjs';
@@ -87,4 +87,30 @@ test('node-only and native modes reject injected steps', () => fixture(dir => {
   assert.equal(buildLocalReceipt(native).status, 'local-checks-passed');
   native.steps.reverse();
   assert.equal(buildLocalReceipt(native).status, 'incomplete-or-failed');
+}));
+
+test('large logs are hashed incrementally without unbounded memory', () => fixture(dir => {
+  const a = args(dir);
+  const file = join(dir, 'npm-build.log');
+  truncateSync(file, 1024 * 1024);
+  const receipt = buildLocalReceipt(a);
+  assert.equal(receipt.status, 'local-checks-passed');
+  assert.equal(receipt.steps.find(s => s.name === 'npm-build').bytes, 1024 * 1024);
+}));
+
+test('oversized logs fail closed before exhausting release verifier memory', () => fixture(dir => {
+  const a = args(dir);
+  truncateSync(join(dir, 'npm-build.log'), 33 * 1024 * 1024);
+  assert.throws(() => buildLocalReceipt(a), /32 MiB/);
+}));
+
+test('symlink substitution and non-file logs cannot create receipts', () => fixture(dir => {
+  const a = args(dir);
+  const log = join(dir, 'npm-build.log');
+  unlinkSync(log);
+  symlinkSync(join(dir, 'npm-test.log'), log);
+  assert.throws(() => buildLocalReceipt(a), /regular file/);
+  unlinkSync(log);
+  mkdirSync(log);
+  assert.throws(() => buildLocalReceipt(a), /regular file/);
 }));
