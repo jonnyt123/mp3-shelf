@@ -1370,67 +1370,102 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
+    /// Playlist edits must be durable before SwiftUI observes the new state.
+    /// A failed atomic catalog write leaves the previous playlist snapshot intact.
+    private func commitPlaylistEdit(_ updated: [MusicPlaylist]) {
+        guard isLibraryPersistenceSafe else { return }
+        do {
+            try PersistedLibrary(tracks: tracks, playlists: updated).write(to: databaseURL)
+            playlists = updated
+            libraryStorageError = nil
+        } catch {
+            libraryStorageError = "Could not save playlist changes. Your previous playlists were preserved."
+            print("MP3 Shelf could not persist playlist edit: \(error)")
+        }
+    }
+
     func createPlaylist(_ name: String) {
         guard isLibraryPersistenceSafe else { return }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
-        playlists.append(MusicPlaylist(name: clean))
-        save()
+        var updated = playlists
+        updated.append(MusicPlaylist(name: clean))
+        commitPlaylistEdit(updated)
     }
 
     func duplicatePlaylist(_ id: UUID) {
         guard isLibraryPersistenceSafe else { return }
         guard let original = playlists.first(where: { $0.id == id }) else { return }
-        playlists.append(original.localCopy())
-        save()
+        var updated = playlists
+        updated.append(original.localCopy())
+        commitPlaylistEdit(updated)
     }
 
     func renamePlaylist(_ id: UUID, to name: String) {
         guard isLibraryPersistenceSafe else { return }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, let index = playlists.firstIndex(where: { $0.id == id }) else { return }
-        playlists[index].name = clean
-        save()
+        var updated = playlists
+        updated[index].name = clean
+        commitPlaylistEdit(updated)
     }
 
     func deletePlaylist(_ id: UUID) {
-        guard isLibraryPersistenceSafe else { return }
-        stopBackgroundTransfers(for: id)
-        playlists.removeAll { $0.id == id }
-        discoveryJobs.removeAll { $0.playlistID == id }
-        persistDiscovery()
-        save()
+        guard isLibraryPersistenceSafe, playlists.contains(where: { $0.id == id }) else { return }
+        let updated = playlists.filter { $0.id != id }
+        // Do not cancel transfers or discard discovery checkpoints unless
+        // the playlist deletion has actually been committed to disk.
+        do {
+            try PersistedLibrary(tracks: tracks, playlists: updated).write(to: databaseURL)
+            playlists = updated
+            libraryStorageError = nil
+            stopBackgroundTransfers(for: id)
+            discoveryJobs.removeAll { $0.playlistID == id }
+            persistDiscovery()
+        } catch {
+            libraryStorageError = "Could not delete the playlist. Your previous playlists were preserved."
+            print("MP3 Shelf could not persist playlist deletion: \(error)")
+        }
     }
 
     func addTrack(_ trackID: UUID, to playlistID: UUID) {
-        guard isLibraryPersistenceSafe else { return }
-        guard let index = playlists.firstIndex(where: { $0.id == playlistID }),
+        guard isLibraryPersistenceSafe, tracks.contains(where: { $0.id == trackID }),
+              let index = playlists.firstIndex(where: { $0.id == playlistID }),
               !playlists[index].trackIDs.contains(trackID) else { return }
-        playlists[index].trackIDs.append(trackID)
-        save()
+        var updated = playlists
+        updated[index].trackIDs.append(trackID)
+        commitPlaylistEdit(updated)
     }
 
     func removeTrack(_ trackID: UUID, from playlistID: UUID) {
-        guard isLibraryPersistenceSafe else { return }
-        guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
-        playlists[index].trackIDs.removeAll { $0 == trackID }
+        guard isLibraryPersistenceSafe,
+              let index = playlists.firstIndex(where: { $0.id == playlistID }),
+              playlists[index].trackIDs.contains(trackID) else { return }
+        var updated = playlists
+        updated[index].trackIDs.removeAll { $0 == trackID }
         if let track = song(with: trackID),
-           let wishIndex = playlists[index].sourceOrder.firstIndex(where: { MusicMatching.reusableOfflineTrack(for: $0, in: [track]) != nil }) {
-            playlists[index].sourceOrder.remove(at: wishIndex)
+           let wishIndex = updated[index].sourceOrder.firstIndex(where: {
+               MusicMatching.reusableOfflineTrack(for: $0, in: [track]) != nil
+           }) {
+            updated[index].sourceOrder.remove(at: wishIndex)
         }
-        save()
+        commitPlaylistEdit(updated)
     }
 
     func moveTracks(in playlistID: UUID, from offsets: IndexSet, to index: Int) {
-        guard let playlistIndex = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        guard isLibraryPersistenceSafe,
+              let playlistIndex = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         var items = playlists[playlistIndex].trackIDs
-        // SwiftUI's move semantics: remove then insert at destination adjusted for removed positions.
+        guard index >= 0, index <= items.count,
+              offsets.allSatisfy({ $0 >= 0 && $0 < items.count }),
+              !offsets.isEmpty else { return }
         let moved = offsets.sorted().map { items[$0] }
         let insertionIndex = index - offsets.filter { $0 < index }.count
         for offset in offsets.sorted(by: >) { items.remove(at: offset) }
         items.insert(contentsOf: moved, at: max(0, min(insertionIndex, items.count)))
-        playlists[playlistIndex].trackIDs = items
-        save()
+        var updated = playlists
+        updated[playlistIndex].trackIDs = items
+        commitPlaylistEdit(updated)
     }
 
     func importPlaylistCSV(data: Data, name: String, spotifyURL: String? = nil) throws -> PlaylistImportReport {
