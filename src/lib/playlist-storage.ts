@@ -98,6 +98,18 @@ export function cancelPlaylistRestore(storage:Pick<Storage,"removeItem">):void{
 
 export function hasPendingPlaylistRestore(storage:Pick<Storage,"getItem">):boolean{return storage.getItem(RESTORE_JOURNAL_KEY)!==null}
 
+/** Merge an edit against the latest durable playlist state rather than a
+ * React snapshot. The updater must be pure: storage failures leave the UI and
+ * persisted data unchanged. */
+export function updateStoredPlaylists(
+ storage:Pick<Storage,"getItem"|"setItem">,key:string,
+ updater:(current:readonly StoredPlaylist[])=>readonly StoredPlaylist[]
+):StoredPlaylist[]{
+ const current=parseStoredPlaylists(storage.getItem(key));
+ const next=updater(current);
+ return commitPlaylistEdit(storage,key,next);
+}
+
 /** Persist before updating UI state; quota failures must not create phantom edits. */
 export function commitPlaylistEdit(storage:Pick<Storage,"setItem">,key:string,next:readonly StoredPlaylist[]):StoredPlaylist[]{
  const serialized=JSON.stringify(next);
@@ -158,6 +170,7 @@ export async function deleteTrackWithPlaylistCleanup(
 ):Promise<StoredPlaylist[]>{
  if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
   throw new Error("A previous track deletion needs recovery before another deletion.");
+ if(typeof trackId!=="string"||!trackId.trim())throw new Error("Invalid track ID for deletion.");
  // Use the current durable state rather than a possibly stale React snapshot.
  const original=parseStoredPlaylists(storage.getItem(key));
  const next=original.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==trackId)}));
@@ -170,6 +183,11 @@ export async function deleteTrackWithPlaylistCleanup(
   throw error;
  }
  try{
+  // An edit from another tab may have reattached the recording while the
+  // deletion was being staged. Abort before removing its audio bytes.
+  const latest=parseStoredPlaylists(storage.getItem(key));
+  if(latest.some(playlist=>playlist.trackIds.includes(trackId)))
+   throw new Error("The recording was added to a playlist during deletion. Audio was preserved.");
   await deleteAudio(trackId);
  }catch(error){
   try{
