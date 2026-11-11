@@ -918,3 +918,48 @@ describe("deletion journal replacement during staging",()=>{
   expect(data.has("mp3-shelf-delete-recovery")).toBe(false);
  });
 });
+
+
+describe("post-deletion reconciliation cross-tab races",()=>{
+ const key="playlists";
+ const original=[{id:"mix",name:"Original",trackIds:["gone","keep"]}];
+ function fixture(){
+  const values=new Map<string,string>([[key,JSON.stringify(original)]]);
+  return {
+   values,
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+ }
+ it("retains newer playlist bytes and the recovery journal if a tab edits during reconciliation",async()=>{
+  const store=fixture();
+  let afterDelete=false,reads=0;
+  const concurrent=[{id:"mix",name:"Other tab",trackIds:["gone","keep","new"]}];
+  const racing={
+   ...store,
+   getItem:(name:string)=>{
+    if(afterDelete&&name===key&&++reads===2)
+     store.setItem(key,JSON.stringify(concurrent));
+    return store.getItem(name);
+   }
+  };
+  await expect(deleteTrackWithPlaylistCleanup(racing,key,original,"gone",async()=>{
+   afterDelete=true;
+   store.setItem(key,JSON.stringify([{...original[0],trackIds:["gone","keep"]}]));
+  })).rejects.toThrow("Playlists changed during post-deletion reconciliation");
+  expect(parseStoredPlaylists(store.getItem(key))).toEqual(concurrent);
+  expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(store,new Set(["keep","new"])))
+   .toEqual([{id:"mix",name:"Other tab",trackIds:["keep","new"]}]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("reconciles reattached references when no other tab edits",async()=>{
+  const store=fixture();
+  const result=await deleteTrackWithPlaylistCleanup(store,key,original,"gone",async()=>{
+   store.setItem(key,JSON.stringify(original));
+  });
+  expect(result).toEqual([{id:"mix",name:"Original",trackIds:["keep"]}]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
