@@ -49,7 +49,7 @@ export function persistRestoredPlaylists(
 }
 
 const RESTORE_JOURNAL_KEY="mp3-shelf-restore-pending";
-type RestoreJournal={version:1;trackIds:string[];playlists:StoredPlaylist[]};
+type RestoreJournal={version:1;key?:string;trackIds:string[];playlists:StoredPlaylist[]};
 
 /** Durable intent is written before any IndexedDB inserts. If the browser
  * terminates between stores, startup can finish the playlist half safely. */
@@ -62,7 +62,7 @@ export function stagePlaylistRestore(storage:Pick<Storage,"getItem"|"setItem">,k
  parseStoredPlaylists(JSON.stringify(playlists));
  const ids=tracks.map(track=>track.id);
  if(ids.some(id=>typeof id!=="string"||!id.trim())||new Set(ids).size!==ids.length)throw new Error("Invalid backup track IDs.");
- const intent=JSON.stringify({version:1,trackIds:ids,playlists} satisfies RestoreJournal);
+ const intent=JSON.stringify({version:1,key,trackIds:ids,playlists} satisfies RestoreJournal);
  if(pending!==null){if(pending!==intent)throw new Error("Finish the pending backup restore using the original backup before importing another.");return false}
  storage.setItem(RESTORE_JOURNAL_KEY,intent);
  return true;
@@ -76,10 +76,13 @@ export function recoverPlaylistRestore(storage:Pick<Storage,"getItem"|"setItem"|
  const parsed:unknown=JSON.parse(raw);
  if(!parsed||typeof parsed!=="object")throw new Error("Invalid pending restore journal.");
  const journal=parsed as Partial<RestoreJournal>;
- if(journal.version!==1||!Array.isArray(journal.trackIds)||!Array.isArray(journal.playlists)||
+ if(journal.version!==1||(journal.key!==undefined&&(typeof journal.key!=="string"||!journal.key))||\n    !Array.isArray(journal.trackIds)||!Array.isArray(journal.playlists)||
     journal.trackIds.some(id=>typeof id!=="string"||!id.trim())||
     new Set(journal.trackIds).size!==journal.trackIds.length)throw new Error("Invalid pending restore journal.");
  parseStoredPlaylists(JSON.stringify(journal.playlists));
+ // Never replay a pending restore into a different playlist namespace.
+ // Legacy version-1 journals without a key remain readable.
+ if(journal.key!==undefined&&journal.key!==key)throw new Error("Pending backup restore belongs to a different playlist storage key.");
  if(!journal.trackIds.every(id=>availableTrackIds.has(id)))throw new Error("A backup restore was interrupted before all recordings were saved. Reimport the backup to finish safely.");
  const result=persistRestoredPlaylists(storage,key,journal.playlists);
  storage.removeItem(RESTORE_JOURNAL_KEY);
