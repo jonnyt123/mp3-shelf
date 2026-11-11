@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {deleteTrackWithPlaylistCleanup,recoverFailedTrackDeletion,commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore} from "./playlist-storage";
+import {deleteTrackWithPlaylistCleanup,recoverFailedTrackDeletion,commitPlaylistEdit,cancelPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore,updateStoredPlaylists} from "./playlist-storage";
 describe("persistent playlist hydration",()=>{
  it("loads existing playlists without dropping order or track references",()=>{
   const saved=[{id:"mix",name:"Road trip",trackIds:["a","b"]}];
@@ -228,6 +228,48 @@ describe("track deletion consistency",()=>{
   finishDeletion();
   expect(await deleting).toEqual([{id:"mix",name:"Updated",trackIds:["keep","new"]}]);
   expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual([{id:"mix",name:"Updated",trackIds:["keep","new"]}]);
+ });
+ it("preserves audio when another tab reattaches a track before deletion",async()=>{
+  const store=storage();let deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{
+   deleted=true;
+  })).resolves.toEqual([{id:"mix",name:"Mix",trackIds:["keep"]}]);
+  expect(deleted).toBe(true);
+  // Inject a synchronous cross-tab write immediately after the playlist
+  // cleanup commit, before the asynchronous IndexedDB deletion begins.
+  const other=storage();
+  const interfering={...other,
+   getItem:store.getItem,
+   removeItem:store.removeItem,
+   setItem:(key:string,value:string)=>{
+    store.setItem(key,value);
+    if(key==="playlists"){
+     store.setItem(key,JSON.stringify([{id:"mix",name:"Concurrent",trackIds:["keep","remove"]}]));
+    }
+   }
+  };
+  deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(interfering,"playlists",original,"remove",async()=>{deleted=true}))
+   .rejects.toThrow("added to a playlist during deletion");
+  expect(deleted).toBe(false);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual([{id:"mix",name:"Concurrent",trackIds:["keep","remove"]}]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("rejects blank track IDs before touching storage or audio",async()=>{
+  const store=storage();let deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original," ",async()=>{deleted=true})).rejects.toThrow("Invalid track ID");
+  expect(deleted).toBe(false);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
+ });
+ it("updates playlists from current durable state, preserving edits from other tabs",()=>{
+  const store=storage();
+  const stale=original;
+  store.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab rename",trackIds:["keep","remove","new"]}]));
+  const result=updateStoredPlaylists(store,"playlists",current=>current.map(p=>({...p,trackIds:p.trackIds.filter(id=>id!=="remove")})));
+  expect(result).toEqual([{id:"mix",name:"Other tab rename",trackIds:["keep","new"]}]);
+  expect(stale[0].name).toBe("Mix");
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(result);
  });
  it("never deletes audio when playlist persistence fails",async()=>{
   const store=storage();let deleted=false;
