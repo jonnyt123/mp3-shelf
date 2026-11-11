@@ -186,8 +186,13 @@ export function recoverFailedTrackDeletion(
  if(!audioTrackIds.has(entry.trackId)){
   // The deletion may have succeeded before another tab reattached the ID.
   // Reconcile missing-audio references before clearing the durable journal.
-  const current=parseStoredPlaylists(storage.getItem(entry.key));
+  const baseline=storage.getItem(entry.key);
+  const current=parseStoredPlaylists(baseline);
   if(current.some(playlist=>playlist.trackIds.includes(entry.trackId))){
+   // A second tab may edit after recovery reads the playlists. Preserve its
+   // newer state and keep the journal so startup can retry reconciliation.
+   if(storage.getItem(entry.key)!==baseline)
+    throw new Error("Playlists changed during deletion recovery. Retry reconciliation.");
    commitPlaylistEdit(storage,entry.key,current.map(playlist=>({
     ...playlist,trackIds:playlist.trackIds.filter(id=>id!==entry.trackId)
    })));
@@ -195,7 +200,8 @@ export function recoverFailedTrackDeletion(
   storage.removeItem(DELETE_RECOVERY_KEY);
   return parseStoredPlaylists(storage.getItem(entry.key));
  }
- const current=parseStoredPlaylists(storage.getItem(entry.key));
+ const baseline=storage.getItem(entry.key);
+ const current=parseStoredPlaylists(baseline);
  const oldById=new Map(entry.original.map(p=>[p.id,p]));
  const next=current.map(p=>{
   const old=oldById.get(p.id);
@@ -207,6 +213,8 @@ export function recoverFailedTrackDeletion(
   const ids=[...p.trackIds];ids.splice(insertAt,0,entry.trackId);
   return {...p,trackIds:ids};
  });
+ if(storage.getItem(entry.key)!==baseline)
+  throw new Error("Playlists changed during deletion recovery. Retry reconciliation.");
  commitPlaylistEdit(storage,entry.key,next);
  storage.removeItem(DELETE_RECOVERY_KEY);
  // Read the latest durable playlists: edits may occur while IDB deletion awaits.
