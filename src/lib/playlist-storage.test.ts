@@ -817,3 +817,35 @@ describe("recovery journal ownership across tab interleavings",()=>{
   expect(parseStoredPlaylists(base.getItem(playlistKey))[0].trackIds).toContain("remove");
  });
 });
+
+describe("asynchronous deletion journal ownership",()=>{
+ const original=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
+ function store(){
+  const data=new Map<string,string>([["playlists",JSON.stringify(original)]]);
+  return {getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)},removeItem:(key:string)=>{data.delete(key)}};
+ }
+ it("preserves a replacement journal when audio deletion succeeds",async()=>{
+  const storage=store();
+  const replacement=JSON.stringify({version:1,key:"playlists",trackId:"other",original});
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",original,"remove",async()=>{
+   storage.setItem("mp3-shelf-delete-recovery",replacement);
+  })).rejects.toThrow("journal changed");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBe(replacement);
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+ });
+ it("does not replay or erase a replacement journal after an audio failure",async()=>{
+  const storage=store();
+  const replacement=JSON.stringify({version:1,key:"playlists",trackId:"other",original});
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",original,"remove",async()=>{
+   storage.setItem("mp3-shelf-delete-recovery",replacement);
+   throw new Error("IDB abort");
+  })).rejects.toThrow("journal changed");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBe(replacement);
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+ });
+ it("cleans up the owned journal after ordinary successful deletion",async()=>{
+  const storage=store();
+  await deleteTrackWithPlaylistCleanup(storage,"playlists",original,"remove",async()=>{});
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
