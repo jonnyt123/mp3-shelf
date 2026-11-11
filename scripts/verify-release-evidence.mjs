@@ -25,6 +25,14 @@ export function verifyReleaseEvidence(evidence, expectedSha) {
       if (check.sha !== expectedSha || check.status !== "passed" || check.conclusion !== "success") {
         errors.push(`Check ${check.name} is missing, stale, or not successful.`);
       }
+      // A successful conclusion without any executed steps (for example an
+      // empty, skipped or cancelled CI workflow) is not release evidence.
+      // Require the executor's actual process exit code and a positive count
+      // of completed checks, rather than trusting a display-only PASS label.
+      if (check.exitCode !== 0 || !Number.isSafeInteger(check.stepsExecuted) ||
+          check.stepsExecuted < 1) {
+        errors.push(`Check ${check.name} lacks successful nonempty execution evidence.`);
+      }
     }
     const required = evidence.target === "web" ? ["test", "typecheck", "build"] : ["native-build", "native-tests", "device-acceptance"];
     for (const name of required) if (!names.has(name)) errors.push(`Missing mandatory check: ${name}.`);

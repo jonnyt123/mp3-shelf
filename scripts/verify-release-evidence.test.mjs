@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { verifyReleaseEvidence } from "./verify-release-evidence.mjs";
 
 const sha = "a".repeat(40);
-const check = name => ({ name, sha, status: "passed", conclusion: "success" });
+const check = name => ({ name, sha, status: "passed", conclusion: "success", exitCode: 0, stepsExecuted: 1 });
 const web = () => ({
   sha, target: "web", checks: ["test", "typecheck", "build"].map(check),
   branchProtectionSatisfied: true, rollbackReady: true
@@ -67,4 +67,37 @@ test("rejects whitespace check aliases and malformed check records without throw
   const duplicate = web();
   duplicate.checks.push(check("test "));
   assert.match(verifyReleaseEvidence(duplicate, sha).join(" "), /unique, exact/);
+});
+
+test("rejects zero-step, cancelled, absent or nonzero-exit execution evidence", () => {
+  for (const mutation of [
+    { stepsExecuted: 0 },
+    { stepsExecuted: -1 },
+    { stepsExecuted: "1" },
+    { stepsExecuted: 1.5 },
+    { stepsExecuted: Number.MAX_SAFE_INTEGER + 1 },
+    { stepsExecuted: undefined },
+    { exitCode: 1 },
+    { exitCode: null },
+    { exitCode: "0" },
+    { exitCode: undefined },
+  ]) {
+    const evidence = web();
+    Object.assign(evidence.checks[0], mutation);
+    assert.match(verifyReleaseEvidence(evidence, sha).join(" "), /nonempty execution evidence/);
+  }
+});
+
+test("rejects missing execution evidence on every required target check", () => {
+  for (const target of ["web", "ios"]) {
+    const evidence = target === "web" ? web() : {
+      ...web(), target: "ios", deviceAcceptance: true,
+      checks: ["native-build", "native-tests", "device-acceptance"].map(check)
+    };
+    for (let index = 0; index < evidence.checks.length; index++) {
+      const incomplete = structuredClone(evidence);
+      delete incomplete.checks[index].stepsExecuted;
+      assert.notDeepEqual(verifyReleaseEvidence(incomplete, sha), []);
+    }
+  }
 });
