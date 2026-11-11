@@ -103,21 +103,77 @@ export function commitPlaylistEdit(storage:Pick<Storage,"setItem">,key:string,ne
 }
 
 
-/** Remove playlist references before deleting audio. A failed playlist write
- * must never delete the only copy of a recording. If audio deletion fails,
- * restore the original references so the operation remains retryable. */
+/** Keep audio until the playlist cleanup has been durably committed.
+ * If deletion fails, restore only the removed track references against the
+ * CURRENT saved state, never a stale snapshot that can erase intervening edits.
+ * A rollback failure is recoverable by the next startup reconciliation. */
+const DELETE_RECOVERY_KEY="mp3-shelf-delete-recovery";
+type DeleteRecovery={version:1;key:string;trackId:string;original:StoredPlaylist[]};
+
+export function recoverFailedTrackDeletion(
+ storage:Pick<Storage,"getItem"|"setItem"|"removeItem">,
+ audioTrackIds:ReadonlySet<string>
+):StoredPlaylist[]|null{
+ const raw=storage.getItem(DELETE_RECOVERY_KEY);
+ if(raw===null)return null;
+ const value:unknown=JSON.parse(raw);
+ if(!value||typeof value!=="object")throw new Error("Invalid track deletion recovery journal.");
+ const entry=value as Partial<DeleteRecovery>;
+ if(entry.version!==1||typeof entry.key!=="string"||!entry.key||
+    typeof entry.trackId!=="string"||!entry.trackId||
+    !Array.isArray(entry.original))throw new Error("Invalid track deletion recovery journal.");
+ parseStoredPlaylists(JSON.stringify(entry.original));
+ // Audio was already deleted successfully: cleanup is final.
+ if(!audioTrackIds.has(entry.trackId)){
+  storage.removeItem(DELETE_RECOVERY_KEY);
+  return parseStoredPlaylists(storage.getItem(entry.key));
+ }
+ const current=parseStoredPlaylists(storage.getItem(entry.key));
+ const oldById=new Map(entry.original.map(p=>[p.id,p]));
+ const next=current.map(p=>{
+  const old=oldById.get(p.id);
+  if(!old||!old.trackIds.includes(entry.trackId)||p.trackIds.includes(entry.trackId))return p;
+  const index=old.trackIds.indexOf(entry.trackId);
+  const previous=old.trackIds.slice(0,index).reverse().find(id=>p.trackIds.includes(id));
+  const following=old.trackIds.slice(index+1).find(id=>p.trackIds.includes(id));
+  const insertAt=previous?p.trackIds.lastIndexOf(previous)+1:following?p.trackIds.indexOf(following):p.trackIds.length;
+  const ids=[...p.trackIds];ids.splice(insertAt,0,entry.trackId);
+  return {...p,trackIds:ids};
+ });
+ commitPlaylistEdit(storage,entry.key,next);
+ storage.removeItem(DELETE_RECOVERY_KEY);
+ return next;
+}
+
 export async function deleteTrackWithPlaylistCleanup(
- storage:Pick<Storage,"setItem">,key:string,
+ storage:Pick<Storage,"getItem"|"setItem"|"removeItem">,key:string,
  playlists:readonly StoredPlaylist[],trackId:string,
  deleteAudio:(id:string)=>Promise<void>
 ):Promise<StoredPlaylist[]>{
- const next=playlists.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==trackId)}));
- commitPlaylistEdit(storage,key,next);
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
+  throw new Error("A previous track deletion needs recovery before another deletion.");
+ // Use the current durable state rather than a possibly stale React snapshot.
+ const original=parseStoredPlaylists(storage.getItem(key));
+ const next=original.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==trackId)}));
+ const intent:DeleteRecovery={version:1,key,trackId,original};
+ storage.setItem(DELETE_RECOVERY_KEY,JSON.stringify(intent));
+ try{
+  commitPlaylistEdit(storage,key,next);
+ }catch(error){
+  storage.removeItem(DELETE_RECOVERY_KEY);
+  throw error;
+ }
  try{
   await deleteAudio(trackId);
+  storage.removeItem(DELETE_RECOVERY_KEY);
  }catch(error){
-  try{commitPlaylistEdit(storage,key,playlists)}
-  catch{throw new Error("Audio deletion failed and playlist rollback could not be saved. Reload the library before editing playlists.",{cause:error})}
+  try{
+   // Reconciliation merges against current edits, and leaves the journal
+   // intact if quota/storage errors prevent the repair.
+   recoverFailedTrackDeletion(storage,new Set([trackId]));
+  }catch{
+   throw new Error("Audio deletion failed and playlist rollback could not be saved. Reload the library before editing playlists.",{cause:error});
+  }
   throw error;
  }
  return next;
