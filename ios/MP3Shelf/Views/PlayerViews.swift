@@ -9,43 +9,21 @@ struct MiniPlayer: View {
 
     var body: some View {
         if let track = library.song(with: playback.currentTrackID) {
-            HStack(alignment: .center, spacing: dynamicTypeSize.isAccessibilitySize ? 6 : 12) {
-                Button(action: open) {
-                    HStack(spacing: 12) {
-                    ArtworkTile(track: track, size: 48)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(track.title)
-                            .font(.system(.subheadline, design: .rounded, weight: .bold))
-                            .foregroundStyle(.white)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
-                        Text(track.artist)
-                            .font(.caption)
-                            .foregroundStyle(ShelfTheme.subdued)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 8) {
+                        openNowPlaying(track)
+                        HStack(spacing: 12) {
+                            Spacer(minLength: 0)
+                            transportControls
+                        }
                     }
-                    Spacer(minLength: 0)
+                } else {
+                    HStack(alignment: .center, spacing: 12) {
+                        openNowPlaying(track)
+                        transportControls
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open Now Playing for \(track.title) by \(track.artist)")
-                .accessibilityHint("Show playback controls, lyrics and the queue")
-                Button { playback.togglePlayback() } label: {
-                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(ShelfTheme.background)
-                        .frame(width: 44, height: 44)
-                        .background(ShelfTheme.accent, in: Circle())
-                }
-                .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
-                Button { playback.next() } label: {
-                    Image(systemName: "forward.end.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("Next song")
             }
             .buttonStyle(.plain)
             .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 8 : 11)
@@ -77,6 +55,55 @@ struct MiniPlayer: View {
             }
             .shadow(color: .black.opacity(0.3), radius: 18, y: 6)
         }
+    }
+    // At accessibility text sizes, give the song metadata the full width and
+    // move transport actions below it instead of squeezing text between buttons.
+    private func openNowPlaying(_ track: MusicTrack) -> some View {
+        Button(action: open) {
+            HStack(spacing: 12) {
+                ArtworkTile(track: track, size: 48)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(track.title)
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                    Text(track.artist)
+                        .font(.caption)
+                        .foregroundStyle(ShelfTheme.subdued)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open Now Playing for \(track.title) by \(track.artist)")
+        .accessibilityHint("Show playback controls, lyrics and the queue")
+    }
+
+    private var transportControls: some View {
+        HStack(spacing: 12) {
+            Button { playback.togglePlayback() } label: {
+                Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ShelfTheme.background)
+                    .frame(width: 44, height: 44)
+                    .background(ShelfTheme.accent, in: Circle())
+            }
+            .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
+            .accessibilityHint("Toggle playback of the current song")
+            Button { playback.next() } label: {
+                Image(systemName: "forward.end.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Next song")
+            .accessibilityHint("Skip to the next song in the queue")
+        }
+        .buttonStyle(.plain)
     }
 }
 
