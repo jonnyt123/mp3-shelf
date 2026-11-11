@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, truncateSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, truncateSync, mkdirSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildLocalReceipt } from './local-evidence.mjs';
+import { buildLocalReceipt, verifyLocalReceipt } from './local-evidence.mjs';
 const sha = 'a'.repeat(40);
 const webSteps = ['node-release-safety','npm-ci','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity'];
 function fixture(fn) {
@@ -113,4 +113,31 @@ test('symlink substitution and non-file logs cannot create receipts', () => fixt
   unlinkSync(log);
   mkdirSync(log);
   assert.throws(() => buildLocalReceipt(a), /regular file/);
+}));
+
+test('receipt verifier accepts unchanged original logs and rejects byte tampering', () => fixture(dir => {
+  const a = args(dir);
+  const receipt = buildLocalReceipt(a);
+  assert.deepEqual(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }), []);
+  writeFileSync(join(dir, 'npm-build.log'), 'changed after receipt\n');
+  assert.match(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }).join(' '), /Log changed/);
+}));
+test('receipt verifier rejects missing, substituted and hard-linked logs', () => fixture(dir => {
+  const a = args(dir);
+  const receipt = buildLocalReceipt(a);
+  unlinkSync(join(dir, 'npm-test.log'));
+  assert.match(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }).join(' '), /Cannot verify log/);
+  const restored = args(dir);
+  const second = buildLocalReceipt(restored);
+  const alias = join(dir, 'alias.log');
+  linkSync(join(dir, 'npm-build.log'), alias);
+  assert.match(verifyLocalReceipt(second, { expectedSha: sha, logDir: dir }).join(' '), /unlinked file/);
+}));
+test('receipt verifier rejects forged release status and changed SHA', () => fixture(dir => {
+  const receipt = buildLocalReceipt(args(dir));
+  assert.match(verifyLocalReceipt(receipt, { expectedSha: 'b'.repeat(40), logDir: dir }).join(' '), /SHA mismatch/);
+  assert.match(verifyLocalReceipt({ ...receipt, rollback: 'VERIFIED' },
+    { expectedSha: sha, logDir: dir }).join(' '), /unauthorized/);
+  assert.match(verifyLocalReceipt({ ...receipt, steps: receipt.steps.slice(1) },
+    { expectedSha: sha, logDir: dir }).join(' '), /sequence/);
 }));

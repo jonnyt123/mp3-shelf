@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SHA-bound local observations, deliberately not a release approval.
 import { createHash } from 'node:crypto';
-import { closeSync, fstatSync, lstatSync, openSync, readSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, openSync, readSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -27,30 +27,9 @@ export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir })
     const path = resolve(logDir, file);
     // Logs may contain arbitrarily large provider/build output. Never load
     // unbounded files into memory or follow a substituted symlink.
-    const metadata = lstatSync(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) throw Error('Step log must be a regular file.');
-    const fd = openSync(path, 'r');
-    try {
-      const opened = fstatSync(fd);
-      if (!opened.isFile() || opened.dev !== metadata.dev || opened.ino !== metadata.ino)
-        throw Error('Step log changed during verification.');
-      const hash = createHash('sha256');
-      const buffer = Buffer.allocUnsafe(64 * 1024);
-      let bytes = 0;
-      let count;
-      while ((count = readSync(fd, buffer, 0, buffer.length, null)) !== 0) {
-        bytes += count;
-        if (bytes > 32 * 1024 * 1024) throw Error('Step log exceeds 32 MiB receipt limit.');
-        hash.update(buffer.subarray(0, count));
-      }
-      const final = fstatSync(fd);
-      if (final.size !== bytes || final.mtimeMs !== opened.mtimeMs)
-        throw Error('Step log changed during verification.');
-      return { name: step.name, success: step.success === 1, bytes,
-        sha256: hash.digest('hex'), file: basename(file) };
-    } finally {
-      closeSync(fd);
-    }
+    const fingerprint = readLogFingerprint(path);
+    return { name: step.name, success: step.success === 1,
+      ...fingerprint, file: basename(file) };
   });
   // An npm test/build run without an actual dependency reconciliation is not
   // release evidence. Require exactly one install mode, not a skipped install
@@ -76,8 +55,96 @@ export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir })
     status: passed ? 'local-checks-passed' : 'incomplete-or-failed', steps: receipts,
     physicalDeviceAcceptance: 'NOT_TESTED', branchProtection: 'NOT_VERIFIED', rollback: 'NOT_VERIFIED' };
 }
+
+/**
+ * Independently recheck a previously written receipt against its original log
+ * directory. A receipt is only an observation, not permission to deploy.
+ * The log hash must match the bytes on disk at verification time.
+ */
+export function verifyLocalReceipt(receipt, { expectedSha, logDir }) {
+  const errors = [];
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return ['Invalid receipt object.'];
+  if (!SHA.test(expectedSha ?? '') || receipt.candidateSha !== expectedSha)
+    errors.push('Receipt candidate SHA mismatch.');
+  if (!Object.hasOwn(required, receipt.mode)) errors.push('Unknown receipt mode.');
+  if (receipt.cleanCheckout !== true || receipt.exitCode !== 0 ||
+      receipt.status !== 'local-checks-passed')
+    errors.push('Receipt is not a successful clean-checkout observation.');
+  if (receipt.physicalDeviceAcceptance !== 'NOT_TESTED' ||
+      receipt.branchProtection !== 'NOT_VERIFIED' || receipt.rollback !== 'NOT_VERIFIED')
+    errors.push('Local receipt contains unauthorized release approval claims.');
+  if (!Array.isArray(receipt.steps)) return [...errors, 'Missing receipt steps.'];
+  const steps = receipt.steps;
+  const names = steps.map(s => s?.name);
+  const installs = names.filter(n => n === 'npm-ci' || n === 'npm-ci-offline');
+  const expected = receipt.mode === 'node-only' ? ['node-release-safety'] :
+    receipt.mode === 'native' ? ['native-local-release', 'post-native-checkout-integrity'] :
+    ['node-release-safety', installs[0], 'npm-test', 'npm-typecheck', 'npm-build',
+      'post-web-checkout-integrity',
+      ...(receipt.mode === 'all' ? ['native-local-release', 'post-native-checkout-integrity'] : [])];
+  if (names.length !== expected.length || names.some((n, i) => n !== expected[i]) ||
+      (['web', 'all'].includes(receipt.mode) && installs.length !== 1))
+    errors.push('Receipt step sequence is incomplete or unexpected.');
+  for (const step of steps) {
+    if (!step || typeof step !== 'object' || !allowed.has(step.name) ||
+        step.success !== true || !Number.isSafeInteger(step.bytes) ||
+        step.bytes < 1 || step.bytes > 32 * 1024 * 1024 ||
+        !/^[0-9a-f]{64}$/.test(step.sha256 ?? '') ||
+        step.file !== step.name + '.log') {
+      errors.push('Malformed or unsuccessful receipt step.');
+      continue;
+    }
+    // The filename is generated from an allowlist, never taken from a
+    // user-controlled path. The existing bounded, symlink-safe reader also
+    // checks the file's identity while hashing.
+    try {
+      const actual = readLogFingerprint(resolve(logDir, step.file));
+      if (actual.bytes !== step.bytes || actual.sha256 !== step.sha256)
+        errors.push('Log changed after receipt creation: ' + step.name);
+    } catch (error) {
+      errors.push('Cannot verify log ' + step.name + ': ' + error.message);
+    }
+  }
+  return errors;
+}
+
+function readLogFingerprint(path) {
+  const metadata = lstatSync(path);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1)
+    throw Error('Step log must be a regular, unlinked file.');
+  const fd = openSync(path, 'r');
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== metadata.dev || opened.ino !== metadata.ino ||
+        opened.nlink !== 1) throw Error('Step log changed during verification.');
+    const hash = createHash('sha256');
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let bytes = 0;
+    let count;
+    while ((count = readSync(fd, buffer, 0, buffer.length, null)) !== 0) {
+      bytes += count;
+      if (bytes > 32 * 1024 * 1024) throw Error('Step log exceeds 32 MiB receipt limit.');
+      hash.update(buffer.subarray(0, count));
+    }
+    const final = fstatSync(fd);
+    if (final.size !== bytes || final.mtimeMs !== opened.mtimeMs ||
+        final.ctimeMs !== opened.ctimeMs || final.nlink !== 1)
+      throw Error('Step log changed during verification.');
+    return { bytes, sha256: hash.digest('hex') };
+  } finally { closeSync(fd); }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
+    if (process.argv[2] === '--verify') {
+      const [, path, sha, dir] = process.argv.slice(2);
+      if (!path || !sha || !dir) throw Error('Usage: --verify receipt.json sha log-directory');
+      const errors = verifyLocalReceipt(JSON.parse(readFileSync(path, 'utf8')),
+        { expectedSha: sha, logDir: dir });
+      if (errors.length) throw Error(errors.join('; '));
+      console.log('Local receipt and original logs verified for ' + sha);
+      process.exit(0);
+    }
     const [out, sha, dirty, mode, code, dir, ...raw] = process.argv.slice(2);
     const steps = raw.map(item => {
       const [name, value] = item.split(':');
