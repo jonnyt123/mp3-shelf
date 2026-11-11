@@ -55,6 +55,11 @@ type RestoreJournal={version:1;key?:string;trackIds:string[];playlists:StoredPla
  * terminates between stores, startup can finish the playlist half safely. */
 export function stagePlaylistRestore(storage:Pick<Storage,"getItem"|"setItem">,key:string,tracks:readonly {id:string}[],playlists:readonly StoredPlaylist[]):boolean{
  const pending=storage.getItem(RESTORE_JOURNAL_KEY);
+ // A deletion can be halfway between playlist cleanup and IndexedDB removal.
+ // Do not restore over that state: its recovery journal must be reconciled first.
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
+  throw new Error("Finish the pending track deletion recovery before restoring a backup.");
+ if(!key.trim())throw new Error("Invalid playlist storage key.");
  // Validate the destination before any IndexedDB audio insertion. Otherwise a
  // corrupt local playlist record is only discovered during final commit, after
  // potentially gigabytes of restored audio have already been persisted.
@@ -178,6 +183,10 @@ export async function deleteTrackWithPlaylistCleanup(
 ):Promise<StoredPlaylist[]>{
  if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
   throw new Error("A previous track deletion needs recovery before another deletion.");
+ // A restore can be between staging its intent and writing its audio records.
+ // Deleting any track now can invalidate its durable recovery checkpoint.
+ if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)
+  throw new Error("Finish the pending backup restore before deleting a recording.");
  if(typeof trackId!=="string"||!trackId.trim())throw new Error("Invalid track ID for deletion.");
  // Use the current durable state rather than a possibly stale React snapshot.
  const original=parseStoredPlaylists(storage.getItem(key));
