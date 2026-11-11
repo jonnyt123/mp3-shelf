@@ -182,6 +182,18 @@ enum PortableShelfArchive {
         return bytes
     }
 
+    /// A backup can repair a missing or damaged sidecar without replacing the
+    /// original file. A non-nil catalog reference alone is not proof that its
+    /// contents are still readable. Leave the old bytes in place for recovery.
+    static func sidecarNeedsRecovery(named fileName: String?, from directory: URL,
+                                     maximumBytes: Int,
+                                     isValid: (Data) -> Bool) -> Bool {
+        guard let fileName else { return true }
+        guard let bytes = try? readSidecar(named: fileName, from: directory,
+                                           maximumBytes: maximumBytes) else { return true }
+        return !isValid(bytes)
+    }
+
     static func export(_ inputs: [MediaInput], playlists: [MusicPlaylist], to destination: URL) throws {
         var parts: [(url: URL?, bytes: Data?, expectedLength: Int64)] = []
         var offset: Int64 = 0

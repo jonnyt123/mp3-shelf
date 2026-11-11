@@ -272,9 +272,21 @@ final class MusicLibrary: ObservableObject {
                                     existingID: UUID) throws {
             guard let index = tracks.firstIndex(where: { $0.id == existingID }) else { return }
             let current = tracks[index]
-            let needsArtwork = current.artworkFileName == nil && archived.artwork != nil
-            let needsLyrics = current.lyricsFileName == nil &&
-                !(archived.lyrics ?? "").isEmpty
+            // A non-nil filename may refer to a deleted, protected, corrupt,
+            // or non-regular file. Repeated restores must repair that state
+            // rather than silently keeping a broken artwork/lyrics reference.
+            // Never modify or delete the previous sidecar: recovery uses a
+            // fresh filename and publishes it only after the catalog commits.
+            let needsArtwork = archived.artwork != nil &&
+                PortableShelfArchive.sidecarNeedsRecovery(
+                    named: current.artworkFileName, from: artworkDirectory,
+                    maximumBytes: 20 * 1024 * 1024,
+                    isValid: { UIImage(data: $0) != nil })
+            let needsLyrics = !(archived.lyrics ?? "").isEmpty &&
+                PortableShelfArchive.sidecarNeedsRecovery(
+                    named: current.lyricsFileName, from: lyricsDirectory,
+                    maximumBytes: 500 * 1024,
+                    isValid: { String(data: $0, encoding: .utf8) != nil })
             guard needsArtwork || needsLyrics else { return }
 
             var restored = current

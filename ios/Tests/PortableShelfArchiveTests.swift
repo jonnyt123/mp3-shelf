@@ -184,6 +184,32 @@ struct PortableShelfArchiveTests {
         assert(String(data: invalidUTF8, encoding: .utf8) == nil)
         let originalSidecarBytes = try Data(contentsOf: savedLyrics)
         assert(originalSidecarBytes == expectedLyrics)
+        // A partial restore must also heal stale non-nil references, not just
+        // completely absent references. Never mutate the old file while
+        // determining whether archive bytes should be restored.
+        assert(!PortableShelfArchive.sidecarNeedsRecovery(
+            named: "song.lrc", from: sidecarDirectory,
+            maximumBytes: 500 * 1024,
+            isValid: { String(data: $0, encoding: .utf8) != nil }))
+        assert(PortableShelfArchive.sidecarNeedsRecovery(
+            named: nil, from: sidecarDirectory,
+            maximumBytes: 500 * 1024, isValid: { _ in true }))
+        assert(PortableShelfArchive.sidecarNeedsRecovery(
+            named: "lost.lrc", from: sidecarDirectory,
+            maximumBytes: 500 * 1024, isValid: { _ in true }))
+        assert(PortableShelfArchive.sidecarNeedsRecovery(
+            named: "corrupt.lrc", from: sidecarDirectory,
+            maximumBytes: 500 * 1024,
+            isValid: { String(data: $0, encoding: .utf8) != nil }))
+        assert(PortableShelfArchive.sidecarNeedsRecovery(
+            named: "song.lrc", from: sidecarDirectory,
+            maximumBytes: 2, isValid: { _ in true }))
+        assert(PortableShelfArchive.sidecarNeedsRecovery(
+            named: "../song.lrc", from: sidecarDirectory,
+            maximumBytes: 500 * 1024, isValid: { _ in true }))
+        let originalLyricsAfterRecoveryCheck = try Data(contentsOf: savedLyrics)
+        assert(originalLyricsAfterRecoveryCheck == expectedLyrics)
+        print("PASS: restore eligibility detects missing/corrupt/stale sidecars without modifying originals")
         print("PASS: referenced sidecars fail closed; intact bytes and valid sidecars remain safe")
 
         let archiveURL = folder.appendingPathComponent("test.mp3shelf")
