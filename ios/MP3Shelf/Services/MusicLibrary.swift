@@ -1302,9 +1302,18 @@ final class MusicLibrary: ObservableObject {
         guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanTitle.isEmpty else { return }
-        tracks[index].title = cleanTitle
-        tracks[index].artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        save()
+        var updatedTracks = tracks
+        updatedTracks[index].title = cleanTitle
+        updatedTracks[index].artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Never publish a rename that has not been durably committed.
+        do {
+            try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+            tracks = updatedTracks
+            libraryStorageError = nil
+        } catch {
+            libraryStorageError = "Could not save the recording name. Your previous metadata was preserved."
+            print("MP3 Shelf could not persist recording rename: \(error)")
+        }
     }
 
     func toggleFavorite(_ id: UUID) {
