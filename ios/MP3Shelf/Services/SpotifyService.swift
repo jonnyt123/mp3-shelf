@@ -9,7 +9,16 @@ import UIKit
 @MainActor
 final class SpotifyService: NSObject, ObservableObject {
     @Published var clientID: String {
-        didSet { UserDefaults.standard.set(clientID, forKey: Self.clientIDKey) }
+        didSet {
+            UserDefaults.standard.set(clientID, forKey: Self.clientIDKey)
+            // OAuth tokens belong to the client ID that obtained them. A
+            // developer-app switch must not reuse the previous app's refresh
+            // token, cached playlists, or in-flight authorized requests.
+            if clientID != oldValue {
+                disconnect()
+                message = "Spotify Client ID changed. Connect again to import playlists."
+            }
+        }
     }
     @Published private(set) var isConnected = false
     @Published private(set) var playlists: [SpotifyPlaylist] = []
