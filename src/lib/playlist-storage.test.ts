@@ -939,7 +939,7 @@ describe("post-deletion reconciliation cross-tab races",()=>{
   const racing={
    ...store,
    getItem:(name:string)=>{
-    if(afterDelete&&name===key&&++reads===2)
+    if(afterDelete&&name===key&&++reads===3)
      store.setItem(key,JSON.stringify(concurrent));
     return store.getItem(name);
    }
