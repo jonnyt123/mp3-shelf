@@ -725,6 +725,29 @@ struct PlaylistsView: View {
         return sortAlphabetically ? lists.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } : lists
     }
 
+    // Keep the result count readable and the recovery control reachable on
+    // compact phones and at accessibility text sizes.
+    @ViewBuilder private var playlistSearchSummary: some View {
+        Text("\(visiblePlaylists.count) of \(library.playlists.count) playlists")
+            .font(.subheadline.monospacedDigit())
+            .foregroundStyle(ShelfTheme.subdued)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("\(visiblePlaylists.count) playlists match your search out of \(library.playlists.count)")
+        if !dynamicTypeSize.isAccessibilitySize {
+            Spacer(minLength: 0)
+        }
+        Button {
+            playlistQuery = ""
+        } label: {
+            Label("Clear search", systemImage: "xmark.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(ShelfTheme.accent)
+        .accessibilityHint("Remove the playlist search filter")
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -764,25 +787,25 @@ struct PlaylistsView: View {
                         .tint(ShelfTheme.accent)
                         .frame(minHeight: 44)
                     if hasPlaylistQuery {
-                        HStack(alignment: .center, spacing: 12) {
-                            Text("\(visiblePlaylists.count) of \(library.playlists.count) playlists")
-                                .font(.subheadline.monospacedDigit())
-                                .foregroundStyle(ShelfTheme.subdued)
-                                .accessibilityLabel("\(visiblePlaylists.count) playlists match your search out of \(library.playlists.count)")
-                            Spacer(minLength: 0)
-                            Button {
-                                playlistQuery = ""
-                            } label: {
-                                Label("Clear search", systemImage: "xmark.circle.fill")
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(minHeight: 44)
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    playlistSearchSummary
+                                }
+                            } else {
+                                HStack(alignment: .center, spacing: 12) {
+                                    playlistSearchSummary
+                                }
                             }
-                            .accessibilityHint("Remove the playlist search filter")
                         }
                     }
                     if hasPlaylistQuery && visiblePlaylists.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("No playlists match your search.")
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Try a different name, or clear the search to browse your collections.")
+                                .font(.subheadline)
                                 .foregroundStyle(ShelfTheme.subdued)
                                 .fixedSize(horizontal: false, vertical: true)
                             Button {
@@ -903,7 +926,12 @@ struct PlaylistsView: View {
             Button("Save") {
                 let name = renamedName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return }
-                if let playlist = pendingRename { library.renamePlaylist(playlist.id, to: name) }
+                if let playlist = pendingRename {
+                    library.renamePlaylist(playlist.id, to: name)
+                    // The renamed collection may no longer match the old query.
+                    // Reveal it rather than leaving the user on an empty result.
+                    playlistQuery = ""
+                }
                 pendingRename = nil
             }
             .disabled(renamedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
