@@ -30,7 +30,8 @@ export function persistRestoredPlaylists(
  // Validate backup playlists before writing. Invalid IDs must not silently
  // merge into the user\'s current playlists.
  parseStoredPlaylists(JSON.stringify(incoming));
- const existing=parseStoredPlaylists(storage.getItem(key));
+ const baseline=storage.getItem(key);
+ const existing=parseStoredPlaylists(baseline);
  const merged=new Map(existing.map(item=>[item.id,item]));
  for(const item of incoming){
   const saved=merged.get(item.id);
@@ -44,6 +45,10 @@ export function persistRestoredPlaylists(
  const next=[...merged.values()];
  // Verify the entire merged representation before mutating persistent storage.
  parseStoredPlaylists(JSON.stringify(next));
+ // Detect a concurrent write during merge instead of silently overwriting it.
+ // This narrows the race but does not replace a cross-tab atomic lock.
+ if(storage.getItem(key)!==baseline)
+  throw new Error("Playlists changed during backup restore. Retry recovery without discarding the journal.");
  storage.setItem(key,JSON.stringify(next));
  return next;
 }
