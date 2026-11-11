@@ -76,7 +76,8 @@ export function recoverPlaylistRestore(storage:Pick<Storage,"getItem"|"setItem"|
  const parsed:unknown=JSON.parse(raw);
  if(!parsed||typeof parsed!=="object")throw new Error("Invalid pending restore journal.");
  const journal=parsed as Partial<RestoreJournal>;
- if(journal.version!==1||(journal.key!==undefined&&(typeof journal.key!=="string"||!journal.key))||\n    !Array.isArray(journal.trackIds)||!Array.isArray(journal.playlists)||
+ if(journal.version!==1||(journal.key!==undefined&&(typeof journal.key!=="string"||!journal.key))||
+    !Array.isArray(journal.trackIds)||!Array.isArray(journal.playlists)||
     journal.trackIds.some(id=>typeof id!=="string"||!id.trim())||
     new Set(journal.trackIds).size!==journal.trackIds.length)throw new Error("Invalid pending restore journal.");
  parseStoredPlaylists(JSON.stringify(journal.playlists));
