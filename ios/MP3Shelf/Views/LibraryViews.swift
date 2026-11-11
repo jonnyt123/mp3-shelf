@@ -192,20 +192,20 @@ struct LibraryView: View {
                                 Circle()
                                     .fill(ShelfTheme.mint)
                                     .frame(width: 7, height: 7)
-                                Text("ALWAYS OFFLINE")
+                                Text("YOUR MUSIC LIBRARY")
                                     .font(.system(size: 10, weight: .heavy, design: .rounded))
                                     .tracking(1.6)
                                     .foregroundStyle(ShelfTheme.mint)
                             }
                             Text(library.tracks.isEmpty
                                  ? "Start your\nsoundtrack."
-                                 : "All yours.\nAlways playing.")
+                                 : "Your songs.\nOne place.")
                                 .font(.system(.title2, design: .rounded, weight: .bold))
                                 .foregroundStyle(.white)
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(library.tracks.isEmpty
                                  ? "Your favorite songs, right on your iPhone."
-                                 : "\(library.tracks.count) songs ready wherever life takes you.")
+                                 : "\(library.tracks.count) songs in your library. Downloaded recordings play offline.")
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
