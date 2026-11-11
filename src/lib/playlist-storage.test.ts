@@ -506,3 +506,52 @@ describe("cross-tab playlist UI mutations",()=>{
   expect(storage.getItem("playlists")).toBe("{invalid");
  });
 });
+
+
+describe("journal-aware ordinary playlist edits",()=>{
+ function store(){
+  const data=new Map<string,string>([["playlists",JSON.stringify([{id:"saved",name:"Keep",trackIds:["audio"]}])]]);
+  let writes=0;
+  return {data,get writes(){return writes},getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{writes++;data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}};
+ }
+ const edit=(items:readonly {id:string;name:string;trackIds:string[]}[])=>
+  [...items,{id:"new",name:"New",trackIds:[]}];
+ it.each(["mp3-shelf-delete-recovery","mp3-shelf-restore-pending"])(
+  "rejects edits while %s exists without invoking updater or changing playlists",journalKey=>{
+   const storage=store();
+   storage.data.set(journalKey,"pending");
+   const before=storage.getItem("playlists");
+   let invoked=false;
+   expect(()=>updateStoredPlaylists(storage,"playlists",current=>{invoked=true;return edit(current)})).toThrow(/pending|Finish/);
+   expect(invoked).toBe(false);
+   expect(storage.writes).toBe(0);
+   expect(storage.getItem("playlists")).toBe(before);
+   expect(storage.getItem(journalKey)).toBe("pending");
+  });
+ it("allows edits after recovery journals have been cleared",()=>{
+  const storage=store();
+  storage.data.set("mp3-shelf-delete-recovery","pending");
+  storage.removeItem("mp3-shelf-delete-recovery");
+  expect(updateStoredPlaylists(storage,"playlists",edit)).toEqual([
+   {id:"saved",name:"Keep",trackIds:["audio"]},{id:"new",name:"New",trackIds:[]}
+  ]);
+  expect(storage.writes).toBe(1);
+ });
+ it("refuses a journal staged during playlist hydration before committing",()=>{
+  const storage=store();
+  const before=storage.getItem("playlists");
+  const adapter={
+   getItem:(key:string)=>{
+    const value=storage.getItem(key);
+    if(key==="playlists")storage.data.set("mp3-shelf-restore-pending","staged");
+    return value;
+   },
+   setItem:storage.setItem
+  };
+  expect(()=>updateStoredPlaylists(adapter,"playlists",edit)).toThrow("started while editing");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(storage.writes).toBe(0);
+ });
+});
