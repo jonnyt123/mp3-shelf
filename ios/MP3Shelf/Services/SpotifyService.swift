@@ -576,7 +576,32 @@ struct SpotifyPlaylist: Identifiable, Decodable {
     let external_urls: SpotifyURLContainer?
 }
 struct SpotifyURLContainer: Decodable { let spotify: String? }
-private struct SpotifyPage<T: Decodable>: Decodable { let items: [T]; let next: String? }
+private struct SpotifyPage<T: Decodable>: Decodable {
+    let items: [T]
+    let next: String?
+
+    private enum CodingKeys: String, CodingKey { case items, next }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        next = try container.decodeIfPresent(String.self, forKey: .next)
+        // Spotify can return an invalid/deleted entry in the middle of an
+        // otherwise valid page. Decode each entry independently instead of
+        // discarding the page and all later pages on one malformed item.
+        // A missing/non-array "items" is still a malformed API response.
+        var entries = try container.nestedUnkeyedContainer(forKey: .items)
+        var decoded: [T] = []
+        while !entries.isAtEnd {
+            // A superDecoder consumes exactly one array position even when
+            // the entry's shape cannot be decoded as T.
+            let entry = try entries.superDecoder()
+            if let value = try? T(from: entry) {
+                decoded.append(value)
+            }
+        }
+        items = decoded
+    }
+}
 private struct SpotifyPlaylistItem: Decodable {
     let item: SpotifyTrack?
     let track: SpotifyTrack?
