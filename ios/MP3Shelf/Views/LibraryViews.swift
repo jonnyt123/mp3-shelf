@@ -1075,9 +1075,17 @@ struct PlaylistDetailView: View {
         return ("Awaiting MP3 source search", "magnifyingglass")
     }
 
+    // Both actions start a new playlist queue. Explicitly set shuffle mode for
+    // each action so a previous shuffled session cannot silently affect Play.
+    private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
+        guard let first = shuffled ? tracks.randomElement() : tracks.first else { return }
+        playback.isShuffled = shuffled
+        playback.play(first, queue: tracks)
+    }
+
     private func playlistPlayButton(_ tracks: [MusicTrack]) -> some View {
         Button {
-            if let first = tracks.first { playback.play(first, queue: tracks) }
+            startPlaylist(tracks, shuffled: false)
         } label: {
             Label("Play", systemImage: "play.fill")
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -1085,20 +1093,25 @@ struct PlaylistDetailView: View {
         .buttonStyle(.borderedProminent)
         .tint(ShelfTheme.accent)
         .disabled(tracks.isEmpty)
+        .accessibilityLabel("Play playlist in order")
+        .accessibilityHint(tracks.isEmpty
+                           ? "No saved recordings are available to play"
+                           : "Start at the first saved song and play in playlist order")
     }
 
     private func playlistShuffleButton(_ tracks: [MusicTrack]) -> some View {
         Button {
-            if let track = tracks.randomElement() {
-                playback.isShuffled = true
-                playback.play(track, queue: tracks)
-            }
+            startPlaylist(tracks, shuffled: true)
         } label: {
             Label("Shuffle", systemImage: "shuffle")
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
         .disabled(tracks.isEmpty)
+        .accessibilityLabel("Shuffle playlist")
+        .accessibilityHint(tracks.isEmpty
+                           ? "No saved recordings are available to shuffle"
+                           : "Start with a random saved song and shuffle the playlist")
     }
 
     var body: some View {
