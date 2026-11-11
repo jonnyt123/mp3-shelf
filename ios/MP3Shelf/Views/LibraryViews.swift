@@ -69,8 +69,8 @@ struct LibraryView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    // Keep a single result snapshot for all controls and rows in a render pass.
-    // The search task owns when a new query becomes eligible for display.
+    // Do not run a stale query or construct a large result array while typing.
+    // The search task determines when the latest query is ready for display.
     private var displayed: [MusicTrack] {
         guard !isSearchUpdating else { return [] }
         return library.browseTracks(query: settledSearchText, favoritesOnly: favoritesOnly,
