@@ -151,6 +151,9 @@ if [[ "$MODE" != builds ]]; then
   run_suite playback-interruptions \
     ios/MP3Shelf/Models/MusicModels.swift \
     ios/Tests/PlaybackInterruptionTests.swift
+  run_suite downloaded-audio-signature \
+    ios/MP3Shelf/Models/DownloadedAudioSignature.swift \
+    ios/Tests/DownloadedAudioSignatureTests.swift
   run_suite downloaded-audio-format \
     ios/MP3Shelf/Models/MusicModels.swift \
     ios/Tests/DownloadedAudioFormatTests.swift

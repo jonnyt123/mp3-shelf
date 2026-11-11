@@ -6,6 +6,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        A60C4A953EC747A38F3BD001 /* DownloadedAudioSignature.swift in Sources */ = {isa = PBXBuildFile; fileRef = A60C4A953EC747A38F3BD002 /* DownloadedAudioSignature.swift */; };
 		A9E6F2461B4C4F19A8D0C271 /* PlaybackOrder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */; };
 		DBA001A001A001A001A001A1 /* PortableShelfArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */; };
 		888888888888888888888888 /* LyricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 777777777777777777777777 /* LyricsView.swift */; };
@@ -37,6 +38,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        A60C4A953EC747A38F3BD002 /* DownloadedAudioSignature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadedAudioSignature.swift; sourceTree = "<group>"; };
 		A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackOrder.swift; sourceTree = "<group>"; };
 		DBA001A001A001A001A001A2 /* PortableShelfArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortableShelfArchive.swift; sourceTree = "<group>"; };
 		777777777777777777777777 /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsView.swift; sourceTree = "<group>"; };
@@ -86,6 +88,7 @@
 				F358300777CBF3353E807A35 /* Resources */,
 			); path = MP3Shelf; sourceTree = "<group>"; };
 		E9CF4F9355D0A5E1275010D6 /* Models */ = {isa = PBXGroup; children = (
+                A60C4A953EC747A38F3BD002 /* DownloadedAudioSignature.swift */,
 				3FC7730E5CFF09F5B95257B0 /* MusicModels.swift */,
 				A9E6F2461B4C4F19A8D0C272 /* PlaybackOrder.swift */,
 				ABCA09110000000000000006 /* SourceDiscoveryJob.swift */,
@@ -134,6 +137,7 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		12573461486BCB4FF9F39CD6 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+                A60C4A953EC747A38F3BD001 /* DownloadedAudioSignature.swift in Sources */,
 				39ADF52DD635A9F51C690F39 /* DownloadPathProof.swift in Sources */,
 				09BF39F8B3187FB59CC2C493 /* AppleMusicViews.swift in Sources */,
 				18C77339A4D7652726EC7476 /* AppleMusicService.swift in Sources */,
