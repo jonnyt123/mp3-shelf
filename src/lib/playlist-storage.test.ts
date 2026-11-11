@@ -152,6 +152,23 @@ describe("crash-safe backup restoration journal",()=>{
   expect(hasPendingPlaylistRestore(storage)).toBe(false);
   expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")).toBeNull();
  });
+ it("rejects dangling playlist links even after all imported recordings are present",()=>{
+  const storage=store();
+  const bad=[{id:"new",name:"Incomplete archive",trackIds:["b","missing"]}];
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],bad);
+  const before=storage.getItem("playlists");
+  expect(()=>recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists"))
+   .toThrow("references missing audio");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+ });
+ it("allows restored playlists to reference recordings already in the local library",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],[{id:"new",name:"Mixed",trackIds:["a","b"]}]);
+  expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists"))
+   .toContainEqual({id:"new",name:"Mixed",trackIds:["a","b"]});
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+ });
  it("never publishes playlist links if a crash happened before audio insertion",()=>{
   const storage=store();
   stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
