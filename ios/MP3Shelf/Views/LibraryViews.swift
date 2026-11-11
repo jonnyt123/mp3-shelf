@@ -657,6 +657,10 @@ struct PlaylistsView: View {
             : [GridItem(.adaptive(minimum: 170), spacing: 13)]
     }
 
+    private var hasPlaylistQuery: Bool {
+        !playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var visiblePlaylists: [MusicPlaylist] {
         let query = playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let lists = library.playlists.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
@@ -700,7 +704,25 @@ struct PlaylistsView: View {
                                           detail: "\(library.playlists.count) collections")
                     Toggle("Sort alphabetically", isOn: $sortAlphabetically)
                         .tint(ShelfTheme.accent)
-                    if !playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && visiblePlaylists.isEmpty {
+                        .frame(minHeight: 44)
+                    if hasPlaylistQuery {
+                        HStack(alignment: .center, spacing: 12) {
+                            Text("\(visiblePlaylists.count) of \(library.playlists.count) playlists")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .accessibilityLabel("\(visiblePlaylists.count) playlists match your search out of \(library.playlists.count)")
+                            Spacer(minLength: 0)
+                            Button {
+                                playlistQuery = ""
+                            } label: {
+                                Label("Clear search", systemImage: "xmark.circle.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(minHeight: 44)
+                            }
+                            .accessibilityHint("Remove the playlist search filter")
+                        }
+                    }
+                    if hasPlaylistQuery && visiblePlaylists.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("No playlists match your search.")
                                 .foregroundStyle(ShelfTheme.subdued)
@@ -716,7 +738,7 @@ struct PlaylistsView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    if library.playlists.isEmpty && playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if library.playlists.isEmpty && !hasPlaylistQuery {
                         VStack(alignment: .leading, spacing: 13) {
                             PremiumIcon(symbol: "square.stack.3d.up",
                                         color: ShelfTheme.accent, size: 55)
@@ -857,7 +879,9 @@ struct PlaylistsView: View {
                 Circle().strokeBorder(.white.opacity(0.2), lineWidth: 1)
                     .frame(width: 108, height: 108)
                     .offset(x: 57, y: -33)
-                if let cover = library.songs(in: list).first {
+                // Resolve just the cover instead of materializing every song in
+                // each visible playlist during grid updates and scrolling.
+                if let cover = list.trackIDs.lazy.compactMap({ library.song(with: $0) }).first {
                     ArtworkTile(track: cover, size: 112)
                         .rotationEffect(.degrees(-7))
                         .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
