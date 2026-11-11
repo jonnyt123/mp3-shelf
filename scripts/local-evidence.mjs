@@ -28,9 +28,26 @@ export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir })
     return { name: step.name, success: step.success === 1, bytes: data.byteLength,
       sha256: createHash('sha256').update(data).digest('hex'), file: basename(file) };
   });
-  const completed = new Set(receipts.filter(s => s.success).map(s => s.name));
-  const passed = exitCode === 0 && required[mode].every(name => completed.has(name)) &&
-    receipts.every(s => s.success);
+  // An npm test/build run without an actual dependency reconciliation is not
+  // release evidence. Require exactly one install mode, not a skipped install
+  // or a mixed online/offline invocation.
+  const installSteps = receipts.filter(s => s.name === 'npm-ci' || s.name === 'npm-ci-offline');
+  const installValid = !['web', 'all'].includes(mode) ||
+    (installSteps.length === 1 && installSteps[0].success);
+  // Receipts must describe the execution sequence the runner actually uses.
+  // This rejects reordered, injected or duplicate-looking success reports.
+  const expected = mode === 'node-only' ? ['node-release-safety'] :
+    mode === 'native' ? ['native-local-release', 'post-native-checkout-integrity'] :
+    ['node-release-safety', installSteps[0]?.name, 'npm-test', 'npm-typecheck',
+      'npm-build', 'post-web-checkout-integrity',
+      ...(mode === 'all' ? ['native-local-release', 'post-native-checkout-integrity'] : [])];
+  const names = receipts.map(s => s.name);
+  const exactSequence = names.length === expected.length &&
+    names.every((name, index) => name === expected[index]);
+  const completed = new Set(receipts.filter(s => s.success && s.bytes > 0).map(s => s.name));
+  const passed = exitCode === 0 && installValid && exactSequence &&
+    required[mode].every(name => completed.has(name)) &&
+    receipts.every(s => s.success && s.bytes > 0);
   return { schemaVersion: 1, candidateSha: sha, mode, cleanCheckout: true, exitCode,
     status: passed ? 'local-checks-passed' : 'incomplete-or-failed', steps: receipts,
     physicalDeviceAcceptance: 'NOT_TESTED', branchProtection: 'NOT_VERIFIED', rollback: 'NOT_VERIFIED' };

@@ -54,3 +54,37 @@ test('native receipt requires native checks but never claims device pass', () =>
   assert.equal(r.status, 'local-checks-passed');
   assert.equal(r.physicalDeviceAcceptance, 'NOT_TESTED');
 }));
+
+test('web and all receipts require exactly one successful dependency install', () => fixture(dir => {
+  const omitted = args(dir, webSteps.filter(s => s !== 'npm-ci'));
+  assert.equal(buildLocalReceipt(omitted).status, 'incomplete-or-failed');
+  const mixed = args(dir, [...webSteps, 'npm-ci-offline']);
+  assert.equal(buildLocalReceipt(mixed).status, 'incomplete-or-failed');
+  const offline = args(dir, webSteps.map(s => s === 'npm-ci' ? 'npm-ci-offline' : s));
+  assert.equal(buildLocalReceipt(offline).status, 'local-checks-passed');
+  const all = args(dir, [...webSteps, 'native-local-release', 'post-native-checkout-integrity']);
+  all.mode = 'all';
+  assert.equal(buildLocalReceipt(all).status, 'local-checks-passed');
+  all.steps = all.steps.filter(s => s.name !== 'npm-ci');
+  assert.equal(buildLocalReceipt(all).status, 'incomplete-or-failed');
+}));
+test('successful but empty or reordered step logs cannot pass', () => fixture(dir => {
+  const empty = args(dir);
+  writeFileSync(join(dir, 'npm-build.log'), '');
+  assert.equal(buildLocalReceipt(empty).status, 'incomplete-or-failed');
+  const swapped = args(dir);
+  [swapped.steps[2], swapped.steps[3]] = [swapped.steps[3], swapped.steps[2]];
+  assert.equal(buildLocalReceipt(swapped).status, 'incomplete-or-failed');
+}));
+test('node-only and native modes reject injected steps', () => fixture(dir => {
+  const node = args(dir, ['node-release-safety']); node.mode = 'node-only';
+  assert.equal(buildLocalReceipt(node).status, 'local-checks-passed');
+  node.steps.push({ name: 'npm-test', success: 1 });
+  writeFileSync(join(dir, 'npm-test.log'), 'fake\n');
+  assert.equal(buildLocalReceipt(node).status, 'incomplete-or-failed');
+  const native = args(dir, ['native-local-release','post-native-checkout-integrity']);
+  native.mode = 'native';
+  assert.equal(buildLocalReceipt(native).status, 'local-checks-passed');
+  native.steps.reverse();
+  assert.equal(buildLocalReceipt(native).status, 'incomplete-or-failed');
+}));
