@@ -120,7 +120,10 @@ struct NowPlayingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        NavigationStack {
+        // Snapshot the queue once for this render so playback ticks do not
+        // repeatedly rebuild it for the preview and its visibility check.
+        let upcomingPreview = playback.upcomingTracks
+        return NavigationStack {
             Group {
                 if let track = library.song(with: playback.currentTrackID) {
                     GeometryReader { proxy in
@@ -157,18 +160,20 @@ struct NowPlayingView: View {
                                         Text(track.title)
                                             .font(.system(.title2, design: .rounded, weight: .bold))
                                             .foregroundStyle(.white)
-                                            .lineLimit(2)
+                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
                                             .fixedSize(horizontal: false, vertical: true)
                                         Text(track.artist)
                                             .font(.headline.weight(.regular))
                                             .foregroundStyle(ShelfTheme.subdued)
-                                            .lineLimit(1)
+                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                                            .fixedSize(horizontal: false, vertical: true)
                                         if !track.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                                             track.album.localizedCaseInsensitiveCompare("Unknown Album") != .orderedSame {
                                             Text(track.album)
                                                 .font(.caption)
                                                 .foregroundStyle(ShelfTheme.subdued.opacity(0.75))
-                                                .lineLimit(1)
+                                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                                                .fixedSize(horizontal: false, vertical: true)
                                         }
                                     }
                                     Spacer(minLength: 0)
@@ -328,11 +333,11 @@ struct NowPlayingView: View {
                                  .accessibilityHint("Review and reorder upcoming songs")
                                  .accessibilityFocused($queueButtonFocused)
 
-                                if !playback.upcomingTracks.isEmpty {
+                                if !upcomingPreview.isEmpty {
                                     VStack(alignment: .leading, spacing: 12) {
                                         PremiumSectionHeading(title: "Up next",
                                                               detail: "YOUR QUEUE")
-                                        ForEach(playback.upcomingTracks) { next in
+                                        ForEach(upcomingPreview) { next in
                                             Button {
                                                 playback.play(next)
                                             } label: {
@@ -342,11 +347,11 @@ struct NowPlayingView: View {
                                                         Text(next.title)
                                                             .font(.subheadline.weight(.semibold))
                                                             .foregroundStyle(.white)
-                                                            .lineLimit(1)
+                                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                                         Text(next.artist)
                                                             .font(.caption)
                                                             .foregroundStyle(ShelfTheme.subdued)
-                                                            .lineLimit(1)
+                                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                                     }
                                                     Spacer(minLength: 0)
                                                     Image(systemName: "play.fill")
@@ -405,7 +410,7 @@ struct NowPlayingView: View {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(.white)
-                            .frame(width: 40, height: 40)
+                            .frame(width: 44, height: 44)
                             .background(ShelfTheme.elevated, in: Circle())
                     }
                     .accessibilityLabel("Close player")
@@ -465,11 +470,11 @@ struct PlaybackQueueSheet: View {
                                     Text(playing.title)
                                         .font(.headline.weight(.semibold))
                                         .foregroundStyle(.white)
-                                        .lineLimit(1)
+                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                     Text(playing.artist)
                                         .font(.subheadline)
                                         .foregroundStyle(ShelfTheme.subdued)
-                                        .lineLimit(1)
+                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                 }
                                 Spacer()
                                 Image(systemName: "waveform")
