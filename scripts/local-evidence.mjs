@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // SHA-bound local observations, deliberately not a release approval.
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { closeSync, fstatSync, lstatSync, openSync, readSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { constants as fsConstants } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -13,6 +15,24 @@ const required = {
   native: ['native-local-release','post-native-checkout-integrity'],
   all: ['node-release-safety','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity','native-local-release','post-native-checkout-integrity']
 };
+/** Independently bind CLI receipts to the real, clean Git checkout. */
+export function verifyCheckoutIdentity(expectedSha, cwd = process.cwd()) {
+  if (!SHA.test(expectedSha ?? '')) return ['Invalid expected checkout SHA.'];
+  try {
+    const git = (...args) => execFileSync('git', args, {
+      cwd, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim();
+    if (git('rev-parse', '--verify', 'HEAD') !== expectedSha)
+      return ['Current Git HEAD does not match receipt SHA.'];
+    if (git('status', '--porcelain', '--untracked-files=all') !== '')
+      return ['Current Git checkout is not clean.'];
+    return [];
+  } catch {
+    return ['Unable to independently verify Git checkout identity.'];
+  }
+}
+
 export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir }) {
   if (!SHA.test(sha) || dirty !== 'no') throw Error('Receipt requires a clean checkout at a full Git SHA.');
   if (!Object.hasOwn(required, mode)) throw Error('Unknown verification mode.');
@@ -112,7 +132,8 @@ function readLogFingerprint(path) {
   const metadata = lstatSync(path);
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1)
     throw Error('Step log must be a regular, unlinked file.');
-  const fd = openSync(path, 'r');
+  // Avoid following a symlink substituted between lstat and open.
+  const fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   try {
     const opened = fstatSync(fd);
     if (!opened.isFile() || opened.dev !== metadata.dev || opened.ino !== metadata.ino ||
@@ -138,14 +159,22 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   try {
     if (process.argv[2] === '--verify') {
       const [, path, sha, dir] = process.argv.slice(2);
-      if (!path || !sha || !dir) throw Error('Usage: --verify receipt.json sha log-directory');
-      const errors = verifyLocalReceipt(JSON.parse(readFileSync(path, 'utf8')),
-        { expectedSha: sha, logDir: dir });
+      if (!path || !sha || !dir || process.argv.length !== 6)
+        throw Error('Usage: --verify receipt.json sha log-directory');
+      const errors = [
+        ...verifyCheckoutIdentity(sha),
+        ...verifyLocalReceipt(JSON.parse(readFileSync(path, 'utf8')),
+          { expectedSha: sha, logDir: dir })
+      ];
       if (errors.length) throw Error(errors.join('; '));
       console.log('Local receipt and original logs verified for ' + sha);
       process.exit(0);
     }
     const [out, sha, dirty, mode, code, dir, ...raw] = process.argv.slice(2);
+    if (!out || !sha || !dirty || !mode || code === undefined || !dir)
+      throw Error('Usage: receipt.json sha dirty mode exitCode log-directory step:success...');
+    const checkoutErrors = verifyCheckoutIdentity(sha);
+    if (checkoutErrors.length) throw Error(checkoutErrors.join('; '));
     const steps = raw.map(item => {
       const [name, value] = item.split(':');
       return { name, success: Number(value) };

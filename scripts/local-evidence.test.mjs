@@ -3,6 +3,9 @@ import { strict as assert } from 'node:assert';
 import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, truncateSync, mkdirSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { verifyCheckoutIdentity } from './local-evidence.mjs';
 import { buildLocalReceipt, verifyLocalReceipt } from './local-evidence.mjs';
 const sha = 'a'.repeat(40);
 const webSteps = ['node-release-safety','npm-ci','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity'];
@@ -140,4 +143,40 @@ test('receipt verifier rejects forged release status and changed SHA', () => fix
     { expectedSha: sha, logDir: dir }).join(' '), /unauthorized/);
   assert.match(verifyLocalReceipt({ ...receipt, steps: receipt.steps.slice(1) },
     { expectedSha: sha, logDir: dir }).join(' '), /sequence/);
+}));
+
+test('receipt CLI rejects mismatched SHA, dirty checkout and tampered original logs', () => fixture(dir => {
+  const git = (...args) => execFileSync('git', args, {
+    cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
+  }).trim();
+  git('init', '-q');
+  git('config', 'user.name', 'Local Receipt Test');
+  git('config', 'user.email', 'local-test@example.invalid');
+  writeFileSync(join(dir, 'tracked.txt'), 'original\\n');
+  git('add', 'tracked.txt');
+  git('commit', '-qm', 'fixture');
+  const actual = git('rev-parse', 'HEAD');
+  assert.deepEqual(verifyCheckoutIdentity(actual, dir), []);
+  assert.match(verifyCheckoutIdentity('b'.repeat(40), dir).join(' '), /HEAD/);
+  const script = fileURLToPath(new URL('./local-evidence.mjs', import.meta.url));
+  const outside = mkdtempSync(join(tmpdir(), 'mp3-receipt-logs-'));
+  try {
+    writeFileSync(join(outside, 'node-release-safety.log'), 'Executed node test\\n');
+    const receiptPath = join(outside, 'receipt.json');
+    const create = spawnSync(process.execPath, [script, receiptPath, actual, 'no',
+      'node-only', '0', outside, 'node-release-safety:1'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(create.status, 0, create.stderr);
+    const verify = () => spawnSync(process.execPath, [script, '--verify', receiptPath,
+      actual, outside], { cwd: dir, encoding: 'utf8' });
+    assert.equal(verify().status, 0, verify().stderr);
+    writeFileSync(join(dir, 'untracked.txt'), 'dirty\\n');
+    assert.match(verifyCheckoutIdentity(actual, dir).join(' '), /not clean/);
+    const rejected = verify();
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /not clean/);
+    rmSync(join(dir, 'untracked.txt'));
+    assert.equal(verify().status, 0);
+    writeFileSync(join(outside, 'node-release-safety.log'), 'tampered\\n');
+    assert.match(verify().stderr, /Log changed/);
+  } finally { rmSync(outside, { recursive: true, force: true }); }
 }));
