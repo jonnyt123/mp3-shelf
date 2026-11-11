@@ -142,6 +142,41 @@ struct PortableShelfArchiveTests {
         } catch PortableShelfArchive.ArchiveError.invalidManifest {
             // Expected.
         }
+        // An archive must never follow a catalog sidecar symlink.
+        let externalLyrics = folder.appendingPathComponent("external-private.lrc")
+        let externalBytes = Data("Do not export this external file".utf8)
+        try externalBytes.write(to: externalLyrics)
+        let linkedLyrics = sidecarDirectory.appendingPathComponent("linked.lrc")
+        try FileManager.default.createSymbolicLink(at: linkedLyrics, withDestinationURL: externalLyrics)
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: "linked.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
+            fatalError("Referenced sidecars must not follow external symlinks")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+        let internalLink = sidecarDirectory.appendingPathComponent("internal-link.lrc")
+        try FileManager.default.createSymbolicLink(at: internalLink, withDestinationURL: savedLyrics)
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: "internal-link.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
+            fatalError("Catalog sidecar aliases must not be followed")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+        let directoryAlias = sidecarDirectory.appendingPathComponent("not-a-file.lrc", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryAlias, withIntermediateDirectories: true)
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: "not-a-file.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
+            fatalError("A sidecar reference must not open a directory")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+        let externalAfter = try Data(contentsOf: externalLyrics)
+        assert(externalAfter == externalBytes)
+        print("PASS: sidecar export rejects external/internal symlinks and directories")
+
         let corruptLyrics = sidecarDirectory.appendingPathComponent("corrupt.lrc")
         try Data([0xFF, 0xFE]).write(to: corruptLyrics)
         let invalidUTF8 = try PortableShelfArchive.readSidecar(
