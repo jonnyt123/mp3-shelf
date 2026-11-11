@@ -231,17 +231,21 @@ enum PortableShelfArchive {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let headerSize = magic.count + 4
-        guard let header = try handle.read(upToCount: headerSize),
-              header.count == headerSize, header.prefix(magic.count) == magic else {
+        // FileHandle is permitted to return short reads before EOF. Collect
+        // the entire fixed header before checking its magic and length.
+        let header = try readExactly(headerSize, from: handle)
+        guard header.count == headerSize, header.prefix(magic.count) == magic else {
             throw ArchiveError.invalidFile
         }
         let tail = header.suffix(4)
         let length = tail.enumerated().reduce(UInt32(0)) { value, entry in
             value | (UInt32(entry.element) << (UInt32(entry.offset) * 8))
         }
-        guard length > 0, Int(length) <= maxManifestBytes,
-              let bytes = try handle.read(upToCount: Int(length)),
-              bytes.count == Int(length) else { throw ArchiveError.invalidManifest }
+        guard length > 0, Int(length) <= maxManifestBytes else {
+            throw ArchiveError.invalidManifest
+        }
+        let bytes = try readExactly(Int(length), from: handle)
+        guard bytes.count == Int(length) else { throw ArchiveError.invalidManifest }
         let manifest = try JSONDecoder().decode(Manifest.self, from: bytes)
         guard manifest.schema == "mp3-shelf-backup", manifest.version == 1,
               manifest.tracks.count <= 20_000, manifest.playlists.count <= 2_000 else {
@@ -401,9 +405,11 @@ enum PortableShelfArchive {
             var remaining = firstLength
             while remaining > 0 {
                 let amount = Int(min(remaining, 64 * 1024))
-                guard let a = try first.read(upToCount: amount),
-                      let b = try second.read(upToCount: amount),
-                      a.count == amount, b.count == amount, a == b else {
+                // Independent handles may return different short-read
+                // boundaries for identical bytes. Compare complete chunks.
+                let a = try readExactly(amount, from: first)
+                let b = try readExactly(amount, from: second)
+                guard a.count == amount, b.count == amount, a == b else {
                     return false
                 }
                 remaining -= UInt64(amount)
@@ -414,6 +420,22 @@ enum PortableShelfArchive {
         } catch {
             return false
         }
+    }
+
+    /// Read at most the requested bytes in bounded chunks. Short reads are
+    /// legal even for regular files; callers decide whether EOF is an error.
+    /// The archive header, JSON manifest and duplicate comparisons all use
+    /// this to avoid accepting incomplete data or rejecting valid short reads.
+    private static func readExactly(_ count: Int, from handle: FileHandle) throws -> Data {
+        var result = Data()
+        var remaining = count
+        while remaining > 0 {
+            let chunk = try handle.read(upToCount: min(remaining, 64 * 1024)) ?? Data()
+            if chunk.isEmpty { break }
+            result.append(chunk)
+            remaining -= chunk.count
+        }
+        return result
     }
 
     static func audioExtension(for track: Track) throws -> String {
