@@ -165,7 +165,6 @@ export async function deleteTrackWithPlaylistCleanup(
  }
  try{
   await deleteAudio(trackId);
-  storage.removeItem(DELETE_RECOVERY_KEY);
  }catch(error){
   try{
    // Reconciliation merges against current edits, and leaves the journal
@@ -176,5 +175,8 @@ export async function deleteTrackWithPlaylistCleanup(
   }
   throw error;
  }
+ // A journal cleanup failure is safe: startup sees that the audio is absent
+ // and removes the intent without resurrecting any playlist references.
+ storage.removeItem(DELETE_RECOVERY_KEY);
  return next;
 }
