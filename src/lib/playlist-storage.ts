@@ -142,7 +142,9 @@ export function recoverFailedTrackDeletion(
  });
  commitPlaylistEdit(storage,entry.key,next);
  storage.removeItem(DELETE_RECOVERY_KEY);
- return next;
+ // Read the latest durable playlists: edits may occur while IDB deletion awaits.
+ // Returning the pre-await snapshot would erase concurrent edits in React.
+ return parseStoredPlaylists(storage.getItem(key));
 }
 
 export async function deleteTrackWithPlaylistCleanup(
