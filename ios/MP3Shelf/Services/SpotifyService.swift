@@ -412,7 +412,17 @@ final class SpotifyService: NSObject, ObservableObject {
         // An API response must not redirect our bearer token to a different
         // Spotify endpoint (including account or playlist metadata endpoints).
         // The next page must advance the cursor of this exact collection.
-        guard let components = URLComponents(string: string),
+        // Spotify may return a relative next link. Resolve against the current
+        // collection page, then apply all existing origin, path and cursor
+        // restrictions to the absolute destination before attaching a token.
+        // Reject scheme-relative links: even same-host forms are unnecessary.
+        guard let supplied = URLComponents(string: string),
+              supplied.user == nil, supplied.password == nil,
+              supplied.fragment == nil,
+              (supplied.scheme == nil && supplied.host == nil) ||
+                  (supplied.scheme?.lowercased() == "https"),
+              let resolved = URL(string: string, relativeTo: current)?.absoluteURL,
+              let components = URLComponents(url: resolved, resolvingAgainstBaseURL: false),
               let previous = URLComponents(url: current, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https",
               components.host?.lowercased() == "api.spotify.com",
