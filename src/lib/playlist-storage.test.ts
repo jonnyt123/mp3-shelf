@@ -555,3 +555,31 @@ describe("journal-aware ordinary playlist edits",()=>{
   expect(storage.writes).toBe(0);
  });
 });
+
+describe("optimistic playlist edit conflict detection",()=>{
+ it("rejects an updater whose storage snapshot changes during evaluation",()=>{
+  const key="playlists";
+  const original=[{id:"a",name:"Original",trackIds:["one"]}];
+  const concurrent=[{id:"a",name:"Edited in another tab",trackIds:["one","two"]}];
+  const values=new Map([[key,JSON.stringify(original)]]);
+  let writes=0;
+  const adapter={
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{writes++;values.set(name,value)}
+  };
+  expect(()=>updateStoredPlaylists(adapter,key,current=>{
+   values.set(key,JSON.stringify(concurrent));
+   return current.map(p=>({...p,name:"Stale rename"}));
+  })).toThrow("Playlists changed while editing");
+  expect(writes).toBe(0);
+  expect(parseStoredPlaylists(values.get(key)!)).toEqual(concurrent);
+ });
+ it("accepts unchanged snapshots and preserves unrelated tracks",()=>{
+  const key="playlists";
+  const values=new Map([[key,JSON.stringify([{id:"a",name:"Keep",trackIds:["one"]}])]]);
+  const adapter={getItem:(name:string)=>values.get(name)??null,setItem:(name:string,value:string)=>{values.set(name,value)}};
+  const updated=updateStoredPlaylists(adapter,key,current=>current.map(p=>({...p,trackIds:[...p.trackIds,"two"]})));
+  expect(updated[0].trackIds).toEqual(["one","two"]);
+  expect(parseStoredPlaylists(values.get(key)!)).toEqual(updated);
+ });
+});
