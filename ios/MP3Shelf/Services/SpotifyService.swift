@@ -113,13 +113,15 @@ final class SpotifyService: NSObject, ObservableObject {
             guard signInGeneration == authorizationGeneration else {
                 throw SpotifyError.notConnected
             }
-            // Sign-in establishes a new session; invalidate stale refresh completions.
+            // Persist first: a Keychain failure must leave this sign-in's
+            // generation intact so its defer and catch can release isBusy and
+            // display the storage error. Advancing the generation beforehand
+            // made the failed attempt look superseded and stranded the UI.
+            try store(tokens: newTokens)
+            // Only a durably saved sign-in becomes a new authorization session.
+            // Invalidate stale refresh completions after persistence succeeds.
             authorizationGeneration &+= 1
             let connectedGeneration = authorizationGeneration
-            try store(tokens: newTokens)
-            // The sign-in generation is intentionally obsolete after token
-            // installation. Release the busy indicator for the new session,
-            // otherwise the old defer leaves the Connect button stuck busy.
             isBusy = false
             do {
                 try await refreshPlaylists()
