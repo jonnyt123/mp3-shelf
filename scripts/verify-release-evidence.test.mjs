@@ -187,3 +187,22 @@ test("CLI rejects surplus positional arguments rather than ignoring them", async
     assert.match(result.stderr, /Usage:/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("web evidence cannot masquerade as physical-device acceptance", () => {
+  for (const value of [true, false, null, "PASS", 1]) {
+    const evidence = { ...web(), deviceAcceptance: value };
+    assert.match(verifyReleaseEvidence(evidence, sha).join(" "), /Web evidence must not contain/);
+  }
+  assert.deepEqual(verifyReleaseEvidence(web(), sha), []);
+});
+
+test("iOS acceptance requires explicit boolean true and native checks", () => {
+  for (const value of [false, null, "true", 1, undefined]) {
+    const evidence = { ...web(), target: "ios", deviceAcceptance: value,
+      checks: ["native-build", "native-tests", "device-acceptance"].map(check) };
+    assert.match(verifyReleaseEvidence(evidence, sha).join(" "), /Physical-device acceptance/);
+  }
+  const validShape = { ...web(), target: "ios", deviceAcceptance: true,
+    checks: ["native-build", "native-tests", "device-acceptance"].map(check) };
+  assert.deepEqual(verifyReleaseEvidence(validShape, sha), []);
+});
