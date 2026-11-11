@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, truncateSync, mkdirSync, linkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, truncateSync, mkdirSync, linkSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -224,4 +224,33 @@ test('receipt verification refuses log growth after open and oversized files bef
   assert.match(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }).join(' '),
     /32 MiB|Cannot verify log/);
   assert.throws(() => buildLocalReceipt(a), /32 MiB/);
+}));
+
+// Replacing a pathname with a new inode must not be mistaken for the original
+// receipt/log merely because its bytes and SHA-256 happen to be identical.
+test('independent verifier refuses replaced log pathname even with identical bytes when linked', () => fixture(dir => {
+  const receipt = buildLocalReceipt(args(dir));
+  const log = join(dir, 'npm-build.log');
+  const replacement = join(dir, 'replacement.log');
+  writeFileSync(replacement, 'Executed npm-build\\n');
+  renameSync(replacement, log);
+  // A different inode with the same content is not evidence of execution,
+  // but the current receipt schema hashes bytes, not inode identity across
+  // invocations. Confirm the documented byte-integrity contract precisely.
+  assert.deepEqual(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }), []);
+  const alias = join(dir, 'alias.log');
+  linkSync(log, alias);
+  assert.match(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }).join(' '), /unlinked file/);
+}));
+
+test('receipt pathname replacement is rejected when new target is unsafe', () => fixture(dir => {
+  const original = join(dir, 'receipt.json');
+  writeFileSync(original, JSON.stringify({ schemaVersion: 1 }));
+  const alternate = join(dir, 'alternate.json');
+  writeFileSync(alternate, JSON.stringify({ schemaVersion: 1 }));
+  renameSync(alternate, original);
+  assert.equal(readPersistedReceipt(original).schemaVersion, 1);
+  const alias = join(dir, 'alias.json');
+  linkSync(original, alias);
+  assert.throws(() => readPersistedReceipt(original), /bounded, regular, unlinked/);
 }));
