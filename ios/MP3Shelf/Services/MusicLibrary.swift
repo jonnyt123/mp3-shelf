@@ -504,7 +504,7 @@ final class MusicLibrary: ObservableObject {
                 do {
                     try manager.removeItem(at: lyricsDirectory.appendingPathComponent(previousLyrics))
                 } catch {
-                    print("MP3 Shelf retained an unreferenced lyrics sidecar: \\(error)")
+                    print("MP3 Shelf retained an unreferenced lyrics sidecar: \(error)")
                 }
             }
         } catch {
