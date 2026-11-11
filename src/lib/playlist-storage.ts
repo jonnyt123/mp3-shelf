@@ -129,8 +129,14 @@ export function updateStoredPlaylists(
   throw new Error("Finish the pending track deletion before editing playlists.");
  if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)
   throw new Error("Finish the pending backup restore before editing playlists.");
- const current=parseStoredPlaylists(storage.getItem(key));
+ const baseline=storage.getItem(key);
+ const current=parseStoredPlaylists(baseline);
  const next=updater(current);
+ // A storage adapter or synchronous cross-context hook can change the value
+ // during the updater. Never commit a result derived from a superseded value.
+ // This is optimistic conflict detection, not an atomic cross-tab lock.
+ if(storage.getItem(key)!==baseline)
+  throw new Error("Playlists changed while editing. Reload and retry the edit.");
  // An updater is synchronous, but a test adapter or storage implementation
  // can stage a journal during the read. Fail closed before the final write.
  if(storage.getItem(DELETE_RECOVERY_KEY)!==null||storage.getItem(RESTORE_JOURNAL_KEY)!==null)
