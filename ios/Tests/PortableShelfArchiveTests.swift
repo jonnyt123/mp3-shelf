@@ -111,14 +111,16 @@ struct PortableShelfArchiveTests {
         let loadedLyrics = try PortableShelfArchive.readSidecar(
             named: "song.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
         assert(loadedLyrics == expectedLyrics)
-        assert(try PortableShelfArchive.readSidecar(
-            named: nil, from: sidecarDirectory, maximumBytes: 500 * 1024) == nil)
+        let absentSidecar = try PortableShelfArchive.readSidecar(
+            named: nil, from: sidecarDirectory, maximumBytes: 500 * 1024)
+        assert(absentSidecar == nil)
         let artworkSidecar = sidecarDirectory.appendingPathComponent("saved.img")
         let artworkBytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
         try artworkBytes.write(to: artworkSidecar)
-        assert(try PortableShelfArchive.readSidecar(
+        let loadedArtwork = try PortableShelfArchive.readSidecar(
             named: "saved.img", from: sidecarDirectory,
-            maximumBytes: 20 * 1024 * 1024) == artworkBytes)
+            maximumBytes: 20 * 1024 * 1024)
+        assert(loadedArtwork == artworkBytes)
         do {
             _ = try PortableShelfArchive.readSidecar(
                 named: "lost.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
@@ -145,7 +147,8 @@ struct PortableShelfArchiveTests {
         let invalidUTF8 = try PortableShelfArchive.readSidecar(
             named: "corrupt.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)!
         assert(String(data: invalidUTF8, encoding: .utf8) == nil)
-        assert(try Data(contentsOf: savedLyrics) == expectedLyrics)
+        let originalSidecarBytes = try Data(contentsOf: savedLyrics)
+        assert(originalSidecarBytes == expectedLyrics)
         print("PASS: referenced sidecars fail closed; intact bytes and valid sidecars remain safe")
 
         let archiveURL = folder.appendingPathComponent("test.mp3shelf")
