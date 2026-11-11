@@ -101,3 +101,24 @@ export function commitPlaylistEdit(storage:Pick<Storage,"setItem">,key:string,ne
  storage.setItem(key,serialized);
  return [...next];
 }
+
+
+/** Remove playlist references before deleting audio. A failed playlist write
+ * must never delete the only copy of a recording. If audio deletion fails,
+ * restore the original references so the operation remains retryable. */
+export async function deleteTrackWithPlaylistCleanup(
+ storage:Pick<Storage,"setItem">,key:string,
+ playlists:readonly StoredPlaylist[],trackId:string,
+ deleteAudio:(id:string)=>Promise<void>
+):Promise<StoredPlaylist[]>{
+ const next=playlists.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==trackId)}));
+ commitPlaylistEdit(storage,key,next);
+ try{
+  await deleteAudio(trackId);
+ }catch(error){
+  try{commitPlaylistEdit(storage,key,playlists)}
+  catch{throw new Error("Audio deletion failed and playlist rollback could not be saved. Reload the library before editing playlists.",{cause:error})}
+  throw error;
+ }
+ return next;
+}
