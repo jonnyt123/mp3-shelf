@@ -19,7 +19,17 @@ struct LibraryView: View {
     @State private var renaming: MusicTrack?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    // A catalog entry is not proof that its audio file is still on disk.\n    // Keep the hero count distinct from imported playlist metadata.\n    private var offlineRecordingCount: Int {\n        library.tracks.reduce(into: 0) { count, track in\n            if FileManager.default.fileExists(atPath: library.fileURL(for: track).path) {\n                count += 1\n            }\n        }\n    }\n\n    private var recentlyAdded: [MusicTrack] {
+    // A catalog entry is not proof that its audio file is still on disk.
+    // Keep the hero count distinct from imported playlist metadata.
+    private var offlineRecordingCount: Int {
+        library.tracks.reduce(into: 0) { count, track in
+            if FileManager.default.fileExists(atPath: library.fileURL(for: track).path) {
+                count += 1
+            }
+        }
+    }
+
+    private var recentlyAdded: [MusicTrack] {
         library.recentlyAddedTracks(limit: 8)
     }
 
