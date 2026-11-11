@@ -637,3 +637,43 @@ describe("restore merge concurrent-write protection",()=>{
    .toEqual([{id:"mix",name:"Local",trackIds:["one","two"]}]);
  });
 });
+
+
+describe("deletion journal staging conflict regression",()=>{
+ const initial=[{id:"mix",name:"Original",trackIds:["song","other"]}];
+ function fixture(){
+  const data=new Map<string,string>([["playlists",JSON.stringify(initial)]]);
+  return {data,getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}};
+ }
+ it("preserves a concurrent playlist edit made during journal staging and never deletes audio",async()=>{
+  const store=fixture();
+  const concurrent=[{id:"mix",name:"Renamed elsewhere",trackIds:["song","other","new"]}];
+  let deleted=false;
+  const storage={...store,setItem:(key:string,value:string)=>{
+   store.setItem(key,value);
+   if(key==="mp3-shelf-delete-recovery")store.setItem("playlists",JSON.stringify(concurrent));
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{deleted=true}))
+   .rejects.toThrow("Playlists changed while staging deletion");
+  expect(deleted).toBe(false);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(concurrent);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("rejects a restore journal appearing while deletion intent is staged",async()=>{
+  const store=fixture();
+  let deleted=false;
+  const storage={...store,setItem:(key:string,value:string)=>{
+   store.setItem(key,value);
+   if(key==="mp3-shelf-delete-recovery")
+    store.setItem("mp3-shelf-restore-pending",JSON.stringify({version:1,key:"playlists",trackIds:[],playlists:[]}));
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{deleted=true}))
+   .rejects.toThrow("backup restore started");
+  expect(deleted).toBe(false);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(initial);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+  expect(store.getItem("mp3-shelf-restore-pending")).not.toBeNull();
+ });
+});
