@@ -38,6 +38,7 @@ export function readPersistedReceipt(path) {
     }
     const final = fstatSync(fd);
     if (final.size !== bytes || final.size !== opened.size ||
+        final.dev !== opened.dev || final.ino !== opened.ino ||
         final.mtimeMs !== opened.mtimeMs || final.ctimeMs !== opened.ctimeMs ||
         final.nlink !== 1) throw Error('Receipt changed during reading.');
     return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'));
@@ -175,7 +176,8 @@ function readLogFingerprint(path) {
   try {
     const opened = fstatSync(fd);
     if (!opened.isFile() || opened.dev !== metadata.dev || opened.ino !== metadata.ino ||
-        opened.nlink !== 1) throw Error('Step log changed during verification.');
+        opened.nlink !== 1 || opened.size !== metadata.size ||
+        opened.size > 32 * 1024 * 1024) throw Error('Step log changed or exceeds 32 MiB limit.');
     const hash = createHash('sha256');
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let bytes = 0;
@@ -186,7 +188,8 @@ function readLogFingerprint(path) {
       hash.update(buffer.subarray(0, count));
     }
     const final = fstatSync(fd);
-    if (final.size !== bytes || final.mtimeMs !== opened.mtimeMs ||
+    if (final.size !== bytes || final.dev !== opened.dev ||
+        final.ino !== opened.ino || final.mtimeMs !== opened.mtimeMs ||
         final.ctimeMs !== opened.ctimeMs || final.nlink !== 1)
       throw Error('Step log changed during verification.');
     return { bytes, sha256: hash.digest('hex') };

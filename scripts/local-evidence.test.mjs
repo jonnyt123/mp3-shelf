@@ -215,3 +215,13 @@ test('independent verifier rejects unknown schema and excessive steps', () => fi
   assert.match(verifyLocalReceipt(excessive, { expectedSha: sha, logDir: dir }).join(' '),
     /excessive receipt steps/);
 }));
+
+
+test('receipt verification refuses log growth after open and oversized files before hashing', () => fixture(dir => {
+  const a = args(dir);
+  const receipt = buildLocalReceipt(a);
+  truncateSync(join(dir, 'npm-build.log'), 33 * 1024 * 1024);
+  assert.match(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }).join(' '),
+    /32 MiB|Cannot verify log/);
+  assert.throws(() => buildLocalReceipt(a), /32 MiB/);
+}));
