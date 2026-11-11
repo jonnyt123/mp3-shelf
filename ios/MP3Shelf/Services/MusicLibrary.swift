@@ -386,8 +386,8 @@ final class MusicLibrary: ObservableObject {
             if let temporary { try? manager.removeItem(at: temporary) }
         }
         // Track imports above are individually durable. Playlist edits below
-        // are not: retain the last committed snapshot until their final write.
-        let committedPlaylists = playlists
+        // are not: stage playlist changes until their final durable write.
+        var candidatePlaylists = playlists
         for item in archive.manifest.playlists {
             // Web backups use string playlist IDs, not necessarily UUIDs.
             // Keep their source ID so restoring the same archive again (or
@@ -402,14 +402,14 @@ final class MusicLibrary: ObservableObject {
                     resolvedTrackIDs.append(localID)
                 }
             }
-            if let index = playlists.firstIndex(where: { $0.matchesPortableBackupID(item.id) }) {
+            if let index = candidatePlaylists.firstIndex(where: { $0.matchesPortableBackupID(item.id) }) {
                 // A previous restore might have imported only some recordings.
                 // Complete missing links on retry, preserving user-customized order.
                 // A set also avoids quadratic lookups on very large playlists.
-                var linked = Set(playlists[index].trackIDs)
+                var linked = Set(candidatePlaylists[index].trackIDs)
                 var addedLinks = 0
                 for id in resolvedTrackIDs where linked.insert(id).inserted {
-                    playlists[index].trackIDs.append(id)
+                    candidatePlaylists[index].trackIDs.append(id)
                     addedLinks += 1
                 }
                 if addedLinks > 0 { report.playlistsUpdated += 1 }
@@ -428,7 +428,7 @@ final class MusicLibrary: ObservableObject {
                              appleMusicItemID: AppleMusicLibraryIdentity.canonical($0.appleMusicItemID))
             }
             playlist.missingTracks = playlist.sourceOrder
-            playlists.append(playlist)
+            candidatePlaylists.append(playlist)
             report.playlistsAdded += 1
         }
         // A restore is not complete until playlist links are durably saved.
@@ -438,15 +438,11 @@ final class MusicLibrary: ObservableObject {
         // Do not call reconcileMissingSongs() here: it calls save(), which
         // swallows write failures and could publish a partially restored catalog.
         // Reconcile in memory, then commit exactly once. A failed commit must
-        // leave the active playlists identical to their last durable state.
-        playlists = reconciledPlaylists(using: tracks)
-        do {
-            try requireLibraryPersistence()
-            try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
-        } catch {
-            playlists = committedPlaylists
-            throw error
-        }
+        // never publish a candidate playlist before its write succeeds.
+        candidatePlaylists = reconciledPlaylists(using: tracks, from: candidatePlaylists)
+        try requireLibraryPersistence()
+        try PersistedLibrary(tracks: tracks, playlists: candidatePlaylists).write(to: databaseURL)
+        playlists = candidatePlaylists
         return report
     }
 
