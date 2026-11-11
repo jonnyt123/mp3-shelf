@@ -69,13 +69,17 @@ struct LibraryView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    // Keep a single result snapshot for all controls and rows in a render pass.
+    // The search task owns when a new query becomes eligible for display.
     private var displayed: [MusicTrack] {
-        library.browseTracks(query: settledSearchText, favoritesOnly: favoritesOnly,
-                             order: sortMode)
+        guard !isSearchUpdating else { return [] }
+        return library.browseTracks(query: settledSearchText, favoritesOnly: favoritesOnly,
+                                    order: sortMode)
     }
 
     private var isSearchUpdating: Bool {
-        searchText != settledSearchText
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            != settledSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var sortMenu: some View {
@@ -118,11 +122,12 @@ struct LibraryView: View {
     }
 
     private var searchSortSummary: some View {
-        VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 9) {
-            Text(isSearchUpdating ? "Updating search…" : "\(displayed.count) of \(library.tracks.count) songs found")
+        let matchingCount = displayed.count
+        return VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 9) {
+            Text(isSearchUpdating ? "Updating search…" : "\(matchingCount) of \(library.tracks.count) songs found")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(ShelfTheme.subdued)
-                .accessibilityLabel(isSearchUpdating ? "Updating search results" : "\(displayed.count) matching songs out of \(library.tracks.count)")
+                .accessibilityLabel(isSearchUpdating ? "Updating search results" : "\(matchingCount) matching songs out of \(library.tracks.count)")
                 .accessibilityAddTraits(.updatesFrequently)
             sortMenu
         }
@@ -481,16 +486,17 @@ struct LibraryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
         .task(id: searchText) {
-            // Clearing restores the library immediately. Superseded searches
-            // are cancelled by SwiftUI before publishing their results.
-            if !searchText.isEmpty {
+            // Clearing or whitespace-only input restores the full library
+            // immediately; nonempty queries debounce until typing settles.
+            let requestedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !requestedQuery.isEmpty {
                 do {
                     try await Task.sleep(for: .milliseconds(220))
                 } catch {
                     return
                 }
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, searchText.trimmingCharacters(in: .whitespacesAndNewlines) == requestedQuery else { return }
             settledSearchText = searchText
         }
         .toolbar {
