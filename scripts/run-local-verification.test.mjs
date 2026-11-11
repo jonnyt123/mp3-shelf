@@ -40,3 +40,16 @@ test('node-only dirty checkout is explicitly excluded from release evidence', as
   assert.match(source, /UNAVAILABLE_UNCLEAN_CHECKOUT/);
   assert.match(source, /DEVELOPMENT CHECKS PASSED; NO RELEASE EVIDENCE/);
 });
+
+test('successful release requires independent verification of persisted receipt and original logs', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  assert.match(source, /local-evidence\\.mjs" --verify "\\$OUT\/local-evidence\\.json" "\\$COMMIT" "\\$OUT"/);
+  assert.match(source, /receipt_state='CREATED_UNVERIFIED'/);
+  assert.match(source, /receipt_state='VERIFIED'/);
+  assert.match(source, /receipt_state='VERIFICATION_FAILED'/);
+  assert.match(source, /receipt_state='INCOMPLETE'/);
+  assert.match(source, /code=1[\\s\\S]*Persisted release receipt failed independent verification/);
+  assert.match(source, /"\\$receipt_state" == VERIFIED/);
+  assert.doesNotMatch(source, /"\\$receipt_state" == CREATED/);
+});

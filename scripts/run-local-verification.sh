@@ -49,7 +49,21 @@ report() {
   trap - EXIT
   if [[ "$COMMIT" != unknown && "$DIRTY" == no ]]; then
     if node "$ROOT/scripts/local-evidence.mjs" "$OUT/local-evidence.json" "$COMMIT" "$DIRTY" "$MODE" "$code" "$OUT" "${RECEIPT_STEPS[@]}"; then
-      receipt_state='CREATED'
+      receipt_state='CREATED_UNVERIFIED'
+      # Receipt creation is not evidence verification. Re-open the persisted
+      # JSON and re-hash the original logs while checking the actual Git HEAD.
+      # The verifier rejects incomplete receipts even if JSON creation worked.
+      if [[ "$code" -eq 0 ]]; then
+        if node "$ROOT/scripts/local-evidence.mjs" --verify "$OUT/local-evidence.json" "$COMMIT" "$OUT"; then
+          receipt_state='VERIFIED'
+        else
+          receipt_state='VERIFICATION_FAILED'
+          code=1
+          echo 'ERROR: Persisted release receipt failed independent verification; refusing PASS.' >&2
+        fi
+      else
+        receipt_state='INCOMPLETE'
+      fi
     else
       receipt_state='FAILED'
       if [[ "$code" -eq 0 ]]; then
@@ -73,7 +87,7 @@ report() {
     echo "Native physical iPhone acceptance: NOT TESTED"
     echo "GitHub Actions minutes used: ZERO"
     echo "Logs: $OUT"
-    if [[ "$code" -eq 0 && "$receipt_state" == CREATED ]]; then
+    if [[ "$code" -eq 0 && "$receipt_state" == VERIFIED ]]; then
       echo 'Local execution: PASS (only for completed steps; not release approval)'
     elif [[ "$code" -eq 0 ]]; then
       echo 'Local execution: DEVELOPMENT CHECKS PASSED; NO RELEASE EVIDENCE'
