@@ -144,7 +144,7 @@ export function recoverFailedTrackDeletion(
  storage.removeItem(DELETE_RECOVERY_KEY);
  // Read the latest durable playlists: edits may occur while IDB deletion awaits.
  // Returning the pre-await snapshot would erase concurrent edits in React.
- return parseStoredPlaylists(storage.getItem(key));
+ return parseStoredPlaylists(storage.getItem(entry.key));
 }
 
 export async function deleteTrackWithPlaylistCleanup(
@@ -180,5 +180,5 @@ export async function deleteTrackWithPlaylistCleanup(
  // A journal cleanup failure is safe: startup sees that the audio is absent
  // and removes the intent without resurrecting any playlist references.
  storage.removeItem(DELETE_RECOVERY_KEY);
- return next;
+ return parseStoredPlaylists(storage.getItem(key));
 }
