@@ -19,7 +19,7 @@ struct LibraryView: View {
     @State private var renaming: MusicTrack?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private var recentlyAdded: [MusicTrack] {
+    // A catalog entry is not proof that its audio file is still on disk.\n    // Keep the hero count distinct from imported playlist metadata.\n    private var offlineRecordingCount: Int {\n        library.tracks.reduce(into: 0) { count, track in\n            if FileManager.default.fileExists(atPath: library.fileURL(for: track).path) {\n                count += 1\n            }\n        }\n    }\n\n    private var recentlyAdded: [MusicTrack] {
         library.recentlyAddedTracks(limit: 8)
     }
 
@@ -205,7 +205,7 @@ struct LibraryView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(library.tracks.isEmpty
                                  ? "Your favorite songs, right on your iPhone."
-                                 : "\(library.tracks.count) songs in your library. Downloaded recordings play offline.")
+                                 : "\(library.tracks.count) songs in your library. \(offlineRecordingCount) recordings available offline.")
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
