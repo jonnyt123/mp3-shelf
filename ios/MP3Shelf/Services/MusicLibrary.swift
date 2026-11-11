@@ -264,6 +264,61 @@ final class MusicLibrary: ObservableObject {
                 recordingsBySize[Int64(size), default: []].append(track)
             }
         }
+        // Byte-identical audio is often already present when restoring a
+        // backup over a partial library. Restore missing sidecars too; otherwise
+        // the early duplicate-audio path silently drops backed-up artwork and
+        // lyrics. Never replace a user's existing sidecar or audio file.
+        func restoreMissingSidecars(for archived: PortableShelfArchive.Track,
+                                    existingID: UUID) throws {
+            guard let index = tracks.firstIndex(where: { $0.id == existingID }) else { return }
+            let current = tracks[index]
+            let needsArtwork = current.artworkFileName == nil && archived.artwork != nil
+            let needsLyrics = current.lyricsFileName == nil &&
+                !(archived.lyrics ?? "").isEmpty
+            guard needsArtwork || needsLyrics else { return }
+
+            var restored = current
+            var created: [URL] = []
+            if needsArtwork, let artwork = archived.artwork {
+                do {
+                    let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
+                    guard UIImage(data: bytes) != nil else {
+                        throw PortableShelfArchive.ArchiveError.invalidManifest
+                    }
+                    let name = existingID.uuidString + "-" + UUID().uuidString + ".img"
+                    let destination = artworkDirectory.appendingPathComponent(name)
+                    try bytes.write(to: destination, options: .atomic)
+                    created.append(destination)
+                    restored.artworkFileName = name
+                } catch {
+                    report.errors.append("\(archived.name): missing cover artwork could not be restored (\(error.localizedDescription)).")
+                }
+            }
+            if needsLyrics, let lyrics = archived.lyrics {
+                do {
+                    let name = existingID.uuidString + "-" + UUID().uuidString + ".lrc"
+                    let destination = lyricsDirectory.appendingPathComponent(name)
+                    try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                    created.append(destination)
+                    restored.lyricsFileName = name
+                } catch {
+                    report.errors.append("\(archived.name): missing lyrics could not be restored (\(error.localizedDescription)).")
+                }
+            }
+            guard !created.isEmpty else { return }
+            do {
+                var candidate = tracks
+                candidate[index] = restored
+                try PersistedLibrary(tracks: candidate, playlists: playlists).write(to: databaseURL)
+                tracks = candidate
+            } catch {
+                // Never publish a reference to an uncommitted sidecar. An
+                // interrupted/low-storage restore must preserve old catalog.
+                for url in created { try? manager.removeItem(at: url) }
+                throw error
+            }
+        }
+
         for archived in archive.manifest.tracks {
             var temporary: URL?
             do {
@@ -298,6 +353,7 @@ final class MusicLibrary: ObservableObject {
                         try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
                         tracks = updatedTracks
                     }
+                    try restoreMissingSidecars(for: archived, existingID: existing.id)
                     restoredIDs[archived.id] = existing.id
                     report.skipped += 1
                     continue
@@ -326,6 +382,7 @@ final class MusicLibrary: ObservableObject {
                                 tracks = updatedTracks
                             }
                         }
+                        try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
                         restoredIDs[archived.id] = tracks[index].id
                     }
                     continue
