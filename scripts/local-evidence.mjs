@@ -129,6 +129,14 @@ export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir })
 export function verifyLocalReceipt(receipt, { expectedSha, logDir }) {
   const errors = [];
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return ['Invalid receipt object.'];
+  // Receipts are a deliberately narrow observation schema. Reject unknown
+  // fields rather than silently accepting attacker-added release approvals.
+  const receiptFields = new Set([
+    'schemaVersion', 'candidateSha', 'mode', 'cleanCheckout', 'exitCode',
+    'status', 'steps', 'physicalDeviceAcceptance', 'branchProtection', 'rollback'
+  ]);
+  if (Object.keys(receipt).some(key => !receiptFields.has(key)))
+    errors.push('Unexpected receipt field; local evidence cannot grant release approval.');
   if (receipt.schemaVersion !== 1) errors.push('Unsupported receipt schema version.');
   if (!SHA.test(expectedSha ?? '') || receipt.candidateSha !== expectedSha)
     errors.push('Receipt candidate SHA mismatch.');
@@ -157,7 +165,8 @@ export function verifyLocalReceipt(receipt, { expectedSha, logDir }) {
         step.success !== true || !Number.isSafeInteger(step.bytes) ||
         step.bytes < 1 || step.bytes > 32 * 1024 * 1024 ||
         !/^[0-9a-f]{64}$/.test(step.sha256 ?? '') ||
-        step.file !== step.name + '.log') {
+        step.file !== step.name + '.log' ||
+        Object.keys(step).some(key => !['name', 'success', 'bytes', 'sha256', 'file'].includes(key))) {
       errors.push('Malformed or unsuccessful receipt step.');
       continue;
     }
