@@ -1337,16 +1337,22 @@ final class MusicLibrary: ObservableObject {
         playlists = remainingPlaylists
         // A crash here may leave an orphan file, never a catalog referencing
         // audio already deleted. Sidecar removal remains best effort.
-        do {
-            try manager.removeItem(at: fileURL(for: track))
-        } catch {
-            print("MP3 Shelf retained an orphaned audio file after catalog removal: \\(error)")
+        // Restored or legacy catalogs may share a stored filename across
+        // multiple track records. Only delete files with no remaining owner.
+        if !remainingTracks.contains(where: { $0.fileName == track.fileName }) {
+            do {
+                try manager.removeItem(at: fileURL(for: track))
+            } catch {
+                print("MP3 Shelf retained an orphaned audio file after catalog removal: \(error)")
+            }
         }
-        if let artwork = track.artworkFileName {
+        if let artwork = track.artworkFileName,
+           !remainingTracks.contains(where: { $0.artworkFileName == artwork }) {
             artworkCache.removeObject(forKey: artwork as NSString)
             try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artwork))
         }
-        if let lyrics = track.lyricsFileName {
+        if let lyrics = track.lyricsFileName,
+           !remainingTracks.contains(where: { $0.lyricsFileName == lyrics }) {
             try? manager.removeItem(at: lyricsDirectory.appendingPathComponent(lyrics))
         }
         reconcileMissingSongs()
