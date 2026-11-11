@@ -105,7 +105,13 @@ export function recoverPlaylistRestore(storage:Pick<Storage,"getItem"|"setItem"|
  // Preserve the recovery intent so a complete archive can be retried safely.
  if(journal.playlists.some(playlist=>playlist.trackIds.some(id=>!availableTrackIds.has(id))))
   throw new Error("A backup playlist references missing audio. Reimport a complete backup before restoring playlists.");
+ // A different tab may replace the restore intent while we validate audio.
+ // Never consume or clear a journal belonging to a newer operation.
+ if(storage.getItem(RESTORE_JOURNAL_KEY)!==raw)
+  throw new Error("Pending backup restore changed during recovery. Retry with the current journal.");
  const result=persistRestoredPlaylists(storage,key,journal.playlists);
+ if(storage.getItem(RESTORE_JOURNAL_KEY)!==raw)
+  throw new Error("Pending backup restore changed before journal cleanup. Preserve the newer intent.");
  storage.removeItem(RESTORE_JOURNAL_KEY);
  return result;
 }
@@ -197,6 +203,8 @@ export function recoverFailedTrackDeletion(
     ...playlist,trackIds:playlist.trackIds.filter(id=>id!==entry.trackId)
    })));
   }
+  if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
+   throw new Error("Track deletion recovery changed before journal cleanup. Preserve the newer intent.");
   storage.removeItem(DELETE_RECOVERY_KEY);
   return parseStoredPlaylists(storage.getItem(entry.key));
  }
@@ -216,6 +224,8 @@ export function recoverFailedTrackDeletion(
  if(storage.getItem(entry.key)!==baseline)
   throw new Error("Playlists changed during deletion recovery. Retry reconciliation.");
  commitPlaylistEdit(storage,entry.key,next);
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
+  throw new Error("Track deletion recovery changed before journal cleanup. Preserve the newer intent.");
  storage.removeItem(DELETE_RECOVERY_KEY);
  // Read the latest durable playlists: edits may occur while IDB deletion awaits.
  // Returning the pre-await snapshot would erase concurrent edits in React.
