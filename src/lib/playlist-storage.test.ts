@@ -459,3 +459,50 @@ describe("conflicting recovery journals",()=>{
   expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
  });
 });
+
+
+describe("cross-tab playlist UI mutations",()=>{
+ function store(initial:{id:string;name:string;trackIds:string[]}[]){
+  const data=new Map([["playlists",JSON.stringify(initial)]]);
+  return {getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)}};
+ }
+ it("creates a playlist without erasing a playlist added by another tab",()=>{
+  const storage=store([{id:"a",name:"A",trackIds:["one"]}]);
+  const staleSnapshot=parseStoredPlaylists(storage.getItem("playlists"));
+  storage.setItem("playlists",JSON.stringify([...staleSnapshot,{id:"remote",name:"Remote",trackIds:["two"]}]));
+  const result=updateStoredPlaylists(storage,"playlists",current=>[...current,{id:"local",name:"Local",trackIds:[]}]);
+  expect(result.map(item=>item.id)).toEqual(["a","remote","local"]);
+  expect(parseStoredPlaylists(storage.getItem("playlists"))).toEqual(result);
+ });
+ it("adds a track without reverting concurrent rename or added songs",()=>{
+  const storage=store([{id:"a",name:"Old",trackIds:["one"]}]);
+  storage.setItem("playlists",JSON.stringify([{id:"a",name:"Renamed",trackIds:["one","remote"]}]));
+  const result=updateStoredPlaylists(storage,"playlists",current=>current.map(item=>item.id==="a"?{...item,trackIds:[...item.trackIds,"local"]}:item));
+  expect(result).toEqual([{id:"a",name:"Renamed",trackIds:["one","remote","local"]}]);
+ });
+ it("deletes only the selected playlist, retaining concurrent additions",()=>{
+  const storage=store([{id:"a",name:"A",trackIds:[]},{id:"b",name:"B",trackIds:[]}]);
+  storage.setItem("playlists",JSON.stringify([...parseStoredPlaylists(storage.getItem("playlists")),{id:"remote",name:"Remote",trackIds:[]}]));
+  const result=updateStoredPlaylists(storage,"playlists",current=>current.filter(item=>item.id!=="a"));
+  expect(result.map(item=>item.id)).toEqual(["b","remote"]);
+ });
+ it("reorders against current persisted order instead of stale UI order",()=>{
+  const storage=store([{id:"a",name:"A",trackIds:[]},{id:"b",name:"B",trackIds:[]}]);
+  storage.setItem("playlists",JSON.stringify([{id:"remote",name:"Remote",trackIds:[]},...parseStoredPlaylists(storage.getItem("playlists"))]));
+  const result=updateStoredPlaylists(storage,"playlists",current=>{const next=[...current],i=next.findIndex(item=>item.id==="b");[next[i-1],next[i]]=[next[i],next[i-1]];return next});
+  expect(result.map(item=>item.id)).toEqual(["remote","b","a"]);
+ });
+ it("preserves the saved value when a write fails",()=>{
+  const storage=store([{id:"a",name:"A",trackIds:[]}]);
+  const before=storage.getItem("playlists");
+  const failing={getItem:storage.getItem,setItem:(_key:string,_value:string):void=>{throw new Error("QuotaExceededError")}};
+  expect(()=>updateStoredPlaylists(failing,"playlists",current=>[...current,{id:"b",name:"B",trackIds:[]}])).toThrow("QuotaExceededError");
+  expect(storage.getItem("playlists")).toBe(before);
+ });
+ it("rejects corrupt current storage without overwriting it",()=>{
+  const storage=store([]);
+  storage.setItem("playlists","{invalid");
+  expect(()=>updateStoredPlaylists(storage,"playlists",()=>[])).toThrow();
+  expect(storage.getItem("playlists")).toBe("{invalid");
+ });
+});
