@@ -747,3 +747,73 @@ describe("deletion recovery concurrent-write protection",()=>{
   expect(recoverFailedTrackDeletion(storage,new Set(["keep","deleted"]))?.[0].trackIds).toContain("deleted");
  });
 });
+
+
+describe("recovery journal ownership across tab interleavings",()=>{
+ const playlistKey="playlists";
+ const restoreKey="mp3-shelf-restore-pending";
+ const deletionKey="mp3-shelf-delete-recovery";
+ const saved=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
+ function storage(){
+  const data=new Map<string,string>([[playlistKey,JSON.stringify(saved)]]);
+  return {
+   data,
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+ }
+ it("preserves a newer restore journal when it changes during playlist commit",()=>{
+  const base=storage();
+  stagePlaylistRestore(base,playlistKey,[{id:"new"}],[{id:"new-list",name:"New",trackIds:["new"]}]);
+  const newer=JSON.stringify({version:1,key:playlistKey,trackIds:["later"],playlists:[{id:"later",name:"Later",trackIds:["later"]}]});
+  const adapter={
+   getItem:base.getItem,
+   removeItem:base.removeItem,
+   setItem:(key:string,value:string)=>{
+    base.setItem(key,value);
+    if(key===playlistKey)base.setItem(restoreKey,newer);
+   }
+  };
+  expect(()=>recoverPlaylistRestore(adapter,new Set(["keep","remove","new"]),playlistKey))
+   .toThrow("changed before journal cleanup");
+  expect(base.getItem(restoreKey)).toBe(newer);
+  expect(hasPendingPlaylistRestore(base)).toBe(true);
+ });
+ it("preserves a newer deletion journal when successful audio deletion is reconciled",()=>{
+  const base=storage();
+  const original=JSON.stringify({version:1,key:playlistKey,trackId:"remove",original:saved});
+  base.setItem(deletionKey,original);
+  const newer=JSON.stringify({version:1,key:playlistKey,trackId:"keep",original:saved});
+  const adapter={
+   getItem:base.getItem,
+   removeItem:base.removeItem,
+   setItem:(key:string,value:string)=>{
+    base.setItem(key,value);
+    if(key===playlistKey)base.setItem(deletionKey,newer);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(adapter,new Set(["keep"])))
+   .toThrow("changed before journal cleanup");
+  expect(base.getItem(deletionKey)).toBe(newer);
+ });
+ it("preserves a newer deletion journal when failed audio deletion is rolled back",()=>{
+  const base=storage();
+  const original=JSON.stringify({version:1,key:playlistKey,trackId:"remove",original:saved});
+  base.setItem(deletionKey,original);
+  base.setItem(playlistKey,JSON.stringify([{id:"mix",name:"Mix",trackIds:["keep"]}]));
+  const newer=JSON.stringify({version:1,key:playlistKey,trackId:"keep",original:saved});
+  const adapter={
+   getItem:base.getItem,
+   removeItem:base.removeItem,
+   setItem:(key:string,value:string)=>{
+    base.setItem(key,value);
+    if(key===playlistKey)base.setItem(deletionKey,newer);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(adapter,new Set(["keep","remove"])))
+   .toThrow("changed before journal cleanup");
+  expect(base.getItem(deletionKey)).toBe(newer);
+  expect(parseStoredPlaylists(base.getItem(playlistKey))[0].trackIds).toContain("remove");
+ });
+});
