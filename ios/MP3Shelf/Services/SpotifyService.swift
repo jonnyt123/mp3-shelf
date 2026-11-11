@@ -394,7 +394,16 @@ final class SpotifyService: NSObject, ObservableObject {
             attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             attributes[kSecValueData as String] = bytes
             let addStatus = SecItemAdd(attributes as CFDictionary, nil)
-            guard addStatus == errSecSuccess else {
+            if addStatus == errSecDuplicateItem {
+                // Another Keychain writer may have inserted the same account
+                // between our update and add. Retry the atomic update rather
+                // than deleting the winner's credentials or reporting success
+                // while leaving the new token only in memory.
+                let retryStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+                guard retryStatus == errSecSuccess else {
+                    throw SpotifyError.api("Could not securely update Spotify credentials. Try again after unlocking your device.")
+                }
+            } else if addStatus != errSecSuccess {
                 throw SpotifyError.api("Could not securely save Spotify credentials. Reconnect and try again.")
             }
         } else if status != errSecSuccess {
