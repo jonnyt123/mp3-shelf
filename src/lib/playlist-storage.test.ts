@@ -218,6 +218,19 @@ describe("track deletion consistency",()=>{
   expect(recoverFailedTrackDeletion(store,new Set(["remove","keep","new"]))).toEqual([{id:"mix",name:"Renamed",trackIds:["keep","remove","new"]}]);
   expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
  });
+ it("recovers a failed deletion using its journaled playlist key",async()=>{
+  const store=storage();
+  const alternate="custom-playlists";
+  store.setItem(alternate,JSON.stringify(original));
+  let writes=0;
+  const failing={...store,setItem:(key:string,value:string)=>{
+   if(key===alternate&&++writes===2)throw new Error("QuotaExceededError");
+   store.setItem(key,value);
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(failing,alternate,original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("rollback could not be saved");
+  expect(recoverFailedTrackDeletion(store,new Set(["keep","remove"]))).toEqual(original);
+  expect(parseStoredPlaylists(store.getItem(alternate))).toEqual(original);
+ });
  it("does not restore references if audio was already removed before restart",async()=>{
   const store=storage();let writes=0;
   const failing={...store,removeItem:()=>{throw new Error("crash")}};
