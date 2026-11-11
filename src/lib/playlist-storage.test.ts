@@ -402,3 +402,60 @@ describe("track deletion consistency",()=>{
   expect(recoverFailedTrackDeletion(store,new Set(["keep"]))?.[0].trackIds).toEqual(["keep"]);
  });
 });
+
+
+describe("conflicting recovery journals",()=>{
+ function store(){
+  const data=new Map<string,string>([["playlists",JSON.stringify([{id:"mix",name:"Safe",trackIds:["audio"]}])]]);
+  return {
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+ }
+ it("does not replay a restore while deletion recovery is pending",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,"playlists",[{id:"new"}],[{id:"new-list",name:"New",trackIds:["new"]}]);
+  const restore=storage.getItem("mp3-shelf-restore-pending");
+  storage.setItem("mp3-shelf-delete-recovery",JSON.stringify({
+   version:1,key:"playlists",trackId:"audio",
+   original:[{id:"mix",name:"Safe",trackIds:["audio"]}]
+  }));
+  const before=storage.getItem("playlists");
+  expect(()=>recoverPlaylistRestore(storage,new Set(["audio","new"]),"playlists"))
+   .toThrow("pending track deletion recovery");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(storage.getItem("mp3-shelf-restore-pending")).toBe(restore);
+  storage.removeItem("mp3-shelf-delete-recovery");
+  expect(recoverPlaylistRestore(storage,new Set(["audio","new"]),"playlists")).not.toBeNull();
+ });
+ it("does not replay a deletion while backup restoration is pending",()=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-delete-recovery",JSON.stringify({
+   version:1,key:"playlists",trackId:"audio",
+   original:[{id:"mix",name:"Safe",trackIds:["audio"]}]
+  }));
+  const deletion=storage.getItem("mp3-shelf-delete-recovery");
+  storage.setItem("mp3-shelf-restore-pending",JSON.stringify({
+   version:1,key:"playlists",trackIds:["new"],playlists:[]
+  }));
+  const before=storage.getItem("playlists");
+  expect(()=>recoverFailedTrackDeletion(storage,new Set(["audio"])))
+   .toThrow("pending backup restore");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBe(deletion);
+  storage.removeItem("mp3-shelf-restore-pending");
+  expect(recoverFailedTrackDeletion(storage,new Set(["audio"]))).not.toBeNull();
+ });
+ it.each([""," ","\\t"])("rejects a blank deletion ID (%s) without altering playlists",trackId=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-delete-recovery",JSON.stringify({
+   version:1,key:"playlists",trackId,
+   original:[{id:"mix",name:"Safe",trackIds:["audio"]}]
+  }));
+  const before=storage.getItem("playlists");
+  expect(()=>recoverFailedTrackDeletion(storage,new Set(["audio"]))).toThrow("Invalid track deletion recovery journal");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+ });
+});
