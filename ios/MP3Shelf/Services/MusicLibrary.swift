@@ -308,27 +308,29 @@ final class MusicLibrary: ObservableObject {
                     recordingsBySize[Int64(extractedSize), default: []].append(tracks[index])
                 }
                 restoredIDs[archived.id] = tracks[index].id
-                let committedTrack = tracks[index]
+                // Keep archive metadata private until its catalog write succeeds.
+                // Published tracks must never expose references to uncommitted sidecars.
+                var restoredTrack = tracks[index]
                 // If the archived identifier belongs to a different local
                 // recording, keep this song's new UUID as its export identity.
                 if !tracks.contains(where: {
                     $0.id != tracks[index].id &&
                             ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
                 }) {
-                    tracks[index].portableBackupID = archived.id
+                    restoredTrack.portableBackupID = archived.id
                 }
-                tracks[index].title = archived.name
-                if let artist = archived.artist { tracks[index].artist = artist }
-                if let album = archived.album { tracks[index].album = album }
-                tracks[index].isFavorite = archived.isFavorite ?? false
+                restoredTrack.title = archived.name
+                if let artist = archived.artist { restoredTrack.artist = artist }
+                if let album = archived.album { restoredTrack.album = album }
+                restoredTrack.isFavorite = archived.isFavorite ?? false
                 let epoch = archived.importedAt / 1000
                 if epoch.isFinite && epoch > 0 {
-                    tracks[index].addedAt = Date(timeIntervalSince1970: epoch)
+                    restoredTrack.addedAt = Date(timeIntervalSince1970: epoch)
                 }
                 if let attribution = archived.attribution,
                    attribution.sourceURL.hasPrefix("https://"),
                    (attribution.licenseURL.isEmpty || attribution.licenseURL.hasPrefix("https://")) {
-                    tracks[index].sourceAttribution = AudioSourceAttribution(
+                    restoredTrack.sourceAttribution = AudioSourceAttribution(
                         pageURL: attribution.sourceURL,
                         licenseURL: attribution.licenseURL,
                         providerName: attribution.provider
@@ -347,7 +349,7 @@ final class MusicLibrary: ObservableObject {
                             let destination = artworkDirectory.appendingPathComponent(filename)
                             try bytes.write(to: destination, options: .atomic)
                             createdSidecars.append(destination)
-                            tracks[index].artworkFileName = filename
+                            restoredTrack.artworkFileName = filename
                         } else {
                             report.errors.append("\(archived.name): invalid cover artwork; audio restored.")
                         }
@@ -361,19 +363,20 @@ final class MusicLibrary: ObservableObject {
                         let destination = lyricsDirectory.appendingPathComponent(filename)
                         try Data(lyrics.utf8).write(to: destination, options: .atomic)
                         createdSidecars.append(destination)
-                        tracks[index].lyricsFileName = filename
+                        restoredTrack.lyricsFileName = filename
                     } catch {
                         report.errors.append("\(archived.name): lyrics not restored (\(error.localizedDescription)); audio restored.")
                     }
                 }
                 do {
                     // save() only logs errors; archive restore must surface them.
-                    try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
+                    var candidateTracks = tracks
+                    candidateTracks[index] = restoredTrack
+                    try PersistedLibrary(tracks: candidateTracks, playlists: playlists).write(to: databaseURL)
+                    tracks = candidateTracks
                 } catch {
-                    // Audio was committed by addLocalAudio before metadata edits.
-                    // Restore that exact in-memory snapshot even if disk reads
-                    // are now blocked by file protection or storage failure.
-                    tracks[index] = committedTrack
+                    // Audio was already committed by addLocalAudio. Leave its
+                    // published metadata unchanged when this write fails.
                     for sidecar in createdSidecars { try? manager.removeItem(at: sidecar) }
                     throw error
                 }
