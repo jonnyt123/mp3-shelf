@@ -357,11 +357,51 @@ final class SpotifyService: NSObject, ObservableObject {
         request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
         // The token endpoint receives authorization codes and refresh tokens.
         // Never allow a redirect to forward either credential to another host.
-        let (data, response) = try await apiSession.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw SpotifyError.api("Spotify token request failed. Check your Client ID and exact registered redirect URI.")
+        // A refresh-token grant can safely be retried after a bounded 429 or
+        // transient server error. Authorization codes, however, are single-use:
+        // never replay an ambiguous exchange after the server may have used it.
+        let isRefreshGrant = fields["grant_type"] == "refresh_token"
+        var retryCount = 0
+        var tokenData: Data?
+        while tokenData == nil {
+            try Task.checkCancellation()
+            let (data, response) = try await apiSession.data(for: request)
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse else {
+                throw SpotifyError.api("Spotify token endpoint returned no HTTP response.")
+            }
+            if (200...299).contains(http.statusCode) {
+                tokenData = data
+                break
+            }
+            if http.statusCode == 400 || http.statusCode == 401 {
+                // Invalid or revoked refresh tokens need a new login, not
+                // repeated requests that exhaust the provider's rate limits.
+                throw SpotifyError.api("Spotify authorization is no longer valid. Disconnect and reconnect your account.")
+            }
+            guard isRefreshGrant, retryCount < 2 else {
+                throw SpotifyError.api("Spotify token request failed (HTTP \\(http.statusCode)). Try reconnecting if it persists.")
+            }
+            let delay: Int
+            if http.statusCode == 429 {
+                guard let value = http.value(forHTTPHeaderField: "Retry-After"),
+                      let seconds = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)),
+                      (1...10).contains(seconds) else {
+                    throw SpotifyError.api("Spotify authentication rate limit reached. Try again later.")
+                }
+                delay = seconds
+            } else if (500...599).contains(http.statusCode) {
+                // Bounded deterministic backoff; no retries on 403 or other
+                // permanent client errors and no unbounded provider traffic.
+                delay = retryCount + 1
+            } else {
+                throw SpotifyError.api("Spotify token request failed (HTTP \\(http.statusCode)).")
+            }
+            retryCount += 1
+            try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
         }
-        let decoded = try JSONDecoder().decode(SpotifyTokenResponse.self, from: data)
+        guard let tokenData else { throw SpotifyError.api("Spotify token response was empty.") }
+        let decoded = try JSONDecoder().decode(SpotifyTokenResponse.self, from: tokenData)
         // Do not persist an unusable token response. An empty access token or
         // nonpositive lifetime would otherwise appear connected and trigger
         // repeated refresh attempts on every playlist request.
