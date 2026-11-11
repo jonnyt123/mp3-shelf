@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { verifyCheckoutIdentity } from './local-evidence.mjs';
+import { verifyCheckoutIdentity, readPersistedReceipt } from './local-evidence.mjs';
 import { buildLocalReceipt, verifyLocalReceipt } from './local-evidence.mjs';
 const sha = 'a'.repeat(40);
 const webSteps = ['node-release-safety','npm-ci','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity'];
@@ -179,4 +179,39 @@ test('receipt CLI rejects mismatched SHA, dirty checkout and tampered original l
     writeFileSync(join(outside, 'node-release-safety.log'), 'tampered\\n');
     assert.match(verify().stderr, /Log changed/);
   } finally { rmSync(outside, { recursive: true, force: true }); }
+}));
+
+test('persisted receipt reader refuses symlink, hardlink, directory and oversized JSON', () => fixture(dir => {
+  const original = join(dir, 'receipt.json');
+  writeFileSync(original, JSON.stringify({ schemaVersion: 1 }));
+  assert.equal(readPersistedReceipt(original).schemaVersion, 1);
+  const symlink = join(dir, 'symlink.json');
+  symlinkSync(original, symlink);
+  assert.throws(() => readPersistedReceipt(symlink), /bounded, regular, unlinked/);
+  const hardlink = join(dir, 'hardlink.json');
+  linkSync(original, hardlink);
+  assert.throws(() => readPersistedReceipt(original), /bounded, regular, unlinked/);
+  unlinkSync(hardlink);
+  const directory = join(dir, 'folder');
+  mkdirSync(directory);
+  assert.throws(() => readPersistedReceipt(directory), /bounded, regular, unlinked/);
+  truncateSync(original, 256 * 1024 + 1);
+  assert.throws(() => readPersistedReceipt(original), /bounded, regular, unlinked/);
+}));
+
+test('persisted receipt reader rejects malformed JSON and empty files', () => fixture(dir => {
+  const path = join(dir, 'receipt.json');
+  writeFileSync(path, '{bad json');
+  assert.throws(() => readPersistedReceipt(path), SyntaxError);
+  writeFileSync(path, '');
+  assert.throws(() => readPersistedReceipt(path), /bounded, regular, unlinked/);
+}));
+
+test('independent verifier rejects unknown schema and excessive steps', () => fixture(dir => {
+  const receipt = buildLocalReceipt(args(dir));
+  assert.match(verifyLocalReceipt({ ...receipt, schemaVersion: 999 },
+    { expectedSha: sha, logDir: dir }).join(' '), /schema version/);
+  const excessive = { ...receipt, steps: Array(1000).fill(receipt.steps[0]) };
+  assert.match(verifyLocalReceipt(excessive, { expectedSha: sha, logDir: dir }).join(' '),
+    /excessive receipt steps/);
 }));

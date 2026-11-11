@@ -2,12 +2,48 @@
 // SHA-bound local observations, deliberately not a release approval.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { closeSync, fstatSync, lstatSync, openSync, readSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, openSync, readSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { constants as fsConstants } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const SHA = /^[0-9a-f]{40}$/i;
+const RECEIPT_LIMIT = 256 * 1024;
+
+/**
+ * Read a persisted receipt without following symlinks, trusting a mutable
+ * pathname after inspection, or allocating memory proportional to file size.
+ * The same bound is enforced before JSON parsing, including for CLI input.
+ */
+export function readPersistedReceipt(path) {
+  const metadata = lstatSync(path);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 ||
+      metadata.size < 2 || metadata.size > RECEIPT_LIMIT)
+    throw Error('Receipt must be a bounded, regular, unlinked JSON file.');
+  const fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== metadata.dev ||
+        opened.ino !== metadata.ino || opened.nlink !== 1 ||
+        opened.size < 2 || opened.size > RECEIPT_LIMIT)
+      throw Error('Receipt changed during opening or exceeds size limit.');
+    const chunks = [];
+    let bytes = 0;
+    const buffer = Buffer.allocUnsafe(16 * 1024);
+    let count;
+    while ((count = readSync(fd, buffer, 0, buffer.length, null)) !== 0) {
+      bytes += count;
+      if (bytes > RECEIPT_LIMIT) throw Error('Receipt exceeds 256 KiB size limit.');
+      chunks.push(Buffer.from(buffer.subarray(0, count)));
+    }
+    const final = fstatSync(fd);
+    if (final.size !== bytes || final.size !== opened.size ||
+        final.mtimeMs !== opened.mtimeMs || final.ctimeMs !== opened.ctimeMs ||
+        final.nlink !== 1) throw Error('Receipt changed during reading.');
+    return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'));
+  } finally { closeSync(fd); }
+}
+
 const allowed = new Set(['node-release-safety','npm-ci','npm-ci-offline','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity','native-local-release','post-native-checkout-integrity']);
 const required = {
   'node-only': ['node-release-safety'],
@@ -84,6 +120,7 @@ export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir })
 export function verifyLocalReceipt(receipt, { expectedSha, logDir }) {
   const errors = [];
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return ['Invalid receipt object.'];
+  if (receipt.schemaVersion !== 1) errors.push('Unsupported receipt schema version.');
   if (!SHA.test(expectedSha ?? '') || receipt.candidateSha !== expectedSha)
     errors.push('Receipt candidate SHA mismatch.');
   if (!Object.hasOwn(required, receipt.mode)) errors.push('Unknown receipt mode.');
@@ -93,7 +130,8 @@ export function verifyLocalReceipt(receipt, { expectedSha, logDir }) {
   if (receipt.physicalDeviceAcceptance !== 'NOT_TESTED' ||
       receipt.branchProtection !== 'NOT_VERIFIED' || receipt.rollback !== 'NOT_VERIFIED')
     errors.push('Local receipt contains unauthorized release approval claims.');
-  if (!Array.isArray(receipt.steps)) return [...errors, 'Missing receipt steps.'];
+  if (!Array.isArray(receipt.steps) || receipt.steps.length > allowed.size)
+    return [...errors, 'Missing or excessive receipt steps.'];
   const steps = receipt.steps;
   const names = steps.map(s => s?.name);
   const installs = names.filter(n => n === 'npm-ci' || n === 'npm-ci-offline');
@@ -163,7 +201,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
         throw Error('Usage: --verify receipt.json sha log-directory');
       const errors = [
         ...verifyCheckoutIdentity(sha),
-        ...verifyLocalReceipt(JSON.parse(readFileSync(path, 'utf8')),
+        ...verifyLocalReceipt(readPersistedReceipt(path),
           { expectedSha: sha, logDir: dir })
       ];
       if (errors.length) throw Error(errors.join('; '));
@@ -180,7 +218,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       return { name, success: Number(value) };
     });
     const receipt = buildLocalReceipt({ sha, dirty, mode, exitCode: Number(code), logDir: dir, steps });
-    writeFileSync(out, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    const encoded = JSON.stringify(receipt, null, 2) + '\n';
+    if (Buffer.byteLength(encoded) > RECEIPT_LIMIT)
+      throw Error('Receipt exceeds 256 KiB size limit.');
+    writeFileSync(out, encoded, { flag: 'wx', mode: 0o600 });
     console.log('Local execution receipt: ' + out + ' (' + receipt.status + ')');
   } catch (error) {
     console.error('Local receipt unavailable: ' + error.message);
