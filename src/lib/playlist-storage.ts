@@ -277,6 +277,9 @@ export async function deleteTrackWithPlaylistCleanup(
    throw new Error("Playlists changed while staging deletion. Retry without losing the newer edit.");
   if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)
    throw new Error("A backup restore started while staging deletion.");
+  // A competing tab can replace the journal while staging writes are in progress.
+  // Never commit playlist cleanup under another operation's recovery intent.
+  assertJournalOwnership();
   commitPlaylistEdit(storage,key,next);
  }catch(error){
   // Do not erase a newer tab's recovery intent when staging fails.
