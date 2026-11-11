@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Fail closed on missing or stale release evidence. This tool never deploys.
-import { readFileSync } from "node:fs";
+import { readPersistedReceipt } from "./local-evidence.mjs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export function verifyReleaseEvidence(evidence, expectedSha) {
   const errors = [];
@@ -43,14 +45,14 @@ export function verifyReleaseEvidence(evidence, expectedSha) {
   return errors;
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [path, sha] = process.argv.slice(2);
   if (!path || !sha) {
     console.error("Usage: node scripts/verify-release-evidence.mjs evidence.json <40-character-candidate-sha>");
     process.exitCode = 2;
   } else {
     try {
-      const errors = verifyReleaseEvidence(JSON.parse(readFileSync(path, "utf8")), sha);
+      const errors = verifyReleaseEvidence(readPersistedReceipt(path), sha);
       if (errors.length) {
         for (const error of errors) console.error(`BLOCKED: ${error}`);
         process.exitCode = 1;
