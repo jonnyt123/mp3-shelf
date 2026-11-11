@@ -313,11 +313,18 @@ export async function deleteTrackWithPlaylistCleanup(
  // was in flight. Its audio is now absent, so never return a playlist with
  // dangling references. Reconcile against the *latest* persisted state and
  // retain the journal if persistence fails, allowing startup to retry.
- const afterDeletion=parseStoredPlaylists(storage.getItem(key));
+ const reconciliationBaseline=storage.getItem(key);
+ const afterDeletion=parseStoredPlaylists(reconciliationBaseline);
  if(afterDeletion.some(playlist=>playlist.trackIds.includes(trackId))){
   const reconciled=afterDeletion.map(playlist=>({
    ...playlist,trackIds:playlist.trackIds.filter(id=>id!==trackId)
   }));
+  // Reconciliation can run after an arbitrary IndexedDB delay. If another
+  // tab edits playlists while we inspect them, retain its bytes and the
+  // deletion journal so startup can safely retry against the new state.
+  if(storage.getItem(key)!==reconciliationBaseline)
+   throw new Error("Playlists changed during post-deletion reconciliation. Retry recovery.");
+  assertJournalOwnership();
   commitPlaylistEdit(storage,key,reconciled);
  }
  // Recheck ownership after reconciliation; a replacement journal must survive.
