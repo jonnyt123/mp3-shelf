@@ -19,12 +19,12 @@ enum SpotifyPaginationSlotTests {
         import Foundation
         struct FixtureTrack: Decodable { let name: String }
         func check(_ condition: Bool, _ description: String) {
-            guard condition else { fatalError("FAIL: \\(description)") }
-            print("PASS: \\(description)")
+            guard condition else { fatalError("FAIL: \(description)") }
+            print("PASS: \(description)")
         }
         let data = #"{"items":[{"name":"first"},null,{"name":17},{"name":"last"}],"next":"?limit=4&offset=4"}"#.data(using: .utf8)!
         let page = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self, from: data)
-        check(page.items.map(\\.name) == ["first", "last"], "valid neighbors survive invalid slots")
+        check(page.items.map(\.name) == ["first", "last"], "valid neighbors survive invalid slots")
         check(page.rawItemCount == 4, "pagination counts raw slots, not filtered entries")
         check(page.next == "?limit=4&offset=4", "next cursor preserved")
         let empty = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
