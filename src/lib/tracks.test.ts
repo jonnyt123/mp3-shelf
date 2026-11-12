@@ -50,6 +50,31 @@ describe("Files provider import compatibility",()=>{
  });
 });
 
+describe("nameless Files provider import safety",()=>{
+ it("skips blank filenames without persisting recordings that cannot be backed up",async()=>{
+  const unnamed=new File([new Uint8Array([1,2,3])],"",{type:"audio/mpeg",lastModified:700});
+  const whitespace=new File([new Uint8Array([4,5,6])],"   ",{type:"audio/mpeg",lastModified:701});
+  const valid=new File([new Uint8Array([7,8,9])],"named.mp3",{type:"audio/mpeg",lastModified:702});
+  try{
+   expect(await importTracks([unnamed,whitespace,valid])).toBe(1);
+   const tracks=await listTracks();
+   expect(tracks.some(track=>track.id===":3:700"||track.id==="   :3:701")).toBe(false);
+   const saved=tracks.find(track=>track.id==="named.mp3:3:702");
+   expect(saved?.originalName).toBe("named.mp3");
+   expect(saved?.name).toBe("named");
+  }finally{await removeTrack("named.mp3:3:702")}
+ });
+ it("does not parse metadata or open storage for entirely nameless selections",async()=>{
+  const originalSlice=File.prototype.slice;
+  let reads=0;
+  File.prototype.slice=function(...args){reads++;return originalSlice.apply(this,args)};
+  try{
+   expect(await importTracks([new File([new Uint8Array([1])],"",{type:"audio/mpeg"})])).toBe(0);
+   expect(reads).toBe(0);
+  }finally{File.prototype.slice=originalSlice}
+ });
+});
+
 describe("bulk import bounded metadata work",()=>{
  it("imports a large Files selection without dropping tracks or changing selection order",async()=>{
   const files=Array.from({length:128},(_,i)=>new File([new Uint8Array([1,2,3])],`bulk-${i}.mp3`,{type:"audio/mpeg",lastModified:123}));
