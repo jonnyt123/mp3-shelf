@@ -50,7 +50,7 @@ export async function importTracks(files:File[]):Promise<number>{
     request.onsuccess=()=>{
      if(request.result!==undefined)return;
      const extension=/\.m4a$/i.test(file.name)?"audio/mp4":"audio/mpeg";
-     const add=store.add({id,name:metadata.title||file.name.replace(/\.(mp3|m4a)$/i,""),originalName:file.name,artist:metadata.artist,album:metadata.album,artwork:metadata.artwork,size:file.size,type:file.type||extension,importedAt:Date.now(),blob:file} satisfies Track);
+     const add=store.add({id,name:metadata.title?.trim()||file.name.replace(/\.(mp3|m4a)$/i,"").trim()||file.name,originalName:file.name,artist:metadata.artist,album:metadata.album,artwork:metadata.artwork,size:file.size,type:file.type||extension,importedAt:Date.now(),blob:file} satisfies Track);
      add.onsuccess=()=>{inserted++};
     };
    }
@@ -78,6 +78,11 @@ export async function removeTrack(id:string):Promise<void>{
  }finally{db.close()}
 }
 export async function renameTrack(id:string,name:string):Promise<void>{
+ // Blank titles make the recording impossible to restore from a portable
+ // archive, whose validation correctly rejects nameless records.
+ if(typeof id!=="string"||!id.trim())throw new Error("Invalid recording ID.");
+ if(typeof name!=="string"||!name.trim())throw new Error("Recording name cannot be empty.");
+ const normalizedName=name.trim();
  const db=await openDatabase();
  try{
   const transaction=db.transaction(STORE,"readwrite");
@@ -89,7 +94,8 @@ export async function renameTrack(id:string,name:string):Promise<void>{
     request.onsuccess=()=>{
      try{
       const track=request.result as Track|undefined;
-      if(track)store.put({...track,name});
+      if(!track){reject(new Error("Recording no longer exists."));return}
+      store.put({...track,name:normalizedName});
       resolve();
      }catch(error){reject(error)}
     };
