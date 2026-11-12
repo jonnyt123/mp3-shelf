@@ -875,11 +875,22 @@ final class MusicLibrary: ObservableObject {
         // Compare only equal-sized candidates; the archive comparator streams in
         // bounded chunks rather than loading entire recordings into memory.
         // An unreadable candidate is never considered a duplicate.
-        if fileSize > 0 && tracks.contains(where: { track in
-            let existingURL = fileURL(for: track)
-            return ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) == fileSize &&
-                PortableShelfArchive.audioFilesIdentical(sourceURL, existingURL)
-        }) { return false }
+        if fileSize > 0 {
+            for track in tracks {
+                // The comparator deliberately returns false when cancelled,
+                // because its nonthrowing API also serves ordinary imports.
+                // A cancellable restore must not interpret that false result
+                // as permission to import a duplicate recording.
+                if cancellationAware { try Task.checkCancellation() }
+                let existingURL = fileURL(for: track)
+                guard ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) == fileSize else {
+                    continue
+                }
+                let identical = PortableShelfArchive.audioFilesIdentical(sourceURL, existingURL)
+                if cancellationAware { try Task.checkCancellation() }
+                if identical { return false }
+            }
+        }
 
         if cancellationAware { try Task.checkCancellation() }
         let id = UUID()
