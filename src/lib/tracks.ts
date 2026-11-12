@@ -30,14 +30,34 @@ export async function importTracks(files:File[]):Promise<number>{
   return true;
  });
  if(!audio.length)return 0;
+ // Skip recordings already stored before parsing ID3. On repeated bulk
+ // selections this avoids reading up to 2 MiB per existing recording.
+ // Keep the conditional get/add below: another tab may import between this
+ // preflight and the write transaction, and existing bytes must always win.
+ const existing=new Set<string>();
+ const lookupDb=await openDatabase();
+ try{
+  const transaction=lookupDb.transaction(STORE,"readonly");
+  const completed=finish(transaction);
+  const store=transaction.objectStore(STORE);
+  const lookups=audio.map(file=>new Promise<void>((resolve,reject)=>{
+   const id=`${file.name}:${file.size}:${file.lastModified}`;
+   const request=store.getKey(id);
+   request.onsuccess=()=>{if(request.result!==undefined)existing.add(id);resolve()};
+   request.onerror=()=>reject(request.error);
+  }));
+  await Promise.all([...lookups,completed]);
+ }finally{lookupDb.close()}
+ const pending=audio.filter(file=>!existing.has(`${file.name}:${file.size}:${file.lastModified}`));
+ if(!pending.length)return 0;
  // Bound concurrent 2 MiB ID3 reads: a large Files selection must not launch
  // hundreds of arrayBuffer allocations simultaneously on memory-limited iPhones.
- const prepared=new Array<{file:File;metadata:Awaited<ReturnType<typeof readAudioMetadata>>}>(audio.length);
+ const prepared=new Array<{file:File;metadata:Awaited<ReturnType<typeof readAudioMetadata>>}>(pending.length);
  let cursor=0;
- await Promise.all(Array.from({length:Math.min(4,audio.length)},async()=>{
-  while(cursor<audio.length){
+ await Promise.all(Array.from({length:Math.min(4,pending.length)},async()=>{
+  while(cursor<pending.length){
    const index=cursor++;
-   prepared[index]={file:audio[index],metadata:await readAudioMetadata(audio[index])};
+   prepared[index]={file:pending[index],metadata:await readAudioMetadata(pending[index])};
   }
  }));
  const db=await openDatabase();
