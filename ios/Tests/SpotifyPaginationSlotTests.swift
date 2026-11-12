@@ -30,6 +30,34 @@ enum SpotifyPaginationSlotTests {
         let empty = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
             from: #"{"items":[null,{},7],"next":null}"#.data(using: .utf8)!)
         check(empty.items.isEmpty && empty.rawItemCount == 3, "all-invalid page still advances by raw slots")
+        // A short decoded page must not be mistaken for an exhausted page.
+        // All positions, including malformed ones, contribute to the cursor.
+        let full = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+            from: #"{\"items\":[null,{\"name\":\"second\"},false,{},null],\"next\":\"?limit=5&offset=5\"}"#.data(using: .utf8)!)
+        check(full.items.map(\\.name) == ["second"] && full.rawItemCount == 5,
+              "raw cursor retains all five slots when only one track is usable")
+        let lastPage = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+            from: #"{\"items\":[{\"name\":\"final\"}],\"next\":null}"#.data(using: .utf8)!)
+        check(lastPage.rawItemCount == 1 && lastPage.next == nil,
+              "short final page terminates without inventing another cursor")
+        let emptyPage = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+            from: #"{\"items\":[],\"next\":null}"#.data(using: .utf8)!)
+        check(emptyPage.rawItemCount == 0 && emptyPage.items.isEmpty,
+              "genuinely empty page retains zero raw slots")
+        do {
+            _ = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+                from: #"{\"next\":null}"#.data(using: .utf8)!)
+            fatalError("FAIL: missing items array accepted")
+        } catch DecodingError.keyNotFound {
+            print("PASS: missing items array rejected")
+        }
+        do {
+            _ = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+                from: #"{\"items\":[],\"next\":17}"#.data(using: .utf8)!)
+            fatalError("FAIL: non-string pagination cursor accepted")
+        } catch DecodingError.typeMismatch {
+            print("PASS: non-string pagination cursor rejected")
+        }
         do {
             _ = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
                 from: #"{"items":{},"next":null}"#.data(using: .utf8)!)
