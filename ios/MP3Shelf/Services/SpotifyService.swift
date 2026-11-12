@@ -177,7 +177,7 @@ final class SpotifyService: NSObject, ObservableObject {
                 throw SpotifyError.notConnected
             }
             found.append(contentsOf: page.items)
-            next = try Self.safeNext(page.next, for: url, returnedItems: page.items.count)
+            next = try Self.safeNext(page.next, for: url, returnedItems: page.rawItemCount)
             if found.count > 10000 { throw SpotifyError.api("Too many playlists to import in one request.") }
         }
         try Task.checkCancellation()
@@ -261,7 +261,7 @@ final class SpotifyService: NSObject, ObservableObject {
                     spotifyURL: track.external_urls?.spotify,
                     durationSeconds: duration, artistNames: artists))
             }
-            next = try Self.safeNext(page.next, for: url, returnedItems: page.items.count)
+            next = try Self.safeNext(page.next, for: url, returnedItems: page.rawItemCount)
             if wishes.count > 20000 { throw SpotifyError.api("The playlist contains too many tracks.") }
         }
         try Task.checkCancellation()
@@ -605,6 +605,9 @@ struct SpotifyURLContainer: Decodable { let spotify: String? }
 private struct SpotifyPage<T: Decodable>: Decodable {
     let items: [T]
     let next: String?
+    // The server cursor counts every array slot, including malformed entries.
+    // Never use the filtered decoded count to validate pagination bounds.
+    let rawItemCount: Int
 
     private enum CodingKeys: String, CodingKey { case items, next }
 
@@ -617,7 +620,9 @@ private struct SpotifyPage<T: Decodable>: Decodable {
         // A missing/non-array "items" is still a malformed API response.
         var entries = try container.nestedUnkeyedContainer(forKey: .items)
         var decoded: [T] = []
+        var rawCount = 0
         while !entries.isAtEnd {
+            rawCount += 1
             // A superDecoder consumes exactly one array position even when
             // the entry's shape cannot be decoded as T.
             let entry = try entries.superDecoder()
@@ -626,6 +631,7 @@ private struct SpotifyPage<T: Decodable>: Decodable {
             }
         }
         items = decoded
+        rawItemCount = rawCount
     }
 }
 private struct SpotifyPlaylistItem: Decodable {
