@@ -78,3 +78,24 @@ test('node-only integrity check is included in completed and receipt steps', asy
   assert.match(block, /"\$OUT\/\$STEP\.log"/);
   assert.ok(block.indexOf('exit 2') < block.indexOf('RECEIPT_STEPS+='), 'failed integrity must not be recorded as passing');
 });
+
+test('receipt-time checkout identity is rechecked even after the final integrity step', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  const report = source.slice(source.indexOf('report() {'), source.indexOf('trap report EXIT'));
+  const recheck = report.indexOf('receipt_state=\'UNAVAILABLE_CHECKOUT_CHANGED\'');
+  const receipt = report.indexOf('node "$ROOT/scripts/local-evidence.mjs" "$OUT/local-evidence.json"');
+  assert.ok(recheck > 0 && receipt > recheck, 'checkout must be rechecked before receipt creation');
+  assert.match(report, /git rev-parse --verify HEAD/);
+  assert.match(report, /git status --porcelain --untracked-files=all/);
+  assert.match(report, /code=1[\\s\\S]*Checkout changed before receipt generation/);
+  assert.match(report, /receipt_state" != UNAVAILABLE_CHECKOUT_CHANGED/);
+});
+
+test('initial, web and native integrity checks include untracked source files', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  const matches = source.match(/git status --porcelain --untracked-files=all/g) ?? [];
+  assert.ok(matches.length >= 5, 'initial, receipt, node, web and native checks must agree');
+  assert.doesNotMatch(source, /git status --porcelain\)/);
+});
