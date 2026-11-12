@@ -574,6 +574,10 @@ final class SpotifyService: NSObject, ObservableObject {
               // next cursor (for example when entries are unavailable).
               // Validate continuity using the server cursor, not the number
               // of decodable items, so valid playlists are not truncated.
+              // A nonterminal page with zero server slots cannot make meaningful
+              // progress. Stop instead of following an unbounded chain of empty
+              // pages that consumes requests without importing any tracks.
+              returnedItems > 0,
               returnedItems <= previousLimit,
               previousOffset >= 0,
               previousOffset <= Int.max - limit,
