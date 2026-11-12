@@ -793,7 +793,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         } catch { return }
         let second = await backgroundTaskInventory()
         guard !second.hasUnknownTasks else { return }
-        var completedLocally = false
         for id in possible {
             guard let current = tickets[id], current.status == .queued,
                   let library, library.hasCurrentSourceRequest(current.requested, for: current.playlistID),
@@ -813,9 +812,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 finished.failureReason = nil
                 finished.nextRetryAt = nil
                 finished.alternativeSources = nil
-                tickets[id] = finished
+                // The OS task has disappeared. Persist the completed ticket
+                // before notifying the library, so a crash or a manifest write
+                // failure cannot leave a phantom queued download on relaunch.
+                var updated = tickets
+                updated[id] = finished
+                do {
+                    try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+                } catch {
+                    // Preserve the queued ticket for a later reconciliation.
+                    // Never acknowledge completion that cannot survive restart.
+                    continue
+                }
+                tickets = updated
                 library.finishedBackgroundDownload(for: current.playlistID, succeeded: true)
-                completedLocally = true
+                updatePending()
                 continue
             }
             guard Self.allowedDownloadURL(current.downloadURL) else {
@@ -845,10 +856,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             } catch {
                 setFailed(id, reason: error.localizedDescription, allowAlternative: false)
             }
-        }
-        if completedLocally {
-            persist()
-            updatePending()
         }
     }
 
