@@ -105,6 +105,9 @@ final class SpotifyService: NSObject, ObservableObject {
                   let query = callbackParts.queryItems,
                   query.allSatisfy({ ["state", "code", "error", "error_description"].contains($0.name) }),
                   Set(query.map(\.name)).count == query.count,
+                  // Exactly one terminal outcome is valid: code or error.
+                  query.contains(where: { $0.name == "code" }) !=
+                      query.contains(where: { $0.name == "error" }),
                   let receivedState = query.first(where: { $0.name == "state" })?.value,
                   receivedState == state else { throw SpotifyError.badCallback }
             if let error = query.first(where: { $0.name == "error" })?.value {
