@@ -7,6 +7,14 @@ struct MiniPlayer: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let open: () -> Void
 
+    // Audio metadata can briefly be unknown or nonfinite during a track switch.
+    // Never feed NaN or infinity into SwiftUI's layout system.
+    private var playbackProgress: Double {
+        guard playback.duration.isFinite, playback.duration > 0,
+              playback.currentTime.isFinite else { return 0 }
+        return min(max(playback.currentTime / playback.duration, 0), 1)
+    }
+
     var body: some View {
         if let track = library.song(with: playback.currentTrackID) {
             Group {
@@ -45,9 +53,7 @@ struct MiniPlayer: View {
                     Capsule()
                         .fill(LinearGradient(colors: [ShelfTheme.accent, ShelfTheme.mint],
                                              startPoint: .leading, endPoint: .trailing))
-                        .frame(width: geo.size.width * (playback.duration > 0
-                            ? max(0, min(1, playback.currentTime / playback.duration)) : 0),
-                               height: 3)
+                        .frame(width: max(0, geo.size.width) * playbackProgress, height: 3)
                         .offset(y: geo.size.height - 3)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 22))
@@ -127,6 +133,20 @@ struct NowPlayingView: View {
 
     private var seekableDuration: Double {
         playback.duration.isFinite && playback.duration > 0 ? playback.duration : 0
+    }
+
+    // Transport buttons operate on the live playback clock, not a pending
+    // slider drag. A scrub is only committed when its editing gesture ends.
+    private var livePlaybackTime: Double {
+        guard playback.currentTime.isFinite else { return 0 }
+        return min(max(playback.currentTime, 0), seekableDuration)
+    }
+
+    private func seekBy(_ offset: TimeInterval) {
+        guard seekableDuration > 0 else { return }
+        let destination = min(max(livePlaybackTime + offset, 0), seekableDuration)
+        clearScrub()
+        playback.seek(to: destination)
     }
 
     private var displayedTime: Double {
@@ -253,28 +273,24 @@ struct NowPlayingView: View {
 
                                 HStack {
                                     Button {
-                                        draggingTime = nil
-                                        scrubbingTrackID = nil
-                                        playback.seek(to: playback.currentTime - seekStep)
+                                        seekBy(-seekStep)
                                     } label: {
                                         Label("Back 15 seconds", systemImage: "gobackward.15")
                                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                                     }
-                                    .disabled(seekableDuration == 0 || displayedTime <= 0)
+                                    .disabled(seekableDuration == 0 || livePlaybackTime <= 0)
                                     .accessibilityHint("Seek toward the beginning of the current recording")
                                     Spacer()
                                     Text(playback.isPlaying ? "Playing" : "Paused")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                     Spacer()
                                     Button {
-                                        draggingTime = nil
-                                        scrubbingTrackID = nil
-                                        playback.seek(to: playback.currentTime + seekStep)
+                                        seekBy(seekStep)
                                     } label: {
                                         Label("Forward 15 seconds", systemImage: "goforward.15")
                                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                                     }
-                                    .disabled(seekableDuration == 0 || displayedTime >= seekableDuration)
+                                    .disabled(seekableDuration == 0 || livePlaybackTime >= seekableDuration)
                                     .accessibilityHint("Seek toward the end of the current recording")
                                 }
                                 .tint(ShelfTheme.mint)
