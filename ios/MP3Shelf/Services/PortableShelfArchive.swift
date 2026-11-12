@@ -483,11 +483,16 @@ enum PortableShelfArchive {
         // shrinking and growing files to avoid misaligned payload offsets.
         var remaining = expectedLength
         while remaining > 0 {
+            // A large offline library can take minutes to export. Cancellation
+            // must interrupt the audio copy itself, not merely the gap between
+            // tracks, or the UI keeps writing gigabytes after the user cancels.
+            try Task.checkCancellation()
             let chunk = try input.read(upToCount: Int(min(remaining, 64 * 1024))) ?? Data()
             guard !chunk.isEmpty else { throw ArchiveError.invalidRange }
             try output.write(contentsOf: chunk)
             remaining -= Int64(chunk.count)
         }
+        try Task.checkCancellation()
         guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
             throw ArchiveError.invalidRange
         }
@@ -723,6 +728,7 @@ enum PortableShelfArchive {
         var result = Data()
         var remaining = count
         while remaining > 0 {
+            try Task.checkCancellation()
             let chunk = try handle.read(upToCount: min(remaining, 64 * 1024)) ?? Data()
             if chunk.isEmpty { break }
             result.append(chunk)
