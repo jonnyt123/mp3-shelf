@@ -330,6 +330,7 @@ final class MusicLibrary: ObservableObject {
                     created.append(destination)
                     restored.lyricsFileName = name
                 } catch {
+                    try Task.checkCancellation()
                     report.errors.append("\(archived.name): missing lyrics could not be restored (\(error.localizedDescription)).")
                 }
             }
