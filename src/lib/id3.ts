@@ -6,7 +6,14 @@ function terminator(bytes:Uint8Array,start:number,wide:boolean){for(let i=start;
 function decode(bytes:Uint8Array,encoding:number){if(!bytes.length)return"";if(encoding===3)return new TextDecoder().decode(bytes).replace(/\0+$/,"").trim();if(encoding===1||encoding===2){let view=bytes,little=encoding===1;if(bytes[0]===0xff&&bytes[1]===0xfe){little=true;view=bytes.slice(2)}else if(bytes[0]===0xfe&&bytes[1]===0xff){little=false;view=bytes.slice(2)}const chars=[];for(let i=0;i+1<view.length;i+=2){const code=little?view[i]|(view[i+1]<<8):(view[i]<<8)|view[i+1];if(code)chars.push(String.fromCharCode(code))}return chars.join("").trim()}return new TextDecoder("windows-1252").decode(bytes).replace(/\0+$/,"").trim()}
 export function parseId3Bytes(bytes:Uint8Array):AudioMetadata{
  const result:AudioMetadata={};if(bytes.length<10||String.fromCharCode(...bytes.slice(0,3))!=="ID3")return result;
- const version=bytes[3],end=Math.min(bytes.length,10+syncSafe(bytes,6));let offset=10;
+ const version=bytes[3];
+ // v2.2 uses six-byte frame headers; v2.3/v2.4 use ten-byte headers.
+ // Never interpret an unsupported layout as valid artwork or song metadata.
+ if(version!==3&&version!==4)return result;
+ if(bytes.slice(6,10).some(byte=>byte>127))return result;
+ const declared=10+syncSafe(bytes,6);
+ if(declared>bytes.length)return result;
+ const end=declared;let offset=10;
  while(offset+10<=end){const id=String.fromCharCode(...bytes.slice(offset,offset+4));if(!/^[A-Z0-9]{4}$/.test(id))break;const size=version===4?syncSafe(bytes,offset+4):uint32(bytes,offset+4);if(size<=0||offset+10+size>end)break;const data=bytes.slice(offset+10,offset+10+size);
   if(textFrames[id]&&data.length>1){const value=decode(data.slice(1),data[0]);if(value)(result as Record<string,unknown>)[textFrames[id]]=value}
   if(id==="APIC"&&data.length>4){const encoding=data[0],mimeEnd=terminator(data,1,false),mime=new TextDecoder().decode(data.slice(1,mimeEnd))||"image/jpeg",pictureType=mimeEnd+1,descStart=pictureType+1,descEnd=terminator(data,descStart,encoding===1||encoding===2),imageStart=Math.min(data.length,descEnd+(encoding===1||encoding===2?2:1));if(imageStart<data.length)result.artwork=new Blob([data.slice(imageStart)],{type:mime})}
@@ -23,9 +30,9 @@ export async function readAudioMetadata(file:Blob):Promise<AudioMetadata>{
   if(header.length<10||header[0]!==73||header[1]!==68||header[2]!==51)return{};
   // ID3v2 sizes are four 7-bit syncsafe bytes. Refuse malformed headers
   // rather than trusting a corrupt length or reading beyond our memory cap.
-  if(header.slice(6,10).some(byte=>byte>127))return{};
+  if((header[3]!==3&&header[3]!==4)||header.slice(6,10).some(byte=>byte>127))return{};
   const declared=10+syncSafe(header,6);
-  if(declared<=10)return{};
+  if(declared<=10||declared>file.size)return{};
   const bytes=new Uint8Array(await file.slice(0,Math.min(MAX_TAG_READ,declared)).arrayBuffer());
   return parseId3Bytes(bytes);
  }catch{return{}}
