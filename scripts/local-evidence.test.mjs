@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, truncateSync, mkdirSync, linkSync, renameSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, truncateSync, mkdirSync, linkSync, renameSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -246,8 +246,18 @@ test('receipt identity rejects a nested directory even when Git HEAD matches', (
   git('commit', '-qm', 'candidate');
   const candidate = git('rev-parse', 'HEAD');
   assert.deepEqual(verifyCheckoutIdentity(candidate, dir), []);
+  // macOS /var resolves to /private/var; aliases must not invalidate a clean root.
+  const aliasParent = mkdtempSync(join(tmpdir(), 'mp3-root-alias-'));
+  try {
+    const alias = join(aliasParent, 'checkout');
+    symlinkSync(dir, alias, 'dir');
+    assert.equal(realpathSync(alias), realpathSync(dir));
+    assert.deepEqual(verifyCheckoutIdentity(candidate, alias), []);
+    const aliasNested = join(alias, 'nested');
+    mkdirSync(join(dir, 'nested'));
+    assert.match(verifyCheckoutIdentity(candidate, aliasNested).join(' '), /candidate repository root/);
+  } finally { rmSync(aliasParent, { recursive: true, force: true }); }
   const nested = join(dir, 'nested');
-  mkdirSync(nested);
   assert.match(verifyCheckoutIdentity(candidate, nested).join(' '),
     /candidate repository root/);
   assert.deepEqual(verifyCheckoutIdentity(candidate, dir), []);
