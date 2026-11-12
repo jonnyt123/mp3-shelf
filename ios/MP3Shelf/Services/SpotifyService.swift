@@ -674,6 +674,15 @@ private struct SpotifyPage<T: Decodable>: Decodable {
         var decoded: [T] = []
         var rawCount = 0
         while !entries.isAtEnd {
+            // Both Spotify collection requests use limit=50. Reject an
+            // oversized response before decoding its extra entries rather
+            // than allocating an unbounded array of untrusted metadata.
+            guard rawCount < 50 else {
+                throw DecodingError.dataCorrupted(.init(
+                    codingPath: container.codingPath + [CodingKeys.items],
+                    debugDescription: "Spotify returned more than 50 collection entries."
+                ))
+            }
             rawCount += 1
             // A superDecoder consumes exactly one array position even when
             // the entry's shape cannot be decoded as T.
