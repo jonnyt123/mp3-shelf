@@ -12,6 +12,8 @@ Media Session integration supplies title, artist, album artwork, playback state,
 
 Open **Storage & backup** from the top-right menu to see music usage, total origin storage, and the allowance reported by the browser. Exports use MP3 Shelf's `.mp3shelf` archive format, which preserves MP3 bytes, artwork, metadata, and playlists without base64 expansion. Restore validates the complete archive manifest before atomically adding or updating tracks; it does not delete music already on the device.
 
+Tap **Export backup** to prepare an archive from the current saved library, then **Save backup** to download it. Export stops if library recovery is pending, playlists change during preparation, or saved audio or artwork cannot be read.
+
 ## Run locally
 
 ```bash
