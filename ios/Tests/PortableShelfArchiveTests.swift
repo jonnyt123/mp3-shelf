@@ -840,6 +840,23 @@ struct PortableShelfArchiveTests {
             .write(to: comparisonB, options: .atomic)
         assert(!PortableShelfArchive.audioFilesIdentical(comparisonA, comparisonB))
         assert(try Data(contentsOf: comparisonA) == comparisonBytes)
+        // A cancelled restore must not continue a potentially multi-gigabyte
+        // byte-for-byte duplicate scan. Gate the worker so this is deterministic
+        // rather than relying on timing or a large fixture.
+        let compareGate = DispatchSemaphore(value: 0)
+        let compareFinished = DispatchSemaphore(value: 0)
+        let cancelledComparison = Task.detached {
+            compareGate.wait()
+            assert(!PortableShelfArchive.audioFilesIdentical(comparisonA, comparisonA))
+            compareFinished.signal()
+        }
+        cancelledComparison.cancel()
+        compareGate.signal()
+        guard compareFinished.wait(timeout: .now() + 10) == .success else {
+            fatalError("Cancelled duplicate comparison did not terminate promptly")
+        }
+        assert(try Data(contentsOf: comparisonA) == comparisonBytes)
+        print("PASS: cancelled duplicate scan returns false without modifying audio")
         print("PASS: duplicate audio comparison rejects nonfiles and changed bytes")
 
         // A valid archive range is not authority to restore arbitrary bytes.
