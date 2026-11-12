@@ -511,6 +511,55 @@ struct PlaybackQueueSheet: View {
             : "Move this song one position toward the end of the queue")
     }
 
+    // Use a vertical fallback when enlarged labels cannot fit beside two
+    // minimum-size reorder targets. Both layouts invoke identical queue actions.
+    @ViewBuilder
+    private func queueActions(_ track: MusicTrack, index: Int,
+                              upcoming: [MusicTrack], stacked: Bool) -> some View {
+        if stacked {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    moveButton(track, earlier: true, in: upcoming)
+                        .disabled(index == 0)
+                    moveButton(track, earlier: false, in: upcoming)
+                        .disabled(index == upcoming.count - 1)
+                    Spacer(minLength: 0)
+                    Text("Position \\(index + 1) of \\(upcoming.count)")
+                        .font(.caption)
+                        .foregroundStyle(ShelfTheme.subdued)
+                        .accessibilityHidden(true)
+                }
+                playNextButton(track)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            HStack(spacing: 8) {
+                moveButton(track, earlier: true, in: upcoming)
+                    .disabled(index == 0)
+                moveButton(track, earlier: false, in: upcoming)
+                    .disabled(index == upcoming.count - 1)
+                Spacer(minLength: 0)
+                playNextButton(track)
+            }
+        }
+    }
+
+    private func playNextButton(_ track: MusicTrack) -> some View {
+        Button {
+            playNext(track.id)
+        } label: {
+            Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                .font(.caption.weight(.semibold))
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(ShelfTheme.accent)
+        .accessibilityLabel("Play next: \\(track.title)")
+        .accessibilityHint("Move this song to the next position in the playback queue")
+    }
+
     var body: some View {
         let upcoming = playback.queuedTracks
         return NavigationStack {
@@ -627,22 +676,13 @@ struct PlaybackQueueSheet: View {
                                     if dynamicTypeSize.isAccessibilitySize {
                                         // Separate transport actions from metadata so the largest
                                         // text sizes never compete with three 44-point targets.
-                                        HStack(spacing: 8) {
-                                            moveButton(track, earlier: true, in: upcoming)
-                                                .disabled(index == 0)
-                                            moveButton(track, earlier: false, in: upcoming)
-                                                .disabled(index == upcoming.count - 1)
-                                            Spacer(minLength: 0)
-                                            Button {
-                                                playNext(track.id)
-                                            } label: {
-                                                Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
-                                                    .font(.caption.weight(.semibold))
-                                                    .frame(minHeight: 44)
-                                            }
-                                            .buttonStyle(.plain)
-                                            .foregroundStyle(ShelfTheme.accent)
-                                            .accessibilityHint("Move this song to the next position in the playback queue")
+                                        // At the largest text sizes, keep all three actions
+                                        // independently reachable without compressing labels.
+                                        ViewThatFits(in: .horizontal) {
+                                            queueActions(track, index: index, upcoming: upcoming,
+                                                         stacked: false)
+                                            queueActions(track, index: index, upcoming: upcoming,
+                                                         stacked: true)
                                         }
                                     }
                                 }
