@@ -312,13 +312,32 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func clearFinishedHistory() {
         let removed = tickets.values.filter { $0.status != .queued }
+        guard !removed.isEmpty else { return }
+
+        // A failed manifest write must not resurrect cleared history on the
+        // next launch. Keep live state and staged files intact until the
+        // replacement queue is durably recorded.
+        let remaining = tickets.filter { $0.value.status == .queued }
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(remaining.values), to: manifestURL)
+        } catch {
+            // Keep history visible so the user can retry clearing it when
+            // storage becomes writable; do not discard recovery evidence.
+            revision += 1
+            return
+        }
+        tickets = remaining
         for item in removed {
             sourceResolutionTasks[item.id]?.cancel()
-            try? fm.removeItem(at: Self.stagingURL(item.id))
+            sourceResolutionTasks.removeValue(forKey: item.id)
+            // A conversion may still be reading its staged file. Cancel it,
+            // but let the conversion's cleanup own removal of that file.
+            conversions[item.id]?.cancel()
+            if !processing.contains(item.id) {
+                try? fm.removeItem(at: Self.stagingURL(item.id))
+            }
         }
-        tickets = tickets.filter { $0.value.status == .queued }
-        persist()
-        revision += 1
+        updatePending()
     }
 
     func cancelTransfer(_ id: UUID, reason: String = "Cancelled") {
