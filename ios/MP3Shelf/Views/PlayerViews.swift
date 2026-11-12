@@ -716,8 +716,8 @@ struct PlaybackQueueSheet: View {
         } label: {
             Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
                 .font(.caption.weight(.semibold))
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(minHeight: 44)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                .frame(minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -738,6 +738,7 @@ struct PlaybackQueueSheet: View {
                             PremiumEyebrow(title: "PLAYING NOW")
                             HStack(spacing: 13) {
                                 ArtworkTile(track: playing, size: 58)
+                                    .accessibilityHidden(true)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(playing.title)
                                         .font(.headline.weight(.semibold))
@@ -847,11 +848,16 @@ struct PlaybackQueueSheet: View {
                                     // forcing standard-size users into an overflow menu to reorder.
                                     // The stacked fallback also protects narrow iPhones and
                                     // long localized labels without shrinking 44-point targets.
-                                    ViewThatFits(in: .horizontal) {
-                                        queueActions(track, index: index, upcoming: upcoming,
-                                                     stacked: false)
+                                    // The horizontal variant contains a Spacer, so
+                                    // ViewThatFits cannot reliably detect cramped text.
+                                    // Select the vertical action layout explicitly at
+                                    // accessibility sizes to preserve 44-point controls.
+                                    if dynamicTypeSize.isAccessibilitySize {
                                         queueActions(track, index: index, upcoming: upcoming,
                                                      stacked: true)
+                                    } else {
+                                        queueActions(track, index: index, upcoming: upcoming,
+                                                     stacked: false)
                                     }
                                 }
                                 .padding(.horizontal, 12)
