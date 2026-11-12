@@ -610,7 +610,28 @@ enum PortableShelfArchive {
                       sourceIdentity: identity)
     }
 
+    /// Only restore slices declared in the inspected manifest. A caller must
+    /// not be able to extract a different song's bytes (or arbitrary offsets)
+    /// by constructing a Part with otherwise valid bounds.
+    private static func containsAudioPart(_ part: Part, in archive: Opened) -> Bool {
+        archive.manifest.tracks.contains {
+            $0.audio.offset == part.offset &&
+            $0.audio.length == part.length &&
+            $0.audio.type == part.type
+        }
+    }
+
+    private static func containsArtworkPart(_ part: Part, in archive: Opened) -> Bool {
+        archive.manifest.tracks.contains {
+            guard let artwork = $0.artwork else { return false }
+            return artwork.offset == part.offset &&
+                   artwork.length == part.length &&
+                   artwork.type == part.type
+        }
+    }
+
     static func extract(_ part: Part, from archive: Opened, extensionName: String) throws -> URL {
+        guard containsAudioPart(part, in: archive) else { throw ArchiveError.invalidRange }
         let ext = extensionName.lowercased()
         guard ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(ext) else {
             throw ArchiveError.unsupportedAudio
@@ -669,6 +690,7 @@ enum PortableShelfArchive {
     }
 
     static func readBytes(_ part: Part, from archive: Opened) throws -> Data {
+        guard containsArtworkPart(part, in: archive) else { throw ArchiveError.invalidRange }
         // Only small artwork/metadata slices belong in memory. A malformed
         // Part must not turn a backup restore into an unbounded allocation or
         // overflow the seek offset before the file is read.
