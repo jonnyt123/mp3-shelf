@@ -117,6 +117,24 @@ struct NowPlayingView: View {
     @State private var showQueue = false
     @AccessibilityFocusState private var queueButtonFocused: Bool
     private let seekStep: TimeInterval = 15
+
+    // An in-progress scrub belongs to exactly one recording. A new recording
+    // must never inherit the previous recording's pending slider value.
+    private func clearScrub() {
+        draggingTime = nil
+        scrubbingTrackID = nil
+    }
+
+    private var seekableDuration: Double {
+        playback.duration.isFinite && playback.duration > 0 ? playback.duration : 0
+    }
+
+    private var displayedTime: Double {
+        let raw = (scrubbingTrackID == playback.currentTrackID ? draggingTime : nil)
+            ?? playback.currentTime
+        guard raw.isFinite else { return 0 }
+        return min(max(raw, 0), seekableDuration)
+    }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -195,39 +213,38 @@ struct NowPlayingView: View {
                                     // phantom scrubs before media metadata is available.
                                     Slider(value: Binding(
                                         get: {
-                                            min(max(draggingTime ?? playback.currentTime, 0),
-                                                max(playback.duration, 1))
+                                            min(displayedTime, max(seekableDuration, 1))
                                         },
-                                        set: { draggingTime = $0 }
-                                    ), in: 0...max(playback.duration, 1), onEditingChanged: { editing in
+                                        set: { draggingTime = $0.isFinite ? $0 : nil }
+                                    ), in: 0...max(seekableDuration, 1), onEditingChanged: { editing in
                                         if editing {
                                             scrubbingTrackID = playback.currentTrackID
                                         } else {
-                                            if scrubbingTrackID == playback.currentTrackID, let draggingTime {
-                                                playback.seek(to: draggingTime)
+                                            if scrubbingTrackID == playback.currentTrackID,
+                                               seekableDuration > 0,
+                                               let draggingTime, draggingTime.isFinite {
+                                                playback.seek(to: min(max(draggingTime, 0), seekableDuration))
                                             }
-                                            self.draggingTime = nil
-                                            scrubbingTrackID = nil
+                                            clearScrub()
                                         }
                                     })
                                     .tint(ShelfTheme.mint)
-                                    .disabled(playback.duration <= 0)
+                                    .disabled(seekableDuration == 0)
                                     .accessibilityLabel("Track progress")
-                                    .accessibilityValue(playback.duration > 0
-                                        ? "\(min(max(draggingTime ?? playback.currentTime, 0), playback.duration).shelfClock) of \(playback.duration.shelfClock)"
+                                    .accessibilityValue(seekableDuration > 0
+                                        ? "\(displayedTime.shelfClock) of \(seekableDuration.shelfClock)"
                                         : "Duration unavailable")
-                                    .accessibilityHint(playback.duration > 0
+                                    .accessibilityHint(seekableDuration > 0
                                         ? "Adjust to seek within the current recording"
                                         : "Seeking is unavailable until the recording duration is known")
                                     HStack {
-                                        Text((draggingTime ?? playback.currentTime).shelfClock)
+                                        Text(displayedTime.shelfClock)
                                             .accessibilityLabel("Elapsed time")
-                                            .accessibilityValue((draggingTime ?? playback.currentTime).shelfClock)
+                                            .accessibilityValue(displayedTime.shelfClock)
                                         Spacer()
-                                        Text("−" + max(0, playback.duration -
-                                            (draggingTime ?? playback.currentTime)).shelfClock)
+                                        Text("−" + max(0, seekableDuration - displayedTime).shelfClock)
                                             .accessibilityLabel("Time remaining")
-                                            .accessibilityValue(max(0, playback.duration - (draggingTime ?? playback.currentTime)).shelfClock)
+                                            .accessibilityValue(max(0, seekableDuration - displayedTime).shelfClock)
                                     }
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(ShelfTheme.subdued)
@@ -243,7 +260,7 @@ struct NowPlayingView: View {
                                         Label("Back 15 seconds", systemImage: "gobackward.15")
                                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                                     }
-                                    .disabled(playback.duration <= 0 || playback.currentTime <= 0)
+                                    .disabled(seekableDuration == 0 || displayedTime <= 0)
                                     .accessibilityHint("Seek toward the beginning of the current recording")
                                     Spacer()
                                     Text(playback.isPlaying ? "Playing" : "Paused")
@@ -257,7 +274,7 @@ struct NowPlayingView: View {
                                         Label("Forward 15 seconds", systemImage: "goforward.15")
                                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                                     }
-                                    .disabled(playback.duration <= 0 || playback.currentTime >= playback.duration)
+                                    .disabled(seekableDuration == 0 || displayedTime >= seekableDuration)
                                     .accessibilityHint("Seek toward the end of the current recording")
                                 }
                                 .tint(ShelfTheme.mint)
@@ -446,6 +463,15 @@ struct NowPlayingView: View {
                     .environmentObject(playback)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
+            }
+        }
+        .onChange(of: playback.currentTrackID) { _, _ in
+            clearScrub()
+        }
+        .onChange(of: playback.duration) { _, duration in
+            // Duration can reset during a source transition without an ID change.
+            if !duration.isFinite || duration <= 0 {
+                clearScrub()
             }
         }
         .preferredColorScheme(.dark)
