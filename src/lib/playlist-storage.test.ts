@@ -73,6 +73,42 @@ describe("playlist restore commit",()=>{
   expect(writes).toBe(0);
   expect(storage.getItem()).toBe(saved);
  });
+ it("rejects deletion recovery staged during backup merge without overwriting playlists",()=>{
+  const saved=JSON.stringify([{id:"local",name:"Keep",trackIds:["audio"]}]);
+  const data=new Map<string,string>([["playlists",saved]]);
+  let reads=0;let writes=0;
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===2){
+     data.set("mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"audio",original:JSON.parse(saved)}));
+    }
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{writes++;data.set(key,value)}
+  };
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[{id:"backup",name:"Backup",trackIds:[]}]))
+   .toThrow("Track deletion started during backup restore");
+  expect(data.get("playlists")).toBe(saved);
+  expect(data.has("mp3-shelf-delete-recovery")).toBe(true);
+  expect(writes).toBe(0);
+ });
+ it("rejects a deletion journal staged at the final playlist check",()=>{
+  const saved=JSON.stringify([{id:"local",name:"Keep",trackIds:["audio"]}]);
+  const data=new Map<string,string>([["playlists",saved]]);
+  let reads=0;let writes=0;
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===2){
+     data.set("mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"audio",original:JSON.parse(saved)}));
+    }
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{writes++;data.set(key,value)}
+  };
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[])).toThrow("Track deletion started during backup restore");
+  expect(writes).toBe(0);
+  expect(data.get("playlists")).toBe(saved);
+ });
  it("refuses to overwrite malformed existing playlists",()=>{
   let wrote=false;
   expect(()=>persistRestoredPlaylists({getItem:()=>"{bad",setItem:()=>{wrote=true}},"playlists",[])).toThrow();
