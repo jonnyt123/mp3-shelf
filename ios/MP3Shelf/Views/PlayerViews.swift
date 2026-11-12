@@ -566,8 +566,9 @@ struct PlaybackQueueSheet: View {
                             .accessibilityFocused($emptyQueueFocused)
                         } else {
                             ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, track in
-                                HStack(spacing: 12) {
-                                    ArtworkTile(track: track, size: 48)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 12) {
+                                    ArtworkTile(track: track, size: dynamicTypeSize.isAccessibilitySize ? 40 : 48)
                                         .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(track.title)
@@ -581,15 +582,6 @@ struct PlaybackQueueSheet: View {
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .layoutPriority(1)
-                                    if dynamicTypeSize.isAccessibilitySize {
-                                        // Keep both actions in stable positions as the row moves.
-                                        // Disabling at the boundary avoids shifting the menu
-                                        // and VoiceOver targets during consecutive edits.
-                                        moveButton(track, earlier: true, in: upcoming)
-                                            .disabled(index == 0)
-                                        moveButton(track, earlier: false, in: upcoming)
-                                            .disabled(index == upcoming.count - 1)
-                                    }
                                     Menu {
                                         Button {
                                             playback.play(track)
@@ -631,6 +623,28 @@ struct PlaybackQueueSheet: View {
                                     .accessibilityLabel("Queue options for \(track.title)")
                                     .accessibilityHint("Play, reorder, or remove this song from the upcoming queue")
                                     .accessibilityFocused($focusedQueueTrackID, equals: track.id)
+                                    }
+                                    if dynamicTypeSize.isAccessibilitySize {
+                                        // Separate transport actions from metadata so the largest
+                                        // text sizes never compete with three 44-point targets.
+                                        HStack(spacing: 8) {
+                                            moveButton(track, earlier: true, in: upcoming)
+                                                .disabled(index == 0)
+                                            moveButton(track, earlier: false, in: upcoming)
+                                                .disabled(index == upcoming.count - 1)
+                                            Spacer(minLength: 0)
+                                            Button {
+                                                playNext(track.id)
+                                            } label: {
+                                                Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                                                    .font(.caption.weight(.semibold))
+                                                    .frame(minHeight: 44)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .foregroundStyle(ShelfTheme.accent)
+                                            .accessibilityHint("Move this song to the next position in the playback queue")
+                                        }
+                                    }
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
