@@ -888,7 +888,7 @@ struct PlaybackQueueSheet: View {
                 } else if focusedRowWasRemoved {
                     // Prefer the same visible position after removal, falling
                     // back to the last surviving row at the end of the queue.
-                    let oldIndex = previousIDs.firstIndex(of: focusedQueueTrackID!) ?? 0
+                    let oldIndex = focusedQueueTrackID.flatMap { previousIDs.firstIndex(of: $0) } ?? 0
                     focusedQueueTrackID = currentIDs[min(oldIndex, currentIDs.count - 1)]
                     emptyQueueFocused = false
                 }
