@@ -708,6 +708,12 @@ enum PortableShelfArchive {
             }
             let firstIdentity = ArchiveSourceIdentity(firstBefore)
             let secondIdentity = ArchiveSourceIdentity(secondBefore)
+            var firstNamed = stat()
+            var secondNamed = stat()
+            guard lstat(firstURL.path, &firstNamed) == 0,
+                  lstat(secondURL.path, &secondNamed) == 0,
+                  firstIdentity.matches(firstNamed),
+                  secondIdentity.matches(secondNamed) else { return false }
             let firstLength = try first.seekToEnd()
             let secondLength = try second.seekToEnd()
             guard firstLength == secondLength,
@@ -741,7 +747,11 @@ enum PortableShelfArchive {
             return fstat(first.fileDescriptor, &firstAfter) == 0 &&
                    fstat(second.fileDescriptor, &secondAfter) == 0 &&
                    firstIdentity.matches(firstAfter) &&
-                   secondIdentity.matches(secondAfter)
+                   secondIdentity.matches(secondAfter) &&
+                   lstat(firstURL.path, &firstNamed) == 0 &&
+                   lstat(secondURL.path, &secondNamed) == 0 &&
+                   firstIdentity.matches(firstNamed) &&
+                   secondIdentity.matches(secondNamed)
         } catch {
             return false
         }
