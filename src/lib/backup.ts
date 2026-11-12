@@ -14,7 +14,9 @@ type Manifest={schema:"mp3-shelf-backup";version:1;createdAt:string;tracks:Backu
 export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):Blob{
  const trackIds=new Set<string>(),playlistIds=new Set<string>();
  for(const track of tracks){
-  if(!track.id?.trim()||!track.name?.trim())throw new Error("Cannot back up a track without an ID and name.");
+  if(typeof track.id!=="string"||!track.id.trim()||
+     typeof track.name!=="string"||!track.name.trim())
+   throw new Error("Cannot back up a track without an ID and name.");
   if(trackIds.has(track.id))throw new Error("Duplicate track ID in library backup.");
   trackIds.add(track.id);
   if(!Number.isFinite(track.importedAt)||track.importedAt<0)throw new Error("Cannot back up a track with an invalid import date.");
@@ -30,7 +32,9 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
    throw new Error("Cannot back up empty artwork.");
  }
  for(const playlist of playlists){
-  if(!playlist.id?.trim()||!playlist.name?.trim())throw new Error("Cannot back up a playlist without an ID and name.");
+  if(typeof playlist.id!=="string"||!playlist.id.trim()||
+     typeof playlist.name!=="string"||!playlist.name.trim())
+   throw new Error("Cannot back up a playlist without an ID and name.");
   if(playlistIds.has(playlist.id))throw new Error("Duplicate playlist ID in library backup.");
   playlistIds.add(playlist.id);
   if(!Array.isArray(playlist.trackIds)||!playlist.trackIds.every(id=>typeof id==="string"&&Boolean(id.trim())))throw new Error("Cannot back up a playlist with invalid track references.");
