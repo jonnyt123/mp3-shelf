@@ -86,7 +86,9 @@ report() {
       fi
     fi
   else
-    receipt_state='UNAVAILABLE_UNCLEAN_CHECKOUT'
+    if [[ "$receipt_state" != UNAVAILABLE_CHECKOUT_CHANGED ]]; then
+      receipt_state='UNAVAILABLE_UNCLEAN_CHECKOUT'
+    fi
     # Node-only development checks are still runnable on a dirty checkout,
     # but must not be misrepresented as clean, SHA-bound release evidence.
   fi
