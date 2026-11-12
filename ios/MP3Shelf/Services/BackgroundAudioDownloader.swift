@@ -312,15 +312,25 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func cancelTransfer(_ id: UUID, reason: String = "Cancelled") {
         guard var ticket = tickets[id], ticket.status == .queued else { return }
-        conversions[id]?.cancel()
         ticket.status = .cancelled
         ticket.failureReason = reason
-        tickets[id] = ticket
-        // An idle staged file has no owner left after explicit cancellation.
-        // Active conversion owns cleanup until its cancellation check returns.
+
+        // Commit the terminal state before touching a running conversion,
+        // staged media or the OS-owned task. If storage is unavailable, keep
+        // the existing transfer recoverable after process termination.
+        var updated = tickets
+        updated[id] = ticket
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        } catch {
+            noteQueueWriteFailure(error, for: id)
+            return
+        }
+        tickets = updated
+        conversions[id]?.cancel()
+        // An active import owns its staged file until its cancellation
+        // check finishes; never remove the file underneath conversion.
         if !processing.contains(id) { try? fm.removeItem(at: Self.stagingURL(id)) }
-        persist()
-        revision += 1
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         updatePending()
         session.getAllTasks { tasks in
