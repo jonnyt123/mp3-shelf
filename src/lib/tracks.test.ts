@@ -166,6 +166,32 @@ describe("IndexedDB connection lifecycle on failed operations",()=>{
   expect((await listTracks()).find(track=>track.id===id)?.name).toBe("Original");
   await assertDatabaseCanClose();
  });
+ it("closes a stale connection when IndexedDB announces a version change",async()=>{
+  // An upgrade requested by another tab must not remain blocked by an
+  // in-flight read's database handle. Simulate the browser versionchange
+  // notification while getAll is pending, then verify the upgrade succeeds.
+  const original=IDBObjectStore.prototype.getAll;
+  const close=IDBDatabase.prototype.close;
+  let closeCalls=0;
+  IDBDatabase.prototype.close=function(){
+   closeCalls++;
+   return close.call(this);
+  };
+  IDBObjectStore.prototype.getAll=function(...args){
+   const request=original.apply(this,args);
+   const db=this.transaction.db;
+   queueMicrotask(()=>db.dispatchEvent(new Event("versionchange")));
+   return request;
+  };
+  try{
+   expect(await listTracks()).toEqual([]);
+   expect(closeCalls).toBeGreaterThanOrEqual(1);
+  }finally{
+   IDBObjectStore.prototype.getAll=original;
+   IDBDatabase.prototype.close=close;
+  }
+  await assertDatabaseCanClose();
+ });
  it("releases the database if the track listing request cannot be created",async()=>{
   const original=IDBObjectStore.prototype.getAll;
   IDBObjectStore.prototype.getAll=function(){throw new Error("Injected getAll failure")};
