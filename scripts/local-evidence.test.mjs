@@ -94,7 +94,7 @@ test('successful but empty or reordered step logs cannot pass', () => fixture(di
   assert.equal(buildLocalReceipt(swapped).status, 'incomplete-or-failed');
 }));
 test('node-only and native modes reject injected steps', () => fixture(dir => {
-  const node = args(dir, ['node-release-safety']); node.mode = 'node-only';
+  const node = args(dir, ['node-release-safety', 'post-node-checkout-integrity']); node.mode = 'node-only';
   assert.equal(buildLocalReceipt(node).status, 'local-checks-passed');
   node.steps.push({ name: 'npm-test', success: 1 });
   writeFileSync(join(dir, 'npm-test.log'), 'fake\n');
@@ -104,6 +104,30 @@ test('node-only and native modes reject injected steps', () => fixture(dir => {
   assert.equal(buildLocalReceipt(native).status, 'local-checks-passed');
   native.steps.reverse();
   assert.equal(buildLocalReceipt(native).status, 'incomplete-or-failed');
+}));
+
+test('node-only evidence requires successful post-test checkout integrity', () => fixture(dir => {
+  const names = ['node-release-safety', 'post-node-checkout-integrity'];
+  const complete = args(dir, names);
+  complete.mode = 'node-only';
+  const receipt = buildLocalReceipt(complete);
+  assert.equal(receipt.status, 'local-checks-passed');
+  assert.deepEqual(receipt.steps.map(s => s.name), names);
+  assert.deepEqual(verifyLocalReceipt(receipt, { expectedSha: sha, logDir: dir }), []);
+  for (const missing of [names.slice(0, 1), names.slice(1)]) {
+    const incomplete = args(dir, missing);
+    incomplete.mode = 'node-only';
+    assert.equal(buildLocalReceipt(incomplete).status, 'incomplete-or-failed');
+  }
+  const failed = args(dir, names);
+  failed.mode = 'node-only';
+  failed.steps[1].success = 0;
+  assert.equal(buildLocalReceipt(failed).status, 'incomplete-or-failed');
+  const reordered = args(dir, [...names].reverse());
+  reordered.mode = 'node-only';
+  assert.equal(buildLocalReceipt(reordered).status, 'incomplete-or-failed');
+  const tampered = { ...receipt, steps: receipt.steps.slice(0, 1) };
+  assert.match(verifyLocalReceipt(tampered, { expectedSha: sha, logDir: dir }).join(' '), /sequence/);
 }));
 
 test('large logs are hashed incrementally without unbounded memory', () => fixture(dir => {
@@ -176,9 +200,10 @@ test('receipt CLI rejects mismatched SHA, dirty checkout and tampered original l
   const outside = mkdtempSync(join(tmpdir(), 'mp3-receipt-logs-'));
   try {
     writeFileSync(join(outside, 'node-release-safety.log'), 'Executed node test\\n');
+    writeFileSync(join(outside, 'post-node-checkout-integrity.log'), 'PASS: unchanged HEAD and checkout\\n');
     const receiptPath = join(outside, 'receipt.json');
     const create = spawnSync(process.execPath, [script, receiptPath, actual, 'no',
-      'node-only', '0', outside, 'node-release-safety:1'], { cwd: dir, encoding: 'utf8' });
+      'node-only', '0', outside, 'node-release-safety:1', 'post-node-checkout-integrity:1'], { cwd: dir, encoding: 'utf8' });
     assert.equal(create.status, 0, create.stderr);
     const verify = () => spawnSync(process.execPath, [script, '--verify', receiptPath,
       actual, outside], { cwd: dir, encoding: 'utf8' });
@@ -193,7 +218,7 @@ test('receipt CLI rejects mismatched SHA, dirty checkout and tampered original l
     ]) {
       const rejectedPath = join(outside, 'rejected-' + exit + '-' + step.replaceAll(':', '_') + '.json');
       const invalid = spawnSync(process.execPath, [script, rejectedPath, actual, 'no',
-        'node-only', exit, outside, step], { cwd: dir, encoding: 'utf8' });
+        'node-only', exit, outside, step, 'post-node-checkout-integrity:1'], { cwd: dir, encoding: 'utf8' });
       assert.equal(invalid.status, 1, invalid.stderr);
       assert.match(invalid.stderr, /Malformed step argument|Exit code must be a decimal integer|Usage:/);
     }
