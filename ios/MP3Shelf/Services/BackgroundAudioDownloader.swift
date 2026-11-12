@@ -774,8 +774,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                         current.failureReason = nil
                         current.nextRetryAt = nil
                         current.alternativeSources = nil
-                        tickets[ticket.id] = current
-                        persist()
+                        // Import may have succeeded even when the queue manifest
+                        // cannot be written (for example, during low storage).
+                        // Keep the queued ticket and staged file until the
+                        // completed transition is durable. On the next recovery
+                        // pass, offline-recording reconciliation can finish it
+                        // without downloading the recording a second time.
+                        var updated = tickets
+                        updated[ticket.id] = current
+                        do {
+                            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+                        } catch {
+                            noteQueueWriteFailure(error, for: ticket.id)
+                            continue
+                        }
+                        tickets = updated
                         revision += 1
                         library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: true)
                         // One verified import can satisfy multiple playlists.
