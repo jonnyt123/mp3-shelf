@@ -366,10 +366,20 @@ export async function deleteTrackWithPlaylistCleanup(
   assertJournalOwnership();
   commitPlaylistEdit(storage,key,reconciled);
  }
- // Recheck ownership after reconciliation; a replacement journal must survive.
+ // A second tab can reattach the now-missing recording after reconciliation
+ // (including when no reconciliation was initially needed). Keep the durable
+ // deletion intent until a later recovery can remove those dangling links.
+ const verifiedBaseline=storage.getItem(key);
+ const verified=parseStoredPlaylists(verifiedBaseline);
+ if(verified.some(playlist=>playlist.trackIds.includes(trackId)))
+  throw new Error("Missing-audio references changed before deletion cleanup. Retry recovery.");
+ // Do not retire the journal after a playlist write that happened while the
+ // final verification was running. The recovery path can safely replay.
+ if(storage.getItem(key)!==verifiedBaseline)
+  throw new Error("Playlists changed before deletion cleanup. Retry recovery.");
  assertJournalOwnership();
  // A journal cleanup failure is safe: startup sees that the audio is absent
  // and removes the intent without resurrecting any playlist references.
  storage.removeItem(DELETE_RECOVERY_KEY);
- return parseStoredPlaylists(storage.getItem(key));
+ return verified;
 }
