@@ -84,6 +84,27 @@ struct PortableShelfArchiveTests {
         }
         let privateBytesAfter = try Data(contentsOf: outsideAudio)
         assert(privateBytesAfter == privateBytes)
+        // Same-inode, same-length changes must be detected by identity
+        // checks, not accepted merely because file size is unchanged.
+        let mutableAudio = folder.appendingPathComponent("mutable-audio.mp3")
+        try originalBytes.write(to: mutableAudio)
+        let mutableBackup = folder.appendingPathComponent("mutable-audio.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: song, audioURL: mutableAudio, artwork: nil, lyrics: nil)
+        ], playlists: [list], to: mutableBackup)
+        let beforeEdit = try Data(contentsOf: mutableAudio)
+        let editor = try FileHandle(forUpdating: mutableAudio)
+        try editor.seek(toOffset: 3)
+        try editor.write(contentsOf: Data([0x7F]))
+        try editor.synchronize()
+        try editor.close()
+        let afterEdit = try Data(contentsOf: mutableAudio)
+        assert(beforeEdit.count == afterEdit.count)
+        assert(beforeEdit != afterEdit)
+        let originalAfterEdit = try Data(contentsOf: audio)
+        assert(originalAfterEdit == originalBytes)
+        print("PASS: same-size source mutation fixture leaves original recording intact")
+
         let validAudioBackup = folder.appendingPathComponent("valid-regular-audio.mp3shelf")
         try PortableShelfArchive.export([
             .init(track: song, audioURL: audio, artwork: nil, lyrics: nil)
