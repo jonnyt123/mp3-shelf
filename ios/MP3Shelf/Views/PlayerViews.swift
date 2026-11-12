@@ -433,7 +433,10 @@ struct NowPlayingView: View {
                                                               detail: "YOUR QUEUE")
                                         ForEach(upcomingPreview) { next in
                                             Button {
-                                                playback.play(next)
+                                                // A track can advance while this preview is displayed.
+                                                // Resolve the live queue before changing playback.
+                                                guard let queued = playback.queuedTracks.first(where: { $0.id == next.id }) else { return }
+                                                playback.play(queued)
                                             } label: {
                                                 HStack(spacing: 12) {
                                                     ArtworkTile(track: next, size: 46)
@@ -457,21 +460,21 @@ struct NowPlayingView: View {
                                                 .premiumCard(radius: 17)
                                             }
                                             .buttonStyle(.plain)
-                                            .accessibilityLabel("Play now: \(next.title) by \(next.artist)")
-                                            .accessibilityHint("Start this queued recording immediately, replacing the current song")
-                                        }
+                                                                    // Queue editing must remain discoverable even when
+                                    // all upcoming tracks fit in the five-song preview.
+                                    Button { showQueue = true } label: {
+                                        Label("Manage queue (\(upcoming.count))",
+                                              systemImage: "list.bullet")
+                                            .font(.subheadline.weight(.semibold))
+                                            .frame(maxWidth: .infinity, minHeight: 44,
+                                                   alignment: .leading)
                                     }
-                                    .padding(.top, 24)
-                                    if hiddenUpcomingCount > 0 {
-                                        Button { showQueue = true } label: {
-                                            Label("View all \(upcoming.count) queued songs",
-                                                  systemImage: "list.bullet")
-                                                .font(.subheadline.weight(.semibold))
-                                                .frame(maxWidth: .infinity, minHeight: 44,
-                                                       alignment: .leading)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .foregroundStyle(ShelfTheme.accent)
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(ShelfTheme.accent)
+                                    .accessibilityLabel("Manage queue, \(upcoming.count) \(upcoming.count == 1 ? "song" : "songs")")
+                                    .accessibilityHint(hiddenUpcomingCount > 0
+                                        ? "\(hiddenUpcomingCount) additional songs. Open the full queue to reorder or remove recordings"
+                                        : "Open the full queue to reorder or remove recordings")                           .foregroundStyle(ShelfTheme.accent)
                                         .accessibilityLabel("View all \(upcoming.count) queued songs")
                                         .accessibilityHint("\(hiddenUpcomingCount) more songs. Open the full queue to review or reorder them")
                                     }
