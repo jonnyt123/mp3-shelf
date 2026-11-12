@@ -94,7 +94,7 @@ enum PortableShelfArchive {
         var payloadOffset: UInt64
         // Identity captured from the descriptor that validated the manifest.
         // Each later extraction must read that same unchanged regular file.
-        fileprivate var sourceIdentity: ArchiveSourceIdentity
+        private var sourceIdentity: ArchiveSourceIdentity
     }
 
     private struct ArchiveSourceIdentity {
