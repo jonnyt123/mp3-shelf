@@ -218,6 +218,10 @@ export function recoverFailedTrackDeletion(
   const baseline=storage.getItem(entry.key);
   const current=parseStoredPlaylists(baseline);
   if(current.some(playlist=>playlist.trackIds.includes(entry.trackId))){
+   // Another recovery may have replaced this journal while we read playlists.
+   // Do not mutate the namespace using a superseded deletion intent.
+   if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
+    throw new Error("Track deletion recovery changed before playlist reconciliation. Preserve the newer intent.");
    // A second tab may edit after recovery reads the playlists. Preserve its
    // newer state and keep the journal so startup can retry reconciliation.
    if(storage.getItem(entry.key)!==baseline)
@@ -246,6 +250,8 @@ export function recoverFailedTrackDeletion(
  });
  if(storage.getItem(entry.key)!==baseline)
   throw new Error("Playlists changed during deletion recovery. Retry reconciliation.");
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
+  throw new Error("Track deletion recovery changed before playlist rollback. Preserve the newer intent.");
  commitPlaylistEdit(storage,entry.key,next);
  if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
   throw new Error("Track deletion recovery changed before journal cleanup. Preserve the newer intent.");
