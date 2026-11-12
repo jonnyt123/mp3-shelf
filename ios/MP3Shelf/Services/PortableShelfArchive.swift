@@ -695,9 +695,26 @@ enum PortableShelfArchive {
             // Reject different lengths immediately and cap the comparison to
             // the sizes observed at open. A concurrently growing source must
             // never turn duplicate detection into an unbounded read.
+            // Duplicate detection controls whether restore skips an incoming
+            // recording. Never trust a comparison against a symlink or a
+            // concurrently replaced/modified catalog audio file.
+            var firstBefore = stat()
+            var secondBefore = stat()
+            guard fstat(first.fileDescriptor, &firstBefore) == 0,
+                  fstat(second.fileDescriptor, &secondBefore) == 0,
+                  (firstBefore.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  (secondBefore.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+                return false
+            }
+            let firstIdentity = ArchiveSourceIdentity(firstBefore)
+            let secondIdentity = ArchiveSourceIdentity(secondBefore)
             let firstLength = try first.seekToEnd()
             let secondLength = try second.seekToEnd()
-            guard firstLength == secondLength else { return false }
+            guard firstLength == secondLength,
+                  firstLength > 0,
+                  firstLength <= UInt64(maxTrackBytes),
+                  firstIdentity.size == off_t(firstLength),
+                  secondIdentity.size == off_t(secondLength) else { return false }
             try first.seek(toOffset: 0)
             try second.seek(toOffset: 0)
             var remaining = firstLength
@@ -712,9 +729,19 @@ enum PortableShelfArchive {
                 }
                 remaining -= UInt64(amount)
             }
-            // A source that grew while comparing is not a stable duplicate.
-            return (try first.read(upToCount: 1) ?? Data()).isEmpty &&
-                   (try second.read(upToCount: 1) ?? Data()).isEmpty
+            // An equal byte stream is insufficient if either source changed
+            // while being read. Fail closed so restore never skips audio based
+            // on a torn comparison. Existing user files are never modified.
+            guard (try first.read(upToCount: 1) ?? Data()).isEmpty,
+                  (try second.read(upToCount: 1) ?? Data()).isEmpty else {
+                return false
+            }
+            var firstAfter = stat()
+            var secondAfter = stat()
+            return fstat(first.fileDescriptor, &firstAfter) == 0 &&
+                   fstat(second.fileDescriptor, &secondAfter) == 0 &&
+                   firstIdentity.matches(firstAfter) &&
+                   secondIdentity.matches(secondAfter)
         } catch {
             return false
         }
