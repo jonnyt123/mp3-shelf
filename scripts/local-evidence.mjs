@@ -53,9 +53,9 @@ export function readPersistedReceipt(path) {
   } finally { closeSync(fd); }
 }
 
-const allowed = new Set(['node-release-safety','npm-ci','npm-ci-offline','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity','native-local-release','post-native-checkout-integrity']);
+const allowed = new Set(['node-release-safety','post-node-checkout-integrity','npm-ci','npm-ci-offline','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity','native-local-release','post-native-checkout-integrity']);
 const required = {
-  'node-only': ['node-release-safety'],
+  'node-only': ['node-release-safety','post-node-checkout-integrity'],
   web: ['node-release-safety','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity'],
   native: ['native-local-release','post-native-checkout-integrity'],
   all: ['node-release-safety','npm-test','npm-typecheck','npm-build','post-web-checkout-integrity','native-local-release','post-native-checkout-integrity']
@@ -105,7 +105,7 @@ export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir })
     (installSteps.length === 1 && installSteps[0].success);
   // Receipts must describe the execution sequence the runner actually uses.
   // This rejects reordered, injected or duplicate-looking success reports.
-  const expected = mode === 'node-only' ? ['node-release-safety'] :
+  const expected = mode === 'node-only' ? ['node-release-safety','post-node-checkout-integrity'] :
     mode === 'native' ? ['native-local-release', 'post-native-checkout-integrity'] :
     ['node-release-safety', installSteps[0]?.name, 'npm-test', 'npm-typecheck',
       'npm-build', 'post-web-checkout-integrity',
@@ -153,7 +153,7 @@ export function verifyLocalReceipt(receipt, { expectedSha, logDir }) {
   const steps = receipt.steps;
   const names = steps.map(s => s?.name);
   const installs = names.filter(n => n === 'npm-ci' || n === 'npm-ci-offline');
-  const expected = receipt.mode === 'node-only' ? ['node-release-safety'] :
+  const expected = receipt.mode === 'node-only' ? ['node-release-safety','post-node-checkout-integrity'] :
     receipt.mode === 'native' ? ['native-local-release', 'post-native-checkout-integrity'] :
     ['node-release-safety', installs[0], 'npm-test', 'npm-typecheck', 'npm-build',
       'post-web-checkout-integrity',
