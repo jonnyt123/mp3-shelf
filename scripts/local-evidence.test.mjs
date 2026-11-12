@@ -47,6 +47,20 @@ test('duplicate, unknown and malformed steps rejected', () => fixture(dir => {
   a.steps.pop(); a.steps.push({ name: 'unexpected', success: 1 });
   assert.throws(() => buildLocalReceipt(a), /Malformed/);
 }));
+test('receipt builder rejects injected execution approval metadata', () => fixture(dir => {
+  assert.equal(buildLocalReceipt(args(dir)).status, 'local-checks-passed');
+  for (const extra of [
+    { releaseApproved: true },
+    { exitCode: 0 },
+    { source: 'trusted-ci' },
+    { stepsExecuted: 999 }
+  ]) {
+    const forged = args(dir);
+    forged.steps[0] = { ...forged.steps[0], ...extra };
+    assert.throws(() => buildLocalReceipt(forged), /Malformed step records/);
+  }
+}));
+
 test('missing log cannot be recorded as executed', () => fixture(dir => {
   const a = args(dir); a.steps.push({ name: 'native-local-release', success: 1 });
   assert.throws(() => buildLocalReceipt(a), /ENOENT/);
@@ -246,7 +260,7 @@ test('independent verifier refuses replaced log pathname even with identical byt
   const receipt = buildLocalReceipt(args(dir));
   const log = join(dir, 'npm-build.log');
   const replacement = join(dir, 'replacement.log');
-  writeFileSync(replacement, 'Executed npm-build\\n');
+  writeFileSync(replacement, 'Executed npm-build\n');
   renameSync(replacement, log);
   // A different inode with the same content is not evidence of execution,
   // but the current receipt schema hashes bytes, not inode identity across
