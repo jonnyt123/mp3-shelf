@@ -410,7 +410,7 @@ struct NowPlayingView: View {
                                             Text("Manage playing queue")
                                                 .font(.subheadline.weight(.semibold))
                                                 .foregroundStyle(.white)
-                                            Text("\(playback.queuedTracks.count) songs lined up")
+                                            Text("\(upcoming.count) upcoming \(upcoming.count == 1 ? "song" : "songs")")
                                                 .font(.caption)
                                                 .foregroundStyle(ShelfTheme.subdued)
                                         }
@@ -423,6 +423,7 @@ struct NowPlayingView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Manage playing queue")
+                                 .accessibilityValue("\(upcoming.count) upcoming \(upcoming.count == 1 ? "song" : "songs")")
                                  .accessibilityHint("Review and reorder upcoming songs")
                                  .accessibilityFocused($queueButtonFocused)
 
@@ -436,6 +437,7 @@ struct NowPlayingView: View {
                                             } label: {
                                                 HStack(spacing: 12) {
                                                     ArtworkTile(track: next, size: 46)
+                                                        .accessibilityHidden(true)
                                                     VStack(alignment: .leading, spacing: 3) {
                                                         Text(next.title)
                                                             .font(.subheadline.weight(.semibold))
@@ -455,8 +457,8 @@ struct NowPlayingView: View {
                                                 .premiumCard(radius: 17)
                                             }
                                             .buttonStyle(.plain)
-                                            .accessibilityLabel("Play next: \(next.title) by \(next.artist)")
-                                             .accessibilityHint("Start this queued recording now")
+                                            .accessibilityLabel("Play now: \(next.title) by \(next.artist)")
+                                            .accessibilityHint("Start this queued recording immediately, replacing the current song")
                                         }
                                     }
                                     .padding(.top, 24)
@@ -470,6 +472,7 @@ struct NowPlayingView: View {
                                         }
                                         .buttonStyle(.plain)
                                         .foregroundStyle(ShelfTheme.accent)
+                                        .accessibilityLabel("View all \(upcoming.count) queued songs")
                                         .accessibilityHint("\(hiddenUpcomingCount) more songs. Open the full queue to review or reorder them")
                                     }
                                 }
