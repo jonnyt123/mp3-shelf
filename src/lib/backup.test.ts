@@ -109,6 +109,47 @@ describe("MP3 Shelf backups",()=>{
   expect(restored.playlists[199].trackIds).toEqual(["song"]);
   expect(restored.tracks[0].blob.size).toBe(1);
  });
+ it("rejects malformed metadata symmetrically before export and before audio restoration",async()=>{
+  const song:Track={id:"song",name:"Song",size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])};
+  const invalidExport:Track[]=[
+   {...song,size:2},
+   {...song,size:4},
+   {...song,importedAt:-1},
+   {...song,originalName:"  "},
+   {...song,artist:123 as unknown as string},
+   {...song,album:null as unknown as string},
+   {...song,type:null as unknown as string},
+   {...song,artwork:"not a blob" as unknown as Blob}
+  ];
+  for(const bad of invalidExport)
+   expect(()=>createLibraryBackup([bad],[])).toThrow();
+  const valid=createLibraryBackup([song],[]);
+  const magicLength=new TextEncoder().encode("MP3SHELF1\\n").length;
+  const header=await valid.slice(0,magicLength+4).arrayBuffer();
+  const length=new DataView(header).getUint32(magicLength,true);
+  const manifest=JSON.parse(await valid.slice(magicLength+4,magicLength+4+length).text());
+  const payload=valid.slice(magicLength+4+length);
+  const corrupt=(edit:(track:Record<string,unknown>)=>void)=>{
+   const altered=structuredClone(manifest);
+   edit(altered.tracks[0]);
+   const json=new TextEncoder().encode(JSON.stringify(altered));
+   const prefix=new Uint8Array(header.slice(0));
+   new DataView(prefix.buffer).setUint32(magicLength,json.byteLength,true);
+   return new Blob([prefix,json,payload]);
+  };
+  const invalidImports=[
+   (track:Record<string,unknown>)=>{track.importedAt=-1},
+   (track:Record<string,unknown>)=>{track.originalName=42},
+   (track:Record<string,unknown>)=>{track.originalName="  "},
+   (track:Record<string,unknown>)=>{track.artist={name:"wrong"}},
+   (track:Record<string,unknown>)=>{track.album=null},
+   (track:Record<string,unknown>)=>{(track.audio as Record<string,unknown>).type=42}
+  ];
+  for(const edit of invalidImports)
+   await expect(parseLibraryBackup(corrupt(edit))).rejects.toThrow("Invalid");
+  const parsed=await parseLibraryBackup(valid);
+  expect(parsed.tracks[0]).toMatchObject({id:"song",size:3,importedAt:1});
+ });
  it("refuses to export records that the restore parser would reject",()=>{
   const makeTrack=(id:string,bytes:number[]):Track=>({id,name:"Song",size:bytes.length,type:"audio/mpeg",importedAt:123,blob:new Blob([new Uint8Array(bytes)])});
   const song=makeTrack("song-1",[1,2,3]);
