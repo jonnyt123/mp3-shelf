@@ -35,8 +35,19 @@ if [[ "$SMOKE" == true && "$MODE" != native && "$MODE" != all ]]; then echo 'ERR
 cd "$ROOT"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/mp3-shelf-verification.XXXXXXXX")"
 COMMIT="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
+# Git failures must never be interpreted as an empty (clean) status.
+# Capture both exit status and output before testing checkout identity.
+checkout_unchanged() {
+  local current status
+  current="$(git rev-parse --verify HEAD 2>/dev/null)" || return 1
+  [[ "$current" == "$COMMIT" ]] || return 1
+  status="$(git status --porcelain --untracked-files=all 2>/dev/null)" || return 1
+  [[ -z "$status" ]]
+}
 DIRTY=unknown
-if [[ "$COMMIT" != unknown ]]; then DIRTY=no; [[ -z "$(git status --porcelain --untracked-files=all)" ]] || DIRTY=yes; fi
+if [[ "$COMMIT" != unknown ]]; then
+  if checkout_unchanged; then DIRTY=no; else DIRTY=yes; fi
+fi
 STEP=none; COMPLETED=(); RECEIPT_STEPS=()
 # Release evidence must be bound to a reproducible, clean Git commit.
 report() {
@@ -52,8 +63,7 @@ report() {
   # have changed HEAD or introduced files after the last integrity step.
   # A changed checkout must never produce a successful SHA-bound receipt.
   if [[ "$COMMIT" != unknown && "$DIRTY" == no ]]; then
-    if [[ "$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)" != "$COMMIT" ||
-          -n "$(git status --porcelain --untracked-files=all 2>/dev/null || echo status-failed)" ]]; then
+    if ! checkout_unchanged; then
       receipt_state='UNAVAILABLE_CHECKOUT_CHANGED'
       if [[ "$code" -eq 0 ]]; then
         code=1
@@ -139,7 +149,7 @@ fi
 # evidence for a checkout that changed during execution.
 if [[ "$MODE" == node-only && "$COMMIT" != unknown && "$DIRTY" == no ]]; then
   STEP=post-node-checkout-integrity
-  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain --untracked-files=all)" ]]; then
+  if ! checkout_unchanged; then
     echo 'ERROR: Node verification changed the candidate commit or checkout; refusing SHA-bound evidence.' >&2
     exit 2
   fi
@@ -163,7 +173,7 @@ fi
 # Tests/build tools may rewrite tracked files or change HEAD during execution.
 if [[ "$MODE" == web || "$MODE" == all ]]; then
   STEP=post-web-checkout-integrity
-  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain --untracked-files=all)" ]]; then
+  if ! checkout_unchanged; then
     echo 'ERROR: Web verification changed the candidate commit or tracked checkout; results are not release evidence.' >&2
     exit 2
   fi
@@ -185,7 +195,7 @@ if [[ "$MODE" == native || "$MODE" == all ]]; then
   run native-local-release bash ios/scripts/verify-local-release.sh "${native_args[@]}"
   # Native builds can rewrite tracked project settings; refuse stale evidence.
   STEP=post-native-checkout-integrity
-  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain --untracked-files=all)" ]]; then
+  if ! checkout_unchanged; then
     echo 'ERROR: Native verification changed the candidate commit or tracked checkout; results are not release evidence.' >&2
     exit 2
   fi
