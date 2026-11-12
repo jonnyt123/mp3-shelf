@@ -273,6 +273,7 @@ final class MusicLibrary: ObservableObject {
         // lyrics. Never replace a user's existing sidecar or audio file.
         func restoreMissingSidecars(for archived: PortableShelfArchive.Track,
                                     existingID: UUID) throws {
+            try Task.checkCancellation()
             guard let index = tracks.firstIndex(where: { $0.id == existingID }) else { return }
             let current = tracks[index]
             // A non-nil filename may refer to a deleted, protected, corrupt,
@@ -290,13 +291,23 @@ final class MusicLibrary: ObservableObject {
                     named: current.lyricsFileName, from: lyricsDirectory,
                     maximumBytes: 500 * 1024,
                     isValid: { String(data: $0, encoding: .utf8) != nil })
+            try Task.checkCancellation()
             guard needsArtwork || needsLyrics else { return }
 
             var restored = current
             var created: [URL] = []
+            // Cancellation must discard unpublished sidecars, not leave orphans.
+            var committed = false
+            defer {
+                if !committed {
+                    for url in created { try? manager.removeItem(at: url) }
+                }
+            }
             if needsArtwork, let artwork = archived.artwork {
                 do {
+                    try Task.checkCancellation()
                     let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
+                    try Task.checkCancellation()
                     guard UIImage(data: bytes) != nil else {
                         throw PortableShelfArchive.ArchiveError.invalidManifest
                     }
@@ -306,11 +317,13 @@ final class MusicLibrary: ObservableObject {
                     created.append(destination)
                     restored.artworkFileName = name
                 } catch {
+                    try Task.checkCancellation()
                     report.errors.append("\(archived.name): missing cover artwork could not be restored (\(error.localizedDescription)).")
                 }
             }
             if needsLyrics, let lyrics = archived.lyrics {
                 do {
+                    try Task.checkCancellation()
                     let name = existingID.uuidString + "-" + UUID().uuidString + ".lrc"
                     let destination = lyricsDirectory.appendingPathComponent(name)
                     try Data(lyrics.utf8).write(to: destination, options: .atomic)
@@ -320,16 +333,18 @@ final class MusicLibrary: ObservableObject {
                     report.errors.append("\(archived.name): missing lyrics could not be restored (\(error.localizedDescription)).")
                 }
             }
+            try Task.checkCancellation()
             guard !created.isEmpty else { return }
             do {
                 var candidate = tracks
                 candidate[index] = restored
+                try Task.checkCancellation()
                 try PersistedLibrary(tracks: candidate, playlists: playlists).write(to: databaseURL)
                 tracks = candidate
+                committed = true
             } catch {
                 // Never publish a reference to an uncommitted sidecar. An
                 // interrupted/low-storage restore must preserve old catalog.
-                for url in created { try? manager.removeItem(at: url) }
                 throw error
             }
         }
