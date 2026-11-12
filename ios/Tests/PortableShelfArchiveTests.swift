@@ -136,6 +136,31 @@ struct PortableShelfArchiveTests {
         try PortableShelfArchive.export([
             .init(track: song, audioURL: audio, artwork: nil, lyrics: nil)
         ], playlists: [list], to: validAudioBackup)
+        // Archive inspection also runs on a cancellable task. A cancelled
+        // reader must stop before consuming the header/manifest and must not
+        // mutate or delete the existing backup.
+        let inspectionGate = DispatchSemaphore(value: 0)
+        let inspectionFinished = DispatchSemaphore(value: 0)
+        let cancelledInspection = Task.detached {
+            inspectionGate.wait()
+            do {
+                _ = try PortableShelfArchive.open(validAudioBackup)
+                fatalError("Cancelled archive inspection unexpectedly succeeded")
+            } catch is CancellationError {
+                // Expected: readExactly checks cancellation before each read.
+            } catch {
+                fatalError("Unexpected cancelled archive inspection error: \\(error)")
+            }
+            inspectionFinished.signal()
+        }
+        cancelledInspection.cancel()
+        inspectionGate.signal()
+        guard inspectionFinished.wait(timeout: .now() + 10) == .success else {
+            fatalError("Cancelled archive inspection did not terminate")
+        }
+        assert(FileManager.default.fileExists(atPath: validAudioBackup.path))
+        print("PASS: cancelled archive inspection preserves the existing backup")
+
         let validAudioArchive = try PortableShelfArchive.open(validAudioBackup)
         let validAudioExtract = try PortableShelfArchive.extract(
             validAudioArchive.manifest.tracks[0].audio,
