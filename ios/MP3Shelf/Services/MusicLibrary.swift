@@ -428,7 +428,8 @@ final class MusicLibrary: ObservableObject {
                 // do not interpret that as permission to import another copy.
                 try Task.checkCancellation()
                 let imported = try addLocalAudio(
-                    sourceURL: file, originalName: original)
+                    sourceURL: file, originalName: original,
+                    cancellationAware: true)
                 if imported { report.imported += 1 }
                 else { report.skipped += 1 }
 
@@ -855,7 +856,12 @@ final class MusicLibrary: ObservableObject {
     private func addLocalAudio(sourceURL: URL, originalName: String,
                                expectedDuration: TimeInterval? = nil,
                                matching wish: PlaylistWish? = nil,
-                               attribution: AudioSourceAttribution? = nil) throws -> Bool {
+                               attribution: AudioSourceAttribution? = nil,
+                               cancellationAware: Bool = false) throws -> Bool {
+        // Archive restoration is cancellable; ordinary synchronous imports
+        // retain their existing behavior. Check at expensive I/O boundaries
+        // before publishing any new catalog entry.
+        if cancellationAware { try Task.checkCancellation() }
         try requireLibraryPersistence()
         // A different import may have saved this recording while a download
         // or AAC conversion was suspended. Recheck at the library write boundary.
@@ -875,6 +881,7 @@ final class MusicLibrary: ObservableObject {
                 PortableShelfArchive.audioFilesIdentical(sourceURL, existingURL)
         }) { return false }
 
+        if cancellationAware { try Task.checkCancellation() }
         let id = UUID()
         let destinationName = LocalAudioFileNaming.storageName(
             originalName: originalName, id: id, fileExtension: extensionName)
@@ -882,6 +889,7 @@ final class MusicLibrary: ObservableObject {
         try manager.copyItem(at: sourceURL, to: destination)
         var artworkName: String?
         do {
+            if cancellationAware { try Task.checkCancellation() }
             let asset = AVURLAsset(url: destination)
             // Fail immediately for renamed HTML, corrupt files or codecs that AVAudioPlayer cannot decode.
             let playbackProbe = try AVAudioPlayer(contentsOf: destination)
@@ -914,6 +922,7 @@ final class MusicLibrary: ObservableObject {
                 if !wish.album.isEmpty { track.album = wish.album }
                 track.sourceAttribution = attribution
             }
+            if cancellationAware { try Task.checkCancellation() }
             let updatedTracks = tracks + [track]
             // Local Files imports can satisfy missing source-playlist wishes
             // too. Persist the new recording and resolved playlist links in a
@@ -921,6 +930,7 @@ final class MusicLibrary: ObservableObject {
             let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
             // Report import success only after the complete record is written.
             // A failed write must leave both the live and saved library intact.
+            if cancellationAware { try Task.checkCancellation() }
             try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists).write(to: databaseURL)
             tracks = updatedTracks
             playlists = updatedPlaylists
