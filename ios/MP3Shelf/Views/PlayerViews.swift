@@ -460,8 +460,13 @@ struct NowPlayingView: View {
                                                 .premiumCard(radius: 17)
                                             }
                                             .buttonStyle(.plain)
-                                                                    // Queue editing must remain discoverable even when
-                                    // all upcoming tracks fit in the five-song preview.
+                                            .accessibilityLabel("Play now: \(next.title) by \(next.artist)")
+                                            .accessibilityHint("Start this queued recording immediately, replacing the current song")
+                                        }
+                                    }
+                                    .padding(.top, 24)
+                                    // Queue editing remains discoverable even when all
+                                    // upcoming tracks fit in the five-song preview.
                                     Button { showQueue = true } label: {
                                         Label("Manage queue (\(upcoming.count))",
                                               systemImage: "list.bullet")
@@ -474,10 +479,7 @@ struct NowPlayingView: View {
                                     .accessibilityLabel("Manage queue, \(upcoming.count) \(upcoming.count == 1 ? "song" : "songs")")
                                     .accessibilityHint(hiddenUpcomingCount > 0
                                         ? "\(hiddenUpcomingCount) additional songs. Open the full queue to reorder or remove recordings"
-                                        : "Open the full queue to reorder or remove recordings")                           .foregroundStyle(ShelfTheme.accent)
-                                        .accessibilityLabel("View all \(upcoming.count) queued songs")
-                                        .accessibilityHint("\(hiddenUpcomingCount) more songs. Open the full queue to review or reorder them")
-                                    }
+                                        : "Open the full queue to reorder or remove recordings")
                                 }
 
                                 HStack(spacing: 7) {
