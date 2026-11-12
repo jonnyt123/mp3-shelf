@@ -490,8 +490,20 @@ struct PlaybackQueueSheet: View {
     }
 
     private func playNext(_ trackID: UUID) {
+        // A context menu can stay open after playback advances or a queue edit.
+        // Do not issue a mutation or retain a focus request for a vanished row.
+        guard playback.queuedTracks.contains(where: { $0.id == trackID }) else { return }
         focusAfterQueueMutation(trackID)
         playback.playQueuedTrackNext(trackID)
+    }
+
+    private func playNow(_ trackID: UUID) {
+        // Resolve from the live queue; a captured MusicTrack may no longer be
+        // queued when a menu action is selected after automatic advancement.
+        guard let track = playback.queuedTracks.first(where: { $0.id == trackID }) else { return }
+        pendingQueueFocusID = nil
+        pendingEmptyQueueFocus = false
+        playback.play(track)
     }
 
     // Large-text users should not have to open a context menu for every
@@ -636,7 +648,7 @@ struct PlaybackQueueSheet: View {
                                     .layoutPriority(1)
                                     Menu {
                                         Button {
-                                            playback.play(track)
+                                            playNow(track.id)
                                         } label: {
                                             Label("Play now", systemImage: "play.fill")
                                         }
@@ -693,6 +705,9 @@ struct PlaybackQueueSheet: View {
                                 .padding(.vertical, 8)
                                 .premiumCard(radius: 17)
                                 .accessibilityElement(children: .contain)
+                                .accessibilityAction(named: "Play now") {
+                                    playNow(track.id)
+                                }
                                 .accessibilityAction(named: "Play next") {
                                     playNext(track.id)
                                 }
@@ -723,6 +738,13 @@ struct PlaybackQueueSheet: View {
                 if pendingEmptyQueueFocus && currentIDs.isEmpty {
                     pendingEmptyQueueFocus = false
                     pendingQueueFocusID = nil
+                    emptyQueueFocused = true
+                } else if currentIDs.isEmpty {
+                    // Automatic playback advancement can drain the queue without
+                    // a removal action. A focused row must never remain orphaned.
+                    pendingQueueFocusID = nil
+                    pendingEmptyQueueFocus = false
+                    focusedQueueTrackID = nil
                     emptyQueueFocused = true
                 } else if let target = pendingQueueFocusID {
                     pendingQueueFocusID = nil
