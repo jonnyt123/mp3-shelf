@@ -627,8 +627,18 @@ enum SpotifyTrackLinks {
               parts.host?.lowercased() == "open.spotify.com",
               parts.user == nil, parts.password == nil,
               parts.port == nil, parts.fragment == nil,
-              parts.query == nil,
               parts.path.hasPrefix("/track/") else { return nil }
+        // A Spotify share link may contain a non-identity "si" token.
+        // Strip it rather than forwarding it; reject unknown or ambiguous
+        // query parameters before accepting a recording identifier.
+        if let query = parts.queryItems {
+            guard query.count == 1, query[0].name == "si",
+                  let shareToken = query[0].value,
+                  shareToken.utf8.count == 16,
+                  shareToken.utf8.allSatisfy({
+                      (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+                  }) else { return nil }
+        }
         let id = String(parts.path.dropFirst("/track/".count))
         guard id.utf8.count == 22,
               id.utf8.allSatisfy({
