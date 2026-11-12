@@ -420,6 +420,33 @@ describe("track deletion consistency",()=>{
   expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
   expect(recoverFailedTrackDeletion(store,new Set(["remove","keep"]))?.[0].trackIds).toEqual(["keep","remove"]);
  });
+ it("retains deletion recovery when playlists change during rollback verification",()=>{
+  const store=storage();
+  store.setItem("mp3-shelf-delete-recovery",JSON.stringify({
+   version:1,key:"playlists",trackId:"remove",original
+  }));
+  store.setItem("playlists",JSON.stringify([{id:"mix",name:"Mix",trackIds:["keep"]}]));
+  let readsAfterWrite=0;
+  let rollbackWritten=false;
+  const racing={
+   ...store,
+   setItem:(key:string,value:string)=>{
+    store.setItem(key,value);
+    if(key==="playlists")rollbackWritten=true;
+   },
+   getItem:(key:string)=>{
+    if(key==="playlists"&&rollbackWritten&&++readsAfterWrite===2)
+     store.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","remove","new"]}]));
+    return store.getItem(key);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(racing,new Set(["keep","remove","new"])))
+   .toThrow("Playlists changed during deletion rollback verification");
+  expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(parseStoredPlaylists(store.getItem("playlists"))[0].name).toBe("Other tab");
+  expect(recoverFailedTrackDeletion(store,new Set(["keep","remove","new"]))?.[0].name).toBe("Other tab");
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
  it("reconciles after restart without discarding intervening playlist edits",async()=>{
   const store=storage();let writes=0;
   const failing={...store,setItem:(key:string,value:string)=>{if(++writes===3)throw new Error("QuotaExceededError");store.setItem(key,value)}};
