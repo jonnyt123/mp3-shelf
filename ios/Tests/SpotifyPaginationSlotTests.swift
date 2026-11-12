@@ -179,14 +179,30 @@ enum SpotifyPaginationSlotTests {
             ("?limit=49&offset=50", "changed page size"),
             ("?limit=50&offset=50&offset=100", "duplicate cursor parameter"),
             ("?limit=50&offset=50#fragment", "cursor fragment"),
-            ("?limit=50&offset=-1", "negative offset")
+            ("?limit=50&offset=-1", "negative offset"),
+            ("//api.spotify.com/v1/playlists/123/items?limit=50&offset=50", "same-host scheme-relative URL"),
+            ("https://user@api.spotify.com/v1/playlists/123/items?limit=50&offset=50", "embedded credentials"),
+            ("https://api.spotify.com:444/v1/playlists/123/items?limit=50&offset=50", "nonstandard port"),
+            ("?limit=50&offset=50&redirect=evil", "extra query parameter"),
+            ("/v1/playlists/another/items?limit=50&offset=50", "different playlist")
         ]
+        let acceptedCursors = [
+            "https://api.spotify.com/v1/playlists/123/items?limit=50&offset=50",
+            "/v1/playlists/123/items?limit=50&offset=50",
+            "items?limit=50&offset=50",
+            "?offset=50&limit=50"
+        ]
+        for cursor in acceptedCursors {
+            let next = try PaginationGuard.safeNext(cursor, for: currentPage, returnedItems: 50)
+            check(next?.host == "api.spotify.com" && next?.path == currentPage.path,
+                  "absolute, root-relative, path-relative and query-relative cursors preserve collection")
+        }
         for (cursor, reason) in invalidCursors {
             do {
                 _ = try PaginationGuard.safeNext(cursor, for: currentPage, returnedItems: 50)
-                fatalError("FAIL: accepted \\(reason)")
+                fatalError("FAIL: accepted \(reason)")
             } catch SpotifyError.api {
-                print("PASS: rejected \\(reason)")
+                print("PASS: rejected \(reason)")
             }
         }
         check(try PaginationGuard.safeNext(nil, for: currentPage, returnedItems: 0) == nil,

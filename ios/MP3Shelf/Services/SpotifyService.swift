@@ -402,7 +402,9 @@ final class SpotifyService: NSObject, ObservableObject {
             // The owner may already have persisted the rotated refresh
             // token. Treat that as success, not an account switch. If a
             // different token won the race, never overwrite its credentials.
-            if current.accessToken == fresh.accessToken { return }
+            if current.accessToken == fresh.accessToken,
+               current.refreshToken == fresh.refreshToken,
+               current.expiresAt == fresh.expiresAt { return }
             guard current.refreshToken == previous else {
                 throw SpotifyError.notConnected
             }
@@ -430,7 +432,17 @@ final class SpotifyService: NSObject, ObservableObject {
         // Disconnect or a new sign-in may have happened during the request.
         // A cancelled shared refresh must never restore a disconnected session.
         guard generation == authorizationGeneration,
-              refreshTask != nil, token?.refreshToken == existing.refreshToken else {
+              refreshTask != nil, let current = token else {
+            throw SpotifyError.notConnected
+        }
+        // A coalesced waiter can persist the shared result before its owner
+        // resumes. A rotated refresh token is then evidence of success, not
+        // disconnection. Compare both credentials: an unchanged access token
+        // must not hide a newly rotated refresh token.
+        if current.accessToken == fresh.accessToken,
+           current.refreshToken == fresh.refreshToken,
+           current.expiresAt == fresh.expiresAt { return }
+        guard current.refreshToken == existing.refreshToken else {
             throw SpotifyError.notConnected
         }
         try store(tokens: fresh)

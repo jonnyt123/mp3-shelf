@@ -536,7 +536,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         for ticket in fulfilled {
             conversions[ticket.id]?.cancel()
             library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: true)
-            try? fm.removeItem(at: Self.stagingURL(ticket.id))
+            // Cancellation is cooperative. An active decoder/converter still
+            // owns this file until its next cancellation check completes.
+            if !processing.contains(ticket.id) {
+                try? fm.removeItem(at: Self.stagingURL(ticket.id))
+            }
         }
         updatePending()
         session.getAllTasks { tasks in
