@@ -673,7 +673,15 @@ private struct SpotifyTrack: Decodable {
         type = try? container.decode(String.self, forKey: .type)
         album = try? container.decode(SpotifyAlbum.self, forKey: .album)
         external_urls = try? container.decode(SpotifyURLContainer.self, forKey: .external_urls)
-        duration_ms = try? container.decode(Int.self, forKey: .duration_ms)
+        // A negative or implausibly long duration is not reliable matching evidence.
+        // Treat it as absent rather than allowing it to influence automatic
+        // exact-recording selection. Spotify's duration is in milliseconds.
+        if let milliseconds = try? container.decode(Int.self, forKey: .duration_ms),
+           milliseconds > 0, milliseconds <= 24 * 60 * 60 * 1000 {
+            duration_ms = milliseconds
+        } else {
+            duration_ms = nil
+        }
 
         if var entries = try? container.nestedUnkeyedContainer(forKey: .artists) {
             var validArtists: [SpotifyArtist] = []
