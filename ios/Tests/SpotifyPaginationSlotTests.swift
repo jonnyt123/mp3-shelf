@@ -17,7 +17,11 @@ enum SpotifyPaginationSlotTests {
               end.lowerBound < typesEnd.lowerBound else {
             fatalError("Production Spotify track decoders not found")
         }
-        let decoder = String(source[start.lowerBound..<typesEnd.lowerBound])
+        guard let urlType = source.range(of: "struct SpotifyURLContainer: Decodable { let spotify: String? }") else {
+            fatalError("Production Spotify URL container decoder not found")
+        }
+        let decoder = String(source[urlType]) + "\n" +
+            String(source[start.lowerBound..<typesEnd.lowerBound])
             .replacingOccurrences(of: "private struct SpotifyPage", with: "struct SpotifyPage")
             .replacingOccurrences(of: "private struct SpotifyPlaylistItem", with: "struct SpotifyPlaylistItem")
             .replacingOccurrences(of: "private struct SpotifyTrack", with: "struct SpotifyTrack")
