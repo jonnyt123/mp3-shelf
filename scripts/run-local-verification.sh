@@ -117,6 +117,17 @@ run() {
 if [[ "$MODE" == node-only || "$MODE" == web || "$MODE" == all ]]; then
   run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs scripts/run-local-verification.test.mjs scripts/local-evidence.test.mjs
 fi
+# Node-only checks can also mutate the checkout. Without this pre-receipt
+# check, a clean initial SHA could be reported after tests changed HEAD/files.
+# Keep dirty node-only development runs permitted, but never issue release
+# evidence for a checkout that changed during execution.
+if [[ "$MODE" == node-only && "$COMMIT" != unknown && "$DIRTY" == no ]]; then
+  STEP=post-node-checkout-integrity
+  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain --untracked-files=all)" ]]; then
+    echo 'ERROR: Node verification changed the candidate commit or checkout; refusing SHA-bound evidence.' >&2
+    exit 2
+  fi
+fi
 if [[ "$MODE" == web || "$MODE" == all ]]; then
   # Always reconcile installed dependencies with the lockfile; an existing
   # node_modules directory is not proof that dependencies match this SHA.
