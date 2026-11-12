@@ -516,8 +516,7 @@ struct PlaybackQueueSheet: View {
 
     // Large-text users should not have to open a context menu for every
     // reorder. The same bounded operations back the menu and VoiceOver.
-    private func moveButton(_ track: MusicTrack, earlier: Bool,
-                            in upcoming: [MusicTrack]) -> some View {
+    private func moveButton(_ track: MusicTrack, earlier: Bool) -> some View {
         Button {
             reorder(track.id, earlier: earlier)
         } label: {
@@ -542,12 +541,12 @@ struct PlaybackQueueSheet: View {
         if stacked {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    moveButton(track, earlier: true, in: upcoming)
+                    moveButton(track, earlier: true)
                         .disabled(!canMove(track.id, earlier: true))
-                    moveButton(track, earlier: false, in: upcoming)
+                    moveButton(track, earlier: false)
                         .disabled(!canMove(track.id, earlier: false))
                     Spacer(minLength: 0)
-                    Text("Position \\(index + 1) of \\(upcoming.count)")
+                    Text("Position \(index + 1) of \(upcoming.count)")
                         .font(.caption)
                         .foregroundStyle(ShelfTheme.subdued)
                         .accessibilityHidden(true)
@@ -557,9 +556,9 @@ struct PlaybackQueueSheet: View {
             }
         } else {
             HStack(spacing: 8) {
-                moveButton(track, earlier: true, in: upcoming)
+                moveButton(track, earlier: true)
                     .disabled(!canMove(track.id, earlier: true))
-                moveButton(track, earlier: false, in: upcoming)
+                moveButton(track, earlier: false)
                     .disabled(!canMove(track.id, earlier: false))
                 Spacer(minLength: 0)
                 playNextButton(track)
@@ -579,8 +578,8 @@ struct PlaybackQueueSheet: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(ShelfTheme.accent)
-        .accessibilityLabel("Play next: \\(track.title)")
-        .accessibilityHint("Move this song to the next position in the playback queue")
+        .accessibilityLabel("Play next: \(track.title)")
+        .accessibilityHint("Make this song the next recording to play")
     }
 
     var body: some View {
