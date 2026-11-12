@@ -20,6 +20,12 @@ enum SpotifyPaginationSlotTests {
         guard let urlType = source.range(of: "struct SpotifyURLContainer: Decodable { let spotify: String? }") else {
             fatalError("Production Spotify URL container decoder not found")
         }
+        guard let trackLinkStart = source.range(of: "enum SpotifyTrackLinks {"),
+              let trackLinkEnd = source.range(of: "struct SpotifyPlaylist: Identifiable, Decodable {"),
+              trackLinkStart.lowerBound < trackLinkEnd.lowerBound else {
+            fatalError("Production Spotify track link guard not found")
+        }
+        let trackLinkGuard = String(source[trackLinkStart.lowerBound..<trackLinkEnd.lowerBound])
         let decoder = String(source[urlType]) + "\n" +
             String(source[start.lowerBound..<typesEnd.lowerBound])
             .replacingOccurrences(of: "private struct SpotifyPage", with: "struct SpotifyPage")
@@ -41,6 +47,21 @@ enum SpotifyPaginationSlotTests {
         func check(_ condition: Bool, _ description: String) {
             guard condition else { fatalError("FAIL: \(description)") }
             print("PASS: \(description)")
+        }
+        let trackID = "0123456789ABCDEFGHIJKL"
+        check(SpotifyTrackLinks.canonicalURL("https://open.spotify.com/track/\(trackID)") ==
+              "https://open.spotify.com/track/\(trackID)", "valid Spotify track URL preserved")
+        for bad in [
+            "http://open.spotify.com/track/\(trackID)",
+            "https://evil.example/track/\(trackID)",
+            "https://open.spotify.com@evil.example/track/\(trackID)",
+            "https://open.spotify.com/track/\(trackID)/extra",
+            "https://open.spotify.com/playlist/\(trackID)",
+            "https://open.spotify.com/track/\(trackID)#fragment",
+            "https://open.spotify.com/track/\(trackID)?redirect=evil",
+            "https://open.spotify.com/track/short"
+        ] {
+            check(SpotifyTrackLinks.canonicalURL(bad) == nil, "untrusted track URL rejected")
         }
         let data = #"{"items":[{"name":"first"},null,{"name":17},{"name":"last"}],"next":"?limit=4&offset=4"}"#.data(using: .utf8)!
         let page = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self, from: data)
@@ -190,7 +211,7 @@ enum SpotifyPaginationSlotTests {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("spotify-page-\(UUID().uuidString).swift")
         defer { try? FileManager.default.removeItem(at: temp) }
-        try (decoder + "\n" + paginationGuard + "\n" + fixture).write(to: temp, atomically: true, encoding: .utf8)
+        try (decoder + "\n" + paginationGuard + "\n" + trackLinkGuard + "\n" + fixture).write(to: temp, atomically: true, encoding: .utf8)
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         task.arguments = ["swift", temp.path]
