@@ -245,6 +245,7 @@ enum PortableShelfArchive {
         bytes.reserveCapacity(Int(size))
         var remaining = size
         while remaining > 0 {
+            try Task.checkCancellation()
             let chunk = try input.read(upToCount: Int(min(remaining, 64 * 1024))) ?? Data()
             guard !chunk.isEmpty else { throw ArchiveError.invalidRange }
             bytes.append(chunk)
@@ -294,6 +295,7 @@ enum PortableShelfArchive {
             throw ArchiveError.invalidManifest
         }
         for item in inputs {
+            try Task.checkCancellation()
             try validateAudioSource(item.audioURL)
             let ext = item.audioURL.pathExtension.lowercased()
             guard ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(ext) else {
@@ -413,6 +415,7 @@ enum PortableShelfArchive {
         ]))
         try output.write(contentsOf: JSON)
         for part in parts {
+            try Task.checkCancellation()
             if let bytes = part.bytes {
                 try output.write(contentsOf: bytes)
             } else if let url = part.url {
@@ -424,6 +427,14 @@ enum PortableShelfArchive {
         }
         try output.synchronize()
         try output.close()
+        // Re-open and validate the staged archive before publishing it.
+        // Failed validation removes only the unpublished partial file.
+        try Task.checkCancellation()
+        let staged = try open(staging)
+        guard staged.manifest.tracks.count == tracks.count,
+              staged.manifest.playlists.count == lists.count else {
+            throw ArchiveError.invalidManifest
+        }
         // Recheck before publication. Moving within the same directory avoids
         // exposing a partially written archive to Files or backup importers.
         guard !manager.fileExists(atPath: destination.path) else {
@@ -611,6 +622,7 @@ enum PortableShelfArchive {
             do {
                 var remaining = part.length
                 while remaining > 0 {
+                    try Task.checkCancellation()
                     let amount = Int(min(remaining, 64 * 1024))
                     guard let data = try input.read(upToCount: amount), !data.isEmpty else {
                         throw ArchiveError.invalidRange
@@ -656,6 +668,7 @@ enum PortableShelfArchive {
         result.reserveCapacity(Int(part.length))
         var remaining = Int(part.length)
         while remaining > 0 {
+            try Task.checkCancellation()
             guard let chunk = try handle.read(upToCount: min(remaining, 64 * 1024)),
                   !chunk.isEmpty else { throw ArchiveError.invalidRange }
             result.append(chunk)
