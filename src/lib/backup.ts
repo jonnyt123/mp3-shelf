@@ -26,6 +26,12 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
   if(playlistIds.has(playlist.id))throw new Error("Duplicate playlist ID in library backup.");
   playlistIds.add(playlist.id);
   if(!Array.isArray(playlist.trackIds)||!playlist.trackIds.every(id=>typeof id==="string"&&Boolean(id.trim())))throw new Error("Cannot back up a playlist with invalid track references.");
+  // A portable archive contains only the supplied recordings. Exporting a
+  // dangling playlist link produces an archive that cannot be safely restored:
+  // recovery refuses to publish references to missing audio. Fail before
+  // allocating the payload so users can repair the library first.
+  if(playlist.trackIds.some(id=>!trackIds.has(id)))
+   throw new Error("Cannot back up a playlist that references missing recordings.");
  }
  const payload:Blob[]=[];let offset=0;
  const archivedTracks=tracks.map(track=>{
