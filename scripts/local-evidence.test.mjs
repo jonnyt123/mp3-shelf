@@ -234,6 +234,25 @@ test('receipt CLI rejects mismatched SHA, dirty checkout and tampered original l
   } finally { rmSync(outside, { recursive: true, force: true }); }
 }));
 
+test('receipt identity rejects a nested directory even when Git HEAD matches', () => fixture(dir => {
+  const git = (...args) => execFileSync('git', args, {
+    cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
+  }).trim();
+  git('init', '-q');
+  git('config', 'user.name', 'Local Receipt Test');
+  git('config', 'user.email', 'local-test@example.invalid');
+  writeFileSync(join(dir, 'tracked.txt'), 'candidate\\n');
+  git('add', 'tracked.txt');
+  git('commit', '-qm', 'candidate');
+  const candidate = git('rev-parse', 'HEAD');
+  assert.deepEqual(verifyCheckoutIdentity(candidate, dir), []);
+  const nested = join(dir, 'nested');
+  mkdirSync(nested);
+  assert.match(verifyCheckoutIdentity(candidate, nested).join(' '),
+    /candidate repository root/);
+  assert.deepEqual(verifyCheckoutIdentity(candidate, dir), []);
+}));
+
 test('persisted receipt reader refuses symlink, hardlink, directory and oversized JSON', () => fixture(dir => {
   const original = join(dir, 'receipt.json');
   writeFileSync(original, JSON.stringify({ schemaVersion: 1 }));
