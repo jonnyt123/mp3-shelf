@@ -1123,3 +1123,48 @@ describe("competing recovery intent during staging",()=>{
   expect(data.get("mp3-shelf-delete-recovery")).toBe(competing);
  });
 });
+
+
+describe("restore cancellation ownership during synchronous storage interference",()=>{
+ it("preserves a replacement journal injected between ownership reads",()=>{
+  const data=new Map<string,string>();
+  const base={
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  const tracks=[{id:"audio"}];
+  const playlists=[{id:"mix",name:"Mix",trackIds:["audio"]}];
+  expect(stagePlaylistRestore(base,"playlists",tracks,playlists)).toBe(true);
+  const original=base.getItem("mp3-shelf-restore-pending");
+  const replacement=JSON.stringify({version:1,key:"playlists",trackIds:["new-audio"],playlists:[]});
+  let journalReads=0;
+  const interfering={
+   getItem:(key:string)=>{
+    if(key==="mp3-shelf-restore-pending"&&++journalReads===2)
+     base.setItem(key,replacement);
+    return base.getItem(key);
+   },
+   removeItem:base.removeItem
+  };
+  expect(cancelOwnedPlaylistRestore(interfering,"playlists",tracks,playlists)).toBe(false);
+  expect(base.getItem("mp3-shelf-restore-pending")).toBe(replacement);
+  expect(base.getItem("mp3-shelf-restore-pending")).not.toBe(original);
+ });
+ it("cancels an unchanged owned journal without altering playlists",()=>{
+  const data=new Map<string,string>();
+  const base={
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  const tracks=[{id:"audio"}];
+  const playlists=[{id:"mix",name:"Mix",trackIds:["audio"]}];
+  base.setItem("playlists",JSON.stringify([{id:"existing",name:"Keep",trackIds:["old"]}]));
+  const before=base.getItem("playlists");
+  expect(stagePlaylistRestore(base,"playlists",tracks,playlists)).toBe(true);
+  expect(cancelOwnedPlaylistRestore(base,"playlists",tracks,playlists)).toBe(true);
+  expect(base.getItem("mp3-shelf-restore-pending")).toBeNull();
+  expect(base.getItem("playlists")).toBe(before);
+ });
+});
