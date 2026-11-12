@@ -94,6 +94,25 @@ enum SpotifyPaginationSlotTests {
               "invalid durations do not discard otherwise usable recordings")
         check(durationCases.items.compactMap(\.track).map(\.duration_ms) == [nil, nil, nil, 212345],
               "negative, zero and implausible durations are excluded from matching evidence")
+        // A syntactically valid primary envelope can still be unusable for
+        // matching. Selection must fall back to the legacy recording rather
+        // than silently importing a title without a credible artist.
+        let fallbackCases = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,
+            from: #"{\"items\":[{\"item\":{\"name\":\"Wrong Primary\",\"type\":\"track\",\"artists\":[{\"name\":\"  \"}]},\"track\":{\"name\":\"Correct Studio\",\"type\":\"track\",\"artists\":[{\"name\":\"Actual Artist\"}],\"duration_ms\":203456}},{\"item\":{\"name\":\"Podcast\",\"type\":\"episode\",\"artists\":[{\"name\":\"Host\"}]},\"track\":{\"name\":\"Actual Recording\",\"type\":\"track\",\"artists\":[{\"name\":\"Actual Artist\"}]}},{\"item\":{\"name\":\"Karaoke\",\"type\":\"episode\",\"artists\":[{\"name\":\"Host\"}]}},{\"track\":{\"name\":\"Missing Type\",\"artists\":[{\"name\":\"Artist\"}]}}],\"next\":\"?limit=4&offset=4\"}"#.data(using: .utf8)!)
+        let recovered = fallbackCases.items.compactMap { entry -> SpotifyTrack? in
+            [entry.item, entry.track].compactMap { $0 }.first {
+                $0.type == "track" &&
+                !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                ($0.artists ?? []).contains {
+                    !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+            }
+        }
+        check(recovered.map(\\.name) == ["Correct Studio", "Actual Recording"],
+              "unusable primary metadata falls back without accepting episodes or unknown types")
+        check(recovered.first?.duration_ms == 203456 && fallbackCases.rawItemCount == 4 &&
+              fallbackCases.next == "?limit=4&offset=4",
+              "fallback retains recording duration and unfiltered pagination cursor")
         check(mixed.next == "?limit=5&offset=5",
               "nested metadata failures do not corrupt continuation cursor")
         do {
