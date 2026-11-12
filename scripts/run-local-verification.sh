@@ -79,7 +79,15 @@ report() {
       # The verifier rejects incomplete receipts even if JSON creation worked.
       if [[ "$code" -eq 0 ]]; then
         if node "$ROOT/scripts/local-evidence.mjs" --verify "$OUT/local-evidence.json" "$COMMIT" "$OUT"; then
-          receipt_state='VERIFIED'
+          # Verification itself can run external commands. Recheck the source
+          # after receipt validation before reporting a SHA-bound PASS.
+          if checkout_unchanged; then
+            receipt_state='VERIFIED'
+          else
+            receipt_state='UNAVAILABLE_CHECKOUT_CHANGED'
+            code=1
+            echo 'ERROR: Checkout changed during receipt verification; refusing PASS.' >&2
+          fi
         else
           receipt_state='VERIFICATION_FAILED'
           code=1
