@@ -252,7 +252,9 @@ final class MusicLibrary: ObservableObject {
         try requireLibraryPersistence()
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        try Task.checkCancellation()
         let archive = try PortableShelfArchive.open(url)
+        try Task.checkCancellation()
         var report = ImportReport()
         var restoredIDs: [String: UUID] = [:]
         // Index candidate sizes once per restore instead of scanning every
@@ -260,6 +262,7 @@ final class MusicLibrary: ObservableObject {
         // Verify actual bytes before reuse; equal sizes are not identity.
         var recordingsBySize: [Int64: [MusicTrack]] = [:]
         for track in tracks {
+            try Task.checkCancellation()
             if let size = try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize {
                 recordingsBySize[Int64(size), default: []].append(track)
             }
@@ -332,6 +335,7 @@ final class MusicLibrary: ObservableObject {
         }
 
         for archived in archive.manifest.tracks {
+            try Task.checkCancellation()
             var temporary: URL?
             do {
                 let ext = try PortableShelfArchive.audioExtension(for: archived)
@@ -348,9 +352,11 @@ final class MusicLibrary: ObservableObject {
                 // recording. Compare same-sized files before copying another
                 // potentially large track; never trust names or portable IDs
                 // without checking the actual bytes.
+                try Task.checkCancellation()
                 let extractedSize = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
                 if extractedSize >= 0, let existing = recordingsBySize[Int64(extractedSize)]?
                     .first(where: { PortableShelfArchive.audioFilesIdentical(file, fileURL(for: $0)) }) {
+                    try Task.checkCancellation()
                     // Byte-identical reuse must also retain the browser's
                     // portable identity for a later native re-export. Never
                     // replace an established identity or steal another song's.
@@ -371,6 +377,9 @@ final class MusicLibrary: ObservableObject {
                     continue
                 }
 
+                // The byte comparator deliberately returns false on cancellation;
+                // do not interpret that as permission to import another copy.
+                try Task.checkCancellation()
                 let imported = try addLocalAudio(
                     sourceURL: file, originalName: original)
                 if imported { report.imported += 1 }
@@ -476,7 +485,12 @@ final class MusicLibrary: ObservableObject {
                     for sidecar in createdSidecars { try? manager.removeItem(at: sidecar) }
                     throw error
                 }
+            } catch is CancellationError {
+                // Previously completed track writes remain durable; do not
+                // continue importing or publish incomplete playlist links.
+                throw CancellationError()
             } catch {
+                if Task.isCancelled { throw CancellationError() }
                 report.errors.append("\(archived.name): \(error.localizedDescription)")
             }
             if let temporary { try? manager.removeItem(at: temporary) }
@@ -485,6 +499,7 @@ final class MusicLibrary: ObservableObject {
         // are not: stage playlist changes until their final durable write.
         var candidatePlaylists = playlists
         for item in archive.manifest.playlists {
+            try Task.checkCancellation()
             // Web backups use string playlist IDs, not necessarily UUIDs.
             // Keep their source ID so restoring the same archive again (or
             // after an app restart) does not create another copy.
@@ -538,7 +553,9 @@ final class MusicLibrary: ObservableObject {
         // swallows write failures and could publish a partially restored catalog.
         // Reconcile in memory, then commit exactly once. A failed commit must
         // never publish a candidate playlist before its write succeeds.
+        try Task.checkCancellation()
         candidatePlaylists = reconciledPlaylists(using: tracks, from: candidatePlaylists)
+        try Task.checkCancellation()
         try requireLibraryPersistence()
         try PersistedLibrary(tracks: tracks, playlists: candidatePlaylists).write(to: databaseURL)
         playlists = candidatePlaylists
