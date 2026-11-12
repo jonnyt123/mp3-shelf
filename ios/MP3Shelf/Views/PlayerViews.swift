@@ -857,32 +857,40 @@ struct PlaybackQueueSheet: View {
                     emptyQueueFocused = liveIDs.isEmpty
                 }
             }
-            .onChange(of: upcoming.map(\.id)) { _, currentIDs in
-                // An empty queue has no track ID to focus; retain that intent
-                // separately so removing the final song still announces the state.
+            .onChange(of: upcoming.map(\.id)) { previousIDs, currentIDs in
+                // Queue changes can also originate outside this sheet (playback
+                // advancement, shuffle, or another queue control). Recover only
+                // focus that was actually on a row that disappeared; otherwise
+                // leave the user's current VoiceOver position untouched.
+                let focusedRowWasRemoved = focusedQueueTrackID.map {
+                    previousIDs.contains($0) && !currentIDs.contains($0)
+                } ?? false
                 if pendingEmptyQueueFocus && currentIDs.isEmpty {
                     pendingEmptyQueueFocus = false
                     pendingQueueFocusID = nil
-                    emptyQueueFocused = true
-                } else if currentIDs.isEmpty {
-                    // Automatic playback advancement can drain the queue without
-                    // a removal action. A focused row must never remain orphaned.
-                    pendingQueueFocusID = nil
-                    pendingEmptyQueueFocus = false
                     focusedQueueTrackID = nil
                     emptyQueueFocused = true
+                } else if currentIDs.isEmpty {
+                    pendingQueueFocusID = nil
+                    pendingEmptyQueueFocus = false
+                    if focusedRowWasRemoved {
+                        focusedQueueTrackID = nil
+                        emptyQueueFocused = true
+                    }
                 } else if let target = pendingQueueFocusID {
                     pendingQueueFocusID = nil
                     pendingEmptyQueueFocus = false
-                    if currentIDs.contains(target) {
-                        focusedQueueTrackID = target
-                    } else if currentIDs.isEmpty {
-                        emptyQueueFocused = true
-                    } else if let first = currentIDs.first {
-                        // Playback can advance while the user is editing.
-                        // Never leave focus pointing at a vanished queue row.
-                        focusedQueueTrackID = first
-                    }
+                    emptyQueueFocused = false
+                    // A simultaneous playback transition can consume the
+                    // requested target before the queue update is observed.
+                    focusedQueueTrackID = currentIDs.contains(target)
+                        ? target : currentIDs.first
+                } else if focusedRowWasRemoved {
+                    // Prefer the same visible position after removal, falling
+                    // back to the last surviving row at the end of the queue.
+                    let oldIndex = previousIDs.firstIndex(of: focusedQueueTrackID!) ?? 0
+                    focusedQueueTrackID = currentIDs[min(oldIndex, currentIDs.count - 1)]
+                    emptyQueueFocused = false
                 }
             }
             .navigationTitle("Your queue")
