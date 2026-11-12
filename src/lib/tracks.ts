@@ -19,9 +19,16 @@ export async function importTracks(files:File[]):Promise<number>{
  // Files providers sometimes omit the MIME type for M4A recordings.
  // Never persist an empty recording as playable audio; it cannot be decoded,
  // and would otherwise become a permanent broken library entry.
- const audio=files.filter(file=>
-  file.size>0&&(file.type.startsWith("audio/")||/\.(mp3|m4a)$/i.test(file.name))
- );
+ const selectedIds=new Set<string>();
+ const audio=files.filter(file=>{
+  if(file.size<=0||!(file.type.startsWith("audio/")||/\.(mp3|m4a)$/i.test(file.name)))return false;
+  const id=`${file.name}:${file.size}:${file.lastModified}`;
+  // Deduplicate before parsing ID3. Repeated selections can otherwise launch
+  // many unnecessary metadata reads (up to 2 MiB each) on mobile Safari.
+  if(selectedIds.has(id))return false;
+  selectedIds.add(id);
+  return true;
+ });
  if(!audio.length)return 0;
  // Bound concurrent 2 MiB ID3 reads: a large Files selection must not launch
  // hundreds of arrayBuffer allocations simultaneously on memory-limited iPhones.
