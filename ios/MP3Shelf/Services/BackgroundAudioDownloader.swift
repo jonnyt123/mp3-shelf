@@ -441,6 +441,23 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         task.taskDescription = ticket.id.uuidString
         task.earliestBeginDate = ticket.nextRetryAt
         task.resume()
+        // The replacement is durable and scheduled. Retire the predecessor's
+        // daemon task as well: changing its manifest status alone does not stop
+        // URLSession from transferring the same bytes in parallel. Late
+        // callbacks remain harmless because each attempt has a distinct ID.
+        if let previous {
+            let retiredID = previous.id.uuidString
+            session.getAllTasks { tasks in
+                for oldTask in tasks where oldTask.taskDescription == retiredID {
+                    oldTask.cancel()
+                }
+            }
+            // An active staged import owns its file until its cancellation
+            // check completes; never remove that file underneath conversion.
+            if !processing.contains(previous.id) {
+                try? fm.removeItem(at: Self.stagingURL(previous.id))
+            }
+        }
         updatePending()
     }
 
