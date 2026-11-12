@@ -75,6 +75,11 @@ describe("restore failure safety",()=>{
    {...makeTrack("missing-blob"),blob:undefined as unknown as Blob},
    {...makeTrack("empty-artwork"),artwork:new Blob([])},
    {...makeTrack("invalid-size"),size:Number.POSITIVE_INFINITY},
+   {...makeTrack("negative-import-date"),importedAt:-1},
+   {...makeTrack("blank-original-name"),originalName:"   "},
+   {...makeTrack("nonstring-original-name"),originalName:42 as unknown as string},
+   {...makeTrack("invalid-artist"),artist:{display:"Artist"} as unknown as string},
+   {...makeTrack("invalid-album"),album:["Album"] as unknown as string},
   ];
   for(const invalid of badCases){
    await expect(restoreTracks([valid,invalid])).rejects.toThrow("Invalid recording metadata or audio");
@@ -88,6 +93,20 @@ describe("restore failure safety",()=>{
    const saved=(await listTracks()).find(item=>item.id===track.id);
    expect(saved?.size).toBe(saved?.blob.size);
    expect(saved?.artwork?.size).toBe(1);
+  }finally{await removeTrack(track.id)}
+ });
+ it("restores valid optional metadata without dropping or rewriting fields",async()=>{
+  const track={
+   ...makeTrack("complete-optional-metadata"),
+   originalName:"original.mp3",artist:"Artist",album:"Album",importedAt:0
+  };
+  try{
+   expect(await restoreTracks([track])).toBe(1);
+   const saved=(await listTracks()).find(item=>item.id===track.id);
+   expect(saved?.originalName).toBe("original.mp3");
+   expect(saved?.artist).toBe("Artist");
+   expect(saved?.album).toBe("Album");
+   expect(saved?.importedAt).toBe(0);
   }finally{await removeTrack(track.id)}
  });
  it("rejects duplicate backup IDs without writing",async()=>{
