@@ -12,8 +12,23 @@ describe("Files provider import compatibility",()=>{
    const saved=(await listTracks()).find(track=>track.id===id);
    expect(saved).toBeDefined();
    expect(saved?.blob.size).toBe(8);
+   expect(saved?.type).toBe("audio/mp4");
+   expect(saved?.name).toBe("voice-note");
    expect(await importTracks([file])).toBe(0);
   }finally{await removeTrack(id)}
+ });
+ it("retains explicit audio MIME types and uses the MP3 fallback only for MIME-less MP3 files",async()=>{
+  const mp3=new File([new Uint8Array([1,2,3])],"no-mime.mp3",{type:"",lastModified:5432});
+  const m4a=new File([new Uint8Array([0,0,0,0,102,116,121,112])],"explicit.m4a",{type:"audio/x-m4a",lastModified:5432});
+  const ids=["no-mime.mp3:3:5432","explicit.m4a:8:5432"];
+  try{
+   expect(await importTracks([mp3,m4a])).toBe(2);
+   const saved=await listTracks();
+   expect(saved.find(track=>track.id===ids[0])?.type).toBe("audio/mpeg");
+   expect(saved.find(track=>track.id===ids[0])?.name).toBe("no-mime");
+   expect(saved.find(track=>track.id===ids[1])?.type).toBe("audio/x-m4a");
+   expect(saved.find(track=>track.id===ids[1])?.name).toBe("explicit");
+  }finally{for(const id of ids)await removeTrack(id)}
  });
  it("rejects zero-byte audio regardless of extension or MIME type",async()=>{
   const emptyMp3=new File([],"empty.mp3",{type:"audio/mpeg",lastModified:1});
