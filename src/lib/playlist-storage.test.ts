@@ -1219,3 +1219,59 @@ describe("missing-audio deletion recovery final reconciliation",()=>{
   expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
  });
 });
+
+describe("deletion final journal retirement cross-tab safety",()=>{
+ const key="playlists", journalKey="mp3-shelf-delete-recovery";
+ const original=[{id:"mix",name:"Mix",trackIds:["gone","keep"]}];
+ function fixture(){
+  const values=new Map<string,string>([[key,JSON.stringify(original)]]);
+  return {
+   values,
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+ }
+ it("retains the journal if a tab reattaches missing audio at final verification",async()=>{
+  const base=fixture();
+  let reads=0;
+  const storage={
+   ...base,
+   getItem:(name:string)=>{
+    // 1: before audio deletion, 2: reconciliation, 3: final verification
+    if(name===key&&++reads===3)
+     base.setItem(key,JSON.stringify([{id:"mix",name:"Remote",trackIds:["keep","gone"]}]));
+    return base.getItem(name);
+   }
+  };
+  await expect(deleteTrackWithPlaylistCleanup(storage,key,original,"gone",async()=>{}))
+   .rejects.toThrow("Missing-audio references changed before deletion cleanup");
+  expect(parseStoredPlaylists(base.getItem(key))).toEqual([{id:"mix",name:"Remote",trackIds:["keep","gone"]}]);
+  expect(base.getItem(journalKey)).not.toBeNull();
+  expect(recoverFailedTrackDeletion(base,new Set(["keep"])))
+   .toEqual([{id:"mix",name:"Remote",trackIds:["keep"]}]);
+  expect(base.getItem(journalKey)).toBeNull();
+ });
+ it("retains the journal when another tab edits after the final snapshot",async()=>{
+  const base=fixture();
+  let reads=0;
+  const storage={
+   ...base,
+   getItem:(name:string)=>{
+    if(name===key&&++reads===4)
+     base.setItem(key,JSON.stringify([{id:"mix",name:"Concurrent rename",trackIds:["keep"]}]));
+    return base.getItem(name);
+   }
+  };
+  await expect(deleteTrackWithPlaylistCleanup(storage,key,original,"gone",async()=>{}))
+   .rejects.toThrow("Playlists changed before deletion cleanup");
+  expect(parseStoredPlaylists(base.getItem(key))[0].name).toBe("Concurrent rename");
+  expect(base.getItem(journalKey)).not.toBeNull();
+ });
+ it("retires the journal and returns durable playlists on ordinary deletion",async()=>{
+  const base=fixture();
+  expect(await deleteTrackWithPlaylistCleanup(base,key,original,"gone",async()=>{}))
+   .toEqual([{id:"mix",name:"Mix",trackIds:["keep"]}]);
+  expect(base.getItem(journalKey)).toBeNull();
+ });
+});
