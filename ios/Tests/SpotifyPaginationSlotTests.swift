@@ -64,18 +64,7 @@ enum SpotifyPaginationSlotTests {
               "unavailable-only page retains the server cursor")
         // Decode nested envelopes using the actual production model types.
         let mixed = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,
-            from: #"""
-            {"items":[
-              {"item":{"name":"Episode","type":"episode","artists":[{"name":"Host"}]},
-               "track":{"name":"Studio Song","type":"track","artists":[{"name":"Artist"}],"duration_ms":201000}},
-              {"item":{"name":123,"artists":[]},
-               "track":{"name":"Fallback","type":"track","artists":[{"name":"Second Artist"}]}},
-              {"track":{"name":"Credits","type":"track","artists":[null,{"name":9},{"name":"Valid Artist"}],
-                        "album":{"name":42},"duration_ms":"unknown","external_urls":[]}},
-              {"item":{"name":"Missing Artist","type":"track","artists":[null]}},
-              null
-            ],"next":"?limit=5&offset=5"}
-            """#.data(using: .utf8)!)
+            from: #"{"items":[{"item":{"name":"Episode","type":"episode","artists":[{"name":"Host"}]},"track":{"name":"Studio Song","type":"track","artists":[{"name":"Artist"}],"duration_ms":201000}},{"item":{"name":123,"artists":[]},"track":{"name":"Fallback","type":"track","artists":[{"name":"Second Artist"}]}},{"track":{"name":"Credits","type":"track","artists":[null,{"name":9},{"name":"Valid Artist"}],"album":{"name":42},"duration_ms":"unknown","external_urls":[]}},{"item":{"name":"Missing Artist","type":"track","artists":[null]}},null],"next":"?limit=5&offset=5"}"#.data(using: .utf8)!)
         check(mixed.rawItemCount == 5 && mixed.items.count == 4,
               "nested decoder retains raw positions and skips null entries")
         let selected = mixed.items.compactMap { entry -> SpotifyTrack? in
