@@ -272,12 +272,17 @@ export function recoverFailedTrackDeletion(
  if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
   throw new Error("Track deletion recovery changed before playlist rollback. Preserve the newer intent.");
  commitPlaylistEdit(storage,entry.key,next);
+ // The rollback restores a surviving audio record's playlist references.
+ // If another tab changes playlists before journal retirement, keep the
+ // intent so the next recovery can reconcile against the newer durable state.
+ const verifiedBaseline=storage.getItem(entry.key);
+ const verified=parseStoredPlaylists(verifiedBaseline);
+ if(storage.getItem(entry.key)!==verifiedBaseline)
+  throw new Error("Playlists changed during deletion rollback verification. Retry recovery.");
  if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
   throw new Error("Track deletion recovery changed before journal cleanup. Preserve the newer intent.");
  storage.removeItem(DELETE_RECOVERY_KEY);
- // Read the latest durable playlists: edits may occur while IDB deletion awaits.
- // Returning the pre-await snapshot would erase concurrent edits in React.
- return parseStoredPlaylists(storage.getItem(entry.key));
+ return verified;
 }
 
 export async function deleteTrackWithPlaylistCleanup(
