@@ -804,6 +804,28 @@ struct PortableShelfArchiveTests {
         let reexport = try PortableShelfArchive.open(reexportURL)
         assert(reexport.manifest.playlists.first?.id == "web-list-1")
 
+        // Duplicate detection must never treat a symlink or an unstable
+        // source as proof that an incoming recording can be discarded.
+        let comparisonA = folder.appendingPathComponent("comparison-a.mp3")
+        let comparisonB = folder.appendingPathComponent("comparison-b.mp3")
+        let comparisonLink = folder.appendingPathComponent("comparison-link.mp3")
+        let comparisonBytes = Data(repeating: 0x53, count: 256 * 1024)
+        try comparisonBytes.write(to: comparisonA)
+        try comparisonBytes.write(to: comparisonB)
+        assert(PortableShelfArchive.audioFilesIdentical(comparisonA, comparisonB))
+        try FileManager.default.createSymbolicLink(
+            at: comparisonLink, withDestinationURL: comparisonA)
+        // A link may be accepted by the reader only if the opened descriptor
+        // itself is regular; the duplicate comparator does not publish or
+        // mutate any bytes and must still reject non-regular sources.
+        assert(!PortableShelfArchive.audioFilesIdentical(
+            comparisonA, folder))
+        try Data(repeating: 0x54, count: comparisonBytes.count)
+            .write(to: comparisonB, options: .atomic)
+        assert(!PortableShelfArchive.audioFilesIdentical(comparisonA, comparisonB))
+        assert(try Data(contentsOf: comparisonA) == comparisonBytes)
+        print("PASS: duplicate audio comparison rejects nonfiles and changed bytes")
+
         print("Portable MP3 Shelf v1 archive round-trip and validation passed.")
     }
 }
