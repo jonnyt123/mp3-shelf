@@ -89,6 +89,51 @@ describe("duplicate selection metadata performance",()=>{
  });
 });
 
+describe("existing recording metadata preflight",()=>{
+ it("avoids re-reading audio metadata when an entire Files selection already exists",async()=>{
+  const files=Array.from({length:48},(_,i)=>new File([new Uint8Array([1,2,3])],`existing-bulk-${i}.mp3`,{type:"audio/mpeg",lastModified:2026}));
+  const originalSlice=File.prototype.slice;
+  try{
+   expect(await importTracks(files)).toBe(48);
+   let metadataReads=0;
+   File.prototype.slice=function(...args){
+    metadataReads++;
+    return originalSlice.apply(this,args);
+   };
+   expect(await importTracks(files)).toBe(0);
+   expect(metadataReads).toBe(0);
+   expect((await listTracks()).filter(track=>track.id.startsWith("existing-bulk-"))).toHaveLength(48);
+  }finally{
+   File.prototype.slice=originalSlice;
+   for(const file of files)await removeTrack(`${file.name}:${file.size}:${file.lastModified}`);
+  }
+ });
+ it("reads only new metadata in mixed repeat imports and never replaces existing bytes",async()=>{
+  const old=new File([new Uint8Array([1,2,3])],"preflight-old.mp3",{type:"audio/mpeg",lastModified:301});
+  const conflicting=new File([new Uint8Array([9,9,9])],"preflight-old.mp3",{type:"audio/mpeg",lastModified:301});
+  const fresh=new File([new Uint8Array([4,5,6])],"preflight-new.mp3",{type:"audio/mpeg",lastModified:302});
+  const ids=["preflight-old.mp3:3:301","preflight-new.mp3:3:302"];
+  const originalSlice=File.prototype.slice;
+  try{
+   expect(await importTracks([old])).toBe(1);
+   let metadataReads=0;
+   File.prototype.slice=function(...args){
+    metadataReads++;
+    return originalSlice.apply(this,args);
+   };
+   expect(await importTracks([conflicting,fresh])).toBe(1);
+   expect(metadataReads).toBe(1);
+   const tracks=await listTracks();
+   const preserved=tracks.find(track=>track.id===ids[0])!;
+   expect(Array.from(new Uint8Array(await preserved.blob.arrayBuffer()))).toEqual([1,2,3]);
+   expect(tracks.some(track=>track.id===ids[1])).toBe(true);
+  }finally{
+   File.prototype.slice=originalSlice;
+   for(const id of ids)await removeTrack(id);
+  }
+ });
+});
+
 describe("restore failure safety",()=>{
  const makeTrack=(id:string):Track=>({id,name:id,size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])});
  it("rejects corrupt restore records atomically before opening IndexedDB",async()=>{
