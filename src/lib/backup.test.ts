@@ -67,7 +67,7 @@ describe("MP3 Shelf backups",()=>{
    .toThrow("references missing recordings");
   const valid=createLibraryBackup([track],[{id:"mix",name:"Mix",trackIds:["present"]}]);
   const bytes=new Uint8Array(await valid.arrayBuffer());
-  const headerSize=new TextEncoder().encode("MP3SHELF1\\n").length+4;
+  const headerSize=new TextEncoder().encode("MP3SHELF1\n").length+4;
   const manifestSize=new DataView(bytes.buffer).getUint32(headerSize-4,true);
   const manifest=JSON.parse(new TextDecoder().decode(bytes.slice(headerSize,headerSize+manifestSize)));
   manifest.playlists[0].trackIds.push("missing");
@@ -78,6 +78,36 @@ describe("MP3 Shelf backups",()=>{
   await expect(parseLibraryBackup(corrupt)).rejects.toThrow("references missing audio");
   const parsed=await parseLibraryBackup(valid);
   expect(parsed.playlists[0].trackIds).toEqual(["present"]);
+ });
+ it("rejects corrupt playlist links without reading or copying audio payloads",async()=>{
+  // Large archives must be rejected from their small manifest; a parser that
+  // accidentally materializes payload bytes can exhaust mobile Safari memory.
+  const track:Track={id:"song",name:"Song",size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])};
+  const valid=createLibraryBackup([track],[{id:"mix",name:"Mix",trackIds:["song"]}]);
+  const headerSize=new TextEncoder().encode("MP3SHELF1\n").length+4;
+  const header=new Uint8Array(await valid.slice(0,headerSize).arrayBuffer());
+  const manifestSize=new DataView(header.buffer).getUint32(headerSize-4,true);
+  const manifest=JSON.parse(await valid.slice(headerSize,headerSize+manifestSize).text());
+  manifest.playlists[0].trackIds=["missing"];
+  const json=new TextEncoder().encode(JSON.stringify(manifest));
+  new DataView(header.buffer).setUint32(headerSize-4,json.length,true);
+  const archive=new Blob([header,json,valid.slice(headerSize+manifestSize)]);
+  const guarded=new Proxy(archive,{
+   get(target,property){
+    if(property==="arrayBuffer")throw new Error("Whole archive read is forbidden");
+    const value=Reflect.get(target,property,target);
+    return typeof value==="function"?value.bind(target):value;
+   }
+  });
+  await expect(parseLibraryBackup(guarded)).rejects.toThrow("references missing audio");
+ });
+ it("round-trips a large playlist without duplicating media in memory",async()=>{
+  const track:Track={id:"song",name:"Song",size:1,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([42])])};
+  const playlists=Array.from({length:200},(_,i)=>({id:"mix-"+i,name:"Mix "+i,trackIds:["song"]}));
+  const restored=await parseLibraryBackup(createLibraryBackup([track],playlists));
+  expect(restored.playlists).toHaveLength(200);
+  expect(restored.playlists[199].trackIds).toEqual(["song"]);
+  expect(restored.tracks[0].blob.size).toBe(1);
  });
  it("refuses to export records that the restore parser would reject",()=>{
   const makeTrack=(id:string,bytes:number[]):Track=>({id,name:"Song",size:bytes.length,type:"audio/mpeg",importedAt:123,blob:new Blob([new Uint8Array(bytes)])});
