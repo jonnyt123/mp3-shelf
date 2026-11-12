@@ -27,6 +27,14 @@ enum SpotifyPaginationSlotTests {
             .replacingOccurrences(of: "private struct SpotifyTrack", with: "struct SpotifyTrack")
             .replacingOccurrences(of: "private struct SpotifyArtist", with: "struct SpotifyArtist")
             .replacingOccurrences(of: "private struct SpotifyAlbum", with: "struct SpotifyAlbum")
+        // Extract the actual URL cursor guard so this fixture detects production regressions.
+        guard let paginationStart = source.range(of: "static func safeNext(_ string: String?, for current: URL, returnedItems: Int) throws -> URL? {"),
+              let paginationEnd = source.range(of: "\n}\n\nextension SpotifyService:"),
+              paginationStart.lowerBound < paginationEnd.lowerBound else {
+            fatalError("Production pagination guard not found")
+        }
+        let paginationGuard = "enum SpotifyError: Error { case api(String) }\nstruct PaginationGuard {\n" +
+            String(source[paginationStart.lowerBound..<paginationEnd.lowerBound]) + "\n}\n"
         let fixture = #"""
         import Foundation
         struct FixtureTrack: Decodable { let name: String }
@@ -115,6 +123,18 @@ enum SpotifyPaginationSlotTests {
               "fallback retains recording duration and unfiltered pagination cursor")
         check(mixed.next == "?limit=5&offset=5",
               "nested metadata failures do not corrupt continuation cursor")
+        let currentPage = URL(string: "https://api.spotify.com/v1/playlists/123/items?limit=50")!
+        let followingPage = "?limit=50&offset=50"
+        check(try PaginationGuard.safeNext(followingPage, for: currentPage, returnedItems: 50) != nil,
+              "full page advances to next cursor")
+        check(try PaginationGuard.safeNext(followingPage, for: currentPage, returnedItems: 1) != nil,
+              "sparse page still advances by the server cursor")
+        do {
+            _ = try PaginationGuard.safeNext(followingPage, for: currentPage, returnedItems: 0)
+            fatalError("FAIL: nonprogressing empty page accepted")
+        } catch SpotifyError.api {
+            print("PASS: empty nonterminal page rejected")
+        }
         do {
             _ = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
                 from: #"{"next":null}"#.data(using: .utf8)!)
@@ -140,7 +160,7 @@ enum SpotifyPaginationSlotTests {
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("spotify-page-\(UUID().uuidString).swift")
         defer { try? FileManager.default.removeItem(at: temp) }
-        try (decoder + "\n" + fixture).write(to: temp, atomically: true, encoding: .utf8)
+        try (decoder + "\n" + paginationGuard + "\n" + fixture).write(to: temp, atomically: true, encoding: .utf8)
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         task.arguments = ["swift", temp.path]
