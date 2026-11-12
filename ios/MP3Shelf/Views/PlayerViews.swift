@@ -484,7 +484,11 @@ struct PlaybackQueueSheet: View {
         // recheck live boundaries before changing the play order.
         let current = playback.queuedTracks
         guard let index = current.firstIndex(where: { $0.id == trackID }) else { return }
-        guard earlier ? index > 0 : index < current.count - 1 else { return }
+        guard earlier ? index > 0 : index < current.count - 1 else {
+            // An obsolete context-menu action must not leave focus pending.
+            pendingQueueFocusID = nil
+            return
+        }
         focusAfterQueueMutation(trackID)
         playback.moveQueuedTrack(trackID, earlier: earlier)
     }
@@ -492,7 +496,16 @@ struct PlaybackQueueSheet: View {
     private func playNext(_ trackID: UUID) {
         // A context menu can stay open after playback advances or a queue edit.
         // Do not issue a mutation or retain a focus request for a vanished row.
-        guard playback.queuedTracks.contains(where: { $0.id == trackID }) else { return }
+        let current = playback.queuedTracks
+        guard let index = current.firstIndex(where: { $0.id == trackID }) else { return }
+        // Already next: no queue publication will follow, so avoid leaving a
+        // pending focus request that could hijack a later unrelated queue edit.
+        guard index > 0 else {
+            pendingQueueFocusID = nil
+            pendingEmptyQueueFocus = false
+            focusedQueueTrackID = trackID
+            return
+        }
         focusAfterQueueMutation(trackID)
         playback.playQueuedTrackNext(trackID)
     }
@@ -695,17 +708,16 @@ struct PlaybackQueueSheet: View {
                                     .accessibilityHint("Play, reorder, or remove this song from the upcoming queue")
                                     .accessibilityFocused($focusedQueueTrackID, equals: track.id)
                                     }
-                                    if dynamicTypeSize.isAccessibilitySize {
-                                        // Separate transport actions from metadata so the largest
-                                        // text sizes never compete with three 44-point targets.
-                                        // At the largest text sizes, keep all three actions
-                                        // independently reachable without compressing labels.
-                                        ViewThatFits(in: .horizontal) {
-                                            queueActions(track, index: index, upcoming: upcoming,
-                                                         stacked: false)
-                                            queueActions(track, index: index, upcoming: upcoming,
-                                                         stacked: true)
-                                        }
+                                    // Expose the primary queue actions at every text size.
+                                    // Previously only accessibility sizes showed these controls,
+                                    // forcing standard-size users into an overflow menu to reorder.
+                                    // The stacked fallback also protects narrow iPhones and
+                                    // long localized labels without shrinking 44-point targets.
+                                    ViewThatFits(in: .horizontal) {
+                                        queueActions(track, index: index, upcoming: upcoming,
+                                                     stacked: false)
+                                        queueActions(track, index: index, upcoming: upcoming,
+                                                     stacked: true)
                                     }
                                 }
                                 .padding(.horizontal, 12)
