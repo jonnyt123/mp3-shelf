@@ -174,3 +174,34 @@ describe("IndexedDB connection lifecycle on failed operations",()=>{
   await assertDatabaseCanClose();
  });
 });
+
+describe("track title integrity across edits and backups",()=>{
+ const makeTrack=(id:string):Track=>({id,name:"Original title",size:3,type:"audio/mpeg",importedAt:10,blob:new Blob([new Uint8Array([1,2,3])])});
+ it("rejects blank renames without corrupting persisted metadata or portable restore eligibility",async()=>{
+  const id="rename-blank-integrity";
+  await restoreTracks([makeTrack(id)]);
+  try{
+   await expect(renameTrack(id,"   ")).rejects.toThrow("cannot be empty");
+   await expect(renameTrack(id,"")).rejects.toThrow("cannot be empty");
+   expect((await listTracks()).find(t=>t.id===id)?.name).toBe("Original title");
+   await renameTrack(id,"  Updated title  ");
+   const saved=(await listTracks()).find(t=>t.id===id)!;
+   expect(saved.name).toBe("Updated title");
+   expect(saved.blob.size).toBe(3);
+  }finally{await removeTrack(id)}
+ });
+ it("rejects stale rename IDs without creating phantom tracks",async()=>{
+  const id="missing-rename-integrity";
+  await expect(renameTrack(id,"New title")).rejects.toThrow("no longer exists");
+  expect((await listTracks()).some(t=>t.id===id)).toBe(false);
+  await expect(renameTrack(" ","New title")).rejects.toThrow("Invalid recording ID");
+ });
+ it("uses a nonblank fallback title for a recording named only by its extension",async()=>{
+  const file=new File([new Uint8Array([1,2,3])],".mp3",{type:"audio/mpeg",lastModified:889});
+  const id=".mp3:3:889";
+  try{
+   expect(await importTracks([file])).toBe(1);
+   expect((await listTracks()).find(t=>t.id===id)?.name).toBe(".mp3");
+  }finally{await removeTrack(id)}
+ });
+});
