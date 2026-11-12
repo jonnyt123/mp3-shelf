@@ -271,6 +271,23 @@ struct PortableShelfArchiveTests {
         let loadedLyrics = try PortableShelfArchive.readSidecar(
             named: "song.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
         assert(loadedLyrics == expectedLyrics)
+        // Reading a sidecar is a fresh, validated operation each time.
+        // A same-size atomic replacement must return the new file's bytes,
+        // never cached content from a prior descriptor or pathname.
+        let replacementLyrics = Data("[00:01.00] Recovered lyric".utf8)
+        let sidecarReplacement = sidecarDirectory.appendingPathComponent("replacement.lrc")
+        try replacementLyrics.write(to: sidecarReplacement)
+        try FileManager.default.removeItem(at: savedLyrics)
+        try FileManager.default.moveItem(at: sidecarReplacement, to: savedLyrics)
+        assert(try PortableShelfArchive.readSidecar(
+            named: "song.lrc", from: sidecarDirectory,
+            maximumBytes: 500 * 1024) == replacementLyrics)
+        // Restore the original fixture before the remaining archive tests.
+        try expectedLyrics.write(to: savedLyrics, options: .atomic)
+        assert(try PortableShelfArchive.readSidecar(
+            named: "song.lrc", from: sidecarDirectory,
+            maximumBytes: 500 * 1024) == expectedLyrics)
+        print("PASS: sidecar reads validate the current file after pathname replacement")
         let absentSidecar = try PortableShelfArchive.readSidecar(
             named: nil, from: sidecarDirectory, maximumBytes: 500 * 1024)
         assert(absentSidecar == nil)
