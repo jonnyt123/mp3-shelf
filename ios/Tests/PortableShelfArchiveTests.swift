@@ -55,6 +55,48 @@ struct PortableShelfArchiveTests {
         assert(!legacyLocal.matchesPortableBackupID("unrelated-browser-list"))
         print("PASS: portable playlist ID collision preserves both independent identities")
 
+        // Backup export must never follow an audio symlink or read a directory
+        // if the saved catalog is damaged. Source bytes remain untouched.
+        let outsideAudio = folder.appendingPathComponent("private-source.mp3")
+        let privateBytes = Data("not-library-audio".utf8)
+        try privateBytes.write(to: outsideAudio)
+        let linkedAudio = folder.appendingPathComponent("linked-recording.mp3")
+        try FileManager.default.createSymbolicLink(at: linkedAudio, withDestinationURL: outsideAudio)
+        let linkedBackup = folder.appendingPathComponent("linked-audio.mp3shelf")
+        do {
+            try PortableShelfArchive.export([
+                .init(track: song, audioURL: linkedAudio, artwork: nil, lyrics: nil)
+            ], playlists: [list], to: linkedBackup)
+            fatalError("Audio symlink must not be followed by backup export")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+        assert(!FileManager.default.fileExists(atPath: linkedBackup.path))
+        let directoryAudio = folder.appendingPathComponent("directory-recording.mp3", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryAudio, withIntermediateDirectories: true)
+        do {
+            try PortableShelfArchive.export([
+                .init(track: song, audioURL: directoryAudio, artwork: nil, lyrics: nil)
+            ], playlists: [list], to: folder.appendingPathComponent("directory-audio.mp3shelf"))
+            fatalError("Directory must not be accepted as an audio recording")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+        let privateBytesAfter = try Data(contentsOf: outsideAudio)
+        assert(privateBytesAfter == privateBytes)
+        let validAudioBackup = folder.appendingPathComponent("valid-regular-audio.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: song, audioURL: audio, artwork: nil, lyrics: nil)
+        ], playlists: [list], to: validAudioBackup)
+        let validAudioArchive = try PortableShelfArchive.open(validAudioBackup)
+        let validAudioExtract = try PortableShelfArchive.extract(
+            validAudioArchive.manifest.tracks[0].audio,
+            from: validAudioArchive, extensionName: "mp3")
+        let validAudioBytes = try Data(contentsOf: validAudioExtract)
+        assert(validAudioBytes == originalBytes)
+        try FileManager.default.removeItem(at: validAudioExtract)
+        print("PASS: audio export rejects symlinks and directories; regular audio round-trips")
+
         let database = folder.appendingPathComponent("library.json")
         let snapshot = PersistedLibrary(tracks: [song], playlists: [list, appleList])
         try snapshot.write(to: database)
