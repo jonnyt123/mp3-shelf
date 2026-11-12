@@ -150,6 +150,22 @@ describe("MP3 Shelf backups",()=>{
   const parsed=await parseLibraryBackup(valid);
   expect(parsed.tracks[0]).toMatchObject({id:"song",size:3,importedAt:1});
  });
+ it("rejects malformed identity types before constructing a backup",()=>{
+  const song:Track={id:"song",name:"Song",size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])};
+  for(const badId of [42,null,{},["song"]]){
+   expect(()=>createLibraryBackup([{...song,id:badId as unknown as string}],[]))
+    .toThrow("without an ID and name");
+   expect(()=>createLibraryBackup([song],[{id:badId as string,name:"Mix",trackIds:["song"]}]))
+    .toThrow("without an ID and name");
+  }
+  for(const badName of [42,null,{},["Song"]]){
+   expect(()=>createLibraryBackup([{...song,name:badName as unknown as string}],[]))
+    .toThrow("without an ID and name");
+   expect(()=>createLibraryBackup([song],[{id:"mix",name:badName as string,trackIds:["song"]}]))
+    .toThrow("without an ID and name");
+  }
+  expect(()=>createLibraryBackup([song],[{id:"mix",name:"Mix",trackIds:["song"]}])).not.toThrow();
+ });
  it("refuses to export records that the restore parser would reject",()=>{
   const makeTrack=(id:string,bytes:number[]):Track=>({id,name:"Song",size:bytes.length,type:"audio/mpeg",importedAt:123,blob:new Blob([new Uint8Array(bytes)])});
   const song=makeTrack("song-1",[1,2,3]);
