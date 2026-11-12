@@ -483,43 +483,58 @@ final class MusicLibrary: ObservableObject {
                 // are durable: a failed catalog write must preserve old bytes.
                 // Optional sidecar failures are reported without losing audio.
                 var createdSidecars: [URL] = []
+                var sidecarsCommitted = false
+                // The catalog is the commit point. Cancellation, low storage,
+                // or a failed write must never strand unpublished sidecars.
+                defer {
+                    if !sidecarsCommitted {
+                        for sidecar in createdSidecars { try? manager.removeItem(at: sidecar) }
+                    }
+                }
                 if let artwork = archived.artwork {
                     do {
+                        try Task.checkCancellation()
                         let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
                         if UIImage(data: bytes) != nil {
                             let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".img"
                             let destination = artworkDirectory.appendingPathComponent(filename)
                             try bytes.write(to: destination, options: .atomic)
                             createdSidecars.append(destination)
+                            try Task.checkCancellation()
                             restoredTrack.artworkFileName = filename
                         } else {
                             report.errors.append("\(archived.name): invalid cover artwork; audio restored.")
                         }
                     } catch {
+                        try Task.checkCancellation()
                         report.errors.append("\(archived.name): cover artwork not restored (\(error.localizedDescription)); audio restored.")
                     }
                 }
                 if let lyrics = archived.lyrics, !lyrics.isEmpty {
                     do {
+                        try Task.checkCancellation()
                         let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".lrc"
                         let destination = lyricsDirectory.appendingPathComponent(filename)
                         try Data(lyrics.utf8).write(to: destination, options: .atomic)
                         createdSidecars.append(destination)
+                        try Task.checkCancellation()
                         restoredTrack.lyricsFileName = filename
                     } catch {
+                        try Task.checkCancellation()
                         report.errors.append("\(archived.name): lyrics not restored (\(error.localizedDescription)); audio restored.")
                     }
                 }
                 do {
                     // save() only logs errors; archive restore must surface them.
+                    try Task.checkCancellation()
                     var candidateTracks = tracks
                     candidateTracks[index] = restoredTrack
                     try PersistedLibrary(tracks: candidateTracks, playlists: playlists).write(to: databaseURL)
                     tracks = candidateTracks
+                    sidecarsCommitted = true
                 } catch {
                     // Audio was already committed by addLocalAudio. Leave its
                     // published metadata unchanged when this write fails.
-                    for sidecar in createdSidecars { try? manager.removeItem(at: sidecar) }
                     throw error
                 }
             } catch is CancellationError {
