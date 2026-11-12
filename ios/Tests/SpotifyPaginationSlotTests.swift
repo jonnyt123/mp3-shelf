@@ -51,9 +51,9 @@ enum SpotifyPaginationSlotTests {
         let trackID = "0123456789ABCDEFGHIJKL"
         check(SpotifyTrackLinks.canonicalURL("https://open.spotify.com/track/\(trackID)") ==
               "https://open.spotify.com/track/\(trackID)", "valid Spotify track URL preserved")
-        let shareURL = "https://open.spotify.com/track/\\(trackID)?si=0123456789ABCDEF"
+        let shareURL = "https://open.spotify.com/track/\(trackID)?si=0123456789ABCDEF"
         check(SpotifyTrackLinks.canonicalURL(shareURL) ==
-              "https://open.spotify.com/track/\\(trackID)",
+              "https://open.spotify.com/track/\(trackID)",
               "valid Spotify share token stripped without changing recording identity")
         for bad in [
             "http://open.spotify.com/track/\(trackID)",
