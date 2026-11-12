@@ -287,6 +287,25 @@ describe("restore failure safety",()=>{
   try{expect(await importTracks(files)).toBe(2)}
   finally{for(const file of files)await removeTrack(`${file.name}:3:987`)}
  });
+ it("reports the asynchronous request failure after its transaction has aborted",async()=>{
+  const existing=makeTrack("async-existing");
+  await restoreTracks([existing]);
+  const add=IDBObjectStore.prototype.add;
+  let aborted=false;
+  IDBObjectStore.prototype.add=function(value,...args){
+   this.transaction.addEventListener("abort",()=>{aborted=true});
+   // Force a genuine asynchronous ConstraintError, not a thrown JS error.
+   return add.call(this,value.id==="async-new"?{...value,id:existing.id}:value,...args);
+  };
+  try{
+   await expect(restoreTracks([makeTrack("async-first"),makeTrack("async-new")])).rejects.toMatchObject({name:"ConstraintError"});
+   expect(aborted).toBe(true);
+  }finally{IDBObjectStore.prototype.add=add}
+  const saved=await listTracks();
+  expect(saved.some(track=>track.id==="async-first"||track.id==="async-new")).toBe(false);
+  expect(saved.find(track=>track.id===existing.id)?.name).toBe(existing.name);
+  await removeTrack(existing.id);
+ });
  it("aborts all writes when a later track is not structured-cloneable",async()=>{
   const bad={...makeTrack("bad-restore"),uncloneable:()=>{}} as Track;
   await expect(restoreTracks([makeTrack("new-restore"),bad])).rejects.toThrow(/could not be cloned/);
