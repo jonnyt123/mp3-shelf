@@ -92,6 +92,75 @@ enum PortableShelfArchive {
         var manifest: Manifest
         var url: URL
         var payloadOffset: UInt64
+        // Identity captured from the descriptor that validated the manifest.
+        // Each later extraction must read that same unchanged regular file.
+        fileprivate var sourceIdentity: ArchiveSourceIdentity
+    }
+
+    private struct ArchiveSourceIdentity {
+        let device: dev_t
+        let inode: ino_t
+        let size: off_t
+        let modifiedSeconds: Int64
+        let modifiedNanoseconds: Int64
+        let changedSeconds: Int64
+        let changedNanoseconds: Int64
+
+        init(_ info: stat) {
+            device = info.st_dev
+            inode = info.st_ino
+            size = info.st_size
+            #if canImport(Darwin)
+            modifiedSeconds = Int64(info.st_mtimespec.tv_sec)
+            modifiedNanoseconds = Int64(info.st_mtimespec.tv_nsec)
+            changedSeconds = Int64(info.st_ctimespec.tv_sec)
+            changedNanoseconds = Int64(info.st_ctimespec.tv_nsec)
+            #else
+            modifiedSeconds = Int64(info.st_mtim.tv_sec)
+            modifiedNanoseconds = Int64(info.st_mtim.tv_nsec)
+            changedSeconds = Int64(info.st_ctim.tv_sec)
+            changedNanoseconds = Int64(info.st_ctim.tv_nsec)
+            #endif
+        }
+
+        func matches(_ info: stat) -> Bool {
+            (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) &&
+            device == info.st_dev && inode == info.st_ino &&
+            size == info.st_size &&
+            modifiedSeconds == ArchiveSourceIdentity(info).modifiedSeconds &&
+            modifiedNanoseconds == ArchiveSourceIdentity(info).modifiedNanoseconds &&
+            changedSeconds == ArchiveSourceIdentity(info).changedSeconds &&
+            changedNanoseconds == ArchiveSourceIdentity(info).changedNanoseconds
+        }
+    }
+
+    /// Validate the opened archive and its current pathname, without following
+    /// symlinks. This prevents a replaced backup from supplying bytes under a
+    /// previously validated manifest and rejects same-inode edits/size changes.
+    private static func archiveIdentity(of handle: FileHandle, at url: URL) throws -> ArchiveSourceIdentity {
+        var opened = stat()
+        var named = stat()
+        guard fstat(handle.fileDescriptor, &opened) == 0,
+              lstat(url.path, &named) == 0,
+              (opened.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+            throw ArchiveError.invalidFile
+        }
+        let identity = ArchiveSourceIdentity(opened)
+        guard identity.matches(named) else { throw ArchiveError.invalidFile }
+        return identity
+    }
+
+    private static func verifyArchive(_ handle: FileHandle, from archive: Opened) throws -> UInt64 {
+        let current = try archiveIdentity(of: handle, at: archive.url)
+        guard current.device == archive.sourceIdentity.device,
+              current.inode == archive.sourceIdentity.inode,
+              current.size == archive.sourceIdentity.size,
+              current.modifiedSeconds == archive.sourceIdentity.modifiedSeconds,
+              current.modifiedNanoseconds == archive.sourceIdentity.modifiedNanoseconds,
+              current.changedSeconds == archive.sourceIdentity.changedSeconds,
+              current.changedNanoseconds == archive.sourceIdentity.changedNanoseconds,
+              current.size >= 0 else { throw ArchiveError.invalidFile }
+        return UInt64(current.size)
     }
 
     /// Resolve archive-only IDs without letting a native UUID overwrite an
@@ -415,6 +484,8 @@ enum PortableShelfArchive {
     static func open(_ url: URL) throws -> Opened {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
+        let identity = try archiveIdentity(of: handle, at: url)
+        guard identity.size >= 0 else { throw ArchiveError.invalidFile }
         let headerSize = magic.count + 4
         // FileHandle is permitted to return short reads before EOF. Collect
         // the entire fixed header before checking its magic and length.
@@ -436,8 +507,7 @@ enum PortableShelfArchive {
               manifest.tracks.count <= 20_000, manifest.playlists.count <= 2_000 else {
             throw ArchiveError.invalidManifest
         }
-        let size = (try FileManager.default.attributesOfItem(
-            atPath: url.path)[.size] as? NSNumber)?.uint64Value ?? 0
+        let size = UInt64(identity.size)
         let payloadOffset = UInt64(headerSize) + UInt64(length)
         guard size >= payloadOffset else { throw ArchiveError.invalidManifest }
         let payloadSize = Int64(size - payloadOffset)
@@ -490,7 +560,18 @@ enum PortableShelfArchive {
                 throw ArchiveError.invalidManifest
             }
         }
-        return Opened(manifest: manifest, url: url, payloadOffset: payloadOffset)
+        // Reject concurrent edits while the manifest was being inspected.
+        let checked = try archiveIdentity(of: handle, at: url)
+        guard checked.device == identity.device, checked.inode == identity.inode,
+              checked.size == identity.size,
+              checked.modifiedSeconds == identity.modifiedSeconds,
+              checked.modifiedNanoseconds == identity.modifiedNanoseconds,
+              checked.changedSeconds == identity.changedSeconds,
+              checked.changedNanoseconds == identity.changedNanoseconds else {
+            throw ArchiveError.invalidFile
+        }
+        return Opened(manifest: manifest, url: url, payloadOffset: payloadOffset,
+                      sourceIdentity: identity)
     }
 
     static func extract(_ part: Part, from archive: Opened, extensionName: String) throws -> URL {
@@ -509,7 +590,7 @@ enum PortableShelfArchive {
         // open() validates the archive at inspection time, but Files may
         // replace or truncate it before extraction. Check the live handle
         // before creating any output, and reject impossible seek arithmetic.
-        let size = try input.seekToEnd()
+        let size = try verifyArchive(input, from: archive)
         let start = archive.payloadOffset + UInt64(part.offset)
         guard start <= size, UInt64(part.length) <= size - start else {
             throw ArchiveError.invalidRange
@@ -558,7 +639,7 @@ enum PortableShelfArchive {
         }
         let handle = try FileHandle(forReadingFrom: archive.url)
         defer { try? handle.close() }
-        let size = try handle.seekToEnd()
+        let size = try verifyArchive(handle, from: archive)
         let start = archive.payloadOffset + UInt64(part.offset)
         guard start <= size, UInt64(part.length) <= size - start else {
             throw ArchiveError.invalidRange
