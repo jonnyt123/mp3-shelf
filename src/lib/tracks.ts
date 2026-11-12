@@ -29,7 +29,11 @@ export async function importTracks(files:File[]):Promise<number>{
  // and would otherwise become a permanent broken library entry.
  const selectedIds=new Set<string>();
  const audio=files.filter(file=>{
-  if(file.size<=0||!(file.type.startsWith("audio/")||/\.(mp3|m4a)$/i.test(file.name)))return false;
+  // Files providers can supply blank or whitespace-only filenames. Such
+  // records cannot be exported safely: the portable archive requires a
+  // nonblank originalName, and a nameless recording cannot be identified.
+  if(typeof file.name!=="string"||!file.name.trim()||file.size<=0||
+     !(file.type.startsWith("audio/")||/\.(mp3|m4a)$/i.test(file.name)))return false;
   const id=`${file.name}:${file.size}:${file.lastModified}`;
   // Deduplicate before parsing ID3. Repeated selections can otherwise launch
   // many unnecessary metadata reads (up to 2 MiB each) on mobile Safari.
