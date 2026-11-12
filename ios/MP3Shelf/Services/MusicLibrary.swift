@@ -886,9 +886,13 @@ final class MusicLibrary: ObservableObject {
         let destinationName = LocalAudioFileNaming.storageName(
             originalName: originalName, id: id, fileExtension: extensionName)
         let destination = musicDirectory.appendingPathComponent(destinationName)
-        try manager.copyItem(at: sourceURL, to: destination)
         var artworkName: String?
         do {
+            // FileManager.copyItem may leave a partial destination when storage
+            // fills or a coordinated source read fails. Keep the copy inside
+            // the same rollback scope as validation and catalog persistence.
+            // The UUID destination is new; never clean up the caller's source.
+            try manager.copyItem(at: sourceURL, to: destination)
             if cancellationAware { try Task.checkCancellation() }
             let asset = AVURLAsset(url: destination)
             // Fail immediately for renamed HTML, corrupt files or codecs that AVAudioPlayer cannot decode.
