@@ -177,9 +177,9 @@ test('release candidate identity requires this repository root and a full commit
   const validator = source.slice(source.indexOf('valid_candidate() {'), source.indexOf('COMMIT="$(valid_candidate'));
   assert.match(validator, /git rev-parse --show-toplevel/);
   assert.match(validator, /pwd -P/);
-  assert.match(validator, /git rev-parse --verify 'HEAD\\^\\{commit\\}'/);
-  assert.match(validator, /\\[0-9a-f\\]\\{40\\}/);
-  assert.match(source, /current="\\$\\(valid_candidate\\)" \\|\\| return 1/);
+  assert.match(validator, /git rev-parse --verify 'HEAD\^\{commit\}'/);
+  assert.match(validator, /\[0-9a-f\]\{40\}/);
+  assert.match(source, /current="\$\(valid_candidate\)" \|\| return 1/);
 });
 
 test('web preflight rejects a parent repository or forged abbreviated SHA before npm', async () => {
@@ -190,13 +190,13 @@ test('web preflight rejects a parent repository or forged abbreviated SHA before
     const dir = mkdtempSync(join(tmpdir(), 'mp3-git-identity-'));
     try {
       const git = join(dir, 'git');
-      const root = mode === 'wrong-root' ? dir : new URL('..', import.meta.url).pathname.replace(/\\/$/, '');
-      const scriptText = '#!/bin/sh\\n' +
-        'case "$1" in\\n' +
-        'rev-parse) if [ "$2" = "--show-toplevel" ]; then printf "%s\\n" ' + JSON.stringify(root) + '; else printf "%s\\n" ' + JSON.stringify(mode === 'short-sha' ? 'abcdef0' : 'a'.repeat(40)) + '; fi ;;\\n' +
-        'status) exit 0 ;;\\n' +
-        '*) exit 128 ;;\\n' +
-        'esac\\n';
+      const root = mode === 'wrong-root' ? dir : new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+      const scriptText = '#!/bin/sh\n' +
+        'case "$1" in\n' +
+        'rev-parse) if [ "$2" = "--show-toplevel" ]; then printf "%s\n" ' + JSON.stringify(root) + '; else printf "%s\n" ' + JSON.stringify(mode === 'short-sha' ? 'abcdef0' : 'a'.repeat(40)) + '; fi ;;\n' +
+        'status) exit 0 ;;\n' +
+        '*) exit 128 ;;\n' +
+        'esac\n';
       writeFileSync(git, scriptText);
       chmodSync(git, 0o755);
       const result = spawnSync('bash', [script, '--web', '--offline'], {
