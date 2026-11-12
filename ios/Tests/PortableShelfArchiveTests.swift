@@ -303,6 +303,25 @@ struct PortableShelfArchiveTests {
         assert(reopenedEmpty.manifest.playlists[0].trackIds.isEmpty)
         print("PASS: dangling playlist links fail closed; empty playlists round-trip")
 
+        // A source pathname resolving through a symlink must not be backed up,
+        // even when the target is valid audio with identical content.
+        let linkedSource = folder.appendingPathComponent("linked-source.mp3")
+        let externalSource = folder.appendingPathComponent("external-source.mp3")
+        try originalBytes.write(to: externalSource)
+        try FileManager.default.createSymbolicLink(at: linkedSource, withDestinationURL: externalSource)
+        let linkedBackup = folder.appendingPathComponent("linked-source.mp3shelf")
+        do {
+            try PortableShelfArchive.export([
+                .init(track: song, audioURL: linkedSource, artwork: nil, lyrics: nil)
+            ], playlists: [list], to: linkedBackup)
+            fatalError("Symlink source should never be exported")
+        } catch {
+            assert(!FileManager.default.fileExists(atPath: linkedBackup.path))
+            let targetAfter = try Data(contentsOf: externalSource)
+            assert(targetAfter == originalBytes)
+        }
+        print("PASS: symlink audio source rejected without modifying target")
+
         // Two files with the same name and size are not necessarily the same
         // recording. Check matching data, a same-size collision and a mismatch
         // beyond the 64-KiB streaming comparison boundary.
