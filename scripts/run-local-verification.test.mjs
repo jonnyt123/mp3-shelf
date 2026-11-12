@@ -53,3 +53,13 @@ test('successful release requires independent verification of persisted receipt 
   assert.match(source, /"\\$receipt_state" == VERIFIED/);
   assert.doesNotMatch(source, /"\\$receipt_state" == CREATED/);
 });
+
+test('node-only refuses SHA-bound evidence if verification modifies the checkout', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  assert.match(source, /MODE" == node-only && "\$COMMIT" != unknown && "\$DIRTY" == no/);
+  assert.match(source, /STEP=post-node-checkout-integrity/);
+  assert.match(source, /git rev-parse --verify HEAD/);
+  assert.match(source, /git status --porcelain --untracked-files=all/);
+  assert.match(source, /Node verification changed the candidate commit or checkout/);
+});
