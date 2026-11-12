@@ -695,7 +695,7 @@ struct PlaybackQueueSheet: View {
                         .foregroundStyle(ShelfTheme.subdued)
                         .accessibilityHidden(true)
                 }
-                playNextButton(track)
+                playNextButton(track, alreadyNext: index == 0)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
@@ -705,12 +705,12 @@ struct PlaybackQueueSheet: View {
                 moveButton(track, earlier: false)
                     .disabled(!canMove(index: index, count: upcoming.count, earlier: false))
                 Spacer(minLength: 0)
-                playNextButton(track)
+                playNextButton(track, alreadyNext: index == 0)
             }
         }
     }
 
-    private func playNextButton(_ track: MusicTrack) -> some View {
+    private func playNextButton(_ track: MusicTrack, alreadyNext: Bool) -> some View {
         Button {
             playNext(track.id)
         } label: {
@@ -722,8 +722,9 @@ struct PlaybackQueueSheet: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(ShelfTheme.accent)
-        .accessibilityLabel("Play next: \(track.title)")
-        .accessibilityHint("Make this song the next recording to play")
+        .disabled(alreadyNext)
+        .accessibilityLabel(alreadyNext ? "Already next: \(track.title)" : "Play next: \(track.title)")
+        .accessibilityHint(alreadyNext ? "This song is already first in the upcoming queue" : "Make this song the next recording to play")
     }
 
     var body: some View {
@@ -803,10 +804,12 @@ struct PlaybackQueueSheet: View {
                                         } label: {
                                             Label("Play now", systemImage: "play.fill")
                                         }
-                                        Button {
-                                            playNext(track.id)
-                                        } label: {
-                                            Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                                        if index > 0 {
+                                            Button {
+                                                playNext(track.id)
+                                            } label: {
+                                                Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                                            }
                                         }
                                         if canMove(index: index, count: upcoming.count, earlier: true) {
                                             Button {
@@ -859,13 +862,13 @@ struct PlaybackQueueSheet: View {
                                 .accessibilityAction(named: "Play now") {
                                     playNow(track.id)
                                 }
-                                .accessibilityAction(named: "Play next") {
-                                    playNext(track.id)
-                                }
                                 // Only advertise reorder actions that can actually
                                 // succeed. The live reorder handler still validates
                                 // bounds if playback changes before activation.
                                 .accessibilityActions {
+                                    if index > 0 {
+                                        Button("Play next") { playNext(track.id) }
+                                    }
                                     if canMove(index: index, count: upcoming.count, earlier: true) {
                                         Button("Move earlier") {
                                             reorder(track.id, earlier: true)
