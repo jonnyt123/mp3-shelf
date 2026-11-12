@@ -13,8 +13,16 @@ enum SpotifyPaginationSlotTests {
               start.lowerBound < end.lowerBound else {
             fatalError("Production SpotifyPage decoder not found")
         }
-        let decoder = String(source[start.lowerBound..<end.lowerBound])
+        guard let typesEnd = source.range(of: "private struct SpotifyTokenResponse: Decodable {"),
+              end.lowerBound < typesEnd.lowerBound else {
+            fatalError("Production Spotify track decoders not found")
+        }
+        let decoder = String(source[start.lowerBound..<typesEnd.lowerBound])
             .replacingOccurrences(of: "private struct SpotifyPage", with: "struct SpotifyPage")
+            .replacingOccurrences(of: "private struct SpotifyPlaylistItem", with: "struct SpotifyPlaylistItem")
+            .replacingOccurrences(of: "private struct SpotifyTrack", with: "struct SpotifyTrack")
+            .replacingOccurrences(of: "private struct SpotifyArtist", with: "struct SpotifyArtist")
+            .replacingOccurrences(of: "private struct SpotifyAlbum", with: "struct SpotifyAlbum")
         let fixture = #"""
         import Foundation
         struct FixtureTrack: Decodable { let name: String }
@@ -54,6 +62,39 @@ enum SpotifyPaginationSlotTests {
             from: #"{"items":[null,null,null,null],"next":"?offset=4"}"#.data(using: .utf8)!)
         check(unavailable.items.isEmpty && unavailable.rawItemCount == 4 && unavailable.next != nil,
               "unavailable-only page retains the server cursor")
+        // Decode nested envelopes using the actual production model types.
+        let mixed = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,
+            from: #"""
+            {"items":[
+              {"item":{"name":"Episode","type":"episode","artists":[{"name":"Host"}]},
+               "track":{"name":"Studio Song","type":"track","artists":[{"name":"Artist"}],"duration_ms":201000}},
+              {"item":{"name":123,"artists":[]},
+               "track":{"name":"Fallback","type":"track","artists":[{"name":"Second Artist"}]}},
+              {"track":{"name":"Credits","type":"track","artists":[null,{"name":9},{"name":"Valid Artist"}],
+                        "album":{"name":42},"duration_ms":"unknown","external_urls":[]}},
+              {"item":{"name":"Missing Artist","type":"track","artists":[null]}},
+              null
+            ],"next":"?limit=5&offset=5"}
+            """#.data(using: .utf8)!)
+        check(mixed.rawItemCount == 5 && mixed.items.count == 4,
+              "nested decoder retains raw positions and skips null entries")
+        let selected = mixed.items.compactMap { entry -> SpotifyTrack? in
+            [entry.item, entry.track].compactMap { $0 }.first {
+                $0.type == "track" &&
+                !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                ($0.artists ?? []).contains {
+                    !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+            }
+        }
+        check(selected.map(\.name) == ["Studio Song", "Fallback", "Credits"],
+              "episode and malformed primary envelopes fall back to usable recordings")
+        check(selected[2].artists?.map(\.name) == ["Valid Artist"] &&
+              selected[2].album == nil && selected[2].duration_ms == nil &&
+              selected[2].external_urls == nil,
+              "malformed optional evidence does not erase valid credited artists")
+        check(mixed.next == "?limit=5&offset=5",
+              "nested metadata failures do not corrupt continuation cursor")
         do {
             _ = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
                 from: #"{"next":null}"#.data(using: .utf8)!)
