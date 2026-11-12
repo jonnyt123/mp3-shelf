@@ -149,7 +149,7 @@ struct PortableShelfArchiveTests {
             } catch is CancellationError {
                 // Expected: readExactly checks cancellation before each read.
             } catch {
-                fatalError("Unexpected cancelled archive inspection error: \\(error)")
+                fatalError("Unexpected cancelled archive inspection error: \(error)")
             }
             inspectionFinished.signal()
         }
