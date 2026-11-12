@@ -190,8 +190,14 @@ struct NowPlayingView: View {
                                 .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 15 : 25)
 
                                 VStack(spacing: 7) {
+                                    // A zero/unknown duration is not a seekable timeline.
+                                    // Keep the slider in a finite range while preventing
+                                    // phantom scrubs before media metadata is available.
                                     Slider(value: Binding(
-                                        get: { draggingTime ?? playback.currentTime },
+                                        get: {
+                                            min(max(draggingTime ?? playback.currentTime, 0),
+                                                max(playback.duration, 1))
+                                        },
                                         set: { draggingTime = $0 }
                                     ), in: 0...max(playback.duration, 1), onEditingChanged: { editing in
                                         if editing {
@@ -205,8 +211,14 @@ struct NowPlayingView: View {
                                         }
                                     })
                                     .tint(ShelfTheme.mint)
+                                    .disabled(playback.duration <= 0)
                                     .accessibilityLabel("Track progress")
-                                    .accessibilityValue("\((draggingTime ?? playback.currentTime).shelfClock) of \(playback.duration.shelfClock)")
+                                    .accessibilityValue(playback.duration > 0
+                                        ? "\(min(max(draggingTime ?? playback.currentTime, 0), playback.duration).shelfClock) of \(playback.duration.shelfClock)"
+                                        : "Duration unavailable")
+                                    .accessibilityHint(playback.duration > 0
+                                        ? "Adjust to seek within the current recording"
+                                        : "Seeking is unavailable until the recording duration is known")
                                     HStack {
                                         Text((draggingTime ?? playback.currentTime).shelfClock)
                                             .accessibilityLabel("Elapsed time")
@@ -231,6 +243,8 @@ struct NowPlayingView: View {
                                         Label("Back 15 seconds", systemImage: "gobackward.15")
                                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                                     }
+                                    .disabled(playback.duration <= 0 || playback.currentTime <= 0)
+                                    .accessibilityHint("Seek toward the beginning of the current recording")
                                     Spacer()
                                     Text(playback.isPlaying ? "Playing" : "Paused")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
@@ -243,6 +257,8 @@ struct NowPlayingView: View {
                                         Label("Forward 15 seconds", systemImage: "goforward.15")
                                             .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                                     }
+                                    .disabled(playback.duration <= 0 || playback.currentTime >= playback.duration)
+                                    .accessibilityHint("Seek toward the end of the current recording")
                                 }
                                 .tint(ShelfTheme.mint)
                                 .padding(.bottom, 8)
