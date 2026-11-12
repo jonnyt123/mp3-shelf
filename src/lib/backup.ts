@@ -17,9 +17,17 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
   if(!track.id?.trim()||!track.name?.trim())throw new Error("Cannot back up a track without an ID and name.");
   if(trackIds.has(track.id))throw new Error("Duplicate track ID in library backup.");
   trackIds.add(track.id);
-  if(!Number.isFinite(track.importedAt))throw new Error("Cannot back up a track with an invalid import date.");
-  if(!track.blob||track.blob.size===0)throw new Error("Cannot back up an empty audio recording.");
-  if(track.artwork&&track.artwork.size===0)throw new Error("Cannot back up empty artwork.");
+  if(!Number.isFinite(track.importedAt)||track.importedAt<0)throw new Error("Cannot back up a track with an invalid import date.");
+  if(!(track.blob instanceof Blob)||track.blob.size===0)throw new Error("Cannot back up an empty audio recording.");
+  if(!Number.isSafeInteger(track.size)||track.size!==track.blob.size)
+   throw new Error("Cannot back up a track with mismatched audio size.");
+  if(typeof track.type!=="string"||
+     (track.originalName!==undefined&&(typeof track.originalName!=="string"||!track.originalName.trim()))||
+     (track.artist!==undefined&&typeof track.artist!=="string")||
+     (track.album!==undefined&&typeof track.album!=="string"))
+   throw new Error("Cannot back up a track with invalid metadata.");
+  if(track.artwork!==undefined&&(!(track.artwork instanceof Blob)||track.artwork.size===0))
+   throw new Error("Cannot back up empty artwork.");
  }
  for(const playlist of playlists){
   if(!playlist.id?.trim()||!playlist.name?.trim())throw new Error("Cannot back up a playlist without an ID and name.");
@@ -48,14 +56,18 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
 
 function isRecord(value:unknown):value is Record<string,unknown>{return typeof value==="object"&&value!==null}
 function requiredString(value:unknown,label:string):string{if(typeof value!=="string"||!value.trim())throw new Error(`Invalid ${label} in backup.`);return value}
-function optionalString(value:unknown):string|undefined{return typeof value==="string"?value:undefined}
+function optionalString(value:unknown,label:string,nonempty=false):string|undefined{
+ if(value===undefined)return undefined;
+ if(typeof value!=="string"||(nonempty&&!value.trim()))throw new Error(`Invalid ${label} in backup.`);
+ return value;
+}
 function requiredNumber(value:unknown,label:string):number{if(typeof value!=="number"||!Number.isFinite(value))throw new Error(`Invalid ${label} in backup.`);return value}
 
 function readPart(value:unknown,payloadSize:number,label:string):BinaryPart{
  if(!isRecord(value))throw new Error(`Missing ${label} data in backup.`);
  const offset=requiredNumber(value.offset,`${label} offset`),length=requiredNumber(value.length,`${label} length`);
  if(!Number.isSafeInteger(offset)||!Number.isSafeInteger(length)||offset<0||length<0||offset+length>payloadSize)throw new Error(`Invalid ${label} range in backup.`);
- return{offset,length,type:optionalString(value.type)||"application/octet-stream"};
+ return{offset,length,type:optionalString(value.type,`${label} media type`)||"application/octet-stream"};
 }
 
 export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
@@ -81,10 +93,11 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
   const id=requiredString(value.id,"track ID");
   if(trackIds.has(id))throw new Error("Duplicate track ID in backup.");
   trackIds.add(id);
+  if(requiredNumber(value.importedAt,"import date")<0)throw new Error("Invalid import date in backup.");
   registerPart(audio,`track ${index+1} audio`);
   if(artwork)registerPart(artwork,`track ${index+1} artwork`);
   const blob=file.slice(payloadStart+audio.offset,payloadStart+audio.offset+audio.length,audio.type);
-  return{id,name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName),artist:optionalString(value.artist),album:optionalString(value.album),size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
+  return{id,name:requiredString(value.name,"track name"),originalName:optionalString(value.originalName,"original filename",true),artist:optionalString(value.artist,"artist"),album:optionalString(value.album,"album"),size:blob.size,type:audio.type,importedAt:requiredNumber(value.importedAt,"import date"),blob,artwork:artwork?file.slice(payloadStart+artwork.offset,payloadStart+artwork.offset+artwork.length,artwork.type):undefined} satisfies Track;
  });
  const playlists=parsed.playlists.map((value,index)=>{
   if(!isRecord(value)||!Array.isArray(value.trackIds)||!value.trackIds.every(id=>typeof id==="string"&&Boolean(id.trim())))throw new Error(`Invalid playlist ${index+1} in backup.`);
