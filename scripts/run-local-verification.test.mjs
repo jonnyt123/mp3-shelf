@@ -30,7 +30,7 @@ test('runner never masks failed release receipt generation', async () => {
   const source = readFileSync(script, 'utf8');
   assert.match(source, /receipt_state='FAILED'/);
   assert.match(source, /Verification commands succeeded but receipt generation failed/);
-  assert.doesNotMatch(source, /local-evidence\\.mjs[^\\n]*\\|\\| true/);
+  assert.doesNotMatch(source, /local-evidence\\.mjs[^\n]*\\|\\| true/);
   assert.match(source, /trap - EXIT/);
   assert.match(source, /exit "\\$code"/);
 });
@@ -122,7 +122,7 @@ test('web preflight fails closed when git status fails instead of running npm', 
   const dir = mkdtempSync(join(tmpdir(), 'mp3-git-failure-'));
   try {
     const git = join(dir, 'git');
-    writeFileSync(git, '#!/bin/sh\\nif [ "$1" = "rev-parse" ]; then printf "%040d\\n" 0; exit 0; fi\\nif [ "$1" = "status" ]; then exit 128; fi\\nexit 128\\n');
+    writeFileSync(git, '#!/bin/sh\nif [ "$1" = "rev-parse" ]; then printf "%040d\n" 0; exit 0; fi\nif [ "$1" = "status" ]; then exit 128; fi\nexit 128\n');
     chmodSync(git, 0o755);
     const r = spawnSync('bash', [script, '--web', '--offline'], {
       encoding: 'utf8', timeout: 10000,
@@ -142,7 +142,7 @@ test('web preflight rejects an unstable HEAD before any dependency install', asy
   const dir = mkdtempSync(join(tmpdir(), 'mp3-git-head-'));
   try {
     const git = join(dir, 'git');
-    writeFileSync(git, '#!/bin/sh\\nif [ "$1" = "rev-parse" ]; then printf "%040d\\n" 0; exit 0; fi\\nif [ "$1" = "status" ]; then printf " M package-lock.json\\n"; exit 0; fi\\nexit 128\\n');
+    writeFileSync(git, '#!/bin/sh\nif [ "$1" = "rev-parse" ]; then printf "%040d\n" 0; exit 0; fi\nif [ "$1" = "status" ]; then printf " M package-lock.json\n"; exit 0; fi\nexit 128\n');
     chmodSync(git, 0o755);
     const r = spawnSync('bash', [script, '--web', '--offline'], {
       encoding: 'utf8', timeout: 10000,
