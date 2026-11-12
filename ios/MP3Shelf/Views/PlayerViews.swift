@@ -17,18 +17,19 @@ struct MiniPlayer: View {
 
     var body: some View {
         if let track = library.song(with: playback.currentTrackID) {
-            Group {
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 8) {
-                        openNowPlaying(track)
-                        HStack(spacing: 12) {
-                            Spacer(minLength: 0)
-                            transportControls
-                        }
-                    }
-                } else {
-                    HStack(alignment: .center, spacing: 12) {
-                        openNowPlaying(track)
+            // An iPhone in Split View or with larger text can be narrower
+            // than its nominal size class. Fit the controls below metadata
+            // before compressing the title into an unusable tap target.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    openNowPlaying(track)
+                        .frame(minWidth: 155)
+                    transportControls
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    openNowPlaying(track)
+                    HStack(spacing: 12) {
+                        Spacer(minLength: 0)
                         transportControls
                     }
                 }
@@ -165,11 +166,16 @@ struct NowPlayingView: View {
             Group {
                 if let track = library.song(with: playback.currentTrackID) {
                     GeometryReader { proxy in
-                        let coverSize = min(proxy.size.width - 64,
-                                            dynamicTypeSize.isAccessibilitySize
-                                                ? max(156, proxy.size.height * 0.26)
-                                                : max(190, proxy.size.height * 0.39),
-                                            330)
+                        // Never pass negative or nonfinite dimensions to ArtworkTile
+                        // when the player is temporarily given zero layout space.
+                        let availableWidth = proxy.size.width.isFinite
+                            ? max(0, proxy.size.width - 64) : 0
+                        let availableHeight = proxy.size.height.isFinite
+                            ? max(0, proxy.size.height) : 0
+                        let preferredCoverHeight = dynamicTypeSize.isAccessibilitySize
+                            ? max(156, availableHeight * 0.26)
+                            : max(190, availableHeight * 0.39)
+                        let coverSize = min(availableWidth, preferredCoverHeight, 330)
                         ScrollView {
                             VStack(spacing: 0) {
                                 PlaybackErrorBanner()
