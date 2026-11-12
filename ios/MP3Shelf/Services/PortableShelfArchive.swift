@@ -267,10 +267,15 @@ enum PortableShelfArchive {
         let playlistIDs = resolvedArchiveIDs(playlists.map {
             (localID: $0.id, portableID: $0.portableBackupID)
         }, namespace: "playlist")
-        // Keep playlist references and names valid under the same constraints
-        // enforced by open(). A backup must always be readable after export.
-        guard playlists.allSatisfy({
-            !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // A stale/corrupt catalog can contain playlist links whose audio is
+        // absent from the export snapshot. Dropping those IDs with compactMap
+        // would silently publish a backup that loses playlist membership.
+        // Reject the snapshot before writing any archive, leaving the saved
+        // catalog and source recordings untouched for recovery.
+        let availableTrackIDs = Set(portableIDs.keys)
+        guard playlists.allSatisfy({ playlist in
+            !playlist.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            playlist.trackIDs.allSatisfy { availableTrackIDs.contains($0) }
         }) else {
             throw ArchiveError.invalidManifest
         }
@@ -278,8 +283,8 @@ enum PortableShelfArchive {
             let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
             return Playlist(
                 id: playlistIDs[index], name: list.name,
-                // Never serialize dangling links to missing recordings.
-                trackIds: list.trackIDs.compactMap { portableIDs[$0] },
+                // All links were validated against the export snapshot.
+                trackIds: list.trackIDs.map { portableIDs[$0]! },
                 sourceURL: list.sourceURL,
                 wishes: wishes.isEmpty ? nil : wishes.map {
                     Wish(title: $0.title, artist: $0.artist, album: $0.album,
