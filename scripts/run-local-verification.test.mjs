@@ -99,7 +99,7 @@ test('initial, web and native integrity checks include untracked source files', 
   const checks = source.match(/if ! checkout_unchanged; then/g) ?? [];
   assert.equal(checks.length, 4, 'receipt, node, web and native checks must use fail-closed helper');
   assert.match(source, /status="\$\(git status --porcelain --untracked-files=all 2>\/dev\/null\)" \|\| return 1/);
-  assert.match(source, /current="\$\(git rev-parse --verify HEAD 2>\/dev\/null\)" \|\| return 1/);
+  assert.match(source, /current="\$\(valid_candidate\)" \|\| return 1/);
   assert.doesNotMatch(source, /git status --porcelain\)/);
 });
 
@@ -193,7 +193,7 @@ test('web preflight rejects a parent repository or forged abbreviated SHA before
       const root = mode === 'wrong-root' ? dir : new URL('..', import.meta.url).pathname.replace(/\\/$/, '');
       const scriptText = '#!/bin/sh\\n' +
         'case "$1" in\\n' +
-        'rev-parse) if [ "$2" = "--show-toplevel" ]; then printf "%s\\\\n" ' + JSON.stringify(root) + '; else printf "%s\\\\n" ' + JSON.stringify(mode === 'short-sha' ? 'abcdef0' : 'a'.repeat(40)) + '; fi ;;\\n' +
+        'rev-parse) if [ "$2" = "--show-toplevel" ]; then printf "%s\\n" ' + JSON.stringify(root) + '; else printf "%s\\n" ' + JSON.stringify(mode === 'short-sha' ? 'abcdef0' : 'a'.repeat(40)) + '; fi ;;\\n' +
         'status) exit 0 ;;\\n' +
         '*) exit 128 ;;\\n' +
         'esac\\n';
