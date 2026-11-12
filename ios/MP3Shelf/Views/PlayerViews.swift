@@ -506,6 +506,14 @@ struct PlaybackQueueSheet: View {
         playback.play(track)
     }
 
+    // A row's captured index can become stale as playback advances.
+    // All queue controls must use live boundaries before enabling an action.
+    private func canMove(_ trackID: UUID, earlier: Bool) -> Bool {
+        let current = playback.queuedTracks
+        guard let index = current.firstIndex(where: { $0.id == trackID }) else { return false }
+        return earlier ? index > 0 : index < current.count - 1
+    }
+
     // Large-text users should not have to open a context menu for every
     // reorder. The same bounded operations back the menu and VoiceOver.
     private func moveButton(_ track: MusicTrack, earlier: Bool,
@@ -535,9 +543,9 @@ struct PlaybackQueueSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     moveButton(track, earlier: true, in: upcoming)
-                        .disabled(index == 0)
+                        .disabled(!canMove(track.id, earlier: true))
                     moveButton(track, earlier: false, in: upcoming)
-                        .disabled(index == upcoming.count - 1)
+                        .disabled(!canMove(track.id, earlier: false))
                     Spacer(minLength: 0)
                     Text("Position \\(index + 1) of \\(upcoming.count)")
                         .font(.caption)
@@ -550,9 +558,9 @@ struct PlaybackQueueSheet: View {
         } else {
             HStack(spacing: 8) {
                 moveButton(track, earlier: true, in: upcoming)
-                    .disabled(index == 0)
+                    .disabled(!canMove(track.id, earlier: true))
                 moveButton(track, earlier: false, in: upcoming)
-                    .disabled(index == upcoming.count - 1)
+                    .disabled(!canMove(track.id, earlier: false))
                 Spacer(minLength: 0)
                 playNextButton(track)
             }
@@ -657,14 +665,14 @@ struct PlaybackQueueSheet: View {
                                         } label: {
                                             Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
                                         }
-                                        if index > 0 {
+                                        if canMove(track.id, earlier: true) {
                                             Button {
                                                 reorder(track.id, earlier: true)
                                             } label: {
                                                 Label("Move earlier", systemImage: "arrow.up")
                                             }
                                         }
-                                        if index < upcoming.count - 1 {
+                                        if canMove(track.id, earlier: false) {
                                             Button {
                                                 reorder(track.id, earlier: false)
                                             } label: {
@@ -712,10 +720,10 @@ struct PlaybackQueueSheet: View {
                                     playNext(track.id)
                                 }
                                 .accessibilityAction(named: "Move earlier") {
-                                    if index > 0 { reorder(track.id, earlier: true) }
+                                    reorder(track.id, earlier: true)
                                 }
                                 .accessibilityAction(named: "Move later") {
-                                    if index < upcoming.count - 1 { reorder(track.id, earlier: false) }
+                                    reorder(track.id, earlier: false)
                                 }
                                 .accessibilityAction(named: "Remove from queue") {
                                     removeFromQueue(track.id)
@@ -731,6 +739,15 @@ struct PlaybackQueueSheet: View {
                     .padding(20)
                 }
                 .scrollDismissesKeyboard(.interactively)
+            }
+            .onChange(of: playback.currentTrackID) { _, _ in
+                // An automatic track transition can invalidate VoiceOver focus
+                // even when the queue editor remains presented.
+                let liveIDs = playback.queuedTracks.map(\.id)
+                if let focused = focusedQueueTrackID, !liveIDs.contains(focused) {
+                    focusedQueueTrackID = liveIDs.first
+                    emptyQueueFocused = liveIDs.isEmpty
+                }
             }
             .onChange(of: upcoming.map(\.id)) { _, currentIDs in
                 // An empty queue has no track ID to focus; retain that intent
