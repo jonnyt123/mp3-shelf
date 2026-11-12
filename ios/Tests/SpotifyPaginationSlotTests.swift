@@ -44,6 +44,16 @@ enum SpotifyPaginationSlotTests {
             from: #"{"items":[],"next":null}"#.data(using: .utf8)!)
         check(emptyPage.rawItemCount == 0 && emptyPage.items.isEmpty,
               "genuinely empty page retains zero raw slots")
+        // Deeply malformed neighbors must not shift the pagination cursor.
+        let nested = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+            from: #"{"items":[{"name":"before"},{"name":["wrong"]},{"unexpected":{"deep":[1,2,3]}},{"name":"after"}],"next":"?offset=4"}"#.data(using: .utf8)!)
+        check(nested.items.map(\.name) == ["before", "after"] && nested.rawItemCount == 4,
+              "nested malformed entries preserve neighbors and all raw slots")
+        // An unavailable-only page must still advance by the raw slot count.
+        let unavailable = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+            from: #"{"items":[null,null,null,null],"next":"?offset=4"}"#.data(using: .utf8)!)
+        check(unavailable.items.isEmpty && unavailable.rawItemCount == 4 && unavailable.next != nil,
+              "unavailable-only page retains the server cursor")
         do {
             _ = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
                 from: #"{"next":null}"#.data(using: .utf8)!)
