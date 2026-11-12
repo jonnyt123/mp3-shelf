@@ -83,7 +83,8 @@ export function buildLocalReceipt({ sha, dirty, mode, steps, exitCode, logDir })
   if (!Object.hasOwn(required, mode)) throw Error('Unknown verification mode.');
   if (!Number.isSafeInteger(exitCode) || exitCode < 0 || exitCode > 255) throw Error('Invalid exit code.');
   if (!Array.isArray(steps) || steps.some(s => !s || typeof s !== 'object' ||
-      !allowed.has(s.name) || ![0, 1].includes(s.success))) throw Error('Malformed step records.');
+      !allowed.has(s.name) || ![0, 1].includes(s.success) ||
+      Object.keys(s).some(key => !['name', 'success'].includes(key)))) throw Error('Malformed step records.');
   const seen = new Set();
   const receipts = steps.map(step => {
     if (seen.has(step.name)) throw Error('Duplicate step receipt.');
