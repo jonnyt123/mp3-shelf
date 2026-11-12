@@ -476,8 +476,12 @@ struct PlaybackQueueSheet: View {
     }
 
     private func reorder(_ trackID: UUID, earlier: Bool, in upcoming: [MusicTrack]) {
-        guard let index = upcoming.firstIndex(where: { $0.id == trackID }),
-              earlier ? index > 0 : index < upcoming.count - 1 else { return }
+        guard let index = upcoming.firstIndex(where: { $0.id == trackID }) else { return }
+        if earlier {
+            guard index > 0 else { return }
+        } else {
+            guard index < upcoming.count - 1 else { return }
+        }
         focusAfterQueueMutation(trackID)
         playback.moveQueuedTrack(trackID, earlier: earlier)
     }
