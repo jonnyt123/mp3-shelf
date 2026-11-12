@@ -3,6 +3,37 @@ import{describe,expect,it}from"vitest";
 import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,Track}from"./tracks";
 describe("track library",()=>{it("imports MP3s, ignores other files, and removes a track",async()=>{const mp3=new File([new Uint8Array([1,2,3])],"demo.mp3",{type:"audio/mpeg",lastModified:10}),text=new File(["no"],"notes.txt",{type:"text/plain"});expect(await importTracks([mp3,text])).toBe(1);const tracks=await listTracks();expect(tracks).toHaveLength(1);expect(tracks[0].name).toBe("demo");await removeTrack(tracks[0].id);expect(await listTracks()).toHaveLength(0)});it("restores a track atomically into IndexedDB",async()=>{const track:Track={id:"restored",name:"Restored song",size:3,type:"audio/mpeg",importedAt:50,blob:new Blob([new Uint8Array([4,5,6])])};expect(await restoreTracks([track])).toBe(1);expect((await listTracks()).find(item=>item.id==="restored")?.name).toBe("Restored song");await removeTrack("restored")});it("formats file sizes",()=>{expect(formatBytes(0)).toBe("0 KB");expect(formatBytes(1048576)).toBe("1.0 MB");expect(formatBytes(1073741824)).toBe("1.0 GB")})});
 
+describe("Files provider import compatibility",()=>{
+ it("imports an M4A recording when Files omits its MIME type",async()=>{
+  const file=new File([new Uint8Array([0,0,0,0,102,116,121,112])],"voice-note.M4A",{type:"",lastModified:4321});
+  const id="voice-note.M4A:8:4321";
+  try{
+   expect(await importTracks([file])).toBe(1);
+   const saved=(await listTracks()).find(track=>track.id===id);
+   expect(saved).toBeDefined();
+   expect(saved?.blob.size).toBe(8);
+   expect(await importTracks([file])).toBe(0);
+  }finally{await removeTrack(id)}
+ });
+ it("rejects zero-byte audio regardless of extension or MIME type",async()=>{
+  const emptyMp3=new File([],"empty.mp3",{type:"audio/mpeg",lastModified:1});
+  const emptyM4a=new File([],"empty.m4a",{type:"",lastModified:2});
+  expect(await importTracks([emptyMp3,emptyM4a])).toBe(0);
+  const ids=new Set((await listTracks()).map(track=>track.id));
+  expect(ids.has("empty.mp3:0:1")).toBe(false);
+  expect(ids.has("empty.m4a:0:2")).toBe(false);
+ });
+ it("skips invalid files without dropping valid recordings from the same selection",async()=>{
+  const valid=new File([new Uint8Array([1,2,3])],"mixed-valid.mp3",{type:"audio/mpeg",lastModified:123});
+  const empty=new File([],"mixed-empty.mp3",{type:"audio/mpeg",lastModified:123});
+  const other=new File(["text"],"mixed.txt",{type:"text/plain",lastModified:123});
+  try{
+   expect(await importTracks([empty,other,valid])).toBe(1);
+   expect((await listTracks()).some(track=>track.id==="mixed-valid.mp3:3:123")).toBe(true);
+  }finally{await removeTrack("mixed-valid.mp3:3:123")}
+ });
+});
+
 describe("bulk import bounded metadata work",()=>{
  it("imports a large Files selection without dropping tracks or changing selection order",async()=>{
   const files=Array.from({length:128},(_,i)=>new File([new Uint8Array([1,2,3])],`bulk-${i}.mp3`,{type:"audio/mpeg",lastModified:123}));
