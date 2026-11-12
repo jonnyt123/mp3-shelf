@@ -1178,3 +1178,44 @@ describe("restore cancellation ownership during synchronous storage interference
   expect(base.getItem("playlists")).toBe(before);
  });
 });
+
+describe("missing-audio deletion recovery final reconciliation",()=>{
+ function fixture(){
+  const original=[{id:"mix",name:"Mix",trackIds:["keep","gone"]}];
+  const values=new Map<string,string>([
+   ["playlists",JSON.stringify([{id:"mix",name:"Mix",trackIds:["keep"]}])],
+   ["mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"gone",original})]
+  ]);
+  const storage={
+   getItem:(key:string)=>values.get(key)??null,
+   setItem:(key:string,value:string)=>{values.set(key,value)},
+   removeItem:(key:string)=>{values.delete(key)}
+  };
+  return {values,storage};
+ }
+ it("preserves recovery intent when another tab reattaches missing audio before cleanup",()=>{
+  const {values,storage}=fixture();
+  let playlistReads=0;
+  const interfering={
+   ...storage,
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++playlistReads===2)
+     values.set("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","gone"]}]));
+    return storage.getItem(key);
+   }
+  };
+  const journal=storage.getItem("mp3-shelf-delete-recovery");
+  expect(()=>recoverFailedTrackDeletion(interfering,new Set(["keep"])))
+   .toThrow("Missing-audio references changed during deletion recovery");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBe(journal);
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"])))
+   .toEqual([{id:"mix",name:"Other tab",trackIds:["keep"]}]);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("retires a completed recovery journal when no missing-audio links remain",()=>{
+  const {storage}=fixture();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"])))
+   .toEqual([{id:"mix",name:"Mix",trackIds:["keep"]}]);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
