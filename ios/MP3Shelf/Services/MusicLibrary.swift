@@ -203,6 +203,7 @@ final class MusicLibrary: ObservableObject {
         // artwork/lyrics because the file was protected, missing or corrupt.
         // Only a nil reference means the recording genuinely has no sidecar.
         let items = try tracks.map { track -> PortableShelfArchive.MediaInput in
+            try Task.checkCancellation()
             let lyricBytes = try PortableShelfArchive.readSidecar(
                 named: track.lyricsFileName, from: lyricsDirectory,
                 maximumBytes: 500 * 1024)
@@ -240,10 +241,30 @@ final class MusicLibrary: ObservableObject {
         // Gather UI-dependent artwork before leaving the main actor, then
         // stream potentially gigabytes of audio to disk off the UI thread.
         let playlistSnapshot = playlists
-        return try await Task.detached(priority: .userInitiated) {
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
             try PortableShelfArchive.export(items, playlists: playlistSnapshot, to: destination)
+            try Task.checkCancellation()
             return destination
-        }.value
+        }
+        // Detached work does not inherit the caller's cancellation. Without
+        // forwarding it, dismissing the export UI can leave a large archive
+        // streaming for minutes and publish a backup nobody requested.
+        return try await withTaskCancellationHandler {
+            let exported = try await worker.value
+            do {
+                try Task.checkCancellation()
+                return exported
+            } catch {
+                // The worker may have completed just as cancellation arrived.
+                // Remove only our unique temporary export, never source audio.
+                try? manager.removeItem(at: exported)
+                throw error
+            }
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     /// Adds valid files from a browser or native backup without deleting
