@@ -197,7 +197,11 @@ struct NowPlayingView: View {
     var body: some View {
         // Snapshot the queue once for this render so playback ticks do not
         // repeatedly rebuild it for the preview and its visibility check.
-        let upcomingPreview = playback.upcomingTracks
+        // Now Playing is an overview, not a second full queue editor. Keep
+        // this eager ScrollView bounded even for imported 1,000-song playlists.
+        let upcoming = playback.upcomingTracks
+        let upcomingPreview = Array(upcoming.prefix(5))
+        let hiddenUpcomingCount = max(0, upcoming.count - upcomingPreview.count)
         return NavigationStack {
             Group {
                 if let track = library.song(with: playback.currentTrackID) {
@@ -456,6 +460,18 @@ struct NowPlayingView: View {
                                         }
                                     }
                                     .padding(.top, 24)
+                                    if hiddenUpcomingCount > 0 {
+                                        Button { showQueue = true } label: {
+                                            Label("View all \(upcoming.count) queued songs",
+                                                  systemImage: "list.bullet")
+                                                .font(.subheadline.weight(.semibold))
+                                                .frame(maxWidth: .infinity, minHeight: 44,
+                                                       alignment: .leading)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .foregroundStyle(ShelfTheme.accent)
+                                        .accessibilityHint("\(hiddenUpcomingCount) more songs. Open the full queue to review or reorder them")
+                                    }
                                 }
 
                                 HStack(spacing: 7) {
