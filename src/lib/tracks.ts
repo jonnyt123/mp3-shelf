@@ -77,6 +77,7 @@ export async function importTracks(files:File[]):Promise<number>{
   const transaction=db.transaction(STORE,"readwrite");
   const completed=finish(transaction);
   let inserted=0;
+  let callbackError:unknown;
   try{
    const store=transaction.objectStore(STORE);
    const seen=new Set<string>();
@@ -87,10 +88,17 @@ export async function importTracks(files:File[]):Promise<number>{
     seen.add(id);
     const request=store.get(id);
     request.onsuccess=()=>{
+     try{
      if(request.result!==undefined)return;
      const extension=/\.m4a$/i.test(file.name)?"audio/mp4":"audio/mpeg";
      const add=store.add({id,name:metadata.title?.trim()||file.name.replace(/\.(mp3|m4a)$/i,"").trim()||file.name,originalName:file.name,artist:metadata.artist,album:metadata.album,artwork:metadata.artwork,size:file.size,type:file.type||extension,importedAt:Date.now(),blob:file} satisfies Track);
      add.onsuccess=()=>{inserted++};
+     }catch(error){
+      // Exceptions in IDB event callbacks escape the enclosing async try.
+      // Abort explicitly and report the cause through the awaited transaction.
+      callbackError=error;
+      transaction.abort();
+     }
     };
    }
   }catch(error){
@@ -98,7 +106,7 @@ export async function importTracks(files:File[]):Promise<number>{
    await completed.catch(()=>{});
    throw error;
   }
-  await completed;
+  try{await completed}catch(error){throw callbackError??error}
   return inserted;
  }finally{db.close()}
 }
@@ -179,6 +187,7 @@ export async function restoreTracks(tracks:Track[]):Promise<number>{
   // restore a library.
   const completed=finish(transaction);
   let inserted=0;
+  let callbackError:unknown;
   try{
    const store=transaction.objectStore(STORE);
    // A backup may reuse an existing ID for different audio. Never replace
@@ -188,9 +197,16 @@ export async function restoreTracks(tracks:Track[]):Promise<number>{
    for(const track of tracks){
     const request=store.get(track.id);
     request.onsuccess=()=>{
+     try{
      if(request.result!==undefined)return;
      const add=store.add(track);
      add.onsuccess=()=>{inserted++};
+     }catch(error){
+      // Exceptions in IDB event callbacks escape the enclosing async try.
+      // Abort explicitly and report the cause through the awaited transaction.
+      callbackError=error;
+      transaction.abort();
+     }
     };
    }
   }catch(error){
@@ -198,7 +214,7 @@ export async function restoreTracks(tracks:Track[]):Promise<number>{
    await completed.catch(()=>{});
    throw error;
   }
-  await completed;
+  try{await completed}catch(error){throw callbackError??error}
   return inserted;
  }finally{db.close()}
 }

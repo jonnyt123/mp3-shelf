@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import {IDBVersionChangeEvent} from "fake-indexeddb";
 import{describe,expect,it}from"vitest";
 import{formatBytes,importTracks,listTracks,removeTrack,renameTrack,restoreTracks,Track}from"./tracks";
 describe("track library",()=>{it("imports MP3s, ignores other files, and removes a track",async()=>{const mp3=new File([new Uint8Array([1,2,3])],"demo.mp3",{type:"audio/mpeg",lastModified:10}),text=new File(["no"],"notes.txt",{type:"text/plain"});expect(await importTracks([mp3,text])).toBe(1);const tracks=await listTracks();expect(tracks).toHaveLength(1);expect(tracks[0].name).toBe("demo");await removeTrack(tracks[0].id);expect(await listTracks()).toHaveLength(0)});it("restores a track atomically into IndexedDB",async()=>{const track:Track={id:"restored",name:"Restored song",size:3,type:"audio/mpeg",importedAt:50,blob:new Blob([new Uint8Array([4,5,6])])};expect(await restoreTracks([track])).toBe(1);expect((await listTracks()).find(item=>item.id==="restored")?.name).toBe("Restored song");await removeTrack("restored")});it("formats file sizes",()=>{expect(formatBytes(0)).toBe("0 KB");expect(formatBytes(1048576)).toBe("1.0 MB");expect(formatBytes(1073741824)).toBe("1.0 GB")})});
@@ -270,9 +271,25 @@ describe("restore failure safety",()=>{
   expect((await listTracks()).some(track=>track.id==="restore-new")).toBe(true);
   await removeTrack("restore-collision");await removeTrack("restore-new");
  });
+ it("rejects an import callback write failure without committing earlier recordings",async()=>{
+  const files=["callback-first.mp3","callback-failed.mp3"].map(name=>new File([new Uint8Array([1,2,3])],name,{type:"audio/mpeg",lastModified:987}));
+  const add=IDBObjectStore.prototype.add;
+  const failure=new DOMException("Injected audio quota failure","QuotaExceededError");
+  IDBObjectStore.prototype.add=function(value,...args){
+   if(value.id==="callback-failed.mp3:3:987")throw failure;
+   return add.call(this,value,...args);
+  };
+  try{await expect(importTracks(files)).rejects.toBe(failure)}
+  finally{IDBObjectStore.prototype.add=add}
+  const ids=new Set((await listTracks()).map(track=>track.id));
+  for(const file of files)expect(ids.has(`${file.name}:3:987`)).toBe(false);
+  // A fresh attempt after failure must remain usable.
+  try{expect(await importTracks(files)).toBe(2)}
+  finally{for(const file of files)await removeTrack(`${file.name}:3:987`)}
+ });
  it("aborts all writes when a later track is not structured-cloneable",async()=>{
   const bad={...makeTrack("bad-restore"),uncloneable:()=>{}} as Track;
-  await expect(restoreTracks([makeTrack("new-restore"),bad])).rejects.toThrow();
+  await expect(restoreTracks([makeTrack("new-restore"),bad])).rejects.toThrow(/could not be cloned/);
   expect((await listTracks()).some(t=>t.id==="new-restore"||t.id==="bad-restore")).toBe(false);
   // Deleting the database exposes leaked open connections after failure.
   await new Promise<void>((resolve,reject)=>{
@@ -320,7 +337,7 @@ describe("IndexedDB connection lifecycle on failed operations",()=>{
   IDBObjectStore.prototype.getAll=function(...args){
    const request=original.apply(this,args);
    const db=this.transaction.db;
-   queueMicrotask(()=>db.dispatchEvent(new Event("versionchange")));
+   queueMicrotask(()=>db.dispatchEvent(new IDBVersionChangeEvent("versionchange",{oldVersion:1,newVersion:2})));
    return request;
   };
   try{

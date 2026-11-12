@@ -54,10 +54,10 @@ describe("playlist restore commit",()=>{
  it("does not claim success or replace the existing playlists when storage is full",()=>{
   const saved=JSON.stringify([{id:"safe",name:"Saved",trackIds:["audio"]}]);
   let writes=0;
-  const storage={getItem:()=>saved,setItem:()=>{writes++;throw new DOMException("Storage full","QuotaExceededError")}};
+  const storage={getItem:(key:string)=>key==="playlists"?saved:null,setItem:()=>{writes++;throw new DOMException("Storage full","QuotaExceededError")}};
   expect(()=>persistRestoredPlaylists(storage,"playlists",[{id:"restored",name:"Restored",trackIds:[]}])).toThrow();
   expect(writes).toBe(1);
-  expect(storage.getItem()).toBe(saved);
+  expect(storage.getItem("playlists")).toBe(saved);
  });
  it("rejects duplicate or malformed incoming playlist IDs without touching saved playlists",()=>{
   const saved=JSON.stringify([{id:"safe",name:"My playlist",trackIds:["audio"]}]);
@@ -374,7 +374,7 @@ describe("track deletion consistency",()=>{
   // Startup uses the actual surviving IndexedDB IDs to remove dangling links.
   expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
  });
- it.each(["", " ", "\\t"])("rejects blank playlist namespaces before staging deletion (%s)",async key=>{
+ it.each(["", " ", "\t"])("rejects blank playlist namespaces before staging deletion (%s)",async key=>{
   const store=storage();
   const before=store.getItem("playlists");
   let deleted=false;
@@ -520,7 +520,7 @@ describe("conflicting recovery journals",()=>{
   storage.removeItem("mp3-shelf-restore-pending");
   expect(recoverFailedTrackDeletion(storage,new Set(["audio"]))).not.toBeNull();
  });
- it.each([""," ","\\t"])("rejects a blank deletion ID (%s) without altering playlists",trackId=>{
+ it.each([""," ","\t"])("rejects a blank deletion ID (%s) without altering playlists",trackId=>{
   const storage=store();
   storage.setItem("mp3-shelf-delete-recovery",JSON.stringify({
    version:1,key:"playlists",trackId,
@@ -1012,7 +1012,7 @@ describe("post-deletion reconciliation cross-tab races",()=>{
   const racing={
    ...store,
    getItem:(name:string)=>{
-    if(afterDelete&&name===key&&++reads===3)
+    if(afterDelete&&name===key&&++reads===2)
      store.setItem(key,JSON.stringify(concurrent));
     return store.getItem(name);
    }

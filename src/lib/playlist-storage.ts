@@ -67,7 +67,7 @@ export function persistRestoredPlaylists(
 }
 
 const RESTORE_JOURNAL_KEY="mp3-shelf-restore-pending";
-type RestoreJournal={version:1;key?:string;trackIds:string[];playlists:StoredPlaylist[]};
+type RestoreJournal={version:1;key?:string;trackIds:string[];playlists:readonly StoredPlaylist[]};
 
 /** Durable intent is written before any IndexedDB inserts. If the browser
  * terminates between stores, startup can finish the playlist half safely. */
@@ -122,7 +122,7 @@ export function recoverPlaylistRestore(storage:Pick<Storage,"getItem"|"setItem"|
  // in the archive (or were removed locally). Publishing those links would
  // create permanently unplayable entries even when the imported tracks exist.
  // Preserve the recovery intent so a complete archive can be retried safely.
- if(journal.playlists.some(playlist=>playlist.trackIds.some(id=>!availableTrackIds.has(id))))
+ if(journal.playlists.some(playlist=>playlist.trackIds.some((id:string)=>!availableTrackIds.has(id))))
   throw new Error("A backup playlist references missing audio. Reimport a complete backup before restoring playlists.");
  // A different tab may replace the restore intent while we validate audio.
  // Never consume or clear a journal belonging to a newer operation.
@@ -223,67 +223,68 @@ export function recoverFailedTrackDeletion(
  if(entry.version!==1||typeof entry.key!=="string"||!entry.key.trim()||
     typeof entry.trackId!=="string"||!entry.trackId.trim()||
     !Array.isArray(entry.original))throw new Error("Invalid track deletion recovery journal.");
- parseStoredPlaylists(JSON.stringify(entry.original));
+ const {key,trackId,original}=entry;
+ parseStoredPlaylists(JSON.stringify(original));
  // Audio was already deleted successfully: cleanup is final.
- if(!audioTrackIds.has(entry.trackId)){
+ if(!audioTrackIds.has(trackId)){
   // The deletion may have succeeded before another tab reattached the ID.
   // Reconcile missing-audio references before clearing the durable journal.
-  const baseline=storage.getItem(entry.key);
+  const baseline=storage.getItem(key);
   const current=parseStoredPlaylists(baseline);
-  if(current.some(playlist=>playlist.trackIds.includes(entry.trackId))){
+  if(current.some(playlist=>playlist.trackIds.includes(trackId))){
    // Another recovery may have replaced this journal while we read playlists.
    // Do not mutate the namespace using a superseded deletion intent.
    if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
     throw new Error("Track deletion recovery changed before playlist reconciliation. Preserve the newer intent.");
    // A second tab may edit after recovery reads the playlists. Preserve its
    // newer state and keep the journal so startup can retry reconciliation.
-   if(storage.getItem(entry.key)!==baseline)
+   if(storage.getItem(key)!==baseline)
     throw new Error("Playlists changed during deletion recovery. Retry reconciliation.");
-   commitPlaylistEdit(storage,entry.key,current.map(playlist=>({
-    ...playlist,trackIds:playlist.trackIds.filter(id=>id!==entry.trackId)
+   commitPlaylistEdit(storage,key,current.map(playlist=>({
+    ...playlist,trackIds:playlist.trackIds.filter(id=>id!==trackId)
    })));
   }
   // A second tab can reattach the now-missing recording after our first
   // reconciliation. Do not retire the durable intent while dangling links
   // remain; the next recovery can safely repeat the cleanup.
-  const verifiedBaseline=storage.getItem(entry.key);
+  const verifiedBaseline=storage.getItem(key);
   const verified=parseStoredPlaylists(verifiedBaseline);
-  if(verified.some(playlist=>playlist.trackIds.includes(entry.trackId)))
+  if(verified.some(playlist=>playlist.trackIds.includes(trackId)))
    throw new Error("Missing-audio references changed during deletion recovery. Retry reconciliation.");
   // A second tab can change the playlist after verification but before we
   // retire the only durable evidence of a deleted recording. Keep the journal
   // when that happens, even if the competing write is a rename or reorder.
-  if(storage.getItem(entry.key)!==verifiedBaseline)
+  if(storage.getItem(key)!==verifiedBaseline)
    throw new Error("Playlists changed before deletion recovery cleanup. Retry reconciliation.");
   if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
    throw new Error("Track deletion recovery changed before journal cleanup. Preserve the newer intent.");
   storage.removeItem(DELETE_RECOVERY_KEY);
   return verified;
  }
- const baseline=storage.getItem(entry.key);
+ const baseline=storage.getItem(key);
  const current=parseStoredPlaylists(baseline);
- const oldById=new Map(entry.original.map(p=>[p.id,p]));
+ const oldById=new Map(original.map(p=>[p.id,p]));
  const next=current.map(p=>{
   const old=oldById.get(p.id);
-  if(!old||!old.trackIds.includes(entry.trackId)||p.trackIds.includes(entry.trackId))return p;
-  const index=old.trackIds.indexOf(entry.trackId);
+  if(!old||!old.trackIds.includes(trackId)||p.trackIds.includes(trackId))return p;
+  const index=old.trackIds.indexOf(trackId);
   const previous=old.trackIds.slice(0,index).reverse().find(id=>p.trackIds.includes(id));
   const following=old.trackIds.slice(index+1).find(id=>p.trackIds.includes(id));
   const insertAt=previous?p.trackIds.lastIndexOf(previous)+1:following?p.trackIds.indexOf(following):p.trackIds.length;
-  const ids=[...p.trackIds];ids.splice(insertAt,0,entry.trackId);
+  const ids=[...p.trackIds];ids.splice(insertAt,0,trackId);
   return {...p,trackIds:ids};
  });
- if(storage.getItem(entry.key)!==baseline)
+ if(storage.getItem(key)!==baseline)
   throw new Error("Playlists changed during deletion recovery. Retry reconciliation.");
  if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
   throw new Error("Track deletion recovery changed before playlist rollback. Preserve the newer intent.");
- commitPlaylistEdit(storage,entry.key,next);
+ commitPlaylistEdit(storage,key,next);
  // The rollback restores a surviving audio record's playlist references.
  // If another tab changes playlists before journal retirement, keep the
  // intent so the next recovery can reconcile against the newer durable state.
- const verifiedBaseline=storage.getItem(entry.key);
+ const verifiedBaseline=storage.getItem(key);
  const verified=parseStoredPlaylists(verifiedBaseline);
- if(storage.getItem(entry.key)!==verifiedBaseline)
+ if(storage.getItem(key)!==verifiedBaseline)
   throw new Error("Playlists changed during deletion rollback verification. Retry recovery.");
  if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
   throw new Error("Track deletion recovery changed before journal cleanup. Preserve the newer intent.");
