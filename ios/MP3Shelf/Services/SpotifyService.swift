@@ -634,7 +634,7 @@ enum SpotifyTrackLinks {
               id.utf8.allSatisfy({
                   (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
               }) else { return nil }
-        return "https://open.spotify.com/track/\\(id)"
+        return "https://open.spotify.com/track/\(id)"
     }
 }
 
