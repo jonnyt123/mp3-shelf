@@ -194,6 +194,34 @@ struct NowPlayingView: View {
         .accessibilityHint("Double tap to update this song in your favorites")
     }
 
+    // Accessibility text must not force the Lyrics and Share actions into
+    // two clipped columns. Keep their hit areas and behavior identical when
+    // switching to a vertical layout.
+    private func secondaryActions(for track: MusicTrack) -> some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            Button { showLyrics = true } label: {
+                Label("Lyrics", systemImage: "text.quote")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+                    .padding(.horizontal, 12)
+            }
+            .buttonStyle(.plain)
+            .premiumCard(radius: 16)
+            ShareLink(item: library.fileURL(for: track)) {
+                Label("Share song", systemImage: "square.and.arrow.up")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+                    .padding(.horizontal, 12)
+            }
+            .buttonStyle(.plain)
+            .premiumCard(radius: 16)
+        }
+        .foregroundStyle(.white)
+    }
+
     var body: some View {
         // Snapshot the queue once for this render so playback ticks do not
         // repeatedly rebuild it for the preview and its visibility check.
@@ -381,25 +409,7 @@ struct NowPlayingView: View {
                                 .buttonStyle(.plain)
                                 .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 18 : 30)
 
-                                HStack(spacing: 12) {
-                                    Button { showLyrics = true } label: {
-                                        Label("Lyrics", systemImage: "text.quote")
-                                            .font(.subheadline.weight(.semibold))
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 15)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .premiumCard(radius: 16)
-                                    ShareLink(item: library.fileURL(for: track)) {
-                                        Label("Share song", systemImage: "square.and.arrow.up")
-                                            .font(.subheadline.weight(.semibold))
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 15)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .premiumCard(radius: 16)
-                                }
-                                .foregroundStyle(.white)
+                                secondaryActions(for: track)
 
                                 Button { showQueue = true } label: {
                                     HStack(spacing: 12) {
