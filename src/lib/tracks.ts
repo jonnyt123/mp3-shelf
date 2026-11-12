@@ -37,16 +37,28 @@ export async function importTracks(files:File[]):Promise<number>{
  const existing=new Set<string>();
  const lookupDb=await openDatabase();
  try{
-  const transaction=lookupDb.transaction(STORE,"readonly");
-  const completed=finish(transaction);
-  const store=transaction.objectStore(STORE);
-  const lookups=audio.map(file=>new Promise<void>((resolve,reject)=>{
-   const id=`${file.name}:${file.size}:${file.lastModified}`;
-   const request=store.getKey(id);
-   request.onsuccess=()=>{if(request.result!==undefined)existing.add(id);resolve()};
-   request.onerror=()=>reject(request.error);
-  }));
-  await Promise.all([...lookups,completed]);
+  // Do not enqueue thousands of IDB requests and Promise handlers at once.
+  // Short read transactions also give other tabs opportunities to write and
+  // keep large Files selections responsive on memory-constrained devices.
+  const LOOKUP_BATCH_SIZE=128;
+  for(let start=0;start<audio.length;start+=LOOKUP_BATCH_SIZE){
+   const transaction=lookupDb.transaction(STORE,"readonly");
+   const completed=finish(transaction);
+   const store=transaction.objectStore(STORE);
+   try{
+    const lookups=audio.slice(start,start+LOOKUP_BATCH_SIZE).map(file=>new Promise<void>((resolve,reject)=>{
+     const id=`${file.name}:${file.size}:${file.lastModified}`;
+     const request=store.getKey(id);
+     request.onsuccess=()=>{if(request.result!==undefined)existing.add(id);resolve()};
+     request.onerror=()=>reject(request.error);
+    }));
+    await Promise.all([...lookups,completed]);
+   }catch(error){
+    try{transaction.abort()}catch{/* Transaction already inactive. */}
+    await completed.catch(()=>{});
+    throw error;
+   }
+  }
  }finally{lookupDb.close()}
  const pending=audio.filter(file=>!existing.has(`${file.name}:${file.size}:${file.lastModified}`));
  if(!pending.length)return 0;
