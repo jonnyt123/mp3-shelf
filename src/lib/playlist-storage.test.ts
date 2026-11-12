@@ -1239,6 +1239,41 @@ describe("missing-audio deletion recovery final reconciliation",()=>{
    .toEqual([{id:"mix",name:"Other tab",trackIds:["keep"]}]);
   expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
  });
+ it("keeps recovery intent if a tab reattaches audio after the verified snapshot",()=>{
+  const {values,storage}=fixture();
+  let reads=0;
+  const interfering={
+   ...storage,
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===3)
+     values.set("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","gone"]}]));
+    return storage.getItem(key);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(interfering,new Set(["keep"])))
+   .toThrow("Playlists changed before deletion recovery cleanup");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"])))
+   .toEqual([{id:"mix",name:"Other tab",trackIds:["keep"]}]);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("keeps recovery intent if another tab renames the verified playlist",()=>{
+  const {values,storage}=fixture();
+  let reads=0;
+  const interfering={
+   ...storage,
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===3)
+     values.set("playlists",JSON.stringify([{id:"mix",name:"Renamed elsewhere",trackIds:["keep"]}]));
+    return storage.getItem(key);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(interfering,new Set(["keep"])))
+   .toThrow("Playlists changed before deletion recovery cleanup");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"]))?.[0].name).toBe("Renamed elsewhere");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
  it("retires a completed recovery journal when no missing-audio links remain",()=>{
   const {storage}=fixture();
   expect(recoverFailedTrackDeletion(storage,new Set(["keep"])))
