@@ -285,6 +285,7 @@ export async function deleteTrackWithPlaylistCleanup(
  // Deleting any track now can invalidate its durable recovery checkpoint.
  if(storage.getItem(RESTORE_JOURNAL_KEY)!==null)
   throw new Error("Finish the pending backup restore before deleting a recording.");
+ if(!key.trim())throw new Error("Invalid playlist storage key for deletion.");
  if(typeof trackId!=="string"||!trackId.trim())throw new Error("Invalid track ID for deletion.");
  // Use the current durable state rather than a possibly stale React snapshot.
  const baseline=storage.getItem(key);
