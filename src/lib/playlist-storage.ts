@@ -246,9 +246,15 @@ export function recoverFailedTrackDeletion(
   // A second tab can reattach the now-missing recording after our first
   // reconciliation. Do not retire the durable intent while dangling links
   // remain; the next recovery can safely repeat the cleanup.
-  const verified=parseStoredPlaylists(storage.getItem(entry.key));
+  const verifiedBaseline=storage.getItem(entry.key);
+  const verified=parseStoredPlaylists(verifiedBaseline);
   if(verified.some(playlist=>playlist.trackIds.includes(entry.trackId)))
    throw new Error("Missing-audio references changed during deletion recovery. Retry reconciliation.");
+  // A second tab can change the playlist after verification but before we
+  // retire the only durable evidence of a deleted recording. Keep the journal
+  // when that happens, even if the competing write is a rename or reorder.
+  if(storage.getItem(entry.key)!==verifiedBaseline)
+   throw new Error("Playlists changed before deletion recovery cleanup. Retry reconciliation.");
   if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
    throw new Error("Track deletion recovery changed before journal cleanup. Preserve the newer intent.");
   storage.removeItem(DELETE_RECOVERY_KEY);
