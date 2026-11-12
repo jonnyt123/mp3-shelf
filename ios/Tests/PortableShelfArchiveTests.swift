@@ -235,6 +235,32 @@ struct PortableShelfArchiveTests {
         defer { try? FileManager.default.removeItem(at: extracted) }
         let extractedBytes = try Data(contentsOf: extracted)
         assert(extractedBytes == originalBytes)
+        // Reject damaged catalog snapshots rather than dropping playlist
+        // membership from a superficially successful portable backup.
+        var danglingList = list
+        danglingList.trackIDs = [song.id, UUID()]
+        let danglingBackup = folder.appendingPathComponent("dangling-links.mp3shelf")
+        do {
+            try PortableShelfArchive.export([
+                .init(track: song, audioURL: audio, artwork: nil, lyrics: nil)
+            ], playlists: [danglingList], to: danglingBackup)
+            fatalError("Export silently discarded a missing playlist track")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected: no incomplete backup was published.
+        }
+        assert(!FileManager.default.fileExists(atPath: danglingBackup.path))
+        let intactSource = try Data(contentsOf: audio)
+        assert(intactSource == originalBytes)
+        var emptyList = list
+        emptyList.trackIDs = []
+        let emptyBackup = folder.appendingPathComponent("empty-playlist.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: song, audioURL: audio, artwork: nil, lyrics: nil)
+        ], playlists: [emptyList], to: emptyBackup)
+        let reopenedEmpty = try PortableShelfArchive.open(emptyBackup)
+        assert(reopenedEmpty.manifest.playlists[0].trackIds.isEmpty)
+        print("PASS: dangling playlist links fail closed; empty playlists round-trip")
+
         // Two files with the same name and size are not necessarily the same
         // recording. Check matching data, a same-size collision and a mismatch
         // beyond the 64-KiB streaming comparison boundary.
