@@ -72,3 +72,34 @@ describe("restore failure safety",()=>{
   });
  });
 });
+
+describe("IndexedDB connection lifecycle on failed operations",()=>{
+ async function assertDatabaseCanClose():Promise<void>{
+  await new Promise<void>((resolve,reject)=>{
+   const request=indexedDB.deleteDatabase("mp3-shelf");
+   request.onsuccess=()=>resolve();
+   request.onerror=()=>reject(request.error);
+   request.onblocked=()=>reject(new Error("Failed library operation leaked an IndexedDB connection."));
+  });
+ }
+ it("releases the database after an invalid delete key",async()=>{
+  await expect(removeTrack(null as unknown as string)).rejects.toThrow();
+  await assertDatabaseCanClose();
+  expect(await listTracks()).toEqual([]);
+ });
+ it("aborts an uncloneable rename and releases the database",async()=>{
+  const id="rename-connection-regression";
+  const original:Track={id,name:"Original",size:1,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1])])};
+  expect(await restoreTracks([original])).toBe(1);
+  await expect(renameTrack(id,(()=>{}) as unknown as string)).rejects.toThrow();
+  expect((await listTracks()).find(track=>track.id===id)?.name).toBe("Original");
+  await assertDatabaseCanClose();
+ });
+ it("releases the database if the track listing request cannot be created",async()=>{
+  const original=IDBObjectStore.prototype.getAll;
+  IDBObjectStore.prototype.getAll=function(){throw new Error("Injected getAll failure")};
+  try{await expect(listTracks()).rejects.toThrow("Injected getAll failure")}
+  finally{IDBObjectStore.prototype.getAll=original}
+  await assertDatabaseCanClose();
+ });
+});
