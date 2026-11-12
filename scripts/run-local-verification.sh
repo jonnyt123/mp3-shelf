@@ -127,6 +127,9 @@ if [[ "$MODE" == node-only && "$COMMIT" != unknown && "$DIRTY" == no ]]; then
     echo 'ERROR: Node verification changed the candidate commit or checkout; refusing SHA-bound evidence.' >&2
     exit 2
   fi
+  COMPLETED+=("$STEP")
+  printf 'PASS: node-only verification preserved the clean candidate checkout and SHA\n' > "$OUT/$STEP.log"
+  RECEIPT_STEPS+=("$STEP:1")
 fi
 if [[ "$MODE" == web || "$MODE" == all ]]; then
   # Always reconcile installed dependencies with the lockfile; an existing
