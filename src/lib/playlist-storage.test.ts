@@ -98,7 +98,7 @@ describe("playlist restore commit",()=>{
   let reads=0;let writes=0;
   const storage={
    getItem:(key:string)=>{
-    if(key==="playlists"&&++reads===2){
+    if(key==="mp3-shelf-delete-recovery"&&++reads===2){
      data.set("mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"audio",original:JSON.parse(saved)}));
     }
     return data.get(key)??null;
