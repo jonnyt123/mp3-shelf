@@ -571,6 +571,7 @@ final class MusicLibrary: ObservableObject {
             var resolvedTrackIDs: [UUID] = []
             var resolvedSet = Set<UUID>()
             for backupID in item.trackIds {
+                try Task.checkCancellation()
                 if let localID = restoredIDs[backupID], resolvedSet.insert(localID).inserted {
                     resolvedTrackIDs.append(localID)
                 }
@@ -582,6 +583,7 @@ final class MusicLibrary: ObservableObject {
                 var linked = Set(candidatePlaylists[index].trackIDs)
                 var addedLinks = 0
                 for id in resolvedTrackIDs where linked.insert(id).inserted {
+                    try Task.checkCancellation()
                     candidatePlaylists[index].trackIDs.append(id)
                     addedLinks += 1
                 }
@@ -597,8 +599,12 @@ final class MusicLibrary: ObservableObject {
             playlist.sourceURL = item.sourceURL
             playlist.appleMusicLibraryID = AppleMusicLibraryIdentity.canonical(item.appleMusicLibraryID)
             playlist.trackIDs = resolvedTrackIDs
-            playlist.sourceOrder = (item.wishes ?? []).map {
-                PlaylistWish(title: $0.title, artist: $0.artist,
+            // Large imported playlists can contain thousands of wishes. Do not
+            // let cancellation finish an expensive metadata rebuild and publish
+            // a playlist the user explicitly stopped restoring.
+            playlist.sourceOrder = try (item.wishes ?? []).map {
+                try Task.checkCancellation()
+                return PlaylistWish(title: $0.title, artist: $0.artist,
                              album: $0.album, spotifyURL: $0.spotifyURL,
                              durationSeconds: $0.durationSeconds, artistNames: $0.artistNames,
                              appleMusicItemID: AppleMusicLibraryIdentity.canonical($0.appleMusicItemID))
