@@ -401,8 +401,24 @@ final class MusicLibrary: ObservableObject {
                 // without checking the actual bytes.
                 try Task.checkCancellation()
                 let extractedSize = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-                if extractedSize >= 0, let existing = recordingsBySize[Int64(extractedSize)]?
-                    .first(where: { PortableShelfArchive.audioFilesIdentical(file, fileURL(for: $0)) }) {
+                // Compare candidates explicitly rather than using first(where:).
+                // The byte comparator cannot throw, and cancellation inside
+                // its read loop returns false; check between candidates and
+                // before accepting a match so cancellation never becomes a miss.
+                var identicalRecording: MusicTrack?
+                if extractedSize >= 0 {
+                    for candidate in recordingsBySize[Int64(extractedSize)] ?? [] {
+                        try Task.checkCancellation()
+                        let identical = PortableShelfArchive.audioFilesIdentical(
+                            file, fileURL(for: candidate))
+                        try Task.checkCancellation()
+                        if identical {
+                            identicalRecording = candidate
+                            break
+                        }
+                    }
+                }
+                if let existing = identicalRecording {
                     try Task.checkCancellation()
                     // Byte-identical reuse must also retain the browser's
                     // portable identity for a later native re-export. Never
@@ -436,10 +452,22 @@ final class MusicLibrary: ObservableObject {
                 if !imported {
                     // Names and sizes alone are not sufficient: multiple local
                     // recordings can share both while containing different audio.
-                    if let index = tracks.firstIndex(where: { candidate in
-                        candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame &&
-                        PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
-                    }) {
+                    var duplicateIndex: Int?
+                    for index in tracks.indices {
+                        try Task.checkCancellation()
+                        let candidate = tracks[index]
+                        guard candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame else {
+                            continue
+                        }
+                        let identical = PortableShelfArchive.audioFilesIdentical(
+                            file, fileURL(for: candidate))
+                        try Task.checkCancellation()
+                        if identical {
+                            duplicateIndex = index
+                            break
+                        }
+                    }
+                    if let index = duplicateIndex {
                         if !tracks.contains(where: {
                             $0.id != tracks[index].id &&
                             ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
