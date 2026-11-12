@@ -840,17 +840,27 @@ struct PlaybackQueueSheet: View {
                                 .padding(.vertical, 8)
                                 .premiumCard(radius: 17)
                                 .accessibilityElement(children: .contain)
+                                .accessibilityValue("Position \(index + 1) of \(upcoming.count) in queue")
                                 .accessibilityAction(named: "Play now") {
                                     playNow(track.id)
                                 }
                                 .accessibilityAction(named: "Play next") {
                                     playNext(track.id)
                                 }
-                                .accessibilityAction(named: "Move earlier") {
-                                    reorder(track.id, earlier: true)
-                                }
-                                .accessibilityAction(named: "Move later") {
-                                    reorder(track.id, earlier: false)
+                                // Only advertise reorder actions that can actually
+                                // succeed. The live reorder handler still validates
+                                // bounds if playback changes before activation.
+                                .accessibilityActions {
+                                    if canMove(index: index, count: upcoming.count, earlier: true) {
+                                        Button("Move earlier") {
+                                            reorder(track.id, earlier: true)
+                                        }
+                                    }
+                                    if canMove(index: index, count: upcoming.count, earlier: false) {
+                                        Button("Move later") {
+                                            reorder(track.id, earlier: false)
+                                        }
+                                    }
                                 }
                                 .accessibilityAction(named: "Remove from queue") {
                                     removeFromQueue(track.id)
@@ -866,15 +876,6 @@ struct PlaybackQueueSheet: View {
                     .padding(20)
                 }
                 .scrollDismissesKeyboard(.interactively)
-            }
-            .onChange(of: playback.currentTrackID) { _, _ in
-                // An automatic track transition can invalidate VoiceOver focus
-                // even when the queue editor remains presented.
-                let liveIDs = playback.queuedTracks.map(\.id)
-                if let focused = focusedQueueTrackID, !liveIDs.contains(focused) {
-                    focusedQueueTrackID = liveIDs.first
-                    emptyQueueFocused = liveIDs.isEmpty
-                }
             }
             .onChange(of: upcoming.map(\.id)) { previousIDs, currentIDs in
                 // Queue changes can also originate outside this sheet (playback
