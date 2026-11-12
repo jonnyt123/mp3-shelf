@@ -123,8 +123,11 @@ export async function restoreTracks(tracks:Track[]):Promise<number>{
   ids.add(track.id);
   if(typeof track.name!=="string"||!track.name.trim()||
      typeof track.type!=="string"||
+     (track.originalName!==undefined&&(typeof track.originalName!=="string"||!track.originalName.trim()))||
+     (track.artist!==undefined&&typeof track.artist!=="string")||
+     (track.album!==undefined&&typeof track.album!=="string")||
      !Number.isSafeInteger(track.size)||track.size<=0||
-     !Number.isFinite(track.importedAt)||
+     !Number.isFinite(track.importedAt)||track.importedAt<0||
      !(track.blob instanceof Blob)||track.blob.size!==track.size||
      (track.artwork!==undefined&&(!(track.artwork instanceof Blob)||track.artwork.size===0)))
    throw new Error("Invalid recording metadata or audio in restore.");
