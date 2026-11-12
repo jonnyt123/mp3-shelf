@@ -238,7 +238,12 @@ enum PortableShelfArchive {
         }
         let input = try FileHandle(forReadingFrom: url)
         defer { try? input.close() }
+        // Resource-value checks precede open and are vulnerable to pathname
+        // replacement. Bind the read to the regular file actually opened.
+        let source = try archiveIdentity(of: input, at: url)
+        guard source.size >= 0 else { throw ArchiveError.invalidManifest }
         let size = try input.seekToEnd()
+        guard Int64(size) == source.size else { throw ArchiveError.invalidRange }
         guard size <= UInt64(maximumBytes) else { throw ArchiveError.oversized }
         try input.seek(toOffset: 0)
         var bytes = Data()
@@ -254,6 +259,19 @@ enum PortableShelfArchive {
         guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
             throw ArchiveError.invalidRange
         }
+        // Reject same-size edits and replaced catalog paths during the read.
+        // Do not return bytes from a sidecar that changed after validation.
+        let afterRead = try archiveIdentity(of: input, at: url)
+        guard source.device == afterRead.device,
+              source.inode == afterRead.inode,
+              source.size == afterRead.size,
+              source.modifiedSeconds == afterRead.modifiedSeconds,
+              source.modifiedNanoseconds == afterRead.modifiedNanoseconds,
+              source.changedSeconds == afterRead.changedSeconds,
+              source.changedNanoseconds == afterRead.changedNanoseconds else {
+            throw ArchiveError.invalidManifest
+        }
+        try Task.checkCancellation()
         return bytes
     }
 
