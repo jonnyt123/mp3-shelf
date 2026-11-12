@@ -255,8 +255,21 @@ struct NowPlayingView: View {
                                         ? "\(displayedTime.shelfClock) of \(seekableDuration.shelfClock)"
                                         : "Duration unavailable")
                                     .accessibilityHint(seekableDuration > 0
-                                        ? "Adjust to seek within the current recording"
+                                        ? "Swipe up or down to seek by 15 seconds"
                                         : "Seeking is unavailable until the recording duration is known")
+                                     // VoiceOver increments do not necessarily invoke
+                                     // Slider drag lifecycle callbacks. Use live time.
+                                     .accessibilityAdjustableAction { direction in
+                                         guard seekableDuration > 0 else { return }
+                                         switch direction {
+                                         case .increment:
+                                             seekBy(seekStep)
+                                         case .decrement:
+                                             seekBy(-seekStep)
+                                         @unknown default:
+                                             break
+                                         }
+                                     }
                                     HStack {
                                         Text(displayedTime.shelfClock)
                                             .accessibilityLabel("Elapsed time")
@@ -469,7 +482,6 @@ struct NowPlayingView: View {
             .navigationDestination(isPresented: $showLyrics) {
                 if let id = playback.currentTrackID { LyricsView(songID: id) }
             }
-            .onChange(of: playback.currentTrackID) { _, _ in draggingTime = nil }
              .onChange(of: showQueue) { _, presented in
                  if !presented { queueButtonFocused = true }
              }
