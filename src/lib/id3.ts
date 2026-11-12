@@ -14,4 +14,19 @@ export function parseId3Bytes(bytes:Uint8Array):AudioMetadata{
  }
  return result;
 }
-export async function readAudioMetadata(file:Blob):Promise<AudioMetadata>{try{return parseId3Bytes(new Uint8Array(await file.slice(0,2*1024*1024).arrayBuffer()))}catch{return{}}}
+export async function readAudioMetadata(file:Blob):Promise<AudioMetadata>{
+ try{
+  // Most imported recordings have no ID3v2 header. Reading only ten bytes
+  // first avoids allocating a 2 MiB buffer per file during bulk imports.
+  const MAX_TAG_READ=2*1024*1024;
+  const header=new Uint8Array(await file.slice(0,10).arrayBuffer());
+  if(header.length<10||header[0]!==73||header[1]!==68||header[2]!==51)return{};
+  // ID3v2 sizes are four 7-bit syncsafe bytes. Refuse malformed headers
+  // rather than trusting a corrupt length or reading beyond our memory cap.
+  if(header.slice(6,10).some(byte=>byte>127))return{};
+  const declared=10+syncSafe(header,6);
+  if(declared<=10)return{};
+  const bytes=new Uint8Array(await file.slice(0,Math.min(MAX_TAG_READ,declared)).arrayBuffer());
+  return parseId3Bytes(bytes);
+ }catch{return{}}
+}
