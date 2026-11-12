@@ -34,12 +34,23 @@ done
 if [[ "$SMOKE" == true && "$MODE" != native && "$MODE" != all ]]; then echo 'ERROR: --smoke requires native mode.' >&2; exit 2; fi
 cd "$ROOT"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/mp3-shelf-verification.XXXXXXXX")"
-COMMIT="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
+# A parent repository or a malformed ref must never be accepted as this project's
+# release candidate. Validate the repository root and full commit identity before
+# running dependency installation or producing SHA-bound evidence.
+valid_candidate() {
+  local root sha
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [[ "$(cd "$root" && pwd -P)" == "$ROOT" ]] || return 1
+  sha="$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || return 1
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$sha"
+}
+COMMIT="$(valid_candidate || echo unknown)"
 # Git failures must never be interpreted as an empty (clean) status.
 # Capture both exit status and output before testing checkout identity.
 checkout_unchanged() {
   local current status
-  current="$(git rev-parse --verify HEAD 2>/dev/null)" || return 1
+  current="$(valid_candidate)" || return 1
   [[ "$current" == "$COMMIT" ]] || return 1
   status="$(git status --porcelain --untracked-files=all 2>/dev/null)" || return 1
   [[ -z "$status" ]]
