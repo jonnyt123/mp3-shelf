@@ -95,6 +95,51 @@ struct PortableShelfArchiveTests {
         let validAudioBytes = try Data(contentsOf: validAudioExtract)
         assert(validAudioBytes == originalBytes)
         try FileManager.default.removeItem(at: validAudioExtract)
+        // A previously inspected archive may be replaced by Files or edited
+        // before a track/cover is extracted. Its manifest cannot authorize
+        // bytes from another inode or a mutated version of the same inode.
+        let identityBackup = folder.appendingPathComponent("identity-check.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: song, audioURL: audio, artwork: Data([1, 2, 3]), lyrics: nil)
+        ], playlists: [list], to: identityBackup)
+        let inspected = try PortableShelfArchive.open(identityBackup)
+        let identityAudio = inspected.manifest.tracks[0].audio
+        let identityArt = inspected.manifest.tracks[0].artwork!
+        let cover = try PortableShelfArchive.readBytes(identityArt, from: inspected)
+        assert(cover == Data([1, 2, 3]))
+        let beforeReplacement = try Data(contentsOf: identityBackup)
+        let replacement = folder.appendingPathComponent("replacement.mp3shelf")
+        try beforeReplacement.write(to: replacement)
+        try FileManager.default.removeItem(at: identityBackup)
+        try FileManager.default.moveItem(at: replacement, to: identityBackup)
+        do {
+            let extracted = try PortableShelfArchive.extract(identityAudio, from: inspected, extensionName: "mp3")
+            try? FileManager.default.removeItem(at: extracted)
+            fatalError("A replaced backup must not be extracted using stale manifest")
+        } catch PortableShelfArchive.ArchiveError.invalidFile {
+            // Expected.
+        }
+        do {
+            _ = try PortableShelfArchive.readBytes(identityArt, from: inspected)
+            fatalError("A replaced backup must not supply artwork under stale manifest")
+        } catch PortableShelfArchive.ArchiveError.invalidFile {
+            // Expected.
+        }
+        let reopened = try PortableShelfArchive.open(identityBackup)
+        let mutation = try FileHandle(forUpdating: identityBackup)
+        try mutation.seek(toOffset: UInt64(beforeReplacement.count - 1))
+        try mutation.write(contentsOf: Data([beforeReplacement.last! ^ 0xFF]))
+        try mutation.synchronize()
+        try mutation.close()
+        do {
+            _ = try PortableShelfArchive.readBytes(reopened.manifest.tracks[0].artwork!, from: reopened)
+            fatalError("Same-inode archive mutation must invalidate prior inspection")
+        } catch PortableShelfArchive.ArchiveError.invalidFile {
+            // Expected.
+        }
+        let preservedSource = try Data(contentsOf: audio)
+        assert(preservedSource == originalBytes)
+        print("PASS: stale archive inspection rejects replacement and same-inode mutation")
         print("PASS: audio export rejects symlinks and directories; regular audio round-trips")
 
         let database = folder.appendingPathComponent("library.json")
