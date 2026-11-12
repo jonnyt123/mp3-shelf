@@ -1027,3 +1027,50 @@ describe("deletion recovery journal replacement before playlist writes",()=>{
   });
  }
 });
+
+describe("restore journal replacement before playlist persistence",()=>{
+ it("preserves concurrent playlist state and the replacement restore intent",()=>{
+  const key="playlists", journalKey="mp3-shelf-restore-pending";
+  const original=[{id:"local",name:"Local",trackIds:["old"]}];
+  const imported=[{id:"new",name:"New",trackIds:["new"]}];
+  const values=new Map<string,string>([[key,JSON.stringify(original)]]);
+  const base={
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+  stagePlaylistRestore(base,key,[{id:"new"}],imported);
+  const initialJournal=values.get(journalKey);
+  const replacement=JSON.stringify({version:1,key,trackIds:["later"],playlists:[{id:"later",name:"Later",trackIds:["later"]}]});
+  let playlistReads=0,playlistWrites=0;
+  const racing={
+   ...base,
+   getItem:(name:string)=>{
+    if(name===key&&++playlistReads===2)values.set(journalKey,replacement);
+    return base.getItem(name);
+   },
+   setItem:(name:string,value:string)=>{
+    if(name===key)playlistWrites++;
+    base.setItem(name,value);
+   }
+  };
+  expect(initialJournal).not.toBe(replacement);
+  expect(()=>recoverPlaylistRestore(racing,new Set(["old","new"]),key))
+   .toThrow("Pending backup restore changed before playlist commit");
+  expect(playlistWrites).toBe(0);
+  expect(values.get(key)).toBe(JSON.stringify(original));
+  expect(values.get(journalKey)).toBe(replacement);
+ });
+ it("still commits a restore when its journal remains owned",()=>{
+  const key="playlists", values=new Map<string,string>();
+  const storage={
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+  const playlist={id:"new",name:"New",trackIds:["song"]};
+  stagePlaylistRestore(storage,key,[{id:"song"}],[playlist]);
+  expect(recoverPlaylistRestore(storage,new Set(["song"]),key)).toEqual([playlist]);
+  expect(values.get("mp3-shelf-restore-pending")).toBeUndefined();
+ });
+});
