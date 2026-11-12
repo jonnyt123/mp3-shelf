@@ -92,6 +92,20 @@ enum SpotifyPaginationSlotTests {
             from: #"{"items":[],"next":null}"#.data(using: .utf8)!)
         check(emptyPage.rawItemCount == 0 && emptyPage.items.isEmpty,
               "genuinely empty page retains zero raw slots")
+        // A malicious or broken provider response must not decode more than
+        // the requested 50 collection slots into an unbounded metadata array.
+        let fifty = "{\"items\":[" + Array(repeating: "null", count: 50).joined(separator: ",") + "],\"next\":null}"
+        let bounded = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+            from: fifty.data(using: .utf8)!)
+        check(bounded.rawItemCount == 50, "maximum 50-slot page accepted")
+        let fiftyOne = "{\"items\":[" + Array(repeating: "null", count: 51).joined(separator: ",") + "],\"next\":null}"
+        do {
+            _ = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
+                from: fiftyOne.data(using: .utf8)!)
+            fatalError("FAIL: oversized 51-slot page accepted")
+        } catch DecodingError.dataCorrupted {
+            print("PASS: oversized page rejected during decoding")
+        }
         // Deeply malformed neighbors must not shift the pagination cursor.
         let nested = try JSONDecoder().decode(SpotifyPage<FixtureTrack>.self,
             from: #"{"items":[{"name":"before"},{"name":["wrong"]},{"unexpected":{"deep":[1,2,3]}},{"name":"after"}],"next":"?offset=4"}"#.data(using: .utf8)!)
