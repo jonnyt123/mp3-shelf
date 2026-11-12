@@ -89,10 +89,10 @@ enum SpotifyPaginationSlotTests {
         // Duration is evidence for exact-recording matching, never a reason
         // to auto-select a different version when the provider is malformed.
         let durationCases = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,
-            from: #"{\"items\":[{\"track\":{\"name\":\"Negative\",\"type\":\"track\",\"artists\":[{\"name\":\"A\"}],\"duration_ms\":-1000}},{\"track\":{\"name\":\"Zero\",\"type\":\"track\",\"artists\":[{\"name\":\"A\"}],\"duration_ms\":0}},{\"track\":{\"name\":\"Overflow\",\"type\":\"track\",\"artists\":[{\"name\":\"A\"}],\"duration_ms\":90000000}},{\"track\":{\"name\":\"Normal\",\"type\":\"track\",\"artists\":[{\"name\":\"A\"}],\"duration_ms\":212345}}],\"next\":null}"#.data(using: .utf8)!)
+            from: #"{"items":[{"track":{"name":"Negative","type":"track","artists":[{"name":"A"}],"duration_ms":-1000}},{"track":{"name":"Zero","type":"track","artists":[{"name":"A"}],"duration_ms":0}},{"track":{"name":"Overflow","type":"track","artists":[{"name":"A"}],"duration_ms":90000000}},{"track":{"name":"Normal","type":"track","artists":[{"name":"A"}],"duration_ms":212345}}],"next":null}"#.data(using: .utf8)!)
         check(durationCases.rawItemCount == 4 && durationCases.items.count == 4,
               "invalid durations do not discard otherwise usable recordings")
-        check(durationCases.items.compactMap(\\.track).map(\\.duration_ms) == [nil, nil, nil, 212345],
+        check(durationCases.items.compactMap(\.track).map(\.duration_ms) == [nil, nil, nil, 212345],
               "negative, zero and implausible durations are excluded from matching evidence")
         check(mixed.next == "?limit=5&offset=5",
               "nested metadata failures do not corrupt continuation cursor")
