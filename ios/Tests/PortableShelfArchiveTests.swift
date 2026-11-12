@@ -842,6 +842,34 @@ struct PortableShelfArchiveTests {
         assert(try Data(contentsOf: comparisonA) == comparisonBytes)
         print("PASS: duplicate audio comparison rejects nonfiles and changed bytes")
 
+        // A valid archive range is not authority to restore arbitrary bytes.
+        // Only exact manifest-declared audio/artwork slices may be accessed.
+        let guardedArchive = try PortableShelfArchive.open(portableURL)
+        let guardedAudio = guardedArchive.manifest.tracks[0].audio
+        let shiftedAudio = PortableShelfArchive.Part(
+            offset: guardedAudio.offset + 1,
+            length: guardedAudio.length - 1,
+            type: guardedAudio.type)
+        do {
+            let unexpected = try PortableShelfArchive.extract(
+                shiftedAudio, from: guardedArchive, extensionName: "mp3")
+            try? FileManager.default.removeItem(at: unexpected)
+            fatalError("Accepted undeclared audio subrange")
+        } catch PortableShelfArchive.ArchiveError.invalidRange {
+            // Expected: even a bounded range must be declared.
+        }
+        do {
+            _ = try PortableShelfArchive.readBytes(guardedAudio, from: guardedArchive)
+            fatalError("Read audio bytes through artwork API")
+        } catch PortableShelfArchive.ArchiveError.invalidRange {
+            // Expected: artwork reads cannot expose audio.
+        }
+        let legitimate = try PortableShelfArchive.extract(
+            guardedAudio, from: guardedArchive, extensionName: "mp3")
+        assert(try Data(contentsOf: legitimate) == originalBytes)
+        try FileManager.default.removeItem(at: legitimate)
+        print("PASS: archive extraction permits only declared media slices")
+
         print("Portable MP3 Shelf v1 archive round-trip and validation passed.")
     }
 }
