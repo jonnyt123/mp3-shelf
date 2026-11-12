@@ -468,12 +468,41 @@ struct PlaybackQueueSheet: View {
         playback.removeQueuedTrack(trackID)
     }
 
-    // Preserve the selected song as the accessibility focus target after a
-    // reorder, rather than letting SwiftUI jump to an unrelated row.
-    private func reorder(_ trackID: UUID, earlier: Bool) {
+    // A queue mutation must leave a usable focus target, even when playback
+    // advances at the same moment or a requested move is already at the edge.
+    private func focusAfterQueueMutation(_ trackID: UUID) {
         pendingQueueFocusID = trackID
         pendingEmptyQueueFocus = false
+    }
+
+    private func reorder(_ trackID: UUID, earlier: Bool, in upcoming: [MusicTrack]) {
+        guard let index = upcoming.firstIndex(where: { $0.id == trackID }),
+              earlier ? index > 0 : index < upcoming.count - 1 else { return }
+        focusAfterQueueMutation(trackID)
         playback.moveQueuedTrack(trackID, earlier: earlier)
+    }
+
+    private func playNext(_ trackID: UUID) {
+        focusAfterQueueMutation(trackID)
+        playback.playQueuedTrackNext(trackID)
+    }
+
+    // Large-text users should not have to open a context menu for every
+    // reorder. The same bounded operations back the menu and VoiceOver.
+    private func moveButton(_ track: MusicTrack, earlier: Bool,
+                            in upcoming: [MusicTrack]) -> some View {
+        Button {
+            reorder(track.id, earlier: earlier, in: upcoming)
+        } label: {
+            Image(systemName: earlier ? "arrow.up" : "arrow.down")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(ShelfTheme.accent)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(earlier ? "Move earlier" : "Move later"): \(track.title)")
+        .accessibilityHint("Change this song's position in the upcoming queue")
     }
 
     var body: some View {
@@ -544,8 +573,14 @@ struct PlaybackQueueSheet: View {
                                             .foregroundStyle(ShelfTheme.subdued)
                                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                     }
-                                    if !dynamicTypeSize.isAccessibilitySize {
-                                        Spacer(minLength: 6)
+                                    Spacer(minLength: 6)
+                                    if dynamicTypeSize.isAccessibilitySize {
+                                        if index > 0 {
+                                            moveButton(track, earlier: true, in: upcoming)
+                                        }
+                                        if index < upcoming.count - 1 {
+                                            moveButton(track, earlier: false, in: upcoming)
+                                        }
                                     }
                                     Menu {
                                         Button {
@@ -554,20 +589,20 @@ struct PlaybackQueueSheet: View {
                                             Label("Play now", systemImage: "play.fill")
                                         }
                                         Button {
-                                            playback.playQueuedTrackNext(track.id)
+                                            playNext(track.id)
                                         } label: {
                                             Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
                                         }
                                         if index > 0 {
                                             Button {
-                                                reorder(track.id, earlier: true)
+                                                reorder(track.id, earlier: true, in: upcoming)
                                             } label: {
                                                 Label("Move earlier", systemImage: "arrow.up")
                                             }
                                         }
                                         if index < upcoming.count - 1 {
                                             Button {
-                                                reorder(track.id, earlier: false)
+                                                reorder(track.id, earlier: false, in: upcoming)
                                             } label: {
                                                 Label("Move later", systemImage: "arrow.down")
                                             }
@@ -594,13 +629,13 @@ struct PlaybackQueueSheet: View {
                                 .premiumCard(radius: 17)
                                 .accessibilityElement(children: .contain)
                                 .accessibilityAction(named: "Play next") {
-                                    playback.playQueuedTrackNext(track.id)
+                                    playNext(track.id)
                                 }
                                 .accessibilityAction(named: "Move earlier") {
-                                    if index > 0 { reorder(track.id, earlier: true) }
+                                    if index > 0 { reorder(track.id, earlier: true, in: upcoming) }
                                 }
                                 .accessibilityAction(named: "Move later") {
-                                    if index < upcoming.count - 1 { reorder(track.id, earlier: false) }
+                                    if index < upcoming.count - 1 { reorder(track.id, earlier: false, in: upcoming) }
                                 }
                                 .accessibilityAction(named: "Remove from queue") {
                                     removeFromQueue(track.id, at: index, in: upcoming)
