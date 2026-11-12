@@ -36,7 +36,7 @@ cd "$ROOT"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/mp3-shelf-verification.XXXXXXXX")"
 COMMIT="$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)"
 DIRTY=unknown
-if [[ "$COMMIT" != unknown ]]; then DIRTY=no; [[ -z "$(git status --porcelain)" ]] || DIRTY=yes; fi
+if [[ "$COMMIT" != unknown ]]; then DIRTY=no; [[ -z "$(git status --porcelain --untracked-files=all)" ]] || DIRTY=yes; fi
 STEP=none; COMPLETED=(); RECEIPT_STEPS=()
 # Release evidence must be bound to a reproducible, clean Git commit.
 report() {
@@ -47,7 +47,21 @@ report() {
   # Previously "|| true" discarded receipt failures while the summary still
   # advertised PASS, allowing an apparently green but unreviewable run.
   trap - EXIT
+  # Revalidate the source at receipt time, not only at the start or after
+  # the final test. A failing command, EXIT hook, or intervening process may
+  # have changed HEAD or introduced files after the last integrity step.
+  # A changed checkout must never produce a successful SHA-bound receipt.
   if [[ "$COMMIT" != unknown && "$DIRTY" == no ]]; then
+    if [[ "$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)" != "$COMMIT" ||
+          -n "$(git status --porcelain --untracked-files=all 2>/dev/null || echo status-failed)" ]]; then
+      receipt_state='UNAVAILABLE_CHECKOUT_CHANGED'
+      if [[ "$code" -eq 0 ]]; then
+        code=1
+        echo 'ERROR: Checkout changed before receipt generation; refusing release evidence.' >&2
+      fi
+    fi
+  fi
+  if [[ "$COMMIT" != unknown && "$DIRTY" == no && "$receipt_state" != UNAVAILABLE_CHECKOUT_CHANGED ]]; then
     if node "$ROOT/scripts/local-evidence.mjs" "$OUT/local-evidence.json" "$COMMIT" "$DIRTY" "$MODE" "$code" "$OUT" "${RECEIPT_STEPS[@]}"; then
       receipt_state='CREATED_UNVERIFIED'
       # Receipt creation is not evidence verification. Re-open the persisted
@@ -147,7 +161,7 @@ fi
 # Tests/build tools may rewrite tracked files or change HEAD during execution.
 if [[ "$MODE" == web || "$MODE" == all ]]; then
   STEP=post-web-checkout-integrity
-  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain)" ]]; then
+  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain --untracked-files=all)" ]]; then
     echo 'ERROR: Web verification changed the candidate commit or tracked checkout; results are not release evidence.' >&2
     exit 2
   fi
@@ -169,7 +183,7 @@ if [[ "$MODE" == native || "$MODE" == all ]]; then
   run native-local-release bash ios/scripts/verify-local-release.sh "${native_args[@]}"
   # Native builds can rewrite tracked project settings; refuse stale evidence.
   STEP=post-native-checkout-integrity
-  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain)" ]]; then
+  if [[ "$(git rev-parse --verify HEAD)" != "$COMMIT" || -n "$(git status --porcelain --untracked-files=all)" ]]; then
     echo 'ERROR: Native verification changed the candidate commit or tracked checkout; results are not release evidence.' >&2
     exit 2
   fi
