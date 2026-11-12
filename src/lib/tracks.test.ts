@@ -50,6 +50,31 @@ describe("bulk import bounded metadata work",()=>{
 
 describe("restore failure safety",()=>{
  const makeTrack=(id:string):Track=>({id,name:id,size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])});
+ it("rejects corrupt restore records atomically before opening IndexedDB",async()=>{
+  const valid=makeTrack("valid-before-invalid");
+  const badCases:Track[]=[
+   {...makeTrack("empty-audio"),size:0,blob:new Blob([])},
+   {...makeTrack("wrong-size"),size:99},
+   {...makeTrack("invalid-date"),importedAt:Number.NaN},
+   {...makeTrack("blank-name"),name:"   "},
+   {...makeTrack("missing-blob"),blob:undefined as unknown as Blob},
+   {...makeTrack("empty-artwork"),artwork:new Blob([])},
+   {...makeTrack("invalid-size"),size:Number.POSITIVE_INFINITY},
+  ];
+  for(const invalid of badCases){
+   await expect(restoreTracks([valid,invalid])).rejects.toThrow("Invalid recording metadata or audio");
+   expect((await listTracks()).some(track=>track.id===valid.id||track.id===invalid.id)).toBe(false);
+  }
+ });
+ it("accepts complete restore records with matching audio and optional artwork",async()=>{
+  const track={...makeTrack("validated-audio"),artwork:new Blob([new Uint8Array([1])],{type:"image/png"})};
+  try{
+   expect(await restoreTracks([track])).toBe(1);
+   const saved=(await listTracks()).find(item=>item.id===track.id);
+   expect(saved?.size).toBe(saved?.blob.size);
+   expect(saved?.artwork?.size).toBe(1);
+  }finally{await removeTrack(track.id)}
+ });
  it("rejects duplicate backup IDs without writing",async()=>{
   await expect(restoreTracks([makeTrack("duplicate-restore"),makeTrack("duplicate-restore")])).rejects.toThrow("duplicate track ID");
   expect((await listTracks()).some(t=>t.id==="duplicate-restore")).toBe(false);
