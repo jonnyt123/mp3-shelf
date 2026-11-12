@@ -92,12 +92,26 @@ final class SpotifyService: NSObject, ObservableObject {
             // A newer sign-in must retain its own session reference.
             guard signInGeneration == authorizationGeneration else { throw SpotifyError.notConnected }
             session = nil
-            guard callback.scheme == "mp3shelf-auth", callback.host == "callback",
-                  let receivedState = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "state" })?.value,
+            // The callback is a credential-bearing trust boundary. Reject
+            // ambiguous duplicate parameters, fragments and unexpected URL
+            // structure rather than trusting the first matching query item.
+            // A provider error and an authorization code must never coexist.
+            guard let callbackParts = URLComponents(url: callback, resolvingAgainstBaseURL: false),
+                  callbackParts.scheme?.lowercased() == "mp3shelf-auth",
+                  callbackParts.host?.lowercased() == "callback",
+                  callbackParts.path.isEmpty || callbackParts.path == "/",
+                  callbackParts.user == nil, callbackParts.password == nil,
+                  callbackParts.port == nil, callbackParts.fragment == nil,
+                  let query = callbackParts.queryItems,
+                  query.allSatisfy({ ["state", "code", "error", "error_description"].contains($0.name) }),
+                  Set(query.map(\.name)).count == query.count,
+                  let receivedState = query.first(where: { $0.name == "state" })?.value,
                   receivedState == state else { throw SpotifyError.badCallback }
-            let query = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            if let error = query.first(where: { $0.name == "error" })?.value { throw SpotifyError.api(error) }
-            guard let code = query.first(where: { $0.name == "code" })?.value else { throw SpotifyError.badCallback }
+            if let error = query.first(where: { $0.name == "error" })?.value {
+                throw SpotifyError.api(error)
+            }
+            guard let code = query.first(where: { $0.name == "code" })?.value,
+                  !code.isEmpty else { throw SpotifyError.badCallback }
             // Disconnect can cancel the browser while its completion is queued.
             // Do not exchange a stale authorization code or perform an OAuth
             // request after the user has explicitly revoked this sign-in.
