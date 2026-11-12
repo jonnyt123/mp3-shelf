@@ -727,6 +727,9 @@ enum PortableShelfArchive {
     /// Filename and size alone are not reliable duplicate identifiers: different
     /// recordings can have identical names and byte counts.
     static func audioFilesIdentical(_ firstURL: URL, _ secondURL: URL) -> Bool {
+        // Restore cancellation must not spend minutes comparing large files
+        // or treat an interrupted comparison as proof of a duplicate.
+        guard !Task.isCancelled else { return false }
         guard let first = try? FileHandle(forReadingFrom: firstURL) else { return false }
         defer { try? first.close() }
         guard let second = try? FileHandle(forReadingFrom: secondURL) else { return false }
@@ -765,6 +768,7 @@ enum PortableShelfArchive {
             try second.seek(toOffset: 0)
             var remaining = firstLength
             while remaining > 0 {
+                guard !Task.isCancelled else { return false }
                 let amount = Int(min(remaining, 64 * 1024))
                 // Independent handles may return different short-read
                 // boundaries for identical bytes. Compare complete chunks.
@@ -784,7 +788,8 @@ enum PortableShelfArchive {
             }
             var firstAfter = stat()
             var secondAfter = stat()
-            return fstat(first.fileDescriptor, &firstAfter) == 0 &&
+            return !Task.isCancelled &&
+                   fstat(first.fileDescriptor, &firstAfter) == 0 &&
                    fstat(second.fileDescriptor, &secondAfter) == 0 &&
                    firstIdentity.matches(firstAfter) &&
                    secondIdentity.matches(secondAfter) &&
