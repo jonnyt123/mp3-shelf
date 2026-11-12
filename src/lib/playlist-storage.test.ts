@@ -1238,8 +1238,8 @@ describe("deletion final journal retirement cross-tab safety",()=>{
   const storage={
    ...base,
    getItem:(name:string)=>{
-    // 1: before audio deletion, 2: reconciliation, 3: final verification
-    if(name===key&&++reads===3)
+    // 1: baseline, 2: staging, 3: pre-delete, 4: reconciliation, 5: final verification
+    if(name===key&&++reads===5)
      base.setItem(key,JSON.stringify([{id:"mix",name:"Remote",trackIds:["keep","gone"]}]));
     return base.getItem(name);
    }
@@ -1258,7 +1258,7 @@ describe("deletion final journal retirement cross-tab safety",()=>{
   const storage={
    ...base,
    getItem:(name:string)=>{
-    if(name===key&&++reads===4)
+    if(name===key&&++reads===6)
      base.setItem(key,JSON.stringify([{id:"mix",name:"Concurrent rename",trackIds:["keep"]}]));
     return base.getItem(name);
    }
