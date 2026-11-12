@@ -271,8 +271,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             fulfilled.failureReason = "This recording is already saved offline"
             fulfilled.nextRetryAt = nil
             fulfilled.alternativeSources = nil
-            tickets[id] = fulfilled
-            persist()
+            // A retry may discover that another import already fulfilled this
+            // recording. Commit the terminal ticket before acknowledging it to
+            // the library; otherwise a failed manifest write resurrects the
+            // obsolete failed ticket on the next launch.
+            var updated = tickets
+            updated[id] = fulfilled
+            do {
+                try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            } catch {
+                noteQueueWriteFailure(error, for: id)
+                return
+            }
+            tickets = updated
             library.finishedBackgroundDownload(for: previous.playlistID, succeeded: true)
             reconcileAlreadyStoredDownloads()
             updatePending()
