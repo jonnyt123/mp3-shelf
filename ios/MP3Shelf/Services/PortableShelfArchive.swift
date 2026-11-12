@@ -194,6 +194,21 @@ enum PortableShelfArchive {
         return !isValid(bytes)
     }
 
+    /// The audio catalog is expected to reference actual app-owned recordings.
+    /// Refuse symbolic links, directories and other special files rather than
+    /// following a damaged catalog entry into unrelated device content.
+    /// Repeat at the copy boundary to catch changes after manifest sizing.
+    private static func validateAudioSource(_ url: URL) throws {
+        let properties = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+        guard properties.isSymbolicLink != true, properties.isRegularFile == true else {
+            throw ArchiveError.invalidManifest
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard (attributes[.type] as? FileAttributeType) == .typeRegular else {
+            throw ArchiveError.invalidManifest
+        }
+    }
+
     static func export(_ inputs: [MediaInput], playlists: [MusicPlaylist], to destination: URL) throws {
         var parts: [(url: URL?, bytes: Data?, expectedLength: Int64)] = []
         var offset: Int64 = 0
@@ -205,6 +220,7 @@ enum PortableShelfArchive {
             throw ArchiveError.invalidManifest
         }
         for item in inputs {
+            try validateAudioSource(item.audioURL)
             let ext = item.audioURL.pathExtension.lowercased()
             guard ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(ext) else {
                 throw ArchiveError.unsupportedAudio
@@ -351,6 +367,7 @@ enum PortableShelfArchive {
     /// removes its unpublished partial archive without touching user audio.
     private static func copyAudioPart(from url: URL, expectedLength: Int64,
                                       to output: FileHandle) throws {
+        try validateAudioSource(url)
         let input = try FileHandle(forReadingFrom: url)
         defer { try? input.close() }
         // The manifest records the size measured before export. Reject both
