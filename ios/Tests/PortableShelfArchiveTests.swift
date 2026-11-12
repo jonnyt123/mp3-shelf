@@ -8,6 +8,33 @@ struct PortableShelfArchiveTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
+        // A pre-cancelled export must not publish a misleading empty backup.
+        // Gate the worker so cancellation always precedes its first check.
+        let cancelledExport = folder.appendingPathComponent("cancelled.mp3shelf")
+        let gate = DispatchSemaphore(value: 0)
+        let completed = DispatchSemaphore(value: 0)
+        let cancelledWorker = Task.detached {
+            gate.wait()
+            do {
+                try PortableShelfArchive.export([], playlists: [], to: cancelledExport)
+                fatalError("Cancelled export unexpectedly published an archive")
+            } catch is CancellationError {
+                // Expected.
+            } catch {
+                fatalError("Unexpected cancellation failure: \(error)")
+            }
+            completed.signal()
+        }
+        cancelledWorker.cancel()
+        gate.signal()
+        guard completed.wait(timeout: .now() + 10) == .success else {
+            fatalError("Cancelled export did not terminate promptly")
+        }
+        assert(!FileManager.default.fileExists(atPath: cancelledExport.path))
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        assert(!leftovers.contains { $0.contains("cancelled.mp3shelf") && $0.hasSuffix(".partial") })
+        print("PASS: cancelled archive export publishes no output or partial files")
+
         let audio = folder.appendingPathComponent("my-song.mp3")
         let originalBytes = Data([0x49, 0x44, 0x33, 0, 1, 2, 3, 4, 5, 6, 7])
         try originalBytes.write(to: audio)
