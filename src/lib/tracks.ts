@@ -104,12 +104,23 @@ export async function renameTrack(id:string,name:string):Promise<void>{
 }
 export async function restoreTracks(tracks:Track[]):Promise<number>{
  if(!tracks.length)return 0;
- // Reject duplicate backup records before opening a write transaction: IDB put()
- // otherwise silently overwrites earlier entries with the same key.
+ // Validate the entire archive before opening a write transaction. This
+ // function is also callable independently of the .mp3shelf parser, so do not
+ // trust TypeScript annotations or allow corrupt/empty audio into the library.
+ // Rejecting up front avoids a partially committed batch of valid recordings.
  const ids=new Set<string>();
  for(const track of tracks){
-  if(typeof track.id!=="string"||!track.id.trim()||ids.has(track.id))throw new Error("Invalid or duplicate track ID in restore.");
+  if(!track||typeof track!=="object"||
+     typeof track.id!=="string"||!track.id.trim()||ids.has(track.id))
+   throw new Error("Invalid or duplicate track ID in restore.");
   ids.add(track.id);
+  if(typeof track.name!=="string"||!track.name.trim()||
+     typeof track.type!=="string"||
+     !Number.isSafeInteger(track.size)||track.size<=0||
+     !Number.isFinite(track.importedAt)||
+     !(track.blob instanceof Blob)||track.blob.size!==track.size||
+     (track.artwork!==undefined&&(!(track.artwork instanceof Blob)||track.artwork.size===0)))
+   throw new Error("Invalid recording metadata or audio in restore.");
  }
  const db=await openDatabase();
  try{
