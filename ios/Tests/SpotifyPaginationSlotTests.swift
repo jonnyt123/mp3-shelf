@@ -98,7 +98,7 @@ enum SpotifyPaginationSlotTests {
         // matching. Selection must fall back to the legacy recording rather
         // than silently importing a title without a credible artist.
         let fallbackCases = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,
-            from: #"{\"items\":[{\"item\":{\"name\":\"Wrong Primary\",\"type\":\"track\",\"artists\":[{\"name\":\"  \"}]},\"track\":{\"name\":\"Correct Studio\",\"type\":\"track\",\"artists\":[{\"name\":\"Actual Artist\"}],\"duration_ms\":203456}},{\"item\":{\"name\":\"Podcast\",\"type\":\"episode\",\"artists\":[{\"name\":\"Host\"}]},\"track\":{\"name\":\"Actual Recording\",\"type\":\"track\",\"artists\":[{\"name\":\"Actual Artist\"}]}},{\"item\":{\"name\":\"Karaoke\",\"type\":\"episode\",\"artists\":[{\"name\":\"Host\"}]}},{\"track\":{\"name\":\"Missing Type\",\"artists\":[{\"name\":\"Artist\"}]}}],\"next\":\"?limit=4&offset=4\"}"#.data(using: .utf8)!)
+            from: #"{"items":[{"item":{"name":"Wrong Primary","type":"track","artists":[{"name":"  "}]},"track":{"name":"Correct Studio","type":"track","artists":[{"name":"Actual Artist"}],"duration_ms":203456}},{"item":{"name":"Podcast","type":"episode","artists":[{"name":"Host"}]},"track":{"name":"Actual Recording","type":"track","artists":[{"name":"Actual Artist"}]}},{"item":{"name":"Karaoke","type":"episode","artists":[{"name":"Host"}]}},{"track":{"name":"Missing Type","artists":[{"name":"Artist"}]}}],"next":"?limit=4&offset=4"}"#.data(using: .utf8)!)
         let recovered = fallbackCases.items.compactMap { entry -> SpotifyTrack? in
             [entry.item, entry.track].compactMap { $0 }.first {
                 $0.type == "track" &&
@@ -108,7 +108,7 @@ enum SpotifyPaginationSlotTests {
                 }
             }
         }
-        check(recovered.map(\\.name) == ["Correct Studio", "Actual Recording"],
+        check(recovered.map(\.name) == ["Correct Studio", "Actual Recording"],
               "unusable primary metadata falls back without accepting episodes or unknown types")
         check(recovered.first?.duration_ms == 203456 && fallbackCases.rawItemCount == 4 &&
               fallbackCases.next == "?limit=4&offset=4",
