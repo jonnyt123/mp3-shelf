@@ -44,3 +44,45 @@ describe("bounded ID3 metadata reads",()=>{
   expect(reads).toBe(1);
  });
 });
+
+describe("ID3 header integrity",()=>{
+ it("ignores unsupported ID3v2.2 and unknown versions rather than interpreting frame bytes",async()=>{
+  const title=frame("TIT2","False Title");
+  for(const version of [2,5,255]){
+   const tag=new Uint8Array(10+title.length);
+   tag.set([73,68,51,version,0,0,0,0,0,title.length]);
+   tag.set(title,10);
+   expect(parseId3Bytes(tag)).toEqual({});
+   const file=new Blob([tag,new Uint8Array(4096)]);
+   let reads=0;
+   const slice=file.slice.bind(file);
+   file.slice=((start?:number,end?:number,type?:string)=>{
+    reads++;
+    if(reads>1)throw new Error("Unexpected payload read");
+    return slice(start,end,type);
+   }) as typeof file.slice;
+   expect(await readAudioMetadata(file)).toEqual({});
+   expect(reads).toBe(1);
+  }
+ });
+ it("rejects declared tags larger than the file without reading beyond the header",async()=>{
+  const header=new Uint8Array([73,68,51,3,0,0,0,0,64,0]);
+  const file=new Blob([header,new Uint8Array(10)]);
+  let reads=0;
+  const slice=file.slice.bind(file);
+  file.slice=((start?:number,end?:number,type?:string)=>{
+   reads++;
+   if(reads>1)throw new Error("Unexpected payload read");
+   return slice(start,end,type);
+  }) as typeof file.slice;
+  expect(await readAudioMetadata(file)).toEqual({});
+  expect(reads).toBe(1);
+ });
+ it("continues to extract valid ID3v2.4 text frames",async()=>{
+  const title=frame("TIT2","Version Four");
+  const tag=new Uint8Array(10+title.length);
+  tag.set([73,68,51,4,0,0,0,0,0,title.length]);
+  tag.set(title,10);
+  expect(await readAudioMetadata(new Blob([tag]))).toMatchObject({title:"Version Four"});
+ });
+});
