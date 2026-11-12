@@ -506,7 +506,9 @@ struct PlaybackQueueSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(earlier ? "Move earlier" : "Move later"): \(track.title)")
-        .accessibilityHint("Change this song's position in the upcoming queue")
+        .accessibilityHint(earlier
+            ? "Move this song one position toward the start of the queue"
+            : "Move this song one position toward the end of the queue")
     }
 
     var body: some View {
@@ -577,14 +579,16 @@ struct PlaybackQueueSheet: View {
                                             .foregroundStyle(ShelfTheme.subdued)
                                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                     }
-                                    Spacer(minLength: 6)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .layoutPriority(1)
                                     if dynamicTypeSize.isAccessibilitySize {
-                                        if index > 0 {
-                                            moveButton(track, earlier: true, in: upcoming)
-                                        }
-                                        if index < upcoming.count - 1 {
-                                            moveButton(track, earlier: false, in: upcoming)
-                                        }
+                                        // Keep both actions in stable positions as the row moves.
+                                        // Disabling at the boundary avoids shifting the menu
+                                        // and VoiceOver targets during consecutive edits.
+                                        moveButton(track, earlier: true, in: upcoming)
+                                            .disabled(index == 0)
+                                        moveButton(track, earlier: false, in: upcoming)
+                                            .disabled(index == upcoming.count - 1)
                                     }
                                     Menu {
                                         Button {
