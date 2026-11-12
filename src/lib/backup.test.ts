@@ -124,7 +124,7 @@ describe("MP3 Shelf backups",()=>{
   for(const bad of invalidExport)
    expect(()=>createLibraryBackup([bad],[])).toThrow();
   const valid=createLibraryBackup([song],[]);
-  const magicLength=new TextEncoder().encode("MP3SHELF1\\n").length;
+  const magicLength=new TextEncoder().encode("MP3SHELF1\n").length;
   const header=await valid.slice(0,magicLength+4).arrayBuffer();
   const length=new DataView(header).getUint32(magicLength,true);
   const manifest=JSON.parse(await valid.slice(magicLength+4,magicLength+4+length).text());
