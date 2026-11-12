@@ -63,6 +63,9 @@ enum SpotifyPaginationSlotTests {
             "https://open.spotify.com/playlist/\(trackID)",
             "https://open.spotify.com/track/\(trackID)#fragment",
             "https://open.spotify.com/track/\(trackID)?redirect=evil",
+            "https://open.spotify.com/track/\(trackID)?si=0123456789ABCDEF&si=0123456789ABCDEF",
+            "https://open.spotify.com/track/\(trackID)?si=invalid!",
+            "https://open.spotify.com/track/\(trackID)?si=",
             "https://open.spotify.com/track/short"
         ] {
             check(SpotifyTrackLinks.canonicalURL(bad) == nil, "untrusted track URL rejected")
