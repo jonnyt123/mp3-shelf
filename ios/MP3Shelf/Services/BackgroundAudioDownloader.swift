@@ -178,6 +178,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     @discardableResult
     func enqueue(source: AudioCatalogMatch, requested: PlaylistWish, playlistID: UUID,
                  alternatives: [AudioCatalogMatch] = [], replacingRetry previousID: UUID? = nil) throws -> Bool {
+        // Discovery may have started before a manual import or another
+        // playlist's transfer finished. Reconcile those completed recordings
+        // before checking capacity, then refuse to enqueue a second copy.
+        // A search result is not proof of a saved recording: only the
+        // authoritative offline library can satisfy this request.
+        reconcileAlreadyStoredDownloads()
+        if library?.hasOfflineRecording(matching: requested) == true { return false }
         // Resolution suspends callers, so an earlier capacity check can be
         // stale. This MainActor check and ticket insertion have no await gap.
         guard BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount()),
