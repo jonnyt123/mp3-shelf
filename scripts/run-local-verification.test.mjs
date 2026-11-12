@@ -153,3 +153,20 @@ test('web preflight rejects an unstable HEAD before any dependency install', asy
     assert.doesNotMatch(r.stdout, /==> npm-ci|==> npm-test|==> npm-build/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('receipt verification cannot report PASS if the checkout mutates during validation', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  const begin = source.indexOf('if node "$ROOT/scripts/local-evidence.mjs" --verify');
+  const end = source.indexOf("receipt_state='VERIFICATION_FAILED'", begin);
+  assert.ok(begin > 0 && end > begin, 'independent receipt verification branch must exist');
+  const branch = source.slice(begin, end);
+  assert.match(branch, /if checkout_unchanged; then/);
+  assert.match(branch, /receipt_state='VERIFIED'/);
+  assert.match(branch, /receipt_state='UNAVAILABLE_CHECKOUT_CHANGED'/);
+  assert.match(branch, /Checkout changed during receipt verification/);
+  assert.ok(branch.indexOf('if checkout_unchanged; then') < branch.indexOf("receipt_state='VERIFIED'"),
+    'success must be gated by a fresh checkout check');
+  assert.ok(branch.indexOf('code=1') > branch.indexOf("receipt_state='UNAVAILABLE_CHECKOUT_CHANGED'"),
+    'checkout mutation must fail the command');
+});
