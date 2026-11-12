@@ -243,10 +243,16 @@ export function recoverFailedTrackDeletion(
     ...playlist,trackIds:playlist.trackIds.filter(id=>id!==entry.trackId)
    })));
   }
+  // A second tab can reattach the now-missing recording after our first
+  // reconciliation. Do not retire the durable intent while dangling links
+  // remain; the next recovery can safely repeat the cleanup.
+  const verified=parseStoredPlaylists(storage.getItem(entry.key));
+  if(verified.some(playlist=>playlist.trackIds.includes(entry.trackId)))
+   throw new Error("Missing-audio references changed during deletion recovery. Retry reconciliation.");
   if(storage.getItem(DELETE_RECOVERY_KEY)!==raw)
    throw new Error("Track deletion recovery changed before journal cleanup. Preserve the newer intent.");
   storage.removeItem(DELETE_RECOVERY_KEY);
-  return parseStoredPlaylists(storage.getItem(entry.key));
+  return verified;
  }
  const baseline=storage.getItem(entry.key);
  const current=parseStoredPlaylists(baseline);
