@@ -453,12 +453,24 @@ enum PortableShelfArchive {
               staged.manifest.playlists.count == lists.count else {
             throw ArchiveError.invalidManifest
         }
-        // Recheck before publication. Moving within the same directory avoids
-        // exposing a partially written archive to Files or backup importers.
-        guard !manager.fileExists(atPath: destination.path) else {
-            throw CocoaError(.fileWriteFileExists)
+        // Publish without replacing an existing user backup. A fileExists
+        // check followed by rename/move is not atomic: another export can
+        // create the destination between those operations, and POSIX rename
+        // may replace it. A same-directory hard link creates the final name
+        // atomically and fails with EEXIST instead of overwriting any bytes.
+        // Keep staging until publication succeeds so errors remain recoverable.
+        try Task.checkCancellation()
+        let published = staging.path.withCString { source in
+            destination.path.withCString { target in link(source, target) }
         }
-        try manager.moveItem(at: staging, to: destination)
+        guard published == 0 else {
+            let code = errno
+            if code == EEXIST { throw CocoaError(.fileWriteFileExists) }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        // The final name is already complete. Failure to unlink staging is
+        // harmless to the published archive; the outer catch cleans it up.
+        try? manager.removeItem(at: staging)
         } catch {
             try? manager.removeItem(at: staging)
             throw error
