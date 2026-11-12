@@ -68,6 +68,9 @@ export function verifyCheckoutIdentity(expectedSha, cwd = process.cwd()) {
       cwd, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe']
     }).trim();
+    const root = git('rev-parse', '--show-toplevel');
+    if (resolve(root) !== resolve(cwd))
+      return ['Verification must run at the candidate repository root.'];
     if (git('rev-parse', '--verify', 'HEAD') !== expectedSha)
       return ['Current Git HEAD does not match receipt SHA.'];
     if (git('status', '--porcelain', '--untracked-files=all') !== '')
