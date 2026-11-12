@@ -16,7 +16,12 @@ export async function listTracks():Promise<Track[]>{
  }finally{db.close()}
 }
 export async function importTracks(files:File[]):Promise<number>{
- const audio=files.filter(file=>file.type.startsWith("audio/")||/\.mp3$/i.test(file.name));
+ // Files providers sometimes omit the MIME type for M4A recordings.
+ // Never persist an empty recording as playable audio; it cannot be decoded,
+ // and would otherwise become a permanent broken library entry.
+ const audio=files.filter(file=>
+  file.size>0&&(file.type.startsWith("audio/")||/\.(mp3|m4a)$/i.test(file.name))
+ );
  if(!audio.length)return 0;
  // Bound concurrent 2 MiB ID3 reads: a large Files selection must not launch
  // hundreds of arrayBuffer allocations simultaneously on memory-limited iPhones.
