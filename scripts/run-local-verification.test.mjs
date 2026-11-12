@@ -88,7 +88,8 @@ test('receipt-time checkout identity is rechecked even after the final integrity
   assert.ok(recheck > 0 && receipt > recheck, 'checkout must be rechecked before receipt creation');
   assert.match(report, /git rev-parse --verify HEAD/);
   assert.match(report, /git status --porcelain --untracked-files=all/);
-  assert.match(report, /code=1[\\s\\S]*Checkout changed before receipt generation/);
+  assert.ok(report.indexOf('code=1', recheck) > recheck, 'successful execution must become failure');
+  assert.match(report, /Checkout changed before receipt generation/);
   assert.match(report, /receipt_state" != UNAVAILABLE_CHECKOUT_CHANGED/);
 });
 
