@@ -134,6 +134,56 @@ describe("existing recording metadata preflight",()=>{
  });
 });
 
+describe("large import IndexedDB preflight batching",()=>{
+ it("bounds each duplicate lookup transaction while preserving all new recordings",async()=>{
+  const files=Array.from({length:300},(_,i)=>new File([new Uint8Array([1,2,3])],`lookup-batch-${i}.mp3`,{type:"audio/mpeg",lastModified:551}));
+  const originalGetKey=IDBObjectStore.prototype.getKey;
+  const originalTransaction=IDBDatabase.prototype.transaction;
+  let lookups=0,readTransactions=0,maxPerTransaction=0,perTransaction=0;
+  IDBDatabase.prototype.transaction=function(...args){
+   if(args[1]==="readonly"){
+    readTransactions++;
+    perTransaction=0;
+   }
+   return originalTransaction.apply(this,args);
+  };
+  IDBObjectStore.prototype.getKey=function(...args){
+   lookups++;
+   perTransaction++;
+   maxPerTransaction=Math.max(maxPerTransaction,perTransaction);
+   return originalGetKey.apply(this,args);
+  };
+  try{
+   expect(await importTracks(files)).toBe(300);
+   expect(lookups).toBe(300);
+   expect(readTransactions).toBe(3);
+   expect(maxPerTransaction).toBeLessThanOrEqual(128);
+   expect((await listTracks()).filter(track=>track.id.startsWith("lookup-batch-"))).toHaveLength(300);
+  }finally{
+   IDBObjectStore.prototype.getKey=originalGetKey;
+   IDBDatabase.prototype.transaction=originalTransaction;
+   for(const file of files)await removeTrack(`${file.name}:${file.size}:${file.lastModified}`);
+  }
+ });
+ it("skips metadata reads across multiple preflight batches of existing recordings",async()=>{
+  const files=Array.from({length:260},(_,i)=>new File([new Uint8Array([1,2,3])],`lookup-existing-${i}.mp3`,{type:"audio/mpeg",lastModified:552}));
+  const originalSlice=File.prototype.slice;
+  try{
+   expect(await importTracks(files)).toBe(260);
+   let metadataReads=0;
+   File.prototype.slice=function(...args){
+    metadataReads++;
+    return originalSlice.apply(this,args);
+   };
+   expect(await importTracks(files)).toBe(0);
+   expect(metadataReads).toBe(0);
+  }finally{
+   File.prototype.slice=originalSlice;
+   for(const file of files)await removeTrack(`${file.name}:${file.size}:${file.lastModified}`);
+  }
+ });
+});
+
 describe("restore failure safety",()=>{
  const makeTrack=(id:string):Track=>({id,name:id,size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])});
  it("rejects corrupt restore records atomically before opening IndexedDB",async()=>{
