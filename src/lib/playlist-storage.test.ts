@@ -999,3 +999,31 @@ describe("post-deletion reconciliation cross-tab races",()=>{
   expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
  });
 });
+
+describe("deletion recovery journal replacement before playlist writes",()=>{
+ const key="playlists",journalKey="mp3-shelf-delete-recovery";
+ const original=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
+ for(const [label,audioExists] of [["deleted audio",false],["failed audio deletion",true]] as const){
+  it("does not reconcile a superseded intent for "+label,()=>{
+   const data=new Map<string,string>([
+    [key,JSON.stringify(audioExists?[{...original[0],trackIds:["keep"]}]:original)],
+    [journalKey,JSON.stringify({version:1,key,trackId:"remove",original})]
+   ]);
+   const replacement=JSON.stringify({version:1,key,trackId:"keep",original});
+   let journalReads=0;
+   const storage={
+    getItem:(name:string)=>{
+     if(name===journalKey&&++journalReads===2)data.set(journalKey,replacement);
+     return data.get(name)??null;
+    },
+    setItem:(name:string,value:string)=>{data.set(name,value)},
+    removeItem:(name:string)=>{data.delete(name)}
+   };
+   const before=data.get(key);
+   expect(()=>recoverFailedTrackDeletion(storage,new Set(audioExists?["keep","remove"]:["keep"])))
+    .toThrow("recovery changed before playlist");
+   expect(data.get(key)).toBe(before);
+   expect(data.get(journalKey)).toBe(replacement);
+  });
+ }
+});
