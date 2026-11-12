@@ -3,7 +3,6 @@ import Foundation
 // Run with: swift ios/Tests/SpotifyPaginationSlotTests.swift
 // Compiles the actual SpotifyPage decoder extracted from the production source.
 // No Spotify credentials, network access, Xcode project edits or mock decoder.
-@main
 enum SpotifyPaginationSlotTests {
     static func main() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -53,3 +52,5 @@ enum SpotifyPaginationSlotTests {
         guard task.terminationStatus == 0 else { throw NSError(domain: "SpotifyPaginationSlotTests", code: Int(task.terminationStatus)) }
     }
 }
+
+try SpotifyPaginationSlotTests.main()
