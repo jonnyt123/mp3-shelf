@@ -461,8 +461,12 @@ struct PlaybackQueueSheet: View {
 
     // Keep VoiceOver on the nearest surviving queue action after a deletion.
     // The focus target must be applied after the queue has published its new rows.
-    private func removeFromQueue(_ trackID: UUID, at index: Int, in upcoming: [MusicTrack]) {
-        let remaining = upcoming.filter { $0.id != trackID }
+    private func removeFromQueue(_ trackID: UUID) {
+        // Resolve against the live queue rather than a row's captured render.
+        // Playback may advance between opening a menu and choosing Remove.
+        let current = playback.queuedTracks
+        guard let index = current.firstIndex(where: { $0.id == trackID }) else { return }
+        let remaining = current.filter { $0.id != trackID }
         pendingQueueFocusID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
         pendingEmptyQueueFocus = remaining.isEmpty
         playback.removeQueuedTrack(trackID)
@@ -475,13 +479,12 @@ struct PlaybackQueueSheet: View {
         pendingEmptyQueueFocus = false
     }
 
-    private func reorder(_ trackID: UUID, earlier: Bool, in upcoming: [MusicTrack]) {
-        guard let index = upcoming.firstIndex(where: { $0.id == trackID }) else { return }
-        if earlier {
-            guard index > 0 else { return }
-        } else {
-            guard index < upcoming.count - 1 else { return }
-        }
+    private func reorder(_ trackID: UUID, earlier: Bool) {
+        // A queued row can outlive the snapshot it rendered from. Always
+        // recheck live boundaries before changing the play order.
+        let current = playback.queuedTracks
+        guard let index = current.firstIndex(where: { $0.id == trackID }) else { return }
+        guard earlier ? index > 0 : index < current.count - 1 else { return }
         focusAfterQueueMutation(trackID)
         playback.moveQueuedTrack(trackID, earlier: earlier)
     }
@@ -496,7 +499,7 @@ struct PlaybackQueueSheet: View {
     private func moveButton(_ track: MusicTrack, earlier: Bool,
                             in upcoming: [MusicTrack]) -> some View {
         Button {
-            reorder(track.id, earlier: earlier, in: upcoming)
+            reorder(track.id, earlier: earlier)
         } label: {
             Image(systemName: earlier ? "arrow.up" : "arrow.down")
                 .font(.body.weight(.semibold))
@@ -644,21 +647,21 @@ struct PlaybackQueueSheet: View {
                                         }
                                         if index > 0 {
                                             Button {
-                                                reorder(track.id, earlier: true, in: upcoming)
+                                                reorder(track.id, earlier: true)
                                             } label: {
                                                 Label("Move earlier", systemImage: "arrow.up")
                                             }
                                         }
                                         if index < upcoming.count - 1 {
                                             Button {
-                                                reorder(track.id, earlier: false, in: upcoming)
+                                                reorder(track.id, earlier: false)
                                             } label: {
                                                 Label("Move later", systemImage: "arrow.down")
                                             }
                                         }
                                         Divider()
                                         Button(role: .destructive) {
-                                            removeFromQueue(track.id, at: index, in: upcoming)
+                                            removeFromQueue(track.id)
                                         } label: {
                                             Label("Remove from queue", systemImage: "minus.circle")
                                         }
@@ -694,13 +697,13 @@ struct PlaybackQueueSheet: View {
                                     playNext(track.id)
                                 }
                                 .accessibilityAction(named: "Move earlier") {
-                                    if index > 0 { reorder(track.id, earlier: true, in: upcoming) }
+                                    if index > 0 { reorder(track.id, earlier: true) }
                                 }
                                 .accessibilityAction(named: "Move later") {
-                                    if index < upcoming.count - 1 { reorder(track.id, earlier: false, in: upcoming) }
+                                    if index < upcoming.count - 1 { reorder(track.id, earlier: false) }
                                 }
                                 .accessibilityAction(named: "Remove from queue") {
-                                    removeFromQueue(track.id, at: index, in: upcoming)
+                                    removeFromQueue(track.id)
                                 }
                             }
                         }
