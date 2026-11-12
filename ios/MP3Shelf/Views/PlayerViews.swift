@@ -199,7 +199,11 @@ struct NowPlayingView: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 17 : 29)
 
-                                HStack(alignment: .center, spacing: 18) {
+                                // Keep the favorite action reachable without forcing long
+                                // titles into a narrow column at accessibility text sizes.
+                                Group {
+                                    if dynamicTypeSize.isAccessibilitySize {
+                                        VStack(alignment: .leading, spacing: 10) {
                                     VStack(alignment: .leading, spacing: 5) {
                                         Text(track.title)
                                             .font(.system(.title2, design: .rounded, weight: .bold))
@@ -220,7 +224,9 @@ struct NowPlayingView: View {
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
                                     }
-                                    Spacer(minLength: 0)
+
+                                            HStack {
+                                                Spacer(minLength: 0)
                                     Button { library.toggleFavorite(track.id) } label: {
                                         Image(systemName: track.isFavorite ? "heart.fill" : "heart")
                                             .font(.system(size: 21, weight: .medium))
@@ -230,6 +236,45 @@ struct NowPlayingView: View {
                                             .overlay(Circle().strokeBorder(ShelfTheme.border, lineWidth: 1))
                                     }
                                     .accessibilityLabel(track.isFavorite ? "Remove favorite" : "Add favorite")
+
+                                            }
+                                        }
+                                    } else {
+                                        HStack(alignment: .center, spacing: 18) {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text(track.title)
+                                            .font(.system(.title2, design: .rounded, weight: .bold))
+                                            .foregroundStyle(.white)
+                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Text(track.artist)
+                                            .font(.headline.weight(.regular))
+                                            .foregroundStyle(ShelfTheme.subdued)
+                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        if !track.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                                            track.album.localizedCaseInsensitiveCompare("Unknown Album") != .orderedSame {
+                                            Text(track.album)
+                                                .font(.caption)
+                                                .foregroundStyle(ShelfTheme.subdued.opacity(0.75))
+                                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+
+                                            Spacer(minLength: 0)
+                                    Button { library.toggleFavorite(track.id) } label: {
+                                        Image(systemName: track.isFavorite ? "heart.fill" : "heart")
+                                            .font(.system(size: 21, weight: .medium))
+                                            .foregroundStyle(track.isFavorite ? ShelfTheme.coral : .white)
+                                            .frame(width: 50, height: 50)
+                                            .background(ShelfTheme.elevated, in: Circle())
+                                            .overlay(Circle().strokeBorder(ShelfTheme.border, lineWidth: 1))
+                                    }
+                                    .accessibilityLabel(track.isFavorite ? "Remove favorite" : "Add favorite")
+
+                                        }
+                                    }
                                 }
                                 .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 15 : 25)
 
