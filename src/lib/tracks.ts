@@ -3,7 +3,18 @@ export type Track={id:string;name:string;originalName?:string;artist?:string;alb
 const DATABASE="mp3-shelf", STORE="tracks";
 function openDatabase():Promise<IDBDatabase>{return new Promise((resolve,reject)=>{const request=indexedDB.open(DATABASE,1);request.onupgradeneeded=()=>{const db=request.result;if(!db.objectStoreNames.contains(STORE))db.createObjectStore(STORE,{keyPath:"id"})};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
 function finish(transaction:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error)})}
-export async function listTracks():Promise<Track[]>{const db=await openDatabase();const transaction=db.transaction(STORE,"readonly");const request=transaction.objectStore(STORE).getAll();const tracks=await new Promise<Track[]>((resolve,reject)=>{request.onsuccess=()=>resolve(request.result as Track[]);request.onerror=()=>reject(request.error)});db.close();return tracks.sort((a,b)=>b.importedAt-a.importedAt)}
+export async function listTracks():Promise<Track[]>{
+ const db=await openDatabase();
+ try{
+  const transaction=db.transaction(STORE,"readonly");
+  const request=transaction.objectStore(STORE).getAll();
+  const tracks=await new Promise<Track[]>((resolve,reject)=>{
+   request.onsuccess=()=>resolve(request.result as Track[]);
+   request.onerror=()=>reject(request.error);
+  });
+  return tracks.sort((a,b)=>b.importedAt-a.importedAt);
+ }finally{db.close()}
+}
 export async function importTracks(files:File[]):Promise<number>{
  const audio=files.filter(file=>file.type.startsWith("audio/")||/\.mp3$/i.test(file.name));
  if(!audio.length)return 0;
@@ -46,8 +57,46 @@ export async function importTracks(files:File[]):Promise<number>{
   return inserted;
  }finally{db.close()}
 }
-export async function removeTrack(id:string):Promise<void>{const db=await openDatabase();const transaction=db.transaction(STORE,"readwrite");transaction.objectStore(STORE).delete(id);await finish(transaction);db.close()}
-export async function renameTrack(id:string,name:string):Promise<void>{const db=await openDatabase();const transaction=db.transaction(STORE,"readwrite");const store=transaction.objectStore(STORE);const request=store.get(id);const track=await new Promise<Track|undefined>((resolve,reject)=>{request.onsuccess=()=>resolve(request.result as Track|undefined);request.onerror=()=>reject(request.error)});if(track)store.put({...track,name});await finish(transaction);db.close()}
+export async function removeTrack(id:string):Promise<void>{
+ const db=await openDatabase();
+ try{
+  const transaction=db.transaction(STORE,"readwrite");
+  const completed=finish(transaction);
+  try{transaction.objectStore(STORE).delete(id)}
+  catch(error){
+   try{transaction.abort()}catch{/* Transaction already inactive. */}
+   await completed.catch(()=>{});
+   throw error;
+  }
+  await completed;
+ }finally{db.close()}
+}
+export async function renameTrack(id:string,name:string):Promise<void>{
+ const db=await openDatabase();
+ try{
+  const transaction=db.transaction(STORE,"readwrite");
+  const completed=finish(transaction);
+  try{
+   const store=transaction.objectStore(STORE);
+   const request=store.get(id);
+   await new Promise<void>((resolve,reject)=>{
+    request.onsuccess=()=>{
+     try{
+      const track=request.result as Track|undefined;
+      if(track)store.put({...track,name});
+      resolve();
+     }catch(error){reject(error)}
+    };
+    request.onerror=()=>reject(request.error);
+   });
+   await completed;
+  }catch(error){
+   try{transaction.abort()}catch{/* Transaction already inactive. */}
+   await completed.catch(()=>{});
+   throw error;
+  }
+ }finally{db.close()}
+}
 export async function restoreTracks(tracks:Track[]):Promise<number>{
  if(!tracks.length)return 0;
  // Reject duplicate backup records before opening a write transaction: IDB put()
