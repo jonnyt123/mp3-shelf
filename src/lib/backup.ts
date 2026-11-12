@@ -91,6 +91,10 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
   const id=requiredString(value.id,"playlist ID");
   if(playlistIds.has(id))throw new Error("Duplicate playlist ID in backup.");
   playlistIds.add(id);
+  // Reject an incomplete archive at parse time rather than allowing its
+  // audio half to be inserted before playlist recovery discovers missing IDs.
+  if(value.trackIds.some((trackId:string)=>!trackIds.has(trackId)))
+   throw new Error("Backup playlist references missing audio.");
   return{id,name:requiredString(value.name,"playlist name"),trackIds:value.trackIds};
  });
  usedRanges.sort((a,b)=>a.start-b.start);
