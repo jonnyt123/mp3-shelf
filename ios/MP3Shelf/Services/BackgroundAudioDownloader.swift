@@ -621,8 +621,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         ticket.status = .failed
         ticket.failureReason = failure
         ticket.mayTryAnotherSource = canTryAnotherSource
-        tickets[id] = ticket
-        persist()
+        // A terminal failure must survive relaunch before notifying the
+        // library or scheduling another source search. Otherwise a failed
+        // manifest write can strand a phantom queued ticket after restart.
+        // Keep the original ticket in memory and on disk if persistence fails.
+        var updated = tickets
+        updated[id] = ticket
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        } catch {
+            noteQueueWriteFailure(error, for: id)
+            return
+        }
+        tickets = updated
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         if canTryAnotherSource { library?.recoverRecordingSource(after: ticket, notBefore: earliestRecovery) }
         updatePending()
