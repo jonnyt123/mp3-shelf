@@ -180,6 +180,7 @@ final class SpotifyService: NSObject, ObservableObject {
         let generation = authorizationGeneration
         var next: URL? = URL(string: "https://api.spotify.com/v1/me/playlists?limit=50")
         var found: [SpotifyPlaylist] = []
+        var seenPlaylistIDs = Set<String>()
         var visitedPages = Set<URL>()
         while let url = next {
             guard visitedPages.insert(url).inserted, visitedPages.count <= 250 else {
@@ -193,9 +194,20 @@ final class SpotifyService: NSObject, ObservableObject {
             guard generation == authorizationGeneration, token != nil else {
                 throw SpotifyError.notConnected
             }
-            found.append(contentsOf: page.items)
+            // The playlist picker must never present unusable IDs or duplicate
+            // entries from overlapping/replayed provider pages. Keep the first
+            // valid occurrence in server order; never silently change its
+            // identity or let an invalid entry reach the track endpoint.
+            for playlist in page.items {
+                guard Self.isValidPlaylistID(playlist.id),
+                      !playlist.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      seenPlaylistIDs.insert(playlist.id).inserted else { continue }
+                found.append(playlist)
+                guard found.count <= 10000 else {
+                    throw SpotifyError.api("Too many playlists to import in one request.")
+                }
+            }
             next = try Self.safeNext(page.next, for: url, returnedItems: page.rawItemCount)
-            if found.count > 10000 { throw SpotifyError.api("Too many playlists to import in one request.") }
         }
         try Task.checkCancellation()
         guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
