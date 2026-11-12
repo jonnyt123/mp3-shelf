@@ -107,7 +107,7 @@ test('Git status failure is never interpreted as a clean checkout', async () => 
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(script, 'utf8');
   const helper = source.slice(source.indexOf('checkout_unchanged() {'), source.indexOf('DIRTY=unknown'));
-  assert.match(helper, /git rev-parse --verify HEAD/);
+  assert.match(helper, /valid_candidate/);
   assert.match(helper, /git status --porcelain --untracked-files=all/);
   assert.match(helper, /\|\| return 1/g);
   assert.match(source, /if checkout_unchanged; then DIRTY=no; else DIRTY=yes; fi/);
@@ -169,4 +169,43 @@ test('receipt verification cannot report PASS if the checkout mutates during val
     'success must be gated by a fresh checkout check');
   assert.ok(branch.indexOf('code=1') > branch.indexOf("receipt_state='UNAVAILABLE_CHECKOUT_CHANGED'"),
     'checkout mutation must fail the command');
+});
+
+test('release candidate identity requires this repository root and a full commit SHA', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  const validator = source.slice(source.indexOf('valid_candidate() {'), source.indexOf('COMMIT="$(valid_candidate'));
+  assert.match(validator, /git rev-parse --show-toplevel/);
+  assert.match(validator, /pwd -P/);
+  assert.match(validator, /git rev-parse --verify 'HEAD\\^\\{commit\\}'/);
+  assert.match(validator, /\\[0-9a-f\\]\\{40\\}/);
+  assert.match(source, /current="\\$\\(valid_candidate\\)" \\|\\| return 1/);
+});
+
+test('web preflight rejects a parent repository or forged abbreviated SHA before npm', async () => {
+  const { mkdtempSync, writeFileSync, chmodSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join, delimiter } = await import('node:path');
+  for (const mode of ['wrong-root', 'short-sha']) {
+    const dir = mkdtempSync(join(tmpdir(), 'mp3-git-identity-'));
+    try {
+      const git = join(dir, 'git');
+      const root = mode === 'wrong-root' ? dir : new URL('..', import.meta.url).pathname.replace(/\\/$/, '');
+      const scriptText = '#!/bin/sh\\n' +
+        'case "$1" in\\n' +
+        'rev-parse) if [ "$2" = "--show-toplevel" ]; then printf "%s\\\\n" ' + JSON.stringify(root) + '; else printf "%s\\\\n" ' + JSON.stringify(mode === 'short-sha' ? 'abcdef0' : 'a'.repeat(40)) + '; fi ;;\\n' +
+        'status) exit 0 ;;\\n' +
+        '*) exit 128 ;;\\n' +
+        'esac\\n';
+      writeFileSync(git, scriptText);
+      chmodSync(git, 0o755);
+      const result = spawnSync('bash', [script, '--web', '--offline'], {
+        encoding: 'utf8', timeout: 10000,
+        env: { ...process.env, PATH: dir + delimiter + process.env.PATH }
+      });
+      assert.equal(result.status, 2, mode + ': ' + result.stderr);
+      assert.match(result.stderr, /Refusing release verification without a clean Git checkout/);
+      assert.doesNotMatch(result.stdout, /==> npm-ci|==> npm-test|==> npm-build/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
 });
