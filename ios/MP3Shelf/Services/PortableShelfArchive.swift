@@ -450,7 +450,8 @@ enum PortableShelfArchive {
               opened.st_dev == named.st_dev,
               opened.st_ino == named.st_ino,
               opened.st_size == expectedLength,
-              named.st_size == expectedLength else {
+              named.st_size == expectedLength,
+              ArchiveSourceIdentity(opened).matches(named) else {
             throw ArchiveError.invalidRange
         }
     }
@@ -479,6 +480,7 @@ enum PortableShelfArchive {
         guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
             throw ArchiveError.invalidRange
         }
+        try verifyOpenedAudioSource(input, at: url, expectedLength: expectedLength)
     }
 
     static func open(_ url: URL) throws -> Opened {
@@ -616,8 +618,10 @@ enum PortableShelfArchive {
                     try output.write(contentsOf: data)
                     remaining -= Int64(data.count)
                 }
+                try verifyArchive(input, from: archive)
                 try output.synchronize()
                 try output.close()
+                try verifyArchive(input, from: archive)
             } catch {
                 try? output.close()
                 throw error
@@ -657,6 +661,7 @@ enum PortableShelfArchive {
             result.append(chunk)
             remaining -= chunk.count
         }
+        try verifyArchive(handle, from: archive)
         return result
     }
 
