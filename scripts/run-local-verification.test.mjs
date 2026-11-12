@@ -59,8 +59,8 @@ test('node-only refuses SHA-bound evidence if verification modifies the checkout
   const source = readFileSync(script, 'utf8');
   assert.match(source, /MODE" == node-only && "\$COMMIT" != unknown && "\$DIRTY" == no/);
   assert.match(source, /STEP=post-node-checkout-integrity/);
-  assert.match(source, /git rev-parse --verify HEAD/);
-  assert.match(source, /git status --porcelain --untracked-files=all/);
+  assert.match(source, /checkout_unchanged/);
+  assert.match(source, /checkout_unchanged/);
   assert.match(source, /Node verification changed the candidate commit or checkout/);
 });
 
@@ -86,8 +86,8 @@ test('receipt-time checkout identity is rechecked even after the final integrity
   const recheck = report.indexOf('receipt_state=\'UNAVAILABLE_CHECKOUT_CHANGED\'');
   const receipt = report.indexOf('node "$ROOT/scripts/local-evidence.mjs" "$OUT/local-evidence.json"');
   assert.ok(recheck > 0 && receipt > recheck, 'checkout must be rechecked before receipt creation');
-  assert.match(report, /git rev-parse --verify HEAD/);
-  assert.match(report, /git status --porcelain --untracked-files=all/);
+  assert.match(report, /checkout_unchanged/);
+  assert.match(report, /checkout_unchanged/);
   assert.ok(report.indexOf('code=1', recheck) > recheck, 'successful execution must become failure');
   assert.match(report, /Checkout changed before receipt generation/);
   assert.match(report, /receipt_state" != UNAVAILABLE_CHECKOUT_CHANGED/);
@@ -96,7 +96,20 @@ test('receipt-time checkout identity is rechecked even after the final integrity
 test('initial, web and native integrity checks include untracked source files', async () => {
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(script, 'utf8');
-  const matches = source.match(/git status --porcelain --untracked-files=all/g) ?? [];
-  assert.ok(matches.length >= 5, 'initial, receipt, node, web and native checks must agree');
+  const checks = source.match(/if ! checkout_unchanged; then/g) ?? [];
+  assert.equal(checks.length, 4, 'receipt, node, web and native checks must use fail-closed helper');
+  assert.match(source, /status="\$\(git status --porcelain --untracked-files=all 2>\/dev\/null\)" \|\| return 1/);
+  assert.match(source, /current="\$\(git rev-parse --verify HEAD 2>\/dev\/null\)" \|\| return 1/);
   assert.doesNotMatch(source, /git status --porcelain\)/);
+});
+
+test('Git status failure is never interpreted as a clean checkout', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  const helper = source.slice(source.indexOf('checkout_unchanged() {'), source.indexOf('DIRTY=unknown'));
+  assert.match(helper, /git rev-parse --verify HEAD/);
+  assert.match(helper, /git status --porcelain --untracked-files=all/);
+  assert.match(helper, /\|\| return 1/g);
+  assert.match(source, /if checkout_unchanged; then DIRTY=no; else DIRTY=yes; fi/);
+  assert.match(source, /if ! checkout_unchanged; then/g);
 });
