@@ -582,10 +582,15 @@ final class MusicLibrary: ObservableObject {
                 // A set also avoids quadratic lookups on very large playlists.
                 var linked = Set(candidatePlaylists[index].trackIDs)
                 var addedLinks = 0
-                for id in resolvedTrackIDs where linked.insert(id).inserted {
+                for id in resolvedTrackIDs {
+                    // Check every archived link, including links already present
+                    // in the destination. A large repeat restore can otherwise
+                    // skip every cancellation checkpoint in this loop.
                     try Task.checkCancellation()
-                    candidatePlaylists[index].trackIDs.append(id)
-                    addedLinks += 1
+                    if linked.insert(id).inserted {
+                        candidatePlaylists[index].trackIDs.append(id)
+                        addedLinks += 1
+                    }
                 }
                 if addedLinks > 0 { report.playlistsUpdated += 1 }
                 continue
