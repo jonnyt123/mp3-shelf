@@ -815,9 +815,8 @@ struct PortableShelfArchiveTests {
         assert(PortableShelfArchive.audioFilesIdentical(comparisonA, comparisonB))
         try FileManager.default.createSymbolicLink(
             at: comparisonLink, withDestinationURL: comparisonA)
-        // A link may be accepted by the reader only if the opened descriptor
-        // itself is regular; the duplicate comparator does not publish or
-        // mutate any bytes and must still reject non-regular sources.
+        assert(!PortableShelfArchive.audioFilesIdentical(
+            comparisonA, comparisonLink))
         assert(!PortableShelfArchive.audioFilesIdentical(
             comparisonA, folder))
         try Data(repeating: 0x54, count: comparisonBytes.count)
