@@ -113,3 +113,43 @@ test('Git status failure is never interpreted as a clean checkout', async () => 
   assert.match(source, /if checkout_unchanged; then DIRTY=no; else DIRTY=yes; fi/);
   assert.match(source, /if ! checkout_unchanged; then/g);
 });
+
+
+test('web preflight fails closed when git status fails instead of running npm', async () => {
+  const { mkdtempSync, writeFileSync, chmodSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join, delimiter } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-git-failure-'));
+  try {
+    const git = join(dir, 'git');
+    writeFileSync(git, '#!/bin/sh\\nif [ "$1" = "rev-parse" ]; then printf "%040d\\n" 0; exit 0; fi\\nif [ "$1" = "status" ]; then exit 128; fi\\nexit 128\\n');
+    chmodSync(git, 0o755);
+    const r = spawnSync('bash', [script, '--web', '--offline'], {
+      encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, PATH: dir + delimiter + process.env.PATH }
+    });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /Refusing release verification without a clean Git checkout/);
+    assert.doesNotMatch(r.stdout, /==> npm-ci|==> npm-test|==> npm-build/);
+    assert.match(r.stdout, /SHA-bound receipt: UNAVAILABLE_UNCLEAN_CHECKOUT/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('web preflight rejects an unstable HEAD before any dependency install', async () => {
+  const { mkdtempSync, writeFileSync, chmodSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join, delimiter } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-git-head-'));
+  try {
+    const git = join(dir, 'git');
+    writeFileSync(git, '#!/bin/sh\\nif [ "$1" = "rev-parse" ]; then printf "%040d\\n" 0; exit 0; fi\\nif [ "$1" = "status" ]; then printf " M package-lock.json\\n"; exit 0; fi\\nexit 128\\n');
+    chmodSync(git, 0o755);
+    const r = spawnSync('bash', [script, '--web', '--offline'], {
+      encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, PATH: dir + delimiter + process.env.PATH }
+    });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /Refusing release verification without a clean Git checkout/);
+    assert.doesNotMatch(r.stdout, /==> npm-ci|==> npm-test|==> npm-build/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
