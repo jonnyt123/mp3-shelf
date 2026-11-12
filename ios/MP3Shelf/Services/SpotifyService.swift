@@ -275,7 +275,7 @@ final class SpotifyService: NSObject, ObservableObject {
                 }
                 wishes.append(PlaylistWish(title: title, artist: artists.joined(separator: ", "),
                     album: track.album?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-                    spotifyURL: track.external_urls?.spotify,
+                    spotifyURL: SpotifyTrackLinks.canonicalURL(track.external_urls?.spotify),
                     durationSeconds: duration, artistNames: artists))
             }
             next = try Self.safeNext(page.next, for: url, returnedItems: page.rawItemCount)
@@ -614,6 +614,27 @@ extension SpotifyService: ASWebAuthenticationPresentationContextProviding {
         MainActor.assumeIsolated {
             UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first ?? UIWindow()
         }
+    }
+}
+
+// Spotify-provided metadata is untrusted display/link data. Only expose a
+// canonical Spotify track link, never an arbitrary URL from a JSON response.
+enum SpotifyTrackLinks {
+    static func canonicalURL(_ value: String?) -> String? {
+        guard let value,
+              let parts = URLComponents(string: value),
+              parts.scheme?.lowercased() == "https",
+              parts.host?.lowercased() == "open.spotify.com",
+              parts.user == nil, parts.password == nil,
+              parts.port == nil, parts.fragment == nil,
+              parts.query == nil,
+              parts.path.hasPrefix("/track/") else { return nil }
+        let id = String(parts.path.dropFirst("/track/".count))
+        guard id.utf8.count == 22,
+              id.utf8.allSatisfy({
+                  (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+              }) else { return nil }
+        return "https://open.spotify.com/track/\\(id)"
     }
 }
 
