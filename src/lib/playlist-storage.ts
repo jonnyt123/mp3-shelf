@@ -87,6 +87,12 @@ export function stagePlaylistRestore(storage:Pick<Storage,"getItem"|"setItem">,k
  if(ids.some(id=>typeof id!=="string"||!id.trim())||new Set(ids).size!==ids.length)throw new Error("Invalid backup track IDs.");
  const intent=JSON.stringify({version:1,key,trackIds:ids,playlists} satisfies RestoreJournal);
  if(pending!==null){if(pending!==intent)throw new Error("Finish the pending backup restore using the original backup before importing another.");return false}
+ // Validation can invoke a storage adapter that stages a competing restore.
+ // Never overwrite its recovery intent after reading an initially empty slot.
+ if(storage.getItem(RESTORE_JOURNAL_KEY)!==pending)
+  throw new Error("Pending backup restore changed during staging. Preserve the newer intent.");
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
+  throw new Error("Track deletion started during backup staging. Preserve its recovery intent.");
  storage.setItem(RESTORE_JOURNAL_KEY,intent);
  return true;
 }
@@ -283,6 +289,10 @@ export async function deleteTrackWithPlaylistCleanup(
  const next=original.map(item=>({...item,trackIds:item.trackIds.filter(id=>id!==trackId)}));
  const intent:DeleteRecovery={version:1,key,trackId,original};
  const ownedJournal=JSON.stringify(intent);
+ // The playlist snapshot may be supplied by a storage adapter that stages
+ // another operation. Recheck both journals before claiming the slot.
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null||storage.getItem(RESTORE_JOURNAL_KEY)!==null)
+  throw new Error("A competing recovery operation started while preparing track deletion.");
  storage.setItem(DELETE_RECOVERY_KEY,ownedJournal);
  const assertJournalOwnership=()=>{
   if(storage.getItem(DELETE_RECOVERY_KEY)!==ownedJournal)
