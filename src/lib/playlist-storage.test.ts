@@ -374,6 +374,16 @@ describe("track deletion consistency",()=>{
   // Startup uses the actual surviving IndexedDB IDs to remove dangling links.
   expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
  });
+ it.each(["", " ", "\\t"])("rejects blank playlist namespaces before staging deletion (%s)",async key=>{
+  const store=storage();
+  const before=store.getItem("playlists");
+  let deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(store,key,original,"remove",async()=>{deleted=true}))
+   .rejects.toThrow("Invalid playlist storage key for deletion");
+  expect(deleted).toBe(false);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+  expect(store.getItem("playlists")).toBe(before);
+ });
  it("rejects blank track IDs before touching storage or audio",async()=>{
   const store=storage();let deleted=false;
   await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original," ",async()=>{deleted=true})).rejects.toThrow("Invalid track ID");
