@@ -653,6 +653,8 @@ enum PortableShelfArchive {
             throw ArchiveError.invalidRange
         }
         try input.seek(toOffset: start)
+        // Cancellation before publication must not create even an empty staging file.
+        try Task.checkCancellation()
         // A backup may still be truncated while streaming. Remove partial
         // output on every read/write failure rather than importing bad audio.
         guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
@@ -675,9 +677,14 @@ enum PortableShelfArchive {
                     remaining -= Int64(data.count)
                 }
                 try verifyArchive(input, from: archive)
+                try Task.checkCancellation()
                 try output.synchronize()
                 try output.close()
                 try verifyArchive(input, from: archive)
+                // The last archive verification may complete after cancellation.
+                // Throw inside the cleanup scope so no completed temporary audio
+                // is handed to an importer whose restore was already cancelled.
+                try Task.checkCancellation()
             } catch {
                 try? output.close()
                 throw error
@@ -720,6 +727,9 @@ enum PortableShelfArchive {
             remaining -= chunk.count
         }
         try verifyArchive(handle, from: archive)
+        // Do not return recovered sidecar bytes after a cancellation that raced
+        // with the final archive identity verification.
+        try Task.checkCancellation()
         return result
     }
 
