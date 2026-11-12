@@ -63,6 +63,32 @@ describe("bulk import bounded metadata work",()=>{
  });
 });
 
+describe("duplicate selection metadata performance",()=>{
+ it("parses each distinct recording only once before IndexedDB import",async()=>{
+  const first=new File([new Uint8Array([1,2,3])],"duplicate-selection.mp3",{type:"audio/mpeg",lastModified:1777});
+  const duplicate=new File([new Uint8Array([9,9,9])],"duplicate-selection.mp3",{type:"audio/mpeg",lastModified:1777});
+  const second=new File([new Uint8Array([4,5,6])],"unique-selection.mp3",{type:"audio/mpeg",lastModified:1777});
+  const ids=["duplicate-selection.mp3:3:1777","unique-selection.mp3:3:1777"];
+  const originalSlice=File.prototype.slice;
+  let metadataReads=0;
+  File.prototype.slice=function(...args){
+   metadataReads++;
+   return originalSlice.apply(this,args);
+  };
+  try{
+   expect(await importTracks([first,...Array.from({length:64},()=>duplicate),second])).toBe(2);
+   expect(metadataReads).toBe(2);
+   const saved=await listTracks();
+   const preserved=saved.find(track=>track.id===ids[0]);
+   expect(Array.from(new Uint8Array(await preserved!.blob.arrayBuffer()))).toEqual([1,2,3]);
+   expect(saved.some(track=>track.id===ids[1])).toBe(true);
+  }finally{
+   File.prototype.slice=originalSlice;
+   for(const id of ids)await removeTrack(id);
+  }
+ });
+});
+
 describe("restore failure safety",()=>{
  const makeTrack=(id:string):Track=>({id,name:id,size:3,type:"audio/mpeg",importedAt:1,blob:new Blob([new Uint8Array([1,2,3])])});
  it("rejects corrupt restore records atomically before opening IndexedDB",async()=>{
