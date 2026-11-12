@@ -25,7 +25,7 @@ export function selectPlaylistTracks<T extends {id:string}>(tracks:readonly T[],
  * localStorage write must never be reported as a successful playlist restore. */
 export function persistRestoredPlaylists(
  storage:Pick<Storage,"getItem"|"setItem">, key:string,
- incoming:readonly StoredPlaylist[]
+ incoming:readonly StoredPlaylist[], expectedRestoreJournal?:string
 ):StoredPlaylist[]{
  // Validate backup playlists before writing. Invalid IDs must not silently
  // merge into the user\'s current playlists.
@@ -54,6 +54,10 @@ export function persistRestoredPlaylists(
  // This narrows the race but does not replace a cross-tab atomic lock.
  if(storage.getItem(key)!==baseline)
   throw new Error("Playlists changed during backup restore. Retry recovery without discarding the journal.");
+ // Recovery must not commit a stale restore if another tab replaced its intent.
+ // Check before the playlist write, not only after it: the latter is too late.
+ if(expectedRestoreJournal!==undefined&&storage.getItem(RESTORE_JOURNAL_KEY)!==expectedRestoreJournal)
+  throw new Error("Pending backup restore changed before playlist commit. Preserve the newer intent.");
  // Recheck the deletion journal after reading playlists: a storage adapter
  // may synchronously stage another operation during the baseline check.
  if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
@@ -118,7 +122,7 @@ export function recoverPlaylistRestore(storage:Pick<Storage,"getItem"|"setItem"|
  // Never consume or clear a journal belonging to a newer operation.
  if(storage.getItem(RESTORE_JOURNAL_KEY)!==raw)
   throw new Error("Pending backup restore changed during recovery. Retry with the current journal.");
- const result=persistRestoredPlaylists(storage,key,journal.playlists);
+ const result=persistRestoredPlaylists(storage,key,journal.playlists,raw);
  if(storage.getItem(RESTORE_JOURNAL_KEY)!==raw)
   throw new Error("Pending backup restore changed before journal cleanup. Preserve the newer intent.");
  storage.removeItem(RESTORE_JOURNAL_KEY);
