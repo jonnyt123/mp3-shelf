@@ -125,6 +125,36 @@ enum SpotifyPaginationSlotTests {
               "nested metadata failures do not corrupt continuation cursor")
         let currentPage = URL(string: "https://api.spotify.com/v1/playlists/123/items?limit=50")!
         let followingPage = "?limit=50&offset=50"
+        // Cursor security and progress: never send a bearer token to another
+        // host, resource, repeated page, or a cursor that silently skips tracks.
+        let invalidCursors: [(String, String)] = [
+            ("https://evil.example/v1/playlists/123/items?limit=50&offset=50", "foreign host"),
+            ("http://api.spotify.com/v1/playlists/123/items?limit=50&offset=50", "insecure scheme"),
+            ("//evil.example/v1/playlists/123/items?limit=50&offset=50", "scheme-relative host"),
+            ("https://api.spotify.com/v1/me?limit=50&offset=50", "different API resource"),
+            ("?limit=50&offset=0", "repeated page"),
+            ("?limit=50&offset=100", "skipped page"),
+            ("?limit=49&offset=50", "changed page size"),
+            ("?limit=50&offset=50&offset=100", "duplicate cursor parameter"),
+            ("?limit=50&offset=50#fragment", "cursor fragment"),
+            ("?limit=50&offset=-1", "negative offset")
+        ]
+        for (cursor, reason) in invalidCursors {
+            do {
+                _ = try PaginationGuard.safeNext(cursor, for: currentPage, returnedItems: 50)
+                fatalError("FAIL: accepted \\(reason)")
+            } catch SpotifyError.api {
+                print("PASS: rejected \\(reason)")
+            }
+        }
+        check(try PaginationGuard.safeNext(nil, for: currentPage, returnedItems: 0) == nil,
+              "terminal empty page needs no continuation")
+        do {
+            _ = try PaginationGuard.safeNext(followingPage, for: currentPage, returnedItems: 51)
+            fatalError("FAIL: oversized page accepted")
+        } catch SpotifyError.api {
+            print("PASS: oversized page rejected")
+        }
         check(try PaginationGuard.safeNext(followingPage, for: currentPage, returnedItems: 50) != nil,
               "full page advances to next cursor")
         check(try PaginationGuard.safeNext(followingPage, for: currentPage, returnedItems: 1) != nil,
