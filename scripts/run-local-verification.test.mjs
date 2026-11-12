@@ -63,3 +63,18 @@ test('node-only refuses SHA-bound evidence if verification modifies the checkout
   assert.match(source, /git status --porcelain --untracked-files=all/);
   assert.match(source, /Node verification changed the candidate commit or checkout/);
 });
+
+// A successful node-only run must include checkout integrity in the persisted
+// receipt, not merely print a success message after testing.
+test('node-only integrity check is included in completed and receipt steps', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(script, 'utf8');
+  const start = source.indexOf('STEP=post-node-checkout-integrity');
+  const end = source.indexOf('if [[ "$MODE" == web || "$MODE" == all ]]', start);
+  assert.ok(start > 0 && end > start, 'node-only integrity block must exist');
+  const block = source.slice(start, end);
+  assert.match(block, /COMPLETED\+=\("\$STEP"\)/);
+  assert.match(block, /RECEIPT_STEPS\+=\("\$STEP:1"\)/);
+  assert.match(block, /"\$OUT\/\$STEP\.log"/);
+  assert.ok(block.indexOf('exit 2') < block.indexOf('RECEIPT_STEPS+='), 'failed integrity must not be recorded as passing');
+});
