@@ -151,6 +151,9 @@ export function cancelOwnedPlaylistRestore(
  const expected=JSON.stringify({version:1,key,trackIds:tracks.map(track=>track.id),playlists} satisfies RestoreJournal);
  const current=storage.getItem(RESTORE_JOURNAL_KEY);
  if(current!==expected)return false;
+ // A storage adapter can synchronously replace the journal during validation.
+ // Check ownership again before cleanup, and never clear a newer restore.
+ if(storage.getItem(RESTORE_JOURNAL_KEY)!==expected)return false;
  storage.removeItem(RESTORE_JOURNAL_KEY);
  return true;
 }
