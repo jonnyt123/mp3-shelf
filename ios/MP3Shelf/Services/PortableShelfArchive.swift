@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// The same portable v1 container used by the browser's .mp3shelf backups.
 /// Binary media are stored as length-checked slices after a JSON manifest.
@@ -362,6 +367,25 @@ enum PortableShelfArchive {
         }
     }
 
+    /// Verify the actual open descriptor, not just the pathname checked
+    /// before open. lstat deliberately does not follow a replaced symlink.
+    /// Keep the descriptor alive for the subsequent streaming copy.
+    private static func verifyOpenedAudioSource(_ handle: FileHandle, at url: URL,
+                                                 expectedLength: Int64) throws {
+        var opened = stat()
+        var named = stat()
+        guard fstat(handle.fileDescriptor, &opened) == 0,
+              lstat(url.path, &named) == 0,
+              (opened.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              (named.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              opened.st_dev == named.st_dev,
+              opened.st_ino == named.st_ino,
+              opened.st_size == expectedLength,
+              named.st_size == expectedLength else {
+            throw ArchiveError.invalidRange
+        }
+    }
+
     /// Stream one source into an archive and close its descriptor before the
     /// next source opens. A failed read or write propagates to export(), which
     /// removes its unpublished partial archive without touching user audio.
@@ -370,6 +394,10 @@ enum PortableShelfArchive {
         try validateAudioSource(url)
         let input = try FileHandle(forReadingFrom: url)
         defer { try? input.close() }
+        // Path validation and open are separate operations. A replaced path
+        // must not let the exporter read a symlink target or a different inode.
+        // Compare the opened descriptor with a fresh non-following path stat.
+        try verifyOpenedAudioSource(input, at: url, expectedLength: expectedLength)
         // The manifest records the size measured before export. Reject both
         // shrinking and growing files to avoid misaligned payload offsets.
         var remaining = expectedLength
