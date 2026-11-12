@@ -470,23 +470,36 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// Finish those tickets without re-downloading an already stored track.
     private func reconcileAlreadyStoredDownloads(excluding excluded: UUID? = nil) {
         guard let library else { return }
-        var duplicateTaskIDs: Set<String> = []
+        // Build the entire transition before touching live state. If the
+        // manifest cannot be saved, keep the daemon tasks alive so a relaunch
+        // can still recover them instead of losing the only queue record.
+        var updated = tickets
+        var fulfilled: [BackgroundAudioTicket] = []
         for ticket in tickets.values where ticket.status == .queued && ticket.id != excluded {
             guard library.hasOfflineRecording(matching: ticket.requested),
-                  var current = tickets[ticket.id], current.status == .queued else { continue }
-            conversions[ticket.id]?.cancel()
+                  var current = updated[ticket.id], current.status == .queued else { continue }
             current.status = .imported
             current.failureReason = "This recording is already saved offline"
             current.alternativeSources = nil
             current.nextRetryAt = nil
-            tickets[ticket.id] = current
-            duplicateTaskIDs.insert(ticket.id.uuidString)
+            updated[ticket.id] = current
+            fulfilled.append(ticket)
+        }
+        guard !fulfilled.isEmpty else { return }
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        } catch {
+            // Never cancel a background task when its terminal state was not
+            // durably recorded. A later reconciliation can safely retry.
+            return
+        }
+        tickets = updated
+        let duplicateTaskIDs = Set(fulfilled.map { $0.id.uuidString })
+        for ticket in fulfilled {
+            conversions[ticket.id]?.cancel()
             library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: true)
-            // Completed transfer may already have left a staging copy.
             try? fm.removeItem(at: Self.stagingURL(ticket.id))
         }
-        guard !duplicateTaskIDs.isEmpty else { return }
-        persist()
         updatePending()
         session.getAllTasks { tasks in
             for task in tasks where duplicateTaskIDs.contains(task.taskDescription ?? "") {
