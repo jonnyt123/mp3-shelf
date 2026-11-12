@@ -675,8 +675,24 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
         ticket.bytesReceived = received
         ticket.totalBytes = knownTotal
-        tickets[id] = ticket
-        if resumedRetry { persist() }
+        if resumedRetry {
+            // Clearing a scheduled retry changes recovery semantics after a
+            // process restart. Commit that transition before publishing it:
+            // a failed manifest write must not silently discard retry state.
+            var updated = tickets
+            updated[id] = ticket
+            do {
+                try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            } catch {
+                noteQueueWriteFailure(error, for: id)
+                return
+            }
+            tickets = updated
+        } else {
+            // Byte-level progress is ephemeral and reconstructed from the OS
+            // task on reattachment; avoid a disk write per progress callback.
+            tickets[id] = ticket
+        }
         revision += 1
         // Byte-level progress is intentionally not flushed to disk for each callback;
         // the OS restores actual task progress after process reattachment.
