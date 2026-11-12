@@ -45,10 +45,19 @@ export function persistRestoredPlaylists(
  const next=[...merged.values()];
  // Verify the entire merged representation before mutating persistent storage.
  parseStoredPlaylists(JSON.stringify(next));
+ // Restoration must not overwrite playlist cleanup from a track deletion
+ // staged by another tab while the merge was in progress. Keep the pending
+ // restore journal intact so recovery can retry after deletion reconciliation.
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
+  throw new Error("Track deletion started during backup restore. Retry recovery after deletion reconciliation.");
  // Detect a concurrent write during merge instead of silently overwriting it.
  // This narrows the race but does not replace a cross-tab atomic lock.
  if(storage.getItem(key)!==baseline)
   throw new Error("Playlists changed during backup restore. Retry recovery without discarding the journal.");
+ // Recheck the deletion journal after reading playlists: a storage adapter
+ // may synchronously stage another operation during the baseline check.
+ if(storage.getItem(DELETE_RECOVERY_KEY)!==null)
+  throw new Error("Track deletion started during backup restore. Retry recovery after deletion reconciliation.");
  storage.setItem(key,JSON.stringify(next));
  return next;
 }
