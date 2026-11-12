@@ -616,12 +616,12 @@ struct PlaybackQueueSheet: View {
         playback.play(track)
     }
 
-    // A row's captured index can become stale as playback advances.
-    // All queue controls must use live boundaries before enabling an action.
-    private func canMove(_ trackID: UUID, earlier: Bool) -> Bool {
-        let current = playback.queuedTracks
-        guard let index = current.firstIndex(where: { $0.id == trackID }) else { return false }
-        return earlier ? index > 0 : index < current.count - 1
+    // The queue is snapshotted once per render. Recomputing queuedTracks and
+    // searching for every row's buttons makes long queues quadratic in size.
+    // These flags are presentation-only: reorder() still checks the live queue
+    // immediately before mutating it, so an old menu cannot move a stale row.
+    private func canMove(index: Int, count: Int, earlier: Bool) -> Bool {
+        earlier ? index > 0 : index < count - 1
     }
 
     // Large-text users should not have to open a context menu for every
@@ -652,9 +652,9 @@ struct PlaybackQueueSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     moveButton(track, earlier: true)
-                        .disabled(!canMove(track.id, earlier: true))
+                        .disabled(!canMove(index: index, count: upcoming.count, earlier: true))
                     moveButton(track, earlier: false)
-                        .disabled(!canMove(track.id, earlier: false))
+                        .disabled(!canMove(index: index, count: upcoming.count, earlier: false))
                     Spacer(minLength: 0)
                     Text("Position \(index + 1) of \(upcoming.count)")
                         .font(.caption)
@@ -667,9 +667,9 @@ struct PlaybackQueueSheet: View {
         } else {
             HStack(spacing: 8) {
                 moveButton(track, earlier: true)
-                    .disabled(!canMove(track.id, earlier: true))
+                    .disabled(!canMove(index: index, count: upcoming.count, earlier: true))
                 moveButton(track, earlier: false)
-                    .disabled(!canMove(track.id, earlier: false))
+                    .disabled(!canMove(index: index, count: upcoming.count, earlier: false))
                 Spacer(minLength: 0)
                 playNextButton(track)
             }
@@ -774,14 +774,14 @@ struct PlaybackQueueSheet: View {
                                         } label: {
                                             Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
                                         }
-                                        if canMove(track.id, earlier: true) {
+                                        if canMove(index: index, count: upcoming.count, earlier: true) {
                                             Button {
                                                 reorder(track.id, earlier: true)
                                             } label: {
                                                 Label("Move earlier", systemImage: "arrow.up")
                                             }
                                         }
-                                        if canMove(track.id, earlier: false) {
+                                        if canMove(index: index, count: upcoming.count, earlier: false) {
                                             Button {
                                                 reorder(track.id, earlier: false)
                                             } label: {
