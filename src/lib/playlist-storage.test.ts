@@ -1074,3 +1074,52 @@ describe("restore journal replacement before playlist persistence",()=>{
   expect(values.get("mp3-shelf-restore-pending")).toBeUndefined();
  });
 });
+
+describe("competing recovery intent during staging",()=>{
+ it("preserves a restore journal staged during destination validation",()=>{
+  const data=new Map<string,string>();
+  const competing=JSON.stringify({version:1,key:"playlists",trackIds:["other"],playlists:[]});
+  let reads=0;
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===1)data.set("mp3-shelf-restore-pending",competing);
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{data.set(key,value)}
+  };
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"new"}],[])).toThrow("Pending backup restore changed during staging");
+  expect(data.get("mp3-shelf-restore-pending")).toBe(competing);
+ });
+ it("preserves a deletion journal staged during backup validation",()=>{
+  const data=new Map<string,string>();
+  const competing=JSON.stringify({version:1,key:"playlists",trackId:"other",original:[]});
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists")data.set("mp3-shelf-delete-recovery",competing);
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{data.set(key,value)}
+  };
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"new"}],[])).toThrow("Track deletion started during backup staging");
+  expect(data.get("mp3-shelf-delete-recovery")).toBe(competing);
+  expect(data.has("mp3-shelf-restore-pending")).toBe(false);
+ });
+ it("does not replace a deletion journal staged while reading playlist state",async()=>{
+  const data=new Map<string,string>();
+  const competing=JSON.stringify({version:1,key:"playlists",trackId:"other",original:[]});
+  let playlistReads=0;
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++playlistReads===1)data.set("mp3-shelf-delete-recovery",competing);
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  let deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",[],"new",async()=>{deleted=true}))
+   .rejects.toThrow("competing recovery operation");
+  expect(deleted).toBe(false);
+  expect(data.get("mp3-shelf-delete-recovery")).toBe(competing);
+ });
+});
