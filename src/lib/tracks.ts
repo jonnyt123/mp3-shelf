@@ -49,7 +49,8 @@ export async function importTracks(files:File[]):Promise<number>{
     const request=store.get(id);
     request.onsuccess=()=>{
      if(request.result!==undefined)return;
-     const add=store.add({id,name:metadata.title||file.name.replace(/\.mp3$/i,""),originalName:file.name,artist:metadata.artist,album:metadata.album,artwork:metadata.artwork,size:file.size,type:file.type||"audio/mpeg",importedAt:Date.now(),blob:file} satisfies Track);
+     const extension=/\.m4a$/i.test(file.name)?"audio/mp4":"audio/mpeg";
+     const add=store.add({id,name:metadata.title||file.name.replace(/\.(mp3|m4a)$/i,""),originalName:file.name,artist:metadata.artist,album:metadata.album,artwork:metadata.artwork,size:file.size,type:file.type||extension,importedAt:Date.now(),blob:file} satisfies Track);
      add.onsuccess=()=>{inserted++};
     };
    }
