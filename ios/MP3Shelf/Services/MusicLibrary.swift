@@ -243,9 +243,19 @@ final class MusicLibrary: ObservableObject {
         let playlistSnapshot = playlists
         try Task.checkCancellation()
         let worker = Task.detached(priority: .userInitiated) {
+            // The export may finish publishing just as cancellation arrives.
+            // Own the output until a successful return; remove it on every
+            // thrown path, including cancellation after publication.
+            var published = false
+            defer {
+                if !published {
+                    try? FileManager.default.removeItem(at: destination)
+                }
+            }
             try Task.checkCancellation()
             try PortableShelfArchive.export(items, playlists: playlistSnapshot, to: destination)
             try Task.checkCancellation()
+            published = true
             return destination
         }
         // Detached work does not inherit the caller's cancellation. Without
