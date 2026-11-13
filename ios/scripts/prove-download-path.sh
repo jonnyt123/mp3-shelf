@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local Simulator test only. Never signs, uploads, or clears the normal app.
+# Isolated Simulator proof using Xcode's local signing; no Apple account needed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 OUT="$ROOT/ios/build/download-proof"
@@ -22,6 +22,7 @@ BUNDLE=com.jonnyt.mp3shelf.downloadproof
 SIMULATOR=""
 OWNS_SIMULATOR=false
 FIXTURE_PID=""
+DERIVED=""
 STEP=preflight
 mkdir -p "$RUN_OUT"
 RUNNER_ERRORS="$RUN_OUT/runner-errors.log"
@@ -56,6 +57,7 @@ on_exit() {
     echo "- Shell: Bash $BASH_VERSION"
     echo "- Proof mode: $MODE"
     echo "- Run output: $RUN_OUT"
+    echo "- Generated Simulator build: ${DERIVED:-not created}"
     echo '- Scope: isolated Simulator app, persisted MP3 import and playback in a fresh process.'
     if [[ "$MODE" == local-import-restart ]]; then
       echo '- This fixture-only result does NOT establish live song search or download success.'
@@ -67,7 +69,8 @@ on_exit() {
     echo '- Device Airplane Mode / host connectivity changes: NOT TESTED / NOT USED'
     echo '- Selection mode is recorded in native-result.json; reference-review does not prove automatic selection.'
     echo '- Physical-iPhone/background acceptance: NOT TESTED'
-    echo '- Signing / GitHub Actions: NOT USED'
+    echo '- Simulator signing mode: Xcode Sign to Run Locally (no Apple account)'
+    echo '- Physical-device signing / GitHub Actions: NOT USED'
     if [[ $result -ne 0 && -s "$step_log" ]]; then
       echo
       echo 'Failed step log'
@@ -105,7 +108,7 @@ preflight_error() {
   exit 2
 }
 [[ "$(uname -s)" == Darwin ]] || preflight_error 'This native test requires macOS with Xcode.'
-for tool in xcodebuild xcrun python3; do
+for tool in xcodebuild xcrun python3 mktemp; do
   command -v "$tool" >/dev/null || preflight_error "Missing $tool."
 done
 TIMEOUT="${MP3SHELF_PROOF_TIMEOUT:-600}"
@@ -115,10 +118,15 @@ TIMEOUT="${MP3SHELF_PROOF_TIMEOUT:-600}"
 RUN_TOKEN="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 run_step() {
   STEP="$1"; shift
-  echo "Running $STEP…"
+  echo "Running ${STEP}..."
   "$@" > "$RUN_OUT/$STEP.log" 2>&1
 }
-BUILD_SETTINGS=(CODE_SIGNING_ALLOWED=NO "PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE")
+# Synced Documents folders can attach Finder metadata that codesign rejects.
+# Keep generated products in the system temporary area, with logs in RUN_OUT.
+STEP=create-simulator-build-directory
+DERIVED="$(mktemp -d "${TMPDIR:-/tmp}/mp3shelf-proof-build.XXXXXX")"
+# The background daemon needs a locally signed bundle identity even in Simulator.
+BUILD_SETTINGS=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- "PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE")
 if [[ "$MODE" == fixture-transfer ]]; then
   run_step configure-fixture-bundle python3 -c '
 import plistlib, sys
@@ -131,8 +139,8 @@ with open(sys.argv[2], "wb") as file: plistlib.dump(info, file)
 fi
 run_step build xcodebuild -project "$ROOT/ios/MP3Shelf.xcodeproj" -scheme MP3Shelf \
   -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath "$RUN_OUT/DerivedData" "${BUILD_SETTINGS[@]}" build
-APP="$RUN_OUT/DerivedData/Build/Products/Debug-iphonesimulator/MP3Shelf.app"
+  -derivedDataPath "$DERIVED" "${BUILD_SETTINGS[@]}" build
+APP="$DERIVED/Build/Products/Debug-iphonesimulator/MP3Shelf.app"
 STEP=verify-isolated-bundle
 python3 - "$APP/Info.plist" "$BUNDLE" "$MODE" <<'PY'
 import plistlib, sys
