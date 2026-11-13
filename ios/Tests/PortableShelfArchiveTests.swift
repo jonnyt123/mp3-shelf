@@ -65,6 +65,50 @@ struct PortableShelfArchiveTests {
         try FileManager.default.removeItem(at: sidecarURL)
         try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
         try assertThrowing(try Data(contentsOf: sidecarURL) == sidecarBytes)
+        // A dangling symlink is an existing directory entry even though
+        // fileExists(atPath:) returns false. Publication must never replace it
+        // or follow it to write outside the artwork/lyrics directory.
+        try FileManager.default.removeItem(at: sidecarURL)
+        let external = folder.appendingPathComponent("external-original.bin")
+        let externalBytes = Data([0xD1, 0xE2, 0xF3])
+        try externalBytes.write(to: external)
+        try FileManager.default.createSymbolicLink(
+            at: sidecarURL, withDestinationURL: external)
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
+            fatalError("Replaced a symbolic-link destination")
+        } catch { }
+        let linkValues = try sidecarURL.resourceValues(forKeys: [.isSymbolicLinkKey])
+        assert(linkValues.isSymbolicLink == true)
+        try assertThrowing(try Data(contentsOf: external) == externalBytes)
+        try FileManager.default.removeItem(at: sidecarURL)
+        let missingTarget = folder.appendingPathComponent("never-created.bin")
+        try FileManager.default.createSymbolicLink(
+            at: sidecarURL, withDestinationURL: missingTarget)
+        assert(!FileManager.default.fileExists(atPath: sidecarURL.path))
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
+            fatalError("Replaced a dangling symbolic-link destination")
+        } catch { }
+        assert((try sidecarURL.resourceValues(forKeys: [.isSymbolicLinkKey]))
+            .isSymbolicLink == true)
+        assert(!FileManager.default.fileExists(atPath: missingTarget.path))
+        try FileManager.default.removeItem(at: sidecarURL)
+        // A post-publication validation failure must not leave the private
+        // staging link or the newly published destination behind.
+        let beforeEntries = Set(try FileManager.default.contentsOfDirectory(
+            atPath: folder.path))
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL) {
+                throw ImportTransactionFailure.catalogWrite
+            }
+            fatalError("Accepted post-publication failure")
+        } catch ImportTransactionFailure.catalogWrite { }
+        let afterEntries = Set(try FileManager.default.contentsOfDirectory(
+            atPath: folder.path))
+        assert(beforeEntries == afterEntries)
+        print("PASS: archive sidecar no-replace symlink and staging cleanup")
+
         print("PASS: failed archive sidecar publication cleans new files without replacing existing bytes")
 
         // A valid recovery journal is durable metadata, not permission to
