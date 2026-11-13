@@ -1,5 +1,7 @@
 import Foundation
 
+private enum ImportTransactionFailure: Error { case invalidAudio, catalogWrite }
+
 // Evaluate throwing fixture reads before entering assert's nonthrowing closure.
 private func assertThrowing(_ condition: @autoclosure () throws -> Bool,
                             file: StaticString = #filePath, line: UInt = #line) rethrows {
@@ -40,6 +42,58 @@ struct PortableShelfArchiveTests {
             .appendingPathComponent("mp3shelf-archive-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
+
+        // A colliding generated destination is a pre-existing user recording,
+        // not a partial copy belonging to the new import. Never delete it
+        // when copy or catalog persistence fails.
+        let importSource = folder.appendingPathComponent("incoming-import.mp3")
+        let importDestination = folder.appendingPathComponent("imported-recording.mp3")
+        let incomingBytes = Data(repeating: 0x4D, count: 64 * 1024)
+        let existingBytes = Data(repeating: 0x24, count: 64 * 1024)
+        try incomingBytes.write(to: importSource)
+        try existingBytes.write(to: importDestination)
+        var importPersistCalls = 0
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { staged in
+                    let copied = try Data(contentsOf: staged)
+                    assert(staged.pathExtension == "mp3" && copied == incomingBytes)
+                },
+                persist: { importPersistCalls += 1 })
+            fatalError("Import overwrote a pre-existing recording")
+        } catch {
+            assert(importPersistCalls == 0)
+        }
+        try assertThrowing(try Data(contentsOf: importDestination) == existingBytes)
+        try FileManager.default.removeItem(at: importDestination)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in throw ImportTransactionFailure.invalidAudio },
+                persist: { importPersistCalls += 1 })
+            fatalError("Invalid audio was published")
+        } catch ImportTransactionFailure.invalidAudio { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in },
+                persist: { throw ImportTransactionFailure.catalogWrite })
+            fatalError("Failed catalog commit left published audio")
+        } catch ImportTransactionFailure.catalogWrite { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        try LocalAudioImportTransaction.perform(
+            from: importSource, to: importDestination,
+            validate: { _ in },
+            persist: { importPersistCalls += 1 })
+        assert(importPersistCalls == 1)
+        try assertThrowing(try Data(contentsOf: importDestination) == incomingBytes)
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        let importOrphans = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+            .filter { $0.hasPrefix(".mp3shelf-import-") }
+        assert(importOrphans.isEmpty)
+        print("PASS: import collisions, validation/storage failures and success preserve audio bytes")
 
         // Case-insensitive iPhone filesystems may resolve differently cased
         // legacy catalog names to the same audio or sidecar. Deleting one

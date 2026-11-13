@@ -34,6 +34,35 @@ enum LocalAudioFileNaming {
     }
 }
 
+/// A failed import must never delete an existing recording at its destination.
+/// Validate a unique extension-preserving staging copy, then publish with a
+/// no-replace hard link. The catalog commit is the last step; failed commits
+/// unlink only the recording published by this transaction.
+enum LocalAudioImportTransaction {
+    static func perform(from source: URL, to destination: URL,
+                        validate: (URL) throws -> Void,
+                        persist: () throws -> Void) throws {
+        let manager = FileManager.default
+        let staging = destination.deletingLastPathComponent().appendingPathComponent(
+            ".mp3shelf-import-\(UUID().uuidString).\(destination.pathExtension)")
+        // A short copy after low storage or a decoder error must clean up
+        // only this attempt's staging path, never the final catalog path.
+        defer { try? manager.removeItem(at: staging) }
+        try manager.copyItem(at: source, to: staging)
+        try validate(staging)
+        // Fails with file-exists if another recording already owns the path.
+        // moveItem/rename are unsafe here because they can replace user audio.
+        try manager.linkItem(at: staging, to: destination)
+        do {
+            try persist()
+        } catch {
+            // Only the successful link above grants ownership of this path.
+            try? manager.removeItem(at: destination)
+            throw error
+        }
+    }
+}
+
 /// Catalog filenames are data, not authorized filesystem paths. Only files
 /// directly owned by MP3 Shelf may be copied into a backup or unlinked after
 /// a successful catalog transaction. Fail closed for missing, linked or

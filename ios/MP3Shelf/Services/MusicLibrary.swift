@@ -957,60 +957,70 @@ final class MusicLibrary: ObservableObject {
         let destination = musicDirectory.appendingPathComponent(destinationName)
         var artworkName: String?
         do {
-            // FileManager.copyItem may leave a partial destination when storage
-            // fills or a coordinated source read fails. Keep the copy inside
-            // the same rollback scope as validation and catalog persistence.
-            // The UUID destination is new; never clean up the caller's source.
-            try manager.copyItem(at: sourceURL, to: destination)
-            if cancellationAware { try Task.checkCancellation() }
-            let asset = AVURLAsset(url: destination)
-            // Fail immediately for renamed HTML, corrupt files or codecs that AVAudioPlayer cannot decode.
-            let playbackProbe = try AVAudioPlayer(contentsOf: destination)
-            let duration = playbackProbe.duration
-            if let expectedDuration, abs(duration - expectedDuration) > 4 {
-                throw MusicLibraryError.recordingDurationMismatch
-            }
-            let metadata = asset.commonMetadata
-            func metadataString(_ key: AVMetadataKey) -> String? {
-                AVMetadataItem.metadataItems(from: metadata, withKey: key, keySpace: .common)
-                    .first?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            let title = metadataString(.commonKeyTitle).flatMap { $0.isEmpty ? nil : $0 }
-                ?? URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
-            let artist = metadataString(.commonKeyArtist).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Artist"
-            let album = metadataString(.commonKeyAlbumName).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Album"
-            if let imageData = AVMetadataItem.metadataItems(from: metadata, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue,
-               UIImage(data: imageData) != nil {
-                let proposedName = id.uuidString + ".img"
-                if (try? imageData.write(to: artworkDirectory.appendingPathComponent(proposedName), options: .atomic)) != nil {
-                    artworkName = proposedName
+            var preparedTrack: MusicTrack?
+            try LocalAudioImportTransaction.perform(
+                from: sourceURL, to: destination,
+                validate: { staged in
+                    if cancellationAware { try Task.checkCancellation() }
+                    // Staging preserves the extension so AVFoundation can
+                    // validate the audio before any final filename is created.
+                    let asset = AVURLAsset(url: staged)
+                    let playbackProbe = try AVAudioPlayer(contentsOf: staged)
+                    let duration = playbackProbe.duration
+                    if let expectedDuration, abs(duration - expectedDuration) > 4 {
+                        throw MusicLibraryError.recordingDurationMismatch
+                    }
+                    let metadata = asset.commonMetadata
+                    func metadataString(_ key: AVMetadataKey) -> String? {
+                        AVMetadataItem.metadataItems(from: metadata, withKey: key, keySpace: .common)
+                            .first?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    let title = metadataString(.commonKeyTitle).flatMap { $0.isEmpty ? nil : $0 }
+                        ?? URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
+                    let artist = metadataString(.commonKeyArtist).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Artist"
+                    let album = metadataString(.commonKeyAlbumName).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Album"
+                    if let imageData = AVMetadataItem.metadataItems(from: metadata, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue,
+                       UIImage(data: imageData) != nil {
+                        let proposedName = id.uuidString + ".img"
+                        if (try? imageData.write(to: artworkDirectory.appendingPathComponent(proposedName), options: .atomic)) != nil {
+                            artworkName = proposedName
+                        }
+                    }
+                    var track = MusicTrack(id: id, title: title, artist: artist, album: album,
+                                           fileName: destinationName, originalFileName: originalName,
+                                           artworkFileName: artworkName, duration: duration)
+                    if let wish {
+                        track.title = wish.title
+                        track.artist = wish.artist
+                        if !wish.album.isEmpty { track.album = wish.album }
+                        track.sourceAttribution = attribution
+                    }
+                    if cancellationAware { try Task.checkCancellation() }
+                    preparedTrack = track
+                },
+                persist: {
+                    guard let preparedTrack else {
+                        throw MusicLibraryError.unsupportedFormat
+                    }
+                    if cancellationAware { try Task.checkCancellation() }
+                    let updatedTracks = tracks + [preparedTrack]
+                    // Imported recording and reconciled playlist links commit
+                    // together, after no-replace publication of the audio.
+                    let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
+                    if cancellationAware { try Task.checkCancellation() }
+                    try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists)
+                        .write(to: databaseURL)
+                    tracks = updatedTracks
+                    playlists = updatedPlaylists
                 }
-            }
-            var track = MusicTrack(id: id, title: title, artist: artist, album: album,
-                                   fileName: destinationName, originalFileName: originalName,
-                                   artworkFileName: artworkName, duration: duration)
-            if let wish {
-                track.title = wish.title
-                track.artist = wish.artist
-                if !wish.album.isEmpty { track.album = wish.album }
-                track.sourceAttribution = attribution
-            }
-            if cancellationAware { try Task.checkCancellation() }
-            let updatedTracks = tracks + [track]
-            // Local Files imports can satisfy missing source-playlist wishes
-            // too. Persist the new recording and resolved playlist links in a
-            // single catalog transaction, regardless of the import origin.
-            let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
-            // Report import success only after the complete record is written.
-            // A failed write must leave both the live and saved library intact.
-            if cancellationAware { try Task.checkCancellation() }
-            try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists).write(to: databaseURL)
-            tracks = updatedTracks
-            playlists = updatedPlaylists
+            )
             return true
         } catch {
-            try? manager.removeItem(at: destination)
-            if let artworkName { try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artworkName)) }
+            // The transaction cleans only its own staging/published file.
+            // A colliding destination existed before us and is never removed.
+            if let artworkName {
+                try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artworkName))
+            }
             throw error
         }
     }
