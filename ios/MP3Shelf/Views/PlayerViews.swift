@@ -25,7 +25,7 @@ struct MiniPlayer: View {
                 // metadata becomes unreadable. At accessibility sizes, give
                 // the song details their own row and preserve full-size
                 // transport targets below them.
-                if dynamicTypeSize.isAccessibilitySize {
+                if dynamicTypeSize >= .xxxLarge {
                     VStack(alignment: .leading, spacing: 8) {
                         openNowPlaying(track)
                         HStack(spacing: 12) {
@@ -51,7 +51,7 @@ struct MiniPlayer: View {
                 }
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 8 : 11)
+            .padding(.horizontal, dynamicTypeSize >= .xxxLarge ? 8 : 11)
             .padding(.vertical, 10)
             .background {
                 RoundedRectangle(cornerRadius: 22)
@@ -75,6 +75,7 @@ struct MiniPlayer: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 22))
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
             .shadow(color: .black.opacity(0.3), radius: 18, y: 6)
         }
@@ -90,11 +91,13 @@ struct MiniPlayer: View {
                     Text(track.title)
                         .font(.system(.subheadline, design: .rounded, weight: .bold))
                         .foregroundStyle(.white)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                        .lineLimit(dynamicTypeSize >= .xxxLarge ? 3 : 1)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(track.artist)
                         .font(.caption)
                         .foregroundStyle(ShelfTheme.subdued)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                        .lineLimit(dynamicTypeSize >= .xxxLarge ? 3 : 1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
@@ -116,7 +119,7 @@ struct MiniPlayer: View {
                     .background(ShelfTheme.accent, in: Circle())
             }
             .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
-            .accessibilityHint("Toggle playback of the current song")
+            .accessibilityHint(playback.isPlaying ? "Pause the current recording" : "Resume the current recording")
             Button { playback.next() } label: {
                 Image(systemName: "forward.end.fill")
                     .font(.system(size: 15, weight: .semibold))
