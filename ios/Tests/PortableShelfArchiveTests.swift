@@ -179,6 +179,28 @@ struct PortableShelfArchiveTests {
         ], playlists: [], to: twoTrackBackup)
         let twoTrackArchive = try PortableShelfArchive.open(twoTrackBackup)
         assert(twoTrackArchive.manifest.tracks.count == 2)
+        // Verify both recordings independently, not just the first payload.
+        // This catches shifted offsets or artwork/track boundary regressions
+        // that a single-track round trip cannot detect.
+        for (index, expected) in [originalBytes, secondBytes].enumerated() {
+            let entry = twoTrackArchive.manifest.tracks[index]
+            let extractedTrack = try PortableShelfArchive.extract(
+                entry.audio, from: twoTrackArchive, extensionName: "mp3")
+            defer { try? FileManager.default.removeItem(at: extractedTrack) }
+            let restoredBytes = try Data(contentsOf: extractedTrack)
+            assert(restoredBytes == expected,
+                   "Track \\(index) must restore exactly its original audio bytes")
+        }
+        // Reopening the published backup must preserve every manifest offset
+        // and source recording; extraction must never consume source files.
+        let reopenedTwoTrack = try PortableShelfArchive.open(twoTrackBackup)
+        assert(reopenedTwoTrack.manifest.tracks.map { $0.audio.offset } ==
+               twoTrackArchive.manifest.tracks.map { $0.audio.offset })
+        let firstSourceAfterRoundTrip = try Data(contentsOf: audio)
+        let secondSourceAfterRoundTrip = try Data(contentsOf: secondAudio)
+        assert(firstSourceAfterRoundTrip == originalBytes)
+        assert(secondSourceAfterRoundTrip == secondBytes)
+        print("PASS: two-track archive extraction preserves both audio payloads")
         var brokenManifest = twoTrackArchive.manifest
         brokenManifest.tracks[1].artwork = .init(
             offset: brokenManifest.tracks[1].audio.offset, length: 0, type: "image/jpeg")
