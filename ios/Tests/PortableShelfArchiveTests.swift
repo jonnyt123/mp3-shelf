@@ -467,6 +467,20 @@ struct PortableShelfArchiveTests {
         } catch PortableShelfArchive.ArchiveError.invalidManifest {
             // Expected.
         }
+        // Replacing lyrics must not delete a sidecar still referenced by a
+        // second legacy recording under a differently cased APFS filename.
+        // The same conservative alias rule protects removeTrack().
+        assert(LocalLibraryFileSafety.isReferenced(
+            "Shared-Lyrics.LRC", by: ["shared-lyrics.lrc", nil]))
+        assert(LocalLibraryFileSafety.isReferenced(
+            "Café.lrc", by: ["cafe.lrc"]))
+        assert(!LocalLibraryFileSafety.isReferenced(
+            "Shared-Lyrics.LRC", by: ["unrelated.lrc", nil]))
+        // A new unique sidecar must be removable after the final owner drops
+        // it, without treating unrelated names as references.
+        assert(!LocalLibraryFileSafety.isReferenced(
+            "new-unique.lrc", by: ["old-shared.lrc"]))
+        print("PASS: lyrics replacement retains case/diacritic aliases")
         print("PASS: runtime sidecar size and path limits preserve source bytes")
         do {
             _ = try PortableShelfArchive.readSidecar(
