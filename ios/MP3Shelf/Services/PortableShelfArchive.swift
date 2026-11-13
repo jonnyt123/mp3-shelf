@@ -817,17 +817,34 @@ enum PortableShelfArchive {
     static func writeRestoredSidecar(_ bytes: Data, to destination: URL,
                                      validate: () throws -> Void = {}) throws {
         try Task.checkCancellation()
-        guard !FileManager.default.fileExists(atPath: destination.path) else {
-            throw CocoaError(.fileWriteFileExists)
-        }
+        let manager = FileManager.default
+        // Data.write(.atomic) may replace a destination created after an
+        // existence check. Stage privately in the same directory and publish
+        // with a hard link: link(2) fails atomically if any entry already
+        // occupies the destination, including a dangling symbolic link.
+        let staging = destination.deletingLastPathComponent()
+            .appendingPathComponent(".mp3shelf-sidecar-\(UUID().uuidString).tmp")
         var published = false
+        defer { try? manager.removeItem(at: staging) }
         do {
-            try bytes.write(to: destination, options: .atomic)
+            try bytes.write(to: staging, options: .atomic)
+            let handle = try FileHandle(forWritingTo: staging)
+            do {
+                try handle.synchronize()
+                try handle.close()
+            } catch {
+                try? handle.close()
+                throw error
+            }
+            try Task.checkCancellation()
+            try manager.linkItem(at: staging, to: destination)
             published = true
             try validate()
             try Task.checkCancellation()
         } catch {
-            if published { try? FileManager.default.removeItem(at: destination) }
+            // Only remove the destination after *our* no-replace link won.
+            // Never remove a pre-existing file or symlink on a failed link.
+            if published { try? manager.removeItem(at: destination) }
             throw error
         }
     }
