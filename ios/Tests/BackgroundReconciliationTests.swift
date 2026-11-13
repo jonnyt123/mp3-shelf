@@ -102,6 +102,19 @@ __METHOD__
         h.reconcileAlreadyStoredDownloads(excluding: excluded.id)
         check(h.library?.finished == 2, "repeated reconciliation does not acknowledge imports twice")
 
+        // Conversion ownership can begin before insertion into processing.
+        // Reconciliation must not unlink a decoder's input in this window.
+        let early = BackgroundAudioTicket()
+        let earlyConversion = Progress(totalUnitCount: 100)
+        h.tickets[early.id] = early
+        h.conversions[early.id] = earlyConversion
+        try Data("conversion input".utf8).write(to: ReconciliationHarness.stagingURL(early.id))
+        h.session.tasks.append(FixtureTask(early.id))
+        h.reconcileAlreadyStoredDownloads()
+        check(h.tickets[early.id]?.status == .imported && earlyConversion.isCancelled &&
+              fm.fileExists(atPath: ReconciliationHarness.stagingURL(early.id).path),
+              "conversion-owned staging survives reconciliation before processing registration")
+
         let failed = ReconciliationHarness(root.appendingPathComponent("missing-parent/queue.json"))
         failed.tickets[active.id] = active
         let task = FixtureTask(active.id)
