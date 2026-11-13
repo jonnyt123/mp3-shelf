@@ -215,30 +215,14 @@ final class MusicLibrary: ObservableObject {
                 }
                 guard !LocalLibraryFileSafety.isReferenced(
                     candidate.fileName, by: tracks.map(\.fileName)) else { continue }
-                let target = musicDirectory.appendingPathComponent(candidate.fileName)
-                let staged = LocalLibraryFileSafety.regularFile(
-                    named: record.stagingName, in: musicDirectory)
-                var audio = LocalLibraryFileSafety.regularFile(
-                    named: candidate.fileName, in: musicDirectory)
-                if audio == nil {
-                    guard let staged else { continue }
-                    // Validate a finished source before publishing it. Unknown
-                    // or half-written staging files remain untouched for repair.
-                    guard let attributes = try? manager.attributesOfItem(atPath: staged.path),
-                          (attributes[.size] as? NSNumber)?.int64Value == record.audioLength,
-                          let probe = try? AVAudioPlayer(contentsOf: staged),
-                          probe.duration.isFinite, probe.duration > 0,
-                          abs(probe.duration - candidate.duration) <= 4 else { continue }
-                    try manager.linkItem(at: staged, to: target)
-                    audio = LocalLibraryFileSafety.regularFile(
-                        named: candidate.fileName, in: musicDirectory)
+                let audio = try record.restorePublication(in: musicDirectory) { file in
+                    guard let probe = try? AVAudioPlayer(contentsOf: file) else {
+                        return false
+                    }
+                    return probe.duration.isFinite && probe.duration > 0 &&
+                        abs(probe.duration - candidate.duration) <= 4
                 }
-                guard let audio,
-                      let attributes = try? manager.attributesOfItem(atPath: audio.path),
-                      (attributes[.size] as? NSNumber)?.int64Value == record.audioLength,
-                      let probe = try? AVAudioPlayer(contentsOf: audio),
-                      probe.duration.isFinite, probe.duration > 0,
-                      abs(probe.duration - candidate.duration) <= 4 else { continue }
+                guard audio != nil else { continue }
                 let updatedTracks = tracks + [candidate]
                 let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
                 // One atomic catalog write is the recovery commit point. A

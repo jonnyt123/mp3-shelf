@@ -96,8 +96,36 @@ struct PortableShelfArchiveTests {
         try FileManager.default.removeItem(at: symlinkJournal)
         try assertThrowing(try Data(contentsOf: recoveryStageURL) == recoveryBytes)
         try assertThrowing(try Data(contentsOf: recoveryUnknown) == unknownBytes)
-        try FileManager.default.removeItem(at: recoveryJournal)
+        // Exercise the production no-replace publication helper without
+        // requiring AVFoundation on Linux. The verifier accepts exact bytes.
+        let recoveryPublished = folder.appendingPathComponent(recoveryTrack.fileName)
+        let recoveredFile = try reopenedRecovery.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == recoveryBytes
+        }
+        assert(recoveredFile == recoveryPublished)
+        try assertThrowing(try Data(contentsOf: recoveryPublished) == recoveryBytes)
+        // A second launch reuses the same file without making another copy.
+        let recoveredAgain = try reopenedRecovery.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == recoveryBytes
+        }
+        assert(recoveredAgain == recoveryPublished)
+        // A malicious or corrupt destination must never be overwritten with
+        // the journal's stage even when the staged audio itself is intact.
+        try FileManager.default.removeItem(at: recoveryPublished)
+        try unknownBytes.write(to: recoveryPublished)
+        let refusedCollision = try reopenedRecovery.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == recoveryBytes
+        }
+        assert(refusedCollision == nil)
+        try assertThrowing(try Data(contentsOf: recoveryPublished) == unknownBytes)
+        try FileManager.default.removeItem(at: recoveryPublished)
+        // An interrupted import with no surviving stage is not synthesized
+        // as a made-up recording: leave the journal, skip publication.
         try FileManager.default.removeItem(at: recoveryStageURL)
+        assert(try reopenedRecovery.restorePublication(in: folder) { _ in true } == nil)
+        assert(FileManager.default.fileExists(atPath: recoveryJournal.path))
+        print("PASS: recovery publication is byte-preserving, idempotent and no-replace")
+        try FileManager.default.removeItem(at: recoveryJournal)
         print("PASS: recovery journals round-trip, reject aliasing and preserve original files")
 
         // A colliding generated destination is a pre-existing user recording,

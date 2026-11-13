@@ -90,6 +90,33 @@ struct LocalAudioRecoveryRecord: Codable {
         }
         return record
     }
+
+    /// Reattach only a validated, ordinary on-disk recording. Never overwrite
+    /// a destination (including a symlink) or delete unidentified bytes.
+    /// The verifier is AVFoundation in production and deterministic fixture
+    /// bytes in the portable regression suite.
+    func restorePublication(in directory: URL,
+                            verify: (URL) -> Bool) throws -> URL? {
+        guard LocalLibraryFileSafety.validName(track.fileName),
+              LocalLibraryFileSafety.validName(stagingName) else { return nil }
+        func eligible(_ name: String) -> URL? {
+            guard let file = LocalLibraryFileSafety.regularFile(
+                named: name, in: directory),
+                  let attributes = try? FileManager.default.attributesOfItem(
+                      atPath: file.path),
+                  (attributes[.size] as? NSNumber)?.int64Value == audioLength,
+                  verify(file) else { return nil }
+            return file
+        }
+        if let published = eligible(track.fileName) { return published }
+        // A preexisting but damaged/aliased destination is not ours to fix
+        // by replacement: keep both files for manual recovery.
+        let destination = directory.appendingPathComponent(track.fileName)
+        guard !FileManager.default.fileExists(atPath: destination.path),
+              let staged = eligible(stagingName) else { return nil }
+        try FileManager.default.linkItem(at: staged, to: destination)
+        return eligible(track.fileName)
+    }
 }
 
 /// A new import validates a unique staged file before publishing an audio
