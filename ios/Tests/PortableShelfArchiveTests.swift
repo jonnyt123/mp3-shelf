@@ -71,6 +71,37 @@ struct PortableShelfArchiveTests {
         let audio = folder.appendingPathComponent("my-song.mp3")
         let originalBytes = Data([0x49, 0x44, 0x33, 0, 1, 2, 3, 4, 5, 6, 7])
         try originalBytes.write(to: audio)
+        // A malformed persisted fileName must never escape the owned Music
+        // folder when a backup exports or a recording is removed. Existing
+        // catalog-generated filenames and genuine regular files still work.
+        let ownedFolder = folder.appendingPathComponent("OwnedMusic", isDirectory: true)
+        try FileManager.default.createDirectory(at: ownedFolder, withIntermediateDirectories: true)
+        let ownedAudio = ownedFolder.appendingPathComponent("owned.mp3")
+        let outsideAudio = folder.appendingPathComponent("outside.mp3")
+        try originalBytes.write(to: ownedAudio)
+        try originalBytes.write(to: outsideAudio)
+        let ownedLink = ownedFolder.appendingPathComponent("linked.mp3")
+        try FileManager.default.createSymbolicLink(
+            at: ownedLink, withDestinationURL: outsideAudio)
+        let internalLink = ownedFolder.appendingPathComponent("internal.mp3")
+        try FileManager.default.createSymbolicLink(
+            at: internalLink, withDestinationURL: ownedAudio)
+        let disguisedDirectory = ownedFolder.appendingPathComponent("folder.mp3", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: disguisedDirectory, withIntermediateDirectories: true)
+        assert(LocalLibraryFileSafety.regularFile(named: "owned.mp3", in: ownedFolder) == ownedAudio)
+        for badName in ["../outside.mp3", "../../outside.mp3", "/tmp/outside.mp3",
+                        "sub/owned.mp3", "sub\\owned.mp3", ".", "..", "",
+                        "linked.mp3", "internal.mp3", "folder.mp3", "missing.mp3"] {
+            assert(LocalLibraryFileSafety.regularFile(named: badName, in: ownedFolder) == nil,
+                   "Accepted unsafe catalog filename: \(badName)")
+        }
+        assert(LocalLibraryFileSafety.regularFile(named: nil, in: ownedFolder) == nil)
+        let unaffectedOutsideBytes = try Data(contentsOf: outsideAudio)
+        let unaffectedOwnedBytes = try Data(contentsOf: ownedAudio)
+        assert(unaffectedOutsideBytes == originalBytes && unaffectedOwnedBytes == originalBytes)
+        print("PASS: malformed and linked catalog paths cannot escape owned music storage")
+
         let song = MusicTrack(
             id: UUID(), title: "Test song", artist: "Local artist",
             album: "Album", fileName: "my-song.mp3",

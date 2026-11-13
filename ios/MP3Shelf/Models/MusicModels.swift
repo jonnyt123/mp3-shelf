@@ -34,6 +34,29 @@ enum LocalAudioFileNaming {
     }
 }
 
+/// Catalog filenames are data, not authorized filesystem paths. Only files
+/// directly owned by MP3 Shelf may be copied into a backup or unlinked after
+/// a successful catalog transaction. Fail closed for missing, linked or
+/// malformed legacy paths instead of touching files outside the library.
+enum LocalLibraryFileSafety {
+    static func regularFile(named name: String?, in directory: URL) -> URL? {
+        guard let name, !name.isEmpty, name != ".", name != "..",
+              !name.contains("/"), !name.contains("\\"), !name.contains("\0") else {
+            return nil
+        }
+        let root = directory.resolvingSymlinksInPath().standardizedFileURL
+        let file = directory.appendingPathComponent(name, isDirectory: false)
+        // Resolve final-component symlinks as well as parent-directory links.
+        guard file.resolvingSymlinksInPath().standardizedFileURL
+                .deletingLastPathComponent() == root else { return nil }
+        guard let values = try? file.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey]),
+              values.isSymbolicLink == false, values.isRegularFile == true else { return nil }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+              (attributes[.type] as? FileAttributeType) == .typeRegular else { return nil }
+        return file
+    }
+}
+
 enum RepeatMode: String, Codable, CaseIterable {
     case off, all, one
 

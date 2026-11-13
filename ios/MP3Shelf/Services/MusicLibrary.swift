@@ -204,6 +204,13 @@ final class MusicLibrary: ObservableObject {
         // Only a nil reference means the recording genuinely has no sidecar.
         let items = try tracks.map { track -> PortableShelfArchive.MediaInput in
             try Task.checkCancellation()
+            // Do not let a malformed/legacy catalog export bytes from outside
+            // the Music directory. The archive exporter revalidates identity
+            // while streaming to catch later pathname replacement.
+            guard let ownedAudio = LocalLibraryFileSafety.regularFile(
+                named: track.fileName, in: musicDirectory) else {
+                throw PortableShelfArchive.ArchiveError.invalidManifest
+            }
             let lyricBytes = try PortableShelfArchive.readSidecar(
                 named: track.lyricsFileName, from: lyricsDirectory,
                 maximumBytes: 500 * 1024)
@@ -232,7 +239,7 @@ final class MusicLibrary: ObservableObject {
                 artwork = nil
             }
             return PortableShelfArchive.MediaInput(
-                track: track, audioURL: fileURL(for: track),
+                track: track, audioURL: ownedAudio,
                 artwork: artwork, lyrics: lyrics
             )
         }
@@ -714,9 +721,11 @@ final class MusicLibrary: ObservableObject {
             // recordings can share a lyrics filename; preserve shared files.
             if let previousLyrics,
                previousLyrics != filename,
-               !updatedTracks.contains(where: { $0.lyricsFileName == previousLyrics }) {
+               !updatedTracks.contains(where: { $0.lyricsFileName == previousLyrics }),
+               let owned = LocalLibraryFileSafety.regularFile(
+                   named: previousLyrics, in: lyricsDirectory) {
                 do {
-                    try manager.removeItem(at: lyricsDirectory.appendingPathComponent(previousLyrics))
+                    try manager.removeItem(at: owned)
                 } catch {
                     print("MP3 Shelf retained an unreferenced lyrics sidecar: \(error)")
                 }
@@ -1632,9 +1641,11 @@ final class MusicLibrary: ObservableObject {
         // audio already deleted. Sidecar removal remains best effort.
         // Restored or legacy catalogs may share a stored filename across
         // multiple track records. Only delete files with no remaining owner.
-        if !remainingTracks.contains(where: { $0.fileName == track.fileName }) {
+        if !remainingTracks.contains(where: { $0.fileName == track.fileName }),
+           let ownedAudio = LocalLibraryFileSafety.regularFile(
+               named: track.fileName, in: musicDirectory) {
             do {
-                try manager.removeItem(at: fileURL(for: track))
+                try manager.removeItem(at: ownedAudio)
             } catch {
                 print("MP3 Shelf retained an orphaned audio file after catalog removal: \(error)")
             }
@@ -1642,11 +1653,16 @@ final class MusicLibrary: ObservableObject {
         if let artwork = track.artworkFileName,
            !remainingTracks.contains(where: { $0.artworkFileName == artwork }) {
             artworkCache.removeObject(forKey: artwork as NSString)
-            try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artwork))
+            if let ownedArtwork = LocalLibraryFileSafety.regularFile(
+                named: artwork, in: artworkDirectory) {
+                try? manager.removeItem(at: ownedArtwork)
+            }
         }
         if let lyrics = track.lyricsFileName,
-           !remainingTracks.contains(where: { $0.lyricsFileName == lyrics }) {
-            try? manager.removeItem(at: lyricsDirectory.appendingPathComponent(lyrics))
+           !remainingTracks.contains(where: { $0.lyricsFileName == lyrics }),
+           let ownedLyrics = LocalLibraryFileSafety.regularFile(
+               named: lyrics, in: lyricsDirectory) {
+            try? manager.removeItem(at: ownedLyrics)
         }
     }
 
