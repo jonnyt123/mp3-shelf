@@ -16,6 +16,13 @@ guard let start = source.range(of: "private final class ShelfPCMConversion {") e
     fatalError("Production converter boundary changed; update the fixture explicitly")
 }
 let converter = String(source[start.lowerBound...])
+let proof = try String(contentsOf: root.appendingPathComponent("ios/MP3Shelf/Services/DownloadPathProof.swift"), encoding: .utf8)
+guard let decodeStart = proof.range(of: "let decoded = try await Task.detached(priority: .utility) {"),
+      let decodeEnd = proof.range(of: "\n            }.value", range: decodeStart.upperBound..<proof.endIndex) else {
+    fatalError("Production full-decode boundary changed; update the fixture explicitly")
+}
+let proofDecode = String(proof[decodeStart.upperBound..<decodeEnd.lowerBound])
+
 let fixture = #"""
 import Foundation
 import AVFoundation
@@ -63,9 +70,17 @@ __CONVERTER__
             }
             check(decoded == audio.length && hasSignal, "entire saved MP3 decodes with real audio")
         }
+        func verifyProofDecode(_ file: URL) throws {
+            func decode() throws -> (Int64, Bool, Double) {
+                __PROOF_DECODE__
+            }
+            let decoded = try decode()
+            check(decoded.0 > 0 && decoded.1, "production proof decodes complete MP3 without reading past EOF")
+        }
         let converted = folder.appendingPathComponent("mono.mp3")
         try ShelfPCMConversion.encode(alias, to: converted, expectedDuration: 2, progress: Progress())
         try verifyMP3(converted, duration: 2, channels: 1)
+        try verifyProofDecode(converted)
         print("PASS: complete AAC recording converts through final partial block and EOF")
 
         let stereo = folder.appendingPathComponent("stereo.wav")
@@ -84,6 +99,7 @@ __CONVERTER__
         let stereoMP3 = folder.appendingPathComponent("stereo.mp3")
         try ShelfPCMConversion.encode(stereo, to: stereoMP3, expectedDuration: nil, progress: Progress())
         try verifyMP3(stereoMP3, duration: 8192.0 / 44100.0, channels: 2)
+        try verifyProofDecode(stereoMP3)
         print("PASS: exact block-boundary stereo conversion flushes successfully")
 
         let sentinel = Data("existing user audio must remain intact".utf8)
@@ -121,6 +137,7 @@ try FileManager.default.createDirectory(at: temporary, withIntermediateDirectori
 defer { try? FileManager.default.removeItem(at: temporary) }
 let file = temporary.appendingPathComponent("Tests.swift")
 try fixture.replacingOccurrences(of: "__CONVERTER__", with: converter)
+    .replacingOccurrences(of: "__PROOF_DECODE__", with: proofDecode)
     .write(to: file, atomically: true, encoding: .utf8)
 let header = root.appendingPathComponent("ios/Packages/ShelfMP3Encoder/Adapter/include/ShelfEncoder.h")
 try "module ShelfEncoder { header \"\(header.path)\" export * }\n"

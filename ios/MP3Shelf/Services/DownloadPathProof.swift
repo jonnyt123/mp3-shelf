@@ -276,14 +276,23 @@ enum DownloadPathProof {
                 }
                 var frames: Int64 = 0
                 var audible = false
-                while true {
+                while audio.framePosition < audio.length {
                     try Task.checkCancellation()
-                    try audio.read(into: buffer, frameCount: 4096)
-                    if buffer.frameLength == 0 { break }
+                    let remaining = audio.length - audio.framePosition
+                    try audio.read(into: buffer,
+                        frameCount: AVAudioFrameCount(min(4096, remaining)))
+                    guard buffer.frameLength > 0 else {
+                        throw NSError(domain: "MP3Shelf.DownloadProof", code: 3,
+                            userInfo: [NSLocalizedDescriptionKey: "MP3 decoding stopped before the final frame"])
+                    }
                     frames += Int64(buffer.frameLength)
                     if let samples = buffer.floatChannelData?[0] {
                         for index in 0..<Int(buffer.frameLength) where abs(samples[index]) > 0.0001 { audible = true; break }
                     }
+                }
+                guard frames == audio.length else {
+                    throw NSError(domain: "MP3Shelf.DownloadProof", code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "MP3 decoding did not cover the entire recording"])
                 }
                 return (frames, audible, Double(frames) / audio.processingFormat.sampleRate)
             }.value
