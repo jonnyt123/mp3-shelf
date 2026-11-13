@@ -567,6 +567,7 @@ enum PortableShelfArchive {
         var mediaRanges: [(start: Int64, end: Int64)] = []
         var trackIDs = Set<String>()
         for track in manifest.tracks {
+            try Task.checkCancellation()
             guard !track.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   trackIDs.insert(track.id).inserted,
                   !track.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -591,6 +592,7 @@ enum PortableShelfArchive {
         mediaRanges.sort { $0.start < $1.start }
         var expectedStart: Int64 = 0
         for range in mediaRanges {
+            try Task.checkCancellation()
             guard range.start == expectedStart else {
                 throw ArchiveError.invalidRange
             }
@@ -601,11 +603,19 @@ enum PortableShelfArchive {
         }
         var playlistIDs = Set<String>()
         for playlist in manifest.playlists {
+            try Task.checkCancellation()
             guard !playlist.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !playlist.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  playlistIDs.insert(playlist.id).inserted,
-                  playlist.trackIds.allSatisfy({ trackIDs.contains($0) }) else {
+                  playlistIDs.insert(playlist.id).inserted else {
                 throw ArchiveError.invalidManifest
+            }
+            // A single large playlist can contain thousands of links. Check
+            // cancellation within reconciliation, not only between playlists.
+            for trackID in playlist.trackIds {
+                try Task.checkCancellation()
+                guard trackIDs.contains(trackID) else {
+                    throw ArchiveError.invalidManifest
+                }
             }
         }
         // Reject concurrent edits while the manifest was being inspected.
@@ -618,6 +628,7 @@ enum PortableShelfArchive {
               checked.changedNanoseconds == identity.changedNanoseconds else {
             throw ArchiveError.invalidFile
         }
+        try Task.checkCancellation()
         return Opened(manifest: manifest, url: url, payloadOffset: payloadOffset,
                       sourceIdentity: identity)
     }
