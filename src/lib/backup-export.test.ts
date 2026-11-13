@@ -278,6 +278,38 @@ describe("durable backup export",()=>{
   expect(reads).toBe(2);
   expect(storage.values.get(key)).toBe(JSON.stringify(playlist));
  });
+ it("detects edits between the three legacy probe windows in a medium recording",async()=>{
+  const storage=store();
+  const bytes=new Uint8Array(512*1024);
+  bytes.fill(42);
+  const replaced=bytes.slice();
+  // Outside the prefix (0-64 KiB), middle (224-288 KiB),
+  // and suffix (448-512 KiB) windows of the old sampler.
+  replaced[96*1024]=43;
+  const original={...track,size:bytes.length,blob:new Blob([bytes])};
+  const changed={...original,blob:new Blob([replaced])};
+  let reads=0;
+  await expect(createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[original]:[changed];
+  })).rejects.toThrow("Saved recording bytes changed");
+  expect(reads).toBe(2);
+ });
+ it("bounds each fingerprint read to 64 KiB for a medium recording",async()=>{
+  const storage=store();
+  const bytes=new Uint8Array(512*1024);
+  const media=new Blob([bytes]);
+  const originalSlice=media.slice.bind(media);
+  const lengths:number[]=[];
+  Object.defineProperty(media,"slice",{value:(start?:number,end?:number,type?:string)=>{
+   lengths.push((end??media.size)-(start??0));
+   return originalSlice(start,end,type);
+  }});
+  const medium={...track,size:bytes.length,blob:media};
+  await createStoredLibraryBackup(storage,key,async()=>[medium]);
+  expect(lengths.length).toBeGreaterThanOrEqual(8);
+  expect(lengths.every(length=>length<=64*1024)).toBe(true);
+ });
  it("accepts unchanged large recordings without materializing full-file fingerprints",async()=>{
   const storage=store();
   const bytes=new Uint8Array(256*1024);
