@@ -1646,7 +1646,7 @@ final class MusicLibrary: ObservableObject {
         // audio already deleted. Sidecar removal remains best effort.
         // Restored or legacy catalogs may share a stored filename across
         // multiple track records. Only delete files with no remaining owner.
-        if !remainingTracks.contains(where: { $0.fileName == track.fileName }),
+        if !LocalLibraryFileSafety.isReferenced(track.fileName, by: remainingTracks.map(\.fileName)),
            let ownedAudio = LocalLibraryFileSafety.regularFile(
                named: track.fileName, in: musicDirectory) {
             do {
@@ -1656,7 +1656,7 @@ final class MusicLibrary: ObservableObject {
             }
         }
         if let artwork = track.artworkFileName,
-           !remainingTracks.contains(where: { $0.artworkFileName == artwork }) {
+           !LocalLibraryFileSafety.isReferenced(artwork, by: remainingTracks.map(\.artworkFileName)) {
             artworkCache.removeObject(forKey: artwork as NSString)
             if let ownedArtwork = LocalLibraryFileSafety.regularFile(
                 named: artwork, in: artworkDirectory) {
@@ -1664,7 +1664,7 @@ final class MusicLibrary: ObservableObject {
             }
         }
         if let lyrics = track.lyricsFileName,
-           !remainingTracks.contains(where: { $0.lyricsFileName == lyrics }),
+           !LocalLibraryFileSafety.isReferenced(lyrics, by: remainingTracks.map(\.lyricsFileName)),
            let ownedLyrics = LocalLibraryFileSafety.regularFile(
                named: lyrics, in: lyricsDirectory) {
             try? manager.removeItem(at: ownedLyrics)
