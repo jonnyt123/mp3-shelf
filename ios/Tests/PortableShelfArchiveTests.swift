@@ -213,7 +213,8 @@ struct PortableShelfArchiveTests {
         let journaledTrack = MusicTrack(
             id: UUID(), title: "Journaled recording", artist: "Local",
             album: "Recovery", fileName: "journaled-recording.mp3",
-            originalFileName: "journaled-recording.mp3", duration: 13)
+            originalFileName: "journaled-recording.mp3",
+            artworkFileName: "journaled-cover.img", duration: 13)
         let journaledDestination = folder.appendingPathComponent(journaledTrack.fileName)
         let journaledIntent = LocalAudioRecoveryRecord.journalURL(
             for: journaledTrack.id, in: folder)
@@ -237,6 +238,8 @@ struct PortableShelfArchiveTests {
         } catch ImportTransactionFailure.catalogWrite { }
         assert(!FileManager.default.fileExists(atPath: journaledDestination.path))
         assert(!FileManager.default.fileExists(atPath: journaledIntent.path))
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            "journaled-cover.img", for: journaledTrack.id, in: folder))
         // Simulate an OS/filesystem refusal to unlink a published file after
         // catalog persistence fails. Preserve the original source, published
         // audio, staging bytes and durable journal for a subsequent retry.
@@ -258,6 +261,17 @@ struct PortableShelfArchiveTests {
         let retainedIntent = try LocalAudioRecoveryRecord.read(
             journaledIntent, in: folder)
         let retainedStage = folder.appendingPathComponent(retainedIntent.stagingName)
+        let cover = folder.appendingPathComponent("journaled-cover.img")
+        let coverBytes = Data(repeating: 0xA3, count: 2048)
+        try coverBytes.write(to: cover)
+        assert(LocalAudioRecoveryRecord.retainsArtwork(
+            cover.lastPathComponent, for: journaledTrack.id, in: folder))
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            cover.lastPathComponent, for: UUID(), in: folder))
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            "../journaled-cover.img", for: journaledTrack.id, in: folder))
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            "other-cover.img", for: journaledTrack.id, in: folder))
         assert(FileManager.default.fileExists(atPath: retainedStage.path))
         try assertThrowing(try Data(contentsOf: retainedStage) == incomingBytes)
         try assertThrowing(try Data(contentsOf: journaledDestination) == incomingBytes)
@@ -275,7 +289,11 @@ struct PortableShelfArchiveTests {
         try FileManager.default.removeItem(at: journaledDestination)
         try FileManager.default.removeItem(at: retainedStage)
         try FileManager.default.removeItem(at: journaledIntent)
-        print("PASS: failed rollback retains staged bytes and journal for retry")
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            cover.lastPathComponent, for: journaledTrack.id, in: folder))
+        try assertThrowing(try Data(contentsOf: cover) == coverBytes)
+        try FileManager.default.removeItem(at: cover)
+        print("PASS: failed rollback retains staged bytes, artwork and journal for retry")
         try LocalAudioImportTransaction.perform(
             from: importSource, to: journaledDestination,
             validate: { _ in },
