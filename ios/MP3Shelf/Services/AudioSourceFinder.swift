@@ -697,14 +697,25 @@ extension AudioSourceFinder {
     }
     struct AudiusGate: Decodable {}
 
-    static func audiusSearchURL(for wish: PlaylistWish) -> URL {
+    // Search pagination is bounded: an exact-looking first-page recording is
+    // not unambiguous if another version is hidden on the next page.
+    static let audiusPageSize = 25
+    static let maxAudiusPages = 2
+
+    static func audiusSearchURL(for wish: PlaylistWish, page: Int = 1) -> URL {
         var parts = URLComponents(string: "https://api.audius.co/v1/tracks/search")!
+        let safePage = max(1, min(page, maxAudiusPages))
         parts.queryItems = [
             URLQueryItem(name: "query", value: "\(wish.artist) \(wish.title)"),
-            URLQueryItem(name: "limit", value: "25"),
+            URLQueryItem(name: "limit", value: String(audiusPageSize)),
+            URLQueryItem(name: "offset", value: String((safePage - 1) * audiusPageSize)),
             URLQueryItem(name: "only_downloadable", value: "true")
         ]
         return parts.url!
+    }
+
+    static func audiusHasUninspectedResults(returned: Int, page: Int) -> Bool {
+        returned >= audiusPageSize && page >= maxAudiusPages
     }
 
     static func audiusPermalink(_ raw: String?) -> URL? {
@@ -756,13 +767,27 @@ extension AudioSourceFinder {
     static func findAudius(for wish: PlaylistWish,
                            allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
-        let response: AudiusSearchResponse = try await requestJSON(audiusSearchURL(for: wish),
-                                                                  allowsCellular: allowsCellular)
-        let matched = response.data.compactMap { audiusCandidate($0, for: wish) }
-        let unique = Dictionary(grouping: matched, by: { $0.downloadURL.absoluteString })
-        // Two exact-looking recordings are ambiguous even when both providers
-        // label them as downloadable. Do not silently choose one.
-        return unique.count == 1 ? unique.values.first?.first : nil
+        var candidates: [String: AudioCatalogMatch] = [:]
+        for page in 1...maxAudiusPages {
+            try Task.checkCancellation()
+            let response: AudiusSearchResponse = try await requestJSON(
+                audiusSearchURL(for: wish, page: page), allowsCellular: allowsCellular)
+            try Task.checkCancellation()
+            for match in response.data.compactMap({ audiusCandidate($0, for: wish) }) {
+                candidates[match.downloadURL.absoluteString] = match
+                // Distinct exact-looking downloadable files can be different
+                // masters or versions. Never select one arbitrarily.
+                if candidates.count > 1 { return nil }
+            }
+            // A full final page cannot certify uniqueness. Return a retryable
+            // catalog error instead of automatically importing a possible
+            // wrong recording; do not request unbounded pages per playlist song.
+            if audiusHasUninspectedResults(returned: response.data.count, page: page) {
+                throw SourceError.unavailable
+            }
+            if response.data.count < audiusPageSize { break }
+        }
+        return candidates.count == 1 ? candidates.values.first : nil
     }
 }
 
