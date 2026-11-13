@@ -35,7 +35,8 @@ func disposition(queued: Bool, staged: Bool) -> String {
     return "retry-or-fail"
 }
 precondition(disposition(queued: true, staged: fm.fileExists(atPath: stagedFile.path)) == "recover")
-precondition(try Data(contentsOf: stagedFile) == completeAudio)
+let preservedAudio = try Data(contentsOf: stagedFile)
+precondition(preservedAudio == completeAudio)
 precondition(disposition(queued: false, staged: true) == "ignore")
 try fm.removeItem(at: stagedFile)
 precondition(disposition(queued: true, staged: fm.fileExists(atPath: stagedFile.path)) == "retry-or-fail")
