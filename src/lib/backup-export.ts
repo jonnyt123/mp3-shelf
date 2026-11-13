@@ -29,6 +29,28 @@ export async function createStoredLibraryBackup(
  // Validate metadata/references before scanning any payload. Blob construction
  // alone does not read file-backed data: an inaccessible original can otherwise
  // produce a "ready" archive whose download fails later in the browser.
+ const sample=async(blob:Blob):Promise<string>=>{
+  // Bound additional I/O for large libraries while detecting common
+  // same-size media replacements that metadata-only comparisons miss.
+  const window=64*1024;
+  const first=new Uint8Array(await blob.slice(0,window).arrayBuffer());
+  const last=blob.size>window?new Uint8Array(await blob.slice(-window).arrayBuffer()):new Uint8Array(0);
+  let hash=2166136261;
+  for(const bytes of [first,last])for(const byte of bytes)
+   hash=Math.imul(hash^byte,16777619)>>>0;
+  return `${blob.size}:${hash}`;
+ };
+ const sampleTracks=async(items:Track[])=>{
+  const samples=new Map<string,string>();
+  for(const item of items){
+   assertSnapshot();
+   samples.set(item.id,`${await sample(item.blob)}:${item.artwork?await sample(item.artwork):"none"}`);
+  }
+  assertSnapshot();
+  return samples;
+ };
+ const originalSamples=await sampleTracks(tracks);
+ assertSnapshot();
  const backup=createLibraryBackup(tracks,playlists);
  for(const track of tracks){
   assertSnapshot();
@@ -90,5 +112,10 @@ export async function createStoredLibraryBackup(
  ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
  if(signature(tracks)!==signature(latest))
   throw new Error("Saved recordings changed while preparing the backup. Retry export.");
+ const latestSamples=await sampleTracks(latest);
+ for(const [id,original] of originalSamples){
+  if(latestSamples.get(id)!==original)
+   throw new Error("Saved recording bytes changed while preparing the backup. Retry export.");
+ }
  return backup;
 }
