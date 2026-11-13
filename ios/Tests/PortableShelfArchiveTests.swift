@@ -122,7 +122,8 @@ struct PortableShelfArchiveTests {
         // An interrupted import with no surviving stage is not synthesized
         // as a made-up recording: leave the journal, skip publication.
         try FileManager.default.removeItem(at: recoveryStageURL)
-        assert(try reopenedRecovery.restorePublication(in: folder) { _ in true } == nil)
+        let missingStage = try reopenedRecovery.restorePublication(in: folder) { _ in true }
+        assert(missingStage == nil)
         assert(FileManager.default.fileExists(atPath: recoveryJournal.path))
         print("PASS: recovery publication is byte-preserving, idempotent and no-replace")
         try FileManager.default.removeItem(at: recoveryJournal)
