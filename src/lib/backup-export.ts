@@ -20,25 +20,44 @@ export async function createStoredLibraryBackup(
  const baseline=storage.getItem(key);
  const playlists=parseStoredPlaylists(baseline);
  const tracks=await loadTracks();
+ const assertSnapshot=()=>{
+  assertNoRecovery();
+  if(storage.getItem(key)!==baseline)
+   throw new Error("Playlists changed while preparing the backup. Retry export.");
+ };
+ assertSnapshot();
  // Validate metadata/references before scanning any payload. Blob construction
  // alone does not read file-backed data: an inaccessible original can otherwise
  // produce a "ready" archive whose download fails later in the browser.
  const backup=createLibraryBackup(tracks,playlists);
  for(const track of tracks){
+  assertSnapshot();
   for(const blob of [track.blob,...(track.artwork?[track.artwork]:[])]){
    let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
    try{
     reader=blob.stream().getReader();
     let bytes=0;
-    while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength}
+    while(true){
+     const part=await reader.read();
+     if(part.done)break;
+     bytes+=part.value.byteLength;
+     // Abort a superseded export before reading the rest of a large file.
+     // Check outside the media-error handler to preserve conflict details.
+     if(bytes>blob.size)throw new Error("Incomplete saved media.");
+     if(storage.getItem(key)!==baseline||RECOVERY_KEYS.some(name=>storage.getItem(name)!==null)){
+      await reader.cancel();
+      reader.releaseLock();
+      reader=undefined;
+      assertSnapshot();
+     }
+    }
     if(bytes!==blob.size)throw new Error("Incomplete saved media.");
    }catch(error){
+    assertSnapshot();
     throw new Error("A saved recording or artwork could not be read. No backup was created.",{cause:error});
    }finally{reader?.releaseLock()}
   }
  }
- assertNoRecovery();
- if(storage.getItem(key)!==baseline)
-  throw new Error("Playlists changed while preparing the backup. Retry export.");
+ assertSnapshot();
  return backup;
 }
