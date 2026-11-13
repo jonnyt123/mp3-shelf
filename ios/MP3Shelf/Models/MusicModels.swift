@@ -138,12 +138,23 @@ enum LocalAudioImportTransaction {
     static func perform(from source: URL, to destination: URL,
                         validate: (URL) throws -> Void,
                         recoveryTrack: (() throws -> MusicTrack)? = nil,
+                        rollbackPublished: (URL) throws -> Void = {
+                            try FileManager.default.removeItem(at: $0)
+                        },
                         persist: () throws -> Void) throws {
         let manager = FileManager.default
         let directory = destination.deletingLastPathComponent()
         let staging = directory.appendingPathComponent(
             ".mp3shelf-import-\(UUID().uuidString).\(destination.pathExtension)")
-        defer { try? manager.removeItem(at: staging) }
+        // If rollback cannot unlink a published recording, retain BOTH the
+        // staged bytes and the recovery journal. A later process can inspect
+        // and repair the interrupted transaction without touching user audio.
+        var preserveStagingForRecovery = false
+        defer {
+            if !preserveStagingForRecovery {
+                try? manager.removeItem(at: staging)
+            }
+        }
         try manager.copyItem(at: source, to: staging)
         try validate(staging)
         var journal: URL?
@@ -193,9 +204,10 @@ enum LocalAudioImportTransaction {
             // leaves the journal for recovery; ordinary failures roll back.
             // A failed unlink must NOT erase the only recovery intent.
             do {
-                try manager.removeItem(at: destination)
+                try rollbackPublished(destination)
             } catch {
                 mayRemoveJournal = false
+                preserveStagingForRecovery = journal != nil
             }
             throw error
         }
