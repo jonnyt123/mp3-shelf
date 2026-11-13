@@ -619,7 +619,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             requested: previous.requested, downloadURL: previous.downloadURL,
             sourcePage: previous.sourcePage, licensePage: previous.licensePage,
             provider: previous.provider)
-        replacement.startedAt = previous.startedAt ?? .now
+        // A new URLSession task must not inherit the original request's orphan age.
+        replacement.startedAt = .now
         replacement.automaticRetryCount = connectivityInterruption ?
             previous.automaticRetryCount : nextServerAttempt
         replacement.connectivityRetryCount = connectivityInterruption ?
@@ -652,7 +653,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             requested: old.requested, downloadURL: next.source.downloadURL,
             sourcePage: next.source.itemURL, licensePage: next.source.licenseURL,
             provider: next.source.sourceName)
-        replacement.startedAt = old.startedAt ?? .now
+        // Switching source creates a fresh daemon task, regardless of request age.
+        replacement.startedAt = .now
         replacement.nextRetryAt = retryAt
         replacement.alternativeSources = next.remaining
         try startTransfer(replacement, replacing: (id, "Replaced by alternate verified source"))
