@@ -206,4 +206,39 @@ describe("durable backup export",()=>{
    .rejects.toThrow("could not be read");
  });
 
+ it("rejects an IndexedDB recording imported during a long backup read",async()=>{
+  const storage=store();
+  const later:Track={...track,id:"second-recording",name:"Other tab import"};
+  let reads=0;
+  const load=vi.fn(async()=>{
+   reads++;
+   return reads===1?[track]:[track,later];
+  });
+  await expect(createStoredLibraryBackup(storage,key,load))
+   .rejects.toThrow("Saved recordings changed");
+  expect(load).toHaveBeenCalledTimes(2);
+ });
+ it("rejects a concurrent metadata edit without changing either recording",async()=>{
+  const storage=store();
+  const edited:Track={...track,name:"Renamed by another tab"};
+  let reads=0;
+  await expect(createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[track]:[edited];
+  })).rejects.toThrow("Saved recordings changed");
+  expect(track.name).toBe("Saved recording");
+  expect(edited.name).toBe("Renamed by another tab");
+ });
+ it("accepts reordered but otherwise identical IndexedDB records",async()=>{
+  const storage=store();
+  const other:Track={...track,id:"other-track",name:"Another recording"};
+  let reads=0;
+  const backup=await createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[track,other]:[other,track];
+  });
+  expect(reads).toBe(2);
+  expect((await parseLibraryBackup(backup)).tracks).toHaveLength(2);
+ });
+
 });
