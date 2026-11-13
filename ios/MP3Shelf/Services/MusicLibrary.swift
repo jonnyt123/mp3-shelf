@@ -110,6 +110,10 @@ final class MusicLibrary: ObservableObject {
                 resumePendingDiscovery()
             }
         }
+        if enabled && isLibraryPersistenceSafe {
+            // Retry interrupted imports when protected files become accessible.
+            recoverInterruptedImports()
+        }
         guard foregroundDiscoveryEnabled != enabled else { return }
         foregroundDiscoveryEnabled = enabled
         if enabled {
@@ -166,6 +170,7 @@ final class MusicLibrary: ObservableObject {
                 playlists = saved.playlists
             }
             isLibraryPersistenceSafe = true
+            recoverInterruptedImports()
             if let saved = try? Data(contentsOf: discoveryURL),
                let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
                 discoveryJobs = decoded.compactMap { checkpoint in
@@ -190,6 +195,49 @@ final class MusicLibrary: ObservableObject {
             }
         }
         networkMonitor.start(queue: networkMonitorQueue)
+    }
+
+    /// Reattach only audio with an app-created, validated recovery intent.
+    /// An ordinary orphan (including failed intentional deletion) has no
+    /// journal and is deliberately left alone, never silently resurrected.
+    private func recoverInterruptedImports() {
+        guard isLibraryPersistenceSafe else { return }
+        for journal in LocalAudioRecoveryRecord.pending(in: musicDirectory) {
+            do {
+                let record = try LocalAudioRecoveryRecord.read(journal, in: musicDirectory)
+                let candidate = record.track
+                // The old catalog may already contain this recording: a crash
+                // after its atomic write must not duplicate it on relaunch.
+                if let existing = tracks.first(where: { $0.id == candidate.id }) {
+                    guard existing.fileName == candidate.fileName else { continue }
+                    try? manager.removeItem(at: journal)
+                    continue
+                }
+                guard !LocalLibraryFileSafety.isReferenced(
+                    candidate.fileName, by: tracks.map(\.fileName)) else { continue }
+                let audio = try record.restorePublication(in: musicDirectory) { file in
+                    guard let probe = try? AVAudioPlayer(contentsOf: file) else {
+                        return false
+                    }
+                    return probe.duration.isFinite && probe.duration > 0 &&
+                        abs(probe.duration - candidate.duration) <= 4
+                }
+                guard audio != nil else { continue }
+                let updatedTracks = tracks + [candidate]
+                let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
+                // One atomic catalog write is the recovery commit point. A
+                // storage failure retains both journal and audio for retry.
+                try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists)
+                    .write(to: databaseURL)
+                tracks = updatedTracks
+                playlists = updatedPlaylists
+                try? manager.removeItem(at: journal)
+            } catch {
+                // Keep unrecognized/invalid intents and original bytes for
+                // manual diagnosis; never auto-delete an orphaned recording.
+                print("MP3 Shelf deferred interrupted import recovery: \(error)")
+            }
+        }
     }
 
     /// Creates the same v1 .mp3shelf archive used by the browser PWA.
@@ -844,6 +892,7 @@ final class MusicLibrary: ObservableObject {
             playlists = restored.playlists
             isLibraryPersistenceSafe = true
             libraryStorageError = nil
+            recoverInterruptedImports()
             // Discovery checkpoints may also have been protected at startup.
             if let saved = try? Data(contentsOf: discoveryURL),
                let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
@@ -997,6 +1046,12 @@ final class MusicLibrary: ObservableObject {
                     }
                     if cancellationAware { try Task.checkCancellation() }
                     preparedTrack = track
+                },
+                recoveryTrack: {
+                    guard let preparedTrack else {
+                        throw MusicLibraryError.unsupportedFormat
+                    }
+                    return preparedTrack
                 },
                 persist: {
                     guard let preparedTrack else {

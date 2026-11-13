@@ -43,6 +43,92 @@ struct PortableShelfArchiveTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
+        // A valid recovery journal is durable metadata, not permission to
+        // delete or overwrite unknown audio. A process may die after writing
+        // the intent, before publishing or committing the catalog.
+        let recoveryTrack = MusicTrack(
+            id: UUID(), title: "Interrupted import", artist: "Local",
+            album: "Recovery", fileName: "Interrupted [123456789ABC].mp3",
+            originalFileName: "interrupted.mp3", duration: 13)
+        let recoveryStage = ".mp3shelf-import-recovery-fixture.mp3"
+        let recoveryBytes = Data(repeating: 0x49, count: 65_536)
+        let recoveryStageURL = folder.appendingPathComponent(recoveryStage)
+        try recoveryBytes.write(to: recoveryStageURL)
+        let recoveryRecord = LocalAudioRecoveryRecord(
+            version: 1, track: recoveryTrack,
+            stagingName: recoveryStage, audioLength: Int64(recoveryBytes.count))
+        let recoveryJournal = LocalAudioRecoveryRecord.journalURL(
+            for: recoveryTrack.id, in: folder)
+        try JSONEncoder().encode(recoveryRecord).write(to: recoveryJournal, options: .atomic)
+        assert(LocalAudioRecoveryRecord.pending(in: folder).contains(recoveryJournal))
+        let reopenedRecovery = try LocalAudioRecoveryRecord.read(
+            recoveryJournal, in: folder)
+        assert(reopenedRecovery.track.id == recoveryTrack.id)
+        assert(reopenedRecovery.track.fileName == recoveryTrack.fileName)
+        assert(reopenedRecovery.audioLength == Int64(recoveryBytes.count))
+        // An unrelated file may coexist with the journal and must be retained.
+        let recoveryUnknown = folder.appendingPathComponent("user-owned-audio.mp3")
+        let unknownBytes = Data([0xDE, 0xAD, 0xBE, 0xEF])
+        try unknownBytes.write(to: recoveryUnknown)
+        // A forged journal name cannot reassign the track's intended identity.
+        let changedJournal = folder.appendingPathComponent(
+            ".mp3shelf-recovery-\(UUID().uuidString).json")
+        try JSONEncoder().encode(recoveryRecord).write(to: changedJournal)
+        do {
+            _ = try LocalAudioRecoveryRecord.read(changedJournal, in: folder)
+            fatalError("Accepted recovery intent under the wrong journal identity")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest { }
+        try FileManager.default.removeItem(at: changedJournal)
+        try FileManager.default.createSymbolicLink(
+            at: folder.appendingPathComponent(
+                ".mp3shelf-recovery-\(UUID().uuidString).json"),
+            withDestinationURL: recoveryJournal)
+        // A wrong-name journal never grants authority over source audio.
+        let symlinkJournal = try FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: nil).first {
+                $0.lastPathComponent.hasPrefix(".mp3shelf-recovery-") &&
+                $0 != recoveryJournal
+            }!
+        do {
+            _ = try LocalAudioRecoveryRecord.read(symlinkJournal, in: folder)
+            fatalError("Accepted a symlink as a recovery journal")
+        } catch { }
+        try FileManager.default.removeItem(at: symlinkJournal)
+        try assertThrowing(try Data(contentsOf: recoveryStageURL) == recoveryBytes)
+        try assertThrowing(try Data(contentsOf: recoveryUnknown) == unknownBytes)
+        // Exercise the production no-replace publication helper without
+        // requiring AVFoundation on Linux. The verifier accepts exact bytes.
+        let recoveryPublished = folder.appendingPathComponent(recoveryTrack.fileName)
+        let recoveredFile = try reopenedRecovery.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == recoveryBytes
+        }
+        assert(recoveredFile == recoveryPublished)
+        try assertThrowing(try Data(contentsOf: recoveryPublished) == recoveryBytes)
+        // A second launch reuses the same file without making another copy.
+        let recoveredAgain = try reopenedRecovery.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == recoveryBytes
+        }
+        assert(recoveredAgain == recoveryPublished)
+        // A malicious or corrupt destination must never be overwritten with
+        // the journal's stage even when the staged audio itself is intact.
+        try FileManager.default.removeItem(at: recoveryPublished)
+        try unknownBytes.write(to: recoveryPublished)
+        let refusedCollision = try reopenedRecovery.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == recoveryBytes
+        }
+        assert(refusedCollision == nil)
+        try assertThrowing(try Data(contentsOf: recoveryPublished) == unknownBytes)
+        try FileManager.default.removeItem(at: recoveryPublished)
+        // An interrupted import with no surviving stage is not synthesized
+        // as a made-up recording: leave the journal, skip publication.
+        try FileManager.default.removeItem(at: recoveryStageURL)
+        let missingStage = try reopenedRecovery.restorePublication(in: folder) { _ in true }
+        assert(missingStage == nil)
+        assert(FileManager.default.fileExists(atPath: recoveryJournal.path))
+        print("PASS: recovery publication is byte-preserving, idempotent and no-replace")
+        try FileManager.default.removeItem(at: recoveryJournal)
+        print("PASS: recovery journals round-trip, reject aliasing and preserve original files")
+
         // A colliding generated destination is a pre-existing user recording,
         // not a partial copy belonging to the new import. Never delete it
         // when copy or catalog persistence fails.
@@ -94,6 +180,102 @@ struct PortableShelfArchiveTests {
             .filter { $0.hasPrefix(".mp3shelf-import-") }
         assert(importOrphans.isEmpty)
         print("PASS: import collisions, validation/storage failures and success preserve audio bytes")
+
+        // The durable journal must already exist when the catalog commit
+        // begins. Normal success removes it; a storage failure removes only
+        // this attempt's journal and published file, never the input source.
+        let journaledTrack = MusicTrack(
+            id: UUID(), title: "Journaled recording", artist: "Local",
+            album: "Recovery", fileName: "journaled-recording.mp3",
+            originalFileName: "journaled-recording.mp3", duration: 13)
+        let journaledDestination = folder.appendingPathComponent(journaledTrack.fileName)
+        let journaledIntent = LocalAudioRecoveryRecord.journalURL(
+            for: journaledTrack.id, in: folder)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: journaledDestination,
+                validate: { staged in
+                    let copied = try Data(contentsOf: staged)
+                    assert(copied == incomingBytes)
+                },
+                recoveryTrack: { journaledTrack },
+                persist: {
+                    assert(FileManager.default.fileExists(atPath: journaledDestination.path))
+                    let saved = try LocalAudioRecoveryRecord.read(
+                        journaledIntent, in: folder)
+                    assert(saved.track.id == journaledTrack.id)
+                    assert(saved.audioLength == Int64(incomingBytes.count))
+                    throw ImportTransactionFailure.catalogWrite
+                })
+            fatalError("Simulated failure committed a journaled import")
+        } catch ImportTransactionFailure.catalogWrite { }
+        assert(!FileManager.default.fileExists(atPath: journaledDestination.path))
+        assert(!FileManager.default.fileExists(atPath: journaledIntent.path))
+        try LocalAudioImportTransaction.perform(
+            from: importSource, to: journaledDestination,
+            validate: { _ in },
+            recoveryTrack: { journaledTrack },
+            persist: {
+                let saved = try LocalAudioRecoveryRecord.read(
+                    journaledIntent, in: folder)
+                assert(saved.track.fileName == journaledTrack.fileName)
+            })
+        try assertThrowing(try Data(contentsOf: journaledDestination) == incomingBytes)
+        assert(!FileManager.default.fileExists(atPath: journaledIntent.path))
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        let journalLeftovers = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        assert(!journalLeftovers.contains {
+            $0.hasPrefix(".mp3shelf-recovery-") || $0.hasPrefix(".mp3shelf-import-")
+        })
+        print("PASS: journal intent exists before catalog publication and cleans up safely")
+        // A cancellation after publication must roll back its own recording
+        // and journal without deleting the original source.
+        let cancelledTrack = MusicTrack(
+            id: UUID(), title: "Cancelled journal", artist: "Local",
+            album: "Recovery", fileName: "cancelled-journal.mp3",
+            originalFileName: "cancelled-journal.mp3", duration: 13)
+        let cancelledDestination = folder.appendingPathComponent(cancelledTrack.fileName)
+        let cancelledJournal = LocalAudioRecoveryRecord.journalURL(
+            for: cancelledTrack.id, in: folder)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: cancelledDestination,
+                validate: { _ in },
+                recoveryTrack: { cancelledTrack },
+                persist: { throw CancellationError() })
+            fatalError("Cancelled journaled import unexpectedly committed")
+        } catch is CancellationError { }
+        assert(!FileManager.default.fileExists(atPath: cancelledDestination.path))
+        assert(!FileManager.default.fileExists(atPath: cancelledJournal.path))
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+
+        // A pre-existing recording with the same destination is never
+        // overwritten, even if the import already wrote its recovery intent.
+        let collisionTrack = MusicTrack(
+            id: UUID(), title: "Collision journal", artist: "Local",
+            album: "Recovery", fileName: "collision-journal.mp3",
+            originalFileName: "collision-journal.mp3", duration: 13)
+        let collisionDestination = folder.appendingPathComponent(collisionTrack.fileName)
+        let collisionJournal = LocalAudioRecoveryRecord.journalURL(
+            for: collisionTrack.id, in: folder)
+        try existingBytes.write(to: collisionDestination)
+        var collisionPersisted = false
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: collisionDestination,
+                validate: { _ in },
+                recoveryTrack: { collisionTrack },
+                persist: { collisionPersisted = true })
+            fatalError("Colliding journaled import replaced user audio")
+        } catch { }
+        assert(!collisionPersisted)
+        assert(!FileManager.default.fileExists(atPath: collisionJournal.path))
+        try assertThrowing(try Data(contentsOf: collisionDestination) == existingBytes)
+        try FileManager.default.removeItem(at: collisionDestination)
+        print("PASS: journaled cancellation and collisions preserve original audio")
+
+
+
 
         // Simulate two interruption boundaries: an aborted decoder/probe
         // before publication, and cancellation after publication but before
