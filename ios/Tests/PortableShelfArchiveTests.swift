@@ -745,6 +745,66 @@ struct PortableShelfArchiveTests {
             $0.contains("portable-identities.mp3shelf") && $0.hasSuffix(".partial")
         })
         print("PASS: rejected backup overwrite preserves archive and recording bytes")
+        // Two exporters racing for an absent destination must never replace
+        // each other's output. Both candidates contain distinct audio bytes;
+        // exactly one must win the atomic publish operation.
+        let raceDestination = folder.appendingPathComponent("racing-export.mp3shelf")
+        let raceAudioA = folder.appendingPathComponent("race-a.mp3")
+        let raceAudioB = folder.appendingPathComponent("race-b.mp3")
+        let raceBytesA = Data(repeating: 0x31, count: 256 * 1024)
+        let raceBytesB = Data(repeating: 0x72, count: 256 * 1024)
+        try raceBytesA.write(to: raceAudioA)
+        try raceBytesB.write(to: raceAudioB)
+        let raceGate = DispatchSemaphore(value: 0)
+        let raceGroup = DispatchGroup()
+        let raceLock = NSLock()
+        var raceWinners: [Int] = []
+        var raceFailures: [Error] = []
+        for index in 0..<2 {
+            raceGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { raceGroup.leave() }
+                raceGate.wait()
+                do {
+                    try PortableShelfArchive.export([
+                        .init(track: portableSong,
+                              audioURL: index == 0 ? raceAudioA : raceAudioB,
+                              artwork: nil, lyrics: nil)
+                    ], playlists: [portableList], to: raceDestination)
+                    raceLock.lock()
+                    raceWinners.append(index)
+                    raceLock.unlock()
+                } catch {
+                    raceLock.lock()
+                    raceFailures.append(error)
+                    raceLock.unlock()
+                }
+            }
+        }
+        raceGate.signal()
+        raceGate.signal()
+        let raceCompleted = raceGroup.wait(timeout: .now() + 30) == .success
+        assert(raceCompleted, "Concurrent archive exporters did not finish")
+        assert(raceWinners.count == 1 && raceFailures.count == 1,
+               "Exactly one concurrent archive export must succeed")
+        let raceArchive = try PortableShelfArchive.open(raceDestination)
+        let raceExtract = try PortableShelfArchive.extract(
+            raceArchive.manifest.tracks[0].audio,
+            from: raceArchive, extensionName: "mp3")
+        let raceExtractBytes = try Data(contentsOf: raceExtract)
+        assert(raceExtractBytes == (raceWinners[0] == 0 ? raceBytesA : raceBytesB),
+               "Published archive must contain only the winning export's audio")
+        try FileManager.default.removeItem(at: raceExtract)
+        let raceEntries = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        assert(!raceEntries.contains {
+            $0.contains("racing-export.mp3shelf") && $0.hasSuffix(".partial")
+        }, "Both exporters must clean up their staging files")
+        let sourceAfterRaceA = try Data(contentsOf: raceAudioA)
+        let sourceAfterRaceB = try Data(contentsOf: raceAudioB)
+        assert(sourceAfterRaceA == raceBytesA)
+        assert(sourceAfterRaceB == raceBytesB)
+        print("PASS: competing exporters publish exactly one byte-intact backup")
+
         // When restore reuses byte-identical audio already on disk, the
         // original local UUID remains stable but the web ID must survive
         // persistence and re-export for browser playlist interoperability.
