@@ -95,6 +95,17 @@ struct LocalAudioRecoveryRecord: Codable {
     /// a destination (including a symlink) or delete unidentified bytes.
     /// The verifier is AVFoundation in production and deterministic fixture
     /// bytes in the portable regression suite.
+    /// Never discard an interrupted import's journal solely because the
+    /// library entry exists. A protected/missing recording may still need
+    /// its staged bytes; preserve existing catalog metadata on recovery.
+    func restoreExistingTrack(_ existing: MusicTrack, in directory: URL,
+                              verify: (URL) -> Bool) throws -> Bool {
+        guard existing.id == track.id && existing.fileName == track.fileName else {
+            return false
+        }
+        return try restorePublication(in: directory, verify: verify) != nil
+    }
+
     func restorePublication(in directory: URL,
                             verify: (URL) -> Bool) throws -> URL? {
         guard LocalLibraryFileSafety.validName(track.fileName),
