@@ -139,6 +139,8 @@ struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draggingTime: Double?
     @State private var scrubbingTrackID: UUID?
+    @State private var sliderEditing = false
+    @State private var invalidatedSliderGesture = false
     @State private var showLyrics = false
     @State private var showQueue = false
     @State private var previewQueueChanged = false
@@ -151,6 +153,16 @@ struct NowPlayingView: View {
     private func clearScrub() {
         draggingTime = nil
         scrubbingTrackID = nil
+    }
+
+    // A track transition can occur while UIKit/SwiftUI is still delivering
+    // drag updates. Reject the remainder of that gesture, even after the
+    // pending track identity is cleared, until editing ends explicitly.
+    private func invalidateActiveScrub() {
+        if sliderEditing || scrubbingTrackID != nil {
+            invalidatedSliderGesture = true
+        }
+        clearScrub()
     }
 
     private var seekableDuration: Double {
@@ -320,7 +332,8 @@ struct NowPlayingView: View {
                                             // onEditingChanged(true), especially with assistive
                                             // input. Bind the pending value to the recording
                                             // that actually received the interaction.
-                                            guard seekableDuration > 0, proposedTime.isFinite,
+                                            guard !invalidatedSliderGesture,
+                                                  seekableDuration > 0, proposedTime.isFinite,
                                                   let currentID = playback.currentTrackID else {
                                                 clearScrub()
                                                 return
@@ -335,18 +348,22 @@ struct NowPlayingView: View {
                                         }
                                     ), in: 0...max(seekableDuration, 1), onEditingChanged: { editing in
                                         if editing {
+                                            sliderEditing = true
                                             // Do not overwrite the identity captured by the
                                             // binding if a track switched mid-interaction.
-                                            if scrubbingTrackID == nil {
+                                            if !invalidatedSliderGesture && scrubbingTrackID == nil {
                                                 scrubbingTrackID = playback.currentTrackID
                                             }
                                         } else {
-                                            if scrubbingTrackID == playback.currentTrackID,
+                                            if !invalidatedSliderGesture,
+                                               scrubbingTrackID == playback.currentTrackID,
                                                seekableDuration > 0,
                                                let draggingTime, draggingTime.isFinite {
                                                 playback.seek(to: min(max(draggingTime, 0), seekableDuration))
                                             }
                                             clearScrub()
+                                            sliderEditing = false
+                                            invalidatedSliderGesture = false
                                         }
                                     })
                                     .tint(ShelfTheme.mint)
@@ -627,12 +644,12 @@ struct NowPlayingView: View {
             }
         }
         .onChange(of: playback.currentTrackID) { _, _ in
-            clearScrub()
+            invalidateActiveScrub()
         }
         .onChange(of: playback.duration) { _, duration in
             // Duration can reset during a source transition without an ID change.
             if !duration.isFinite || duration <= 0 {
-                clearScrub()
+                invalidateActiveScrub()
             }
         }
         .preferredColorScheme(.dark)
