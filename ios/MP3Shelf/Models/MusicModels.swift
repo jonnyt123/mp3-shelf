@@ -91,6 +91,18 @@ struct LocalAudioRecoveryRecord: Codable {
         return record
     }
 
+    /// A failed catalog write may also fail to roll back its published audio.
+    /// In that case the journal owns the freshly extracted artwork until the
+    /// recording can be recovered. Do not erase the only artwork copy while
+    /// retaining a track whose catalog still references it.
+    static func retainsArtwork(_ name: String, for trackID: UUID,
+                               in musicDirectory: URL) -> Bool {
+        guard LocalLibraryFileSafety.validName(name) else { return false }
+        let journal = journalURL(for: trackID, in: musicDirectory)
+        guard let record = try? read(journal, in: musicDirectory) else { return false }
+        return record.track.id == trackID && record.track.artworkFileName == name
+    }
+
     /// Reattach only a validated, ordinary on-disk recording. Never overwrite
     /// a destination (including a symlink) or delete unidentified bytes.
     /// The verifier is AVFoundation in production and deterministic fixture
