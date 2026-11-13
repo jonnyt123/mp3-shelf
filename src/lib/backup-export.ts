@@ -37,16 +37,25 @@ export async function createStoredLibraryBackup(
    try{
     reader=blob.stream().getReader();
     let bytes=0;
+    let emptyChunks=0;
     while(true){
      // Check before each pull as well as after it. A paused stream must not
      // read another chunk after a concurrent playlist or recovery change.
      assertSnapshot();
      const part=await reader.read();
      if(part.done)break;
+     // File-provider streams are untrusted at runtime. Repeated empty chunks
+     // can otherwise keep an export spinning indefinitely without progress.
+     if(!(part.value instanceof Uint8Array))throw new Error("Invalid saved media chunk.");
+     if(part.value.byteLength===0){
+      if(++emptyChunks>16)throw new Error("Saved media stream made no progress.");
+      continue;
+     }
+     emptyChunks=0;
      bytes+=part.value.byteLength;
      // Abort a superseded export before reading the rest of a large file.
      // Check outside the media-error handler to preserve conflict details.
-     if(bytes>blob.size)throw new Error("Incomplete saved media.");
+     if(bytes>blob.size)throw new Error("Saved media stream exceeded its declared size.");
      if(storage.getItem(key)!==baseline||RECOVERY_KEYS.some(name=>storage.getItem(name)!==null)){
       await reader.cancel();
       reader.releaseLock();
