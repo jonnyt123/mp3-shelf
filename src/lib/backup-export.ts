@@ -38,6 +38,9 @@ export async function createStoredLibraryBackup(
     reader=blob.stream().getReader();
     let bytes=0;
     while(true){
+     // Check before each pull as well as after it. A paused stream must not
+     // read another chunk after a concurrent playlist or recovery change.
+     assertSnapshot();
      const part=await reader.read();
      if(part.done)break;
      bytes+=part.value.byteLength;
@@ -55,7 +58,14 @@ export async function createStoredLibraryBackup(
    }catch(error){
     assertSnapshot();
     throw new Error("A saved recording or artwork could not be read. No backup was created.",{cause:error});
-   }finally{reader?.releaseLock()}
+   }finally{
+    // A failed read or invalid payload must release the underlying stream,
+    // not leave a file-backed reader holding resources on mobile Safari.
+    if(reader){
+     try{await reader.cancel()}catch{/* Preserve the original media failure. */}
+     reader.releaseLock();
+    }
+   }
   }
  }
  assertSnapshot();
