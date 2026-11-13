@@ -95,6 +95,22 @@ enum PortableShelfArchive {
         // Identity captured from the descriptor that validated the manifest.
         // Each later extraction must read that same unchanged regular file.
         fileprivate var sourceIdentity: ArchiveSourceIdentity
+        // Indexed once at open: repeated extraction of large shelves must not
+        // rescan all manifest tracks for every audio/artwork part.
+        fileprivate var audioParts: Set<MediaPartKey>
+        fileprivate var artworkParts: Set<MediaPartKey>
+    }
+
+    fileprivate struct MediaPartKey: Hashable {
+        let offset: Int64
+        let length: Int64
+        let type: String
+
+        init(_ part: Part) {
+            offset = part.offset
+            length = part.length
+            type = part.type
+        }
     }
 
     fileprivate struct ArchiveSourceIdentity {
@@ -566,6 +582,8 @@ enum PortableShelfArchive {
         // Collect half-open ranges, then reject overlaps in O(n log n).
         var mediaRanges: [(start: Int64, end: Int64)] = []
         var trackIDs = Set<String>()
+        var audioParts = Set<MediaPartKey>()
+        var artworkParts = Set<MediaPartKey>()
         for track in manifest.tracks {
             try Task.checkCancellation()
             guard !track.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -575,11 +593,13 @@ enum PortableShelfArchive {
                   track.importedAt.isFinite else { throw ArchiveError.invalidManifest }
             try validate(track.audio, payloadSize: payloadSize)
             mediaRanges.append((track.audio.offset, track.audio.offset + track.audio.length))
+            audioParts.insert(MediaPartKey(track.audio))
             if let artwork = track.artwork {
                 guard artwork.length <= 20 * 1024 * 1024 else { throw ArchiveError.oversized }
                 try validate(artwork, payloadSize: payloadSize)
                 if artwork.length > 0 {
                     mediaRanges.append((artwork.offset, artwork.offset + artwork.length))
+                    artworkParts.insert(MediaPartKey(artwork))
                 }
             }
             if let lyrics = track.lyrics, Data(lyrics.utf8).count > 500 * 1024 {
@@ -630,27 +650,19 @@ enum PortableShelfArchive {
         }
         try Task.checkCancellation()
         return Opened(manifest: manifest, url: url, payloadOffset: payloadOffset,
-                      sourceIdentity: identity)
+                      sourceIdentity: identity, audioParts: audioParts,
+                      artworkParts: artworkParts)
     }
 
     /// Only restore slices declared in the inspected manifest. A caller must
     /// not be able to extract a different song's bytes (or arbitrary offsets)
     /// by constructing a Part with otherwise valid bounds.
     private static func containsAudioPart(_ part: Part, in archive: Opened) -> Bool {
-        archive.manifest.tracks.contains {
-            $0.audio.offset == part.offset &&
-            $0.audio.length == part.length &&
-            $0.audio.type == part.type
-        }
+        archive.audioParts.contains(MediaPartKey(part))
     }
 
     private static func containsArtworkPart(_ part: Part, in archive: Opened) -> Bool {
-        archive.manifest.tracks.contains {
-            guard let artwork = $0.artwork else { return false }
-            return artwork.offset == part.offset &&
-                   artwork.length == part.length &&
-                   artwork.type == part.type
-        }
+        archive.artworkParts.contains(MediaPartKey(part))
     }
 
     static func extract(_ part: Part, from archive: Opened, extensionName: String) throws -> URL {
