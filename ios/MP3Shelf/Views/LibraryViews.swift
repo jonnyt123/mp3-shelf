@@ -755,138 +755,11 @@ struct PlaylistsView: View {
         let playlists = visiblePlaylists
         return ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 5) {
-                    PremiumEyebrow(title: "CURATED BY YOU", color: ShelfTheme.coral)
-                    Text("Made for every mood.")
-                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                        .foregroundStyle(.white)
-                    Text("Your music, exactly how you like it.")
-                        .font(.subheadline).foregroundStyle(ShelfTheme.subdued)
-                }
-                .padding(.top, 10)
+                playlistHeading
 
-                NavigationLink { PlaylistSourcesView() } label: {
-                    HStack(spacing: 14) {
-                        PremiumIcon(symbol: "arrow.down.to.line.compact", color: ShelfTheme.mint, size: 50)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Bring your playlists")
-                                .font(.headline).foregroundStyle(.white)
-                            Text("Import track lists & match offline audio")
-                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "arrow.up.right")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(ShelfTheme.mint)
-                    }
-                    .padding(16)
-                    .premiumCard()
-                }
-                .buttonStyle(.plain)
+                playlistImportLink
 
-                VStack(alignment: .leading, spacing: 14) {
-                    PremiumSectionHeading(title: "Your playlists",
-                                          detail: "\(library.playlists.count) collections")
-                    Toggle("Sort alphabetically", isOn: $sortAlphabetically)
-                        .tint(ShelfTheme.accent)
-                        .frame(minHeight: 44)
-                    if hasPlaylistQuery {
-                        Group {
-                            if dynamicTypeSize.isAccessibilitySize {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    playlistSearchSummary(matchingCount: playlists.count)
-                                }
-                            } else {
-                                HStack(alignment: .center, spacing: 12) {
-                                    playlistSearchSummary(matchingCount: playlists.count)
-                                }
-                            }
-                        }
-                    }
-                    if hasPlaylistQuery && playlists.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("No playlists match your search.")
-                                .foregroundStyle(ShelfTheme.subdued)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("Try a different name, or clear the search to browse your collections.")
-                                .font(.subheadline)
-                                .foregroundStyle(ShelfTheme.subdued)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button {
-                                playlistQuery = ""
-                            } label: {
-                                Label("Clear playlist search", systemImage: "xmark.circle")
-                                    .frame(minHeight: 44)
-                            }
-                            .buttonStyle(.bordered)
-                            .accessibilityHint("Show all playlists again")
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    if library.playlists.isEmpty && !hasPlaylistQuery {
-                        VStack(alignment: .leading, spacing: 13) {
-                            PremiumIcon(symbol: "square.stack.3d.up",
-                                        color: ShelfTheme.accent, size: 55)
-                            Text("Every great mix starts somewhere.")
-                                .font(.system(.title3, design: .rounded, weight: .bold))
-                                .foregroundStyle(.white)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("Create a playlist for the songs you'll never get tired of.")
-                                .font(.subheadline)
-                                .foregroundStyle(ShelfTheme.subdued)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button {
-                                showCreate = true
-                            } label: {
-                                Label("Create a playlist", systemImage: "plus")
-                                    .font(.system(.subheadline, design: .rounded, weight: .bold))
-                                    .frame(maxWidth: .infinity)
-                                    .frame(minHeight: 46)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(ShelfTheme.accent)
-                            .padding(.top, 5)
-                        }
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .premiumCard(radius: 24)
-                    } else if !playlists.isEmpty {
-                        LazyVGrid(columns: columns, spacing: 13) {
-                            ForEach(Array(playlists.enumerated()), id: \.element.id) { index, list in
-                                NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
-                                    playlistCard(list, index: index)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("\(list.name), \(list.trackIDs.count) saved songs, \(list.missingTracks.count) recordings still to find")
-                                .accessibilityHint("Open playlist to see songs and download status")
-                                // VoiceOver users should not need to discover a
-                                // long press to manage a playlist.
-                                .accessibilityAction(named: "Rename playlist") {
-                                    renamedName = list.name
-                                    pendingRename = list
-                                }
-                                .accessibilityAction(named: "Make local copy") {
-                                    library.duplicatePlaylist(list.id)
-                                }
-                                .accessibilityAction(named: "Delete playlist") {
-                                    pendingDelete = list
-                                }
-                                .contextMenu {
-                                    Button {
-                                        renamedName = list.name
-                                        pendingRename = list
-                                    } label: { Label("Rename Playlist", systemImage: "pencil") }
-                                    Button { library.duplicatePlaylist(list.id) } label: {
-                                        Label("Make local copy", systemImage: "doc.on.doc")
-                                    }
-                                    Button(role: .destructive) {
-                                        pendingDelete = list
-                                    } label: { Label("Delete Playlist", systemImage: "trash") }
-                                }
-                            }
-                        }
-                    }
-                }
+                playlistSection(playlists)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 28)
@@ -956,6 +829,157 @@ struct PlaylistsView: View {
             Button("Keep playlist", role: .cancel) { pendingDelete = nil }
         } message: {
             Text("Only this playlist will be removed. Your offline songs will remain on this iPhone.")
+        }
+    }
+
+    private var playlistHeading: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            PremiumEyebrow(title: "CURATED BY YOU", color: ShelfTheme.coral)
+            Text("Made for every mood.")
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+            Text("Your music, exactly how you like it.")
+                .font(.subheadline).foregroundStyle(ShelfTheme.subdued)
+        }
+        .padding(.top, 10)
+    }
+
+    private var playlistImportLink: some View {
+        NavigationLink { PlaylistSourcesView() } label: {
+            HStack(spacing: 14) {
+                PremiumIcon(symbol: "arrow.down.to.line.compact", color: ShelfTheme.mint, size: 50)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Bring your playlists")
+                        .font(.headline).foregroundStyle(.white)
+                    Text("Import track lists & match offline audio")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(ShelfTheme.mint)
+            }
+            .padding(16)
+            .premiumCard()
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var emptyPlaylistSearch: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("No playlists match your search.")
+                .foregroundStyle(ShelfTheme.subdued)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Try a different name, or clear the search to browse your collections.")
+                .font(.subheadline)
+                .foregroundStyle(ShelfTheme.subdued)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                playlistQuery = ""
+            } label: {
+                Label("Clear playlist search", systemImage: "xmark.circle")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityHint("Show all playlists again")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var emptyPlaylistLibrary: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            PremiumIcon(symbol: "square.stack.3d.up",
+                        color: ShelfTheme.accent, size: 55)
+            Text("Every great mix starts somewhere.")
+                .font(.system(.title3, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Create a playlist for the songs you'll never get tired of.")
+                .font(.subheadline)
+                .foregroundStyle(ShelfTheme.subdued)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                showCreate = true
+            } label: {
+                Label("Create a playlist", systemImage: "plus")
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 46)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ShelfTheme.accent)
+            .padding(.top, 5)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .premiumCard(radius: 24)
+    }
+
+    private func playlistGrid(_ playlists: [MusicPlaylist]) -> some View {
+        LazyVGrid(columns: columns, spacing: 13) {
+            ForEach(Array(playlists.enumerated()), id: \.element.id) { index, list in
+                NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
+                    playlistCard(list, index: index)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(list.name), \(list.trackIDs.count) saved songs, \(list.missingTracks.count) recordings still to find")
+                .accessibilityHint("Open playlist to see songs and download status")
+                // VoiceOver users should not need to discover a
+                // long press to manage a playlist.
+                .accessibilityAction(named: "Rename playlist") {
+                    renamedName = list.name
+                    pendingRename = list
+                }
+                .accessibilityAction(named: "Make local copy") {
+                    library.duplicatePlaylist(list.id)
+                }
+                .accessibilityAction(named: "Delete playlist") {
+                    pendingDelete = list
+                }
+                .contextMenu {
+                    Button {
+                        renamedName = list.name
+                        pendingRename = list
+                    } label: { Label("Rename Playlist", systemImage: "pencil") }
+                    Button { library.duplicatePlaylist(list.id) } label: {
+                        Label("Make local copy", systemImage: "doc.on.doc")
+                    }
+                    Button(role: .destructive) {
+                        pendingDelete = list
+                    } label: { Label("Delete Playlist", systemImage: "trash") }
+                }
+            }
+        }
+    }
+
+    private func playlistSection(_ playlists: [MusicPlaylist]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            PremiumSectionHeading(title: "Your playlists",
+                                  detail: "\(library.playlists.count) collections")
+            Toggle("Sort alphabetically", isOn: $sortAlphabetically)
+                .tint(ShelfTheme.accent)
+                .frame(minHeight: 44)
+            if hasPlaylistQuery {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 6) {
+                            playlistSearchSummary(matchingCount: playlists.count)
+                        }
+                    } else {
+                        HStack(alignment: .center, spacing: 12) {
+                            playlistSearchSummary(matchingCount: playlists.count)
+                        }
+                    }
+                }
+            }
+            if hasPlaylistQuery && playlists.isEmpty {
+                emptyPlaylistSearch
+            }
+            if library.playlists.isEmpty && !hasPlaylistQuery {
+                emptyPlaylistLibrary
+            } else if !playlists.isEmpty {
+                playlistGrid(playlists)
+            }
         }
     }
 
