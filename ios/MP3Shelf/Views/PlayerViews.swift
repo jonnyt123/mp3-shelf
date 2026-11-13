@@ -709,6 +709,7 @@ struct PlaybackQueueSheet: View {
     @State private var queueChangedAlert = false
     @State private var queueSearchText = ""
     @AccessibilityFocusState private var emptyQueueFocused: Bool
+    @AccessibilityFocusState private var noMatchesFocused: Bool
 
     // Context menus can outlive their row after automatic playback advancement.
     // Explain rejected actions instead of silently ignoring the tap, and give
@@ -735,7 +736,10 @@ struct PlaybackQueueSheet: View {
             return
         }
         let remaining = current.filter { $0.id != trackID }
-        pendingQueueFocusID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
+        let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let visible = remaining.filter { matchesSearch($0, query: query) }
+        let visibleIndex = current.prefix(index).filter { $0.id != trackID && matchesSearch($0, query: query) }.count
+        pendingQueueFocusID = visible.isEmpty ? nil : visible[min(visibleIndex, visible.count - 1)].id
         pendingEmptyQueueFocus = remaining.isEmpty
         playback.removeQueuedTrack(trackID)
     }
@@ -800,6 +804,12 @@ struct PlaybackQueueSheet: View {
         pendingQueueFocusID = nil
         pendingEmptyQueueFocus = false
         playback.play(track)
+    }
+
+    private func matchesSearch(_ track: MusicTrack, query: String) -> Bool {
+        query.isEmpty || track.title.localizedStandardContains(query)
+            || track.artist.localizedStandardContains(query)
+            || track.album.localizedStandardContains(query)
     }
 
     // The queue is snapshotted once per render. Recomputing queuedTracks and
@@ -891,10 +901,9 @@ struct PlaybackQueueSheet: View {
         // play-next operations so a search never reorders the underlying queue.
         let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let visibleRows = Array(upcoming.enumerated()).filter { _, track in
-            query.isEmpty || track.title.localizedStandardContains(query)
-                || track.artist.localizedStandardContains(query)
-                || track.album.localizedStandardContains(query)
+            matchesSearch(track, query: query)
         }
+        let visibleIDs = visibleRows.map { $0.element.id }
         return NavigationStack {
             ZStack {
                 PremiumBackdrop()
@@ -965,6 +974,11 @@ struct PlaybackQueueSheet: View {
                             .padding(22)
                             .premiumCard()
                             .accessibilityElement(children: .combine)
+                            .accessibilityFocused($noMatchesFocused)
+                            Button("Clear search") { queueSearchText = "" }
+                                .frame(minHeight: 44)
+                                .foregroundStyle(ShelfTheme.accent)
+                                .accessibilityHint("Show all queued songs without changing their order")
                         } else {
                             ForEach(visibleRows, id: \.element.id) { index, track in
                                 VStack(alignment: .leading, spacing: 8) {
@@ -1120,13 +1134,16 @@ struct PlaybackQueueSheet: View {
                     emptyQueueFocused = false
                     // A simultaneous playback transition can consume the
                     // requested target before the queue update is observed.
-                    focusedQueueTrackID = currentIDs.contains(target)
-                        ? target : currentIDs.first
+                    focusedQueueTrackID = visibleIDs.contains(target)
+                        ? target : visibleIDs.first
+                    noMatchesFocused = !currentIDs.isEmpty && visibleIDs.isEmpty
                 } else if focusedRowWasRemoved {
                     // Prefer the same visible position after removal, falling
                     // back to the last surviving row at the end of the queue.
                     let oldIndex = focusedQueueTrackID.flatMap { previousIDs.firstIndex(of: $0) } ?? 0
-                    focusedQueueTrackID = currentIDs[min(oldIndex, currentIDs.count - 1)]
+                    let visibleBefore = previousIDs.prefix(oldIndex).filter { visibleIDs.contains($0) }.count
+                    focusedQueueTrackID = visibleIDs.isEmpty ? nil : visibleIDs[min(visibleBefore, visibleIDs.count - 1)]
+                    noMatchesFocused = visibleIDs.isEmpty
                     emptyQueueFocused = false
                 }
             }
@@ -1143,8 +1160,10 @@ struct PlaybackQueueSheet: View {
                 let surviving = playback.queuedTracks
                 pendingQueueFocusID = nil
                 pendingEmptyQueueFocus = false
-                focusedQueueTrackID = surviving.first?.id
+                let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                focusedQueueTrackID = surviving.first(where: { matchesSearch($0, query: query) })?.id
                 emptyQueueFocused = surviving.isEmpty
+                noMatchesFocused = !surviving.isEmpty && focusedQueueTrackID == nil
             }
             .searchable(text: $queueSearchText, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "Search queued songs")
