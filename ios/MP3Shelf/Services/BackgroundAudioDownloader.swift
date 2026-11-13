@@ -1122,6 +1122,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let connectionLost = systemError.domain == NSURLErrorDomain &&
             BackgroundTransferRetryPolicy.isConnectivityInterruption(systemError.code)
         Task { @MainActor in
+            // A completed download is moved into staging by didFinishDownloadingTo.
+            // A later error callback from a duplicate/retired daemon task must not
+            // replace the queued ticket or discard a complete file awaiting import.
+            // Staging is created only after HTTP, size, type and range checks.
+            guard self.tickets[id]?.status == .queued else { return }
+            if self.fm.fileExists(atPath: Self.stagingURL(id).path) {
+                await self.recoverStagedDownloads()
+                return
+            }
             if shouldRetry {
                 self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.message(for: error),
                                             connectivityInterruption: connectionLost)
