@@ -660,14 +660,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     private func setFailed(_ id: UUID, reason: String = "Download or validation failed",
-                           allowAlternative: Bool = true, earliestRecovery: Date? = nil) {
+                           allowAlternative: Bool = true, earliestRecovery: Date? = nil) -> Bool {
         reconcileAlreadyStoredDownloads()
-        guard var ticket = tickets[id], ticket.status == .queued else { return }
+        guard var ticket = tickets[id], ticket.status == .queued else { return false }
         var failure = reason
         var canTryAnotherSource = allowAlternative
         if allowAlternative {
             do {
-                if try startAlternateTransfer(after: id, earliestBeginDate: earliestRecovery) { return }
+                if try startAlternateTransfer(after: id, earliestBeginDate: earliestRecovery) { return true }
             } catch {
                 failure = error.localizedDescription
                 canTryAnotherSource = false
@@ -686,12 +686,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
         } catch {
             noteQueueWriteFailure(error, for: id)
-            return
+            return false
         }
         tickets = updated
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         if canTryAnotherSource { library?.recoverRecordingSource(after: ticket, notBefore: earliestRecovery) }
         updatePending()
+        return true
     }
 
     private func updateProgress(_ id: UUID, received: Int64, total: Int64) {
@@ -860,7 +861,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                         reconcileAlreadyStoredDownloads(excluding: ticket.id)
                     }
                 } else {
-                    setFailed(ticket.id, reason: "Audio already stored or could not be imported")
+                    // Do not discard the only downloaded bytes until failure
+                    // is durably recorded. A failed manifest write must
+                    // leave the staged input available for relaunch recovery.
+                    guard setFailed(ticket.id, reason: "Audio already stored or could not be imported") else { continue }
                 }
                 try? fm.removeItem(at: stagedURL)
             } catch is CancellationError {
@@ -871,9 +875,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 }
             } catch {
                 // Leave failed transfers retryable via the playlist's retry button.
-                setFailed(ticket.id, reason: AudioDownloadDiagnostics.message(for: error),
-                          allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
-                try? fm.removeItem(at: stagedURL)
+                if setFailed(ticket.id, reason: AudioDownloadDiagnostics.message(for: error),
+                             allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error)) {
+                    try? fm.removeItem(at: stagedURL)
+                }
             }
         }
         updatePending()
