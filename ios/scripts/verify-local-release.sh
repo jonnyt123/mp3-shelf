@@ -12,7 +12,7 @@ MP3 Shelf — local native verification without GitHub Actions
   bash ios/scripts/verify-local-release.sh --builds-only
   bash ios/scripts/verify-local-release.sh --smoke
 
-Default: all nine Swift regression suites, the C matching core, unsigned simulator Debug,
+Default: all ten Swift regression suites, the C matching core, unsigned simulator Debug,
 simulator Release and physical-iPhone arm64 Release builds.
 --tests-only: run Swift regressions (codec tests require macOS AVFoundation).
 --builds-only: compile all three native configurations, skip Swift suites.
