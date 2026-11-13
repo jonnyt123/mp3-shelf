@@ -209,8 +209,18 @@ final class MusicLibrary: ObservableObject {
                 // The old catalog may already contain this recording: a crash
                 // after its atomic write must not duplicate it on relaunch.
                 if let existing = tracks.first(where: { $0.id == candidate.id }) {
-                    guard existing.fileName == candidate.fileName else { continue }
-                    try? manager.removeItem(at: journal)
+                    // A committed catalog entry is not proof its audio is
+                    // readable. Protected/missing files must retain recovery
+                    // intent until staged bytes can be safely reattached.
+                    let repaired = try record.restoreExistingTrack(
+                        existing, in: musicDirectory) { file in
+                        guard let probe = try? AVAudioPlayer(contentsOf: file) else {
+                            return false
+                        }
+                        return probe.duration.isFinite && probe.duration > 0 &&
+                            abs(probe.duration - existing.duration) <= 4
+                    }
+                    if repaired { try? manager.removeItem(at: journal) }
                     continue
                 }
                 guard !LocalLibraryFileSafety.isReferenced(
