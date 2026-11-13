@@ -756,6 +756,13 @@ struct PlaybackQueueSheet: View {
     }
 
     private func reorder(_ trackID: UUID, earlier: Bool) {
+        // An already-open menu or delayed accessibility action may fire after
+        // search begins. Do not silently move hidden neighbors in that case.
+        guard queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            pendingQueueFocusID = nil
+            pendingEmptyQueueFocus = false
+            return
+        }
         // A queued row can outlive the snapshot it rendered from. Always
         // recheck live boundaries before changing the play order.
         let current = playback.queuedTracks
