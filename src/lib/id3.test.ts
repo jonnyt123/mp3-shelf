@@ -165,3 +165,37 @@ describe("ID3 frame payload transformation safety",()=>{
   }
  });
 });
+
+describe("ID3 whole-tag unsynchronisation safety",()=>{
+ it("does not decode unsynchronised v2.3/v2.4 tags as ordinary frames",async()=>{
+  for(const version of [3,4] as const){
+   const title=frame("TIT2","Misleading title");
+   const tag=new Uint8Array(10+title.length);
+   tag.set([73,68,51,version,0,0x80,0,0,0,title.length]);
+   tag.set(title,10);
+   expect(parseId3Bytes(tag)).toEqual({});
+   const file=new Blob([tag,new Uint8Array(3*1024*1024)]);
+   const reads:number[]=[];
+   const originalSlice=file.slice.bind(file);
+   file.slice=((start?:number,end?:number,type?:string)=>{
+    reads.push((end??file.size)-(start??0));
+    return originalSlice(start,end,type);
+   }) as typeof file.slice;
+   expect(await readAudioMetadata(file)).toEqual({});
+   expect(reads).toEqual([10]);
+  }
+ });
+ it("rejects reserved header flag bits but preserves supported ordinary tags",async()=>{
+  const title=frame("TIT2","Valid title");
+  for(const version of [3,4] as const){
+   const tag=new Uint8Array(10+title.length);
+   tag.set([73,68,51,version,0,0,0,0,0,title.length]);
+   tag.set(title,10);
+   expect(parseId3Bytes(tag)).toMatchObject({title:"Valid title"});
+   expect(await readAudioMetadata(new Blob([tag]))).toMatchObject({title:"Valid title"});
+   tag[5]=0x01;
+   expect(parseId3Bytes(tag)).toEqual({});
+   expect(await readAudioMetadata(new Blob([tag]))).toEqual({});
+  }
+ });
+});
