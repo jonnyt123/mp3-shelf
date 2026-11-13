@@ -147,6 +147,14 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
       if (response.body?.cancel) await response.body.cancel().catch(() => {});
       throw Error(`Vercel API returned HTTP ${response.status} for ${options.method ?? 'GET'}.`);
     }
+    // Deployment metadata is untrusted network input. Bound its bytes before
+    // JSON parsing just as we bound public health responses; an unexpectedly
+    // large API payload must never exhaust the release guard's memory.
+    if (response.body?.getReader) {
+      const raw = await readProbeBody(response, 1024 * 1024);
+      return JSON.parse(raw);
+    }
+    // Compatibility with injected metadata fixtures without a stream.
     return response.json();
   };
   const current = await api(`/v13/deployments/${args.deployment}`);
