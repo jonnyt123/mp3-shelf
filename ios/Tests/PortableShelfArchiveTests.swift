@@ -204,9 +204,12 @@ struct PortableShelfArchiveTests {
         } catch PortableShelfArchive.ArchiveError.invalidManifest {
             // Expected: reject the entire archive during preflight.
         }
-        assert(try Data(contentsOf: audio) == originalBytes)
-        assert(try Data(contentsOf: secondAudio) == secondBytes)
-        assert(try Data(contentsOf: twoTrackBackup) == originalContainer)
+        let preservedFirstAudio = try Data(contentsOf: audio)
+        let preservedSecondAudio = try Data(contentsOf: secondAudio)
+        let preservedValidBackup = try Data(contentsOf: twoTrackBackup)
+        assert(preservedFirstAudio == originalBytes)
+        assert(preservedSecondAudio == secondBytes)
+        assert(preservedValidBackup == originalContainer)
         print("PASS: late zero-length artwork rejected without changing audio or valid backup")
 
         let validAudioArchive = try PortableShelfArchive.open(validAudioBackup)
