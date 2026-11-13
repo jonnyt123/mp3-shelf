@@ -43,6 +43,59 @@ struct PortableShelfArchiveTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
+        // A dangling catalog symlink must not be mistaken for first launch.
+        // Neither loading nor saving may replace user-owned linked bytes.
+        let catalog = folder.appendingPathComponent("catalog.json")
+        let protectedTarget = folder.appendingPathComponent("protected-library.json")
+        let protectedBytes = Data("preserve-user-library".utf8)
+        try protectedBytes.write(to: protectedTarget)
+        let sampleLibrary = PersistedLibrary(tracks: [], playlists: [])
+        try FileManager.default.createSymbolicLink(
+            at: catalog, withDestinationURL: protectedTarget)
+        do {
+            _ = try PersistedLibrary.readIfPresent(from: catalog)
+            fatalError("Accepted a linked music catalog")
+        } catch { }
+        do {
+            try sampleLibrary.write(to: catalog)
+            fatalError("Overwrote a linked music catalog")
+        } catch { }
+        try assertThrowing(try Data(contentsOf: protectedTarget) == protectedBytes)
+        assert((try catalog.resourceValues(forKeys: [.isSymbolicLinkKey]))
+            .isSymbolicLink == true)
+        try FileManager.default.removeItem(at: catalog)
+        let danglingTarget = folder.appendingPathComponent("missing-catalog.json")
+        try FileManager.default.createSymbolicLink(
+            at: catalog, withDestinationURL: danglingTarget)
+        do {
+            _ = try PersistedLibrary.readIfPresent(from: catalog)
+            fatalError("Accepted a dangling catalog link as first launch")
+        } catch { }
+        do {
+            try sampleLibrary.write(to: catalog)
+            fatalError("Replaced a dangling catalog link")
+        } catch { }
+        assert(!FileManager.default.fileExists(atPath: danglingTarget.path))
+        try FileManager.default.removeItem(at: catalog)
+        // A hard-linked catalog must not be replaced behind another owner.
+        try protectedBytes.write(to: catalog)
+        let alias = folder.appendingPathComponent("catalog-hardlink.json")
+        try FileManager.default.linkItem(at: catalog, to: alias)
+        do {
+            try sampleLibrary.write(to: catalog)
+            fatalError("Replaced a shared hard-linked catalog")
+        } catch { }
+        try assertThrowing(try Data(contentsOf: alias) == protectedBytes)
+        try FileManager.default.removeItem(at: alias)
+        try FileManager.default.removeItem(at: catalog)
+        // Ordinary fresh catalog writes and reads remain compatible.
+        try sampleLibrary.write(to: catalog)
+        let roundTrip = try PersistedLibrary.readIfPresent(from: catalog)
+        assert(roundTrip?.tracks.isEmpty == true && roundTrip?.playlists.isEmpty == true)
+        try FileManager.default.removeItem(at: catalog)
+        assert(try PersistedLibrary.readIfPresent(from: catalog) == nil)
+        print("PASS: catalog symlink, dangling link and hardlink protection")
+
         // Archive sidecar publication is a pre-catalog operation: a failed
         // post-write check must remove only the new file, while existing
         // user-owned bytes and filenames are never replaced.
