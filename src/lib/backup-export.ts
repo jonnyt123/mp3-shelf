@@ -33,11 +33,15 @@ export async function createStoredLibraryBackup(
   // Bound additional I/O for large libraries while detecting common
   // same-size media replacements that metadata-only comparisons miss.
   const window=64*1024;
-  // Sample the middle too: prefix/suffix-only checks miss same-size edits
-  // to the body of a long recording. Keep the extra I/O bounded at 192 KiB.
-  const offsets=[0];
-  if(blob.size>2*window)offsets.push(Math.floor((blob.size-window)/2));
-  if(blob.size>window)offsets.push(blob.size-window);
+  // Small and medium recordings can be checked completely with bounded
+  // per-read memory. Three probes alone miss edits between sampled regions.
+  // Large recordings retain bounded I/O to avoid doubling multi-GB exports.
+  const offsets:number[]=[];
+  if(blob.size<=1024*1024){
+   for(let offset=0;offset<blob.size;offset+=window)offsets.push(offset);
+  }else{
+   offsets.push(0,Math.floor((blob.size-window)/2),blob.size-window);
+  }
   let hash=2166136261;
   for(const offset of offsets){
    const bytes=new Uint8Array(await blob.slice(offset,offset+window).arrayBuffer());
