@@ -512,3 +512,54 @@ test('injected metadata without a stream rejects malformed content-length and mi
     }
   } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
 });
+
+test('successful empty 204 rollback response still requires verified alias readback', async () => {
+  const old = process.env.VERCEL_TOKEN;
+  process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork({ bad: true });
+    let rollbackRequests = 0;
+    const fetcher = async (url, options = {}) => {
+      if ((options.method ?? 'GET') === 'POST') {
+        rollbackRequests++;
+        return { ok: true, status: 204, body: null,
+          json: async () => { throw Error('204 response has no JSON'); } };
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck({ ...valid, autoRollback: true },
+      { fetcher, sleep: async () => {} });
+    assert.equal(rollbackRequests, 1);
+    assert.equal(result.status, 'ROLLED_BACK');
+    assert.equal(result.previous, valid.previous);
+  } finally {
+    if (old === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = old;
+  }
+});
+
+test('204 rollback without alias movement cannot claim successful rollback', async () => {
+  const old = process.env.VERCEL_TOKEN;
+  process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    const net = fakeNetwork({ bad: true });
+    let rollbackRequests = 0;
+    const fetcher = async (url, options = {}) => {
+      if ((options.method ?? 'GET') === 'POST') {
+        rollbackRequests++;
+        return { ok: true, status: 204, body: null };
+      }
+      if (rollbackRequests && new URL(url).pathname === `/v13/deployments/${valid.domain}`) {
+        return { ok: true, status: 200, json: async () => identity.aliased };
+      }
+      return net.fetcher(url, options);
+    };
+    const result = await runReleaseCheck({ ...valid, autoRollback: true },
+      { fetcher, sleep: async () => {} });
+    assert.equal(rollbackRequests, 1);
+    assert.equal(result.status, 'ROLLBACK_REQUESTED_UNVERIFIED');
+  } finally {
+    if (old === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = old;
+  }
+});
