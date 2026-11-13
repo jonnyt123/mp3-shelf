@@ -150,10 +150,10 @@ test('symlink substitution and non-file logs cannot create receipts', () => fixt
   const log = join(dir, 'npm-build.log');
   unlinkSync(log);
   symlinkSync(join(dir, 'npm-test.log'), log);
-  assert.throws(() => buildLocalReceipt(a), /regular file/);
+  assert.throws(() => buildLocalReceipt(a), /regular, unlinked file/);
   unlinkSync(log);
   mkdirSync(log);
-  assert.throws(() => buildLocalReceipt(a), /regular file/);
+  assert.throws(() => buildLocalReceipt(a), /regular, unlinked file/);
 }));
 
 test('receipt verifier accepts unchanged original logs and rejects byte tampering', () => fixture(dir => {
