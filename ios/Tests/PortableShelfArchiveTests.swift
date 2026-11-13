@@ -95,6 +95,50 @@ struct PortableShelfArchiveTests {
         assert(importOrphans.isEmpty)
         print("PASS: import collisions, validation/storage failures and success preserve audio bytes")
 
+        // Simulate two interruption boundaries: an aborted decoder/probe
+        // before publication, and cancellation after publication but before
+        // the catalog can durably reference its new recording.
+        try FileManager.default.removeItem(at: importDestination)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in throw CancellationError() },
+                persist: { importPersistCalls += 1 })
+            fatalError("Cancelled validation published an audio file")
+        } catch is CancellationError { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in },
+                persist: { throw CancellationError() })
+            fatalError("Cancelled catalog update retained unpublished audio")
+        } catch is CancellationError { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        let afterCancellation = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        assert(!afterCancellation.contains { $0.hasPrefix(".mp3shelf-import-") })
+
+        // A process can die between writing the staging copy and publishing.
+        // The next import must never delete another session's recoverable
+        // partial recording: each transaction cleans only its own unique path.
+        let crashedSessionStage = folder.appendingPathComponent(".mp3shelf-import-old-session.mp3")
+        let recoverableBytes = Data([0x49, 0x44, 0x33, 0xAB, 0xCD])
+        try recoverableBytes.write(to: crashedSessionStage)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in throw ImportTransactionFailure.invalidAudio },
+                persist: { importPersistCalls += 1 })
+            fatalError("Rejected reentry unexpectedly committed audio")
+        } catch ImportTransactionFailure.invalidAudio { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        try assertThrowing(try Data(contentsOf: crashedSessionStage) == recoverableBytes)
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        assert(importPersistCalls == 1)
+        print("PASS: simulated cancellation leaves no new catalog file; crashed-session bytes survive reentry")
+
+
         // Case-insensitive iPhone filesystems may resolve differently cased
         // legacy catalog names to the same audio or sidecar. Deleting one
         // entry must retain files referenced by the surviving entry.
