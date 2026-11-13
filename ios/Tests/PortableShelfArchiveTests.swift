@@ -7,6 +7,32 @@ private func assertThrowing(_ condition: @autoclosure () throws -> Bool,
     assert(passed, file: file, line: line)
 }
 
+// Synchronize results from concurrent exporters without mutable captured vars.
+// @unchecked Sendable is justified by the lock guarding every access.
+private final class ArchiveExportRaceResults: @unchecked Sendable {
+    private let lock = NSLock()
+    private var winners: [Int] = []
+    private var failureCount = 0
+
+    func recordSuccess(_ index: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        winners.append(index)
+    }
+
+    func recordFailure(_ error: Error) {
+        lock.lock()
+        defer { lock.unlock() }
+        failureCount += 1
+    }
+
+    func snapshot() -> (winners: [Int], failureCount: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (winners, failureCount)
+    }
+}
+
 @main
 struct PortableShelfArchiveTests {
     static func main() throws {
@@ -764,9 +790,9 @@ struct PortableShelfArchiveTests {
         try raceBytesB.write(to: raceAudioB)
         let raceGate = DispatchSemaphore(value: 0)
         let raceGroup = DispatchGroup()
-        let raceLock = NSLock()
-        var raceWinners: [Int] = []
-        var raceFailures: [Error] = []
+        // Mutable captured arrays are rejected by Swift 6's concurrent closure
+        // checking. Keep results behind one synchronized, Sendable reference.
+        let raceResults = ArchiveExportRaceResults()
         for index in 0..<2 {
             raceGroup.enter()
             DispatchQueue.global(qos: .userInitiated).async {
@@ -778,13 +804,9 @@ struct PortableShelfArchiveTests {
                               audioURL: index == 0 ? raceAudioA : raceAudioB,
                               artwork: nil, lyrics: nil)
                     ], playlists: [portableList], to: raceDestination)
-                    raceLock.lock()
-                    raceWinners.append(index)
-                    raceLock.unlock()
+                    raceResults.recordSuccess(index)
                 } catch {
-                    raceLock.lock()
-                    raceFailures.append(error)
-                    raceLock.unlock()
+                    raceResults.recordFailure(error)
                 }
             }
         }
@@ -792,14 +814,15 @@ struct PortableShelfArchiveTests {
         raceGate.signal()
         let raceCompleted = raceGroup.wait(timeout: .now() + 30) == .success
         assert(raceCompleted, "Concurrent archive exporters did not finish")
-        assert(raceWinners.count == 1 && raceFailures.count == 1,
+        let raceOutcome = raceResults.snapshot()
+        assert(raceOutcome.winners.count == 1 && raceOutcome.failureCount == 1,
                "Exactly one concurrent archive export must succeed")
         let raceArchive = try PortableShelfArchive.open(raceDestination)
         let raceExtract = try PortableShelfArchive.extract(
             raceArchive.manifest.tracks[0].audio,
             from: raceArchive, extensionName: "mp3")
         let raceExtractBytes = try Data(contentsOf: raceExtract)
-        assert(raceExtractBytes == (raceWinners[0] == 0 ? raceBytesA : raceBytesB),
+        assert(raceExtractBytes == (raceOutcome.winners[0] == 0 ? raceBytesA : raceBytesB),
                "Published archive must contain only the winning export's audio")
         try FileManager.default.removeItem(at: raceExtract)
         let raceEntries = try FileManager.default.contentsOfDirectory(atPath: folder.path)
