@@ -241,4 +241,25 @@ describe("durable backup export",()=>{
   expect((await parseLibraryBackup(backup)).tracks).toHaveLength(2);
  });
 
+ it("rejects same-size audio replacement even when all metadata is identical",async()=>{
+  const storage=store();
+  const changed={...track,blob:new Blob([new Uint8Array([9,8,7])])};
+  let reads=0;
+  await expect(createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[track]:[changed];
+  })).rejects.toThrow("Saved recording bytes changed");
+  expect(reads).toBe(2);
+ });
+ it("rejects same-size artwork replacement with unchanged metadata",async()=>{
+  const storage=store();
+  const first={...track,artwork:new Blob([new Uint8Array([1,2,3])],{type:"image/png"})};
+  const changed={...first,artwork:new Blob([new Uint8Array([3,2,1])],{type:"image/png"})};
+  let reads=0;
+  await expect(createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[first]:[changed];
+  })).rejects.toThrow("Saved recording bytes changed");
+ });
+
 });
