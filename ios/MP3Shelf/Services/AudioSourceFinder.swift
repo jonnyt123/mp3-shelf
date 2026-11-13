@@ -198,11 +198,18 @@ enum AudioSourceFinder {
         // Archive item metadata. All files still require full verification.
         let lookupStartedAt = Date()
         var detailLookupFailed = false
+        // A budget-truncated scan cannot prove a sole candidate is unique.
+        // Keep the result retryable instead of auto-downloading a possibly
+        // different recording hidden in the uninspected results.
+        var searchIncomplete = false
         var uniqueCandidates: [URL: AudioCatalogMatch] = [:]
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
             guard ArchiveLookupBudget.stillWithinWindow(
-                startedAt: lookupStartedAt, now: Date()) else { break }
+                startedAt: lookupStartedAt, now: Date()) else {
+                searchIncomplete = true
+                break
+            }
             let search: SearchResponse = try await requestJSON(
                 archiveSearchURL(for: wish, page: page),
                 allowsCellular: allowsCellular)
@@ -220,7 +227,15 @@ enum AudioSourceFinder {
                 try Task.checkCancellation()
                 guard ArchiveLookupBudget.canRequestDetails(
                     completed: detailRequests, startedAt: lookupStartedAt,
-                    now: Date()) else { break }
+                    now: Date()) else {
+                    // Only count truncation if there are valid, uninspected
+                    // entries; malformed identifiers cannot hide a match.
+                    if ranked.drop(while: { $0.offset != entry.offset })
+                        .contains(where: { safeIdentifier($0.element.identifier) }) {
+                        searchIncomplete = true
+                    }
+                    break
+                }
                 let result = entry.element
                 guard safeIdentifier(result.identifier) else { continue }
                 detailRequests += 1
@@ -243,13 +258,21 @@ enum AudioSourceFinder {
                     if uniqueCandidates.count > 1 { return nil }
                 }
             }
-            if search.response.docs.count < 20 ||
-                !ArchiveLookupBudget.stillWithinWindow(
-                    startedAt: lookupStartedAt, now: Date()) { break }
+            if !ArchiveLookupBudget.stillWithinWindow(
+                startedAt: lookupStartedAt, now: Date()) {
+                searchIncomplete = true
+                break
+            }
+            if search.response.docs.count < 20 { break }
+            if page == maxArchiveSearchPages {
+                // The index may have further pages that the bounded search
+                // cannot inspect. Do not certify a unique recording.
+                searchIncomplete = true
+            }
         }
         // An unreadable item may contain the requested recording. Allow the
         // caller's bounded retries instead of persisting a false no-match.
-        if detailLookupFailed { throw SourceError.unavailable }
+        if detailLookupFailed || searchIncomplete { throw SourceError.unavailable }
         return uniqueCandidates.count == 1 ? uniqueCandidates.values.first : nil
     }
 
