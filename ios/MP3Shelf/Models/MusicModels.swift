@@ -39,6 +39,17 @@ enum LocalAudioFileNaming {
 /// a successful catalog transaction. Fail closed for missing, linked or
 /// malformed legacy paths instead of touching files outside the library.
 enum LocalLibraryFileSafety {
+    /// APFS on iPhone is normally case-insensitive. Legacy catalogs can hold
+    /// differently cased spellings of one physical filename. When deleting a
+    /// track, conservatively retain any file still referenced under a spelling
+    /// that could resolve to the same inode. An orphan is safer than data loss.
+    static func isReferenced(_ filename: String, by remainingNames: [String?]) -> Bool {
+        remainingNames.contains { other in
+            guard let other else { return false }
+            return filename.compare(other, options: [.caseInsensitive, .diacriticInsensitive],
+                                    locale: Locale(identifier: "en_US_POSIX")) == .orderedSame
+        }
+    }
     static func regularFile(named name: String?, in directory: URL) -> URL? {
         guard let name, !name.isEmpty, name != ".", name != "..",
               !name.contains("/"), !name.contains("\\"), !name.contains("\0") else {
