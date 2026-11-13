@@ -75,4 +75,42 @@ describe("durable backup export",()=>{
   await expect(createStoredLibraryBackup(storage,key,async()=>{throw failure})).rejects.toBe(failure);
   expect(storage.values).toEqual(before);
  });
+ it("stops a multi-chunk export when another tab changes playlists mid-stream",async()=>{
+  const storage=store();
+  const newer=JSON.stringify([{...playlist[0],name:"Concurrent edit"}]);
+  let pulls=0;
+  let cancelled=false;
+  const streamed=new Blob([new Uint8Array([1,2,3])]);
+  Object.defineProperty(streamed,"stream",{value:()=>new ReadableStream<Uint8Array>({
+   pull(controller){
+    pulls++;
+    if(pulls===1){
+     controller.enqueue(new Uint8Array([1]));
+     storage.values.set(key,newer);
+    }else controller.enqueue(new Uint8Array([2,3]));
+   },
+   cancel(){cancelled=true}
+  },{highWaterMark:0})});
+  await expect(createStoredLibraryBackup(storage,key,async()=>[{...track,blob:streamed}]))
+   .rejects.toThrow("Playlists changed");
+  expect(cancelled).toBe(true);
+  expect(pulls).toBe(1);
+  expect(storage.values.get(key)).toBe(newer);
+ });
+ it("stops export when a recovery journal appears during a media stream",async()=>{
+  const storage=store();
+  const streamed=new Blob([new Uint8Array([1,2,3])]);
+  let cancelled=false;
+  Object.defineProperty(streamed,"stream",{value:()=>new ReadableStream<Uint8Array>({
+   pull(controller){
+    controller.enqueue(new Uint8Array([1]));
+    storage.values.set("mp3-shelf-delete-recovery","new deletion");
+   },
+   cancel(){cancelled=true}
+  },{highWaterMark:0})});
+  await expect(createStoredLibraryBackup(storage,key,async()=>[{...track,blob:streamed}]))
+   .rejects.toThrow("Finish pending library recovery");
+  expect(cancelled).toBe(true);
+  expect(storage.values.get("mp3-shelf-delete-recovery")).toBe("new deletion");
+ });
 });
