@@ -205,3 +205,39 @@ if !fm.fileExists(atPath: survivingStage.path) {
 check(try Data(contentsOf: survivingStage) == second, "Duplicate overwrote queued stage")
 check(try Data(contentsOf: duplicateSurvivor) == first, "Duplicate source was unexpectedly moved")
 print("PASS: two-ticket journal isolation, failed persistence, restart and duplicate completion")
+
+
+// Interrupted journal publication: a truncated or malformed on-disk manifest
+// must never be treated as an empty queue authorizing orphan-media deletion.
+// A valid checkpoint is retained separately so recovery can be retried.
+let corruptJournal = root.appendingPathComponent("corrupt-tickets.json")
+let checkpoint = root.appendingPathComponent("tickets-checkpoint.json")
+let crashStage = root.appendingPathComponent("crash-survivor.mp3")
+let crashID = UUID()
+let crashEntries = [JournalEntry(id: crashID, status: .queued)]
+try JSONEncoder().encode(crashEntries).write(to: checkpoint, options: .atomic)
+try first.write(to: crashStage)
+let corruptPayloads: [Data] = [
+    Data(),
+    Data("[{".utf8),
+    Data("null".utf8),
+    Data("{\"id\":\"unexpected\"}".utf8)
+]
+for payload in corruptPayloads {
+    try payload.write(to: corruptJournal, options: .atomic)
+    let decoded = try? JSONDecoder().decode([JournalEntry].self, from: Data(contentsOf: corruptJournal))
+    check(decoded == nil, "Corrupt journal was accepted as an empty queue")
+    // The recovery path must not infer ownership from a failed decode.
+    // The original audio and last valid checkpoint are immutable here.
+    check(try Data(contentsOf: crashStage) == first, "Corrupt journal lost staged audio")
+    check(try JSONDecoder().decode([JournalEntry].self,
+          from: Data(contentsOf: checkpoint)) == crashEntries,
+          "Corrupt journal changed last valid checkpoint")
+}
+try JSONEncoder().encode(crashEntries).write(to: corruptJournal, options: .atomic)
+let recoveredEntries = try JSONDecoder().decode([JournalEntry].self,
+    from: Data(contentsOf: corruptJournal))
+check(recoveredEntries == crashEntries, "Valid journal could not recover after corruption")
+check(try Data(contentsOf: crashStage) == first,
+      "Recovery replaced original staged audio")
+print("PASS: truncated journal fails closed and preserves recoverable staged bytes")
