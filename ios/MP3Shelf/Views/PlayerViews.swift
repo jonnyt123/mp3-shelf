@@ -595,7 +595,20 @@ struct PlaybackQueueSheet: View {
     @AccessibilityFocusState private var focusedQueueTrackID: UUID?
     @State private var pendingQueueFocusID: UUID?
     @State private var pendingEmptyQueueFocus = false
+    @State private var queueChangedAlert = false
     @AccessibilityFocusState private var emptyQueueFocused: Bool
+
+    // Context menus can outlive their row after automatic playback advancement.
+    // Explain rejected actions instead of silently ignoring the tap, and give
+    // VoiceOver a surviving focus target in the refreshed queue.
+    private func reportStaleQueueAction() {
+        pendingQueueFocusID = nil
+        pendingEmptyQueueFocus = false
+        let current = playback.queuedTracks
+        focusedQueueTrackID = current.first?.id
+        emptyQueueFocused = current.isEmpty
+        queueChangedAlert = true
+    }
 
     // Keep VoiceOver on the nearest surviving queue action after a deletion.
     // The focus target must be applied after the queue has published its new rows.
@@ -604,8 +617,7 @@ struct PlaybackQueueSheet: View {
         // Playback may advance between opening a menu and choosing Remove.
         let current = playback.queuedTracks
         guard let index = current.firstIndex(where: { $0.id == trackID }) else {
-            pendingQueueFocusID = nil
-            pendingEmptyQueueFocus = false
+            reportStaleQueueAction()
             return
         }
         let remaining = current.filter { $0.id != trackID }
@@ -626,8 +638,7 @@ struct PlaybackQueueSheet: View {
         // recheck live boundaries before changing the play order.
         let current = playback.queuedTracks
         guard let index = current.firstIndex(where: { $0.id == trackID }) else {
-            pendingQueueFocusID = nil
-            pendingEmptyQueueFocus = false
+            reportStaleQueueAction()
             return
         }
         guard earlier ? index > 0 : index < current.count - 1 else {
@@ -644,8 +655,7 @@ struct PlaybackQueueSheet: View {
         // Do not issue a mutation or retain a focus request for a vanished row.
         let current = playback.queuedTracks
         guard let index = current.firstIndex(where: { $0.id == trackID }) else {
-            pendingQueueFocusID = nil
-            pendingEmptyQueueFocus = false
+            reportStaleQueueAction()
             return
         }
         // Already next: no queue publication will follow, so avoid leaving a
@@ -664,8 +674,7 @@ struct PlaybackQueueSheet: View {
         // Resolve from the live queue; a captured MusicTrack may no longer be
         // queued when a menu action is selected after automatic advancement.
         guard let track = playback.queuedTracks.first(where: { $0.id == trackID }) else {
-            pendingQueueFocusID = nil
-            pendingEmptyQueueFocus = false
+            reportStaleQueueAction()
             return
         }
         pendingQueueFocusID = nil
@@ -966,6 +975,11 @@ struct PlaybackQueueSheet: View {
                     focusedQueueTrackID = currentIDs[min(oldIndex, currentIDs.count - 1)]
                     emptyQueueFocused = false
                 }
+            }
+            .alert("Queue changed", isPresented: $queueChangedAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("That song is no longer in the upcoming queue. The list has been updated.")
             }
             .navigationTitle("Your queue")
             .navigationBarTitleDisplayMode(.inline)
