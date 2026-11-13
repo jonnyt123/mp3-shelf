@@ -943,6 +943,15 @@ struct PlaybackQueueSheet: View {
                 .scrollDismissesKeyboard(.interactively)
             }
             .onChange(of: upcoming.map(\.id)) { previousIDs, currentIDs in
+                // A presented alert owns accessibility focus. Playback can
+                // advance while it is open; defer all row/empty-state focus
+                // recovery until dismissal rather than moving VoiceOver behind
+                // the alert.
+                guard !queueChangedAlert else {
+                    pendingQueueFocusID = nil
+                    pendingEmptyQueueFocus = false
+                    return
+                }
                 // Queue changes can also originate outside this sheet (playback
                 // advancement, shuffle, or another queue control). Recover only
                 // focus that was actually on a row that disappeared; otherwise
@@ -979,17 +988,20 @@ struct PlaybackQueueSheet: View {
                 }
             }
             .alert("Queue changed", isPresented: $queueChangedAlert) {
-                Button("OK", role: .cancel) {
-                    // Re-resolve after dismissal: playback may advance again
-                    // while the alert is visible. Never focus a vanished row.
-                    let surviving = playback.queuedTracks
-                    pendingQueueFocusID = nil
-                    pendingEmptyQueueFocus = false
-                    focusedQueueTrackID = surviving.first?.id
-                    emptyQueueFocused = surviving.isEmpty
-                }
+                Button("OK", role: .cancel) {}
             } message: {
                 Text("That song is no longer in the upcoming queue. The list has been updated.")
+            }
+            .onChange(of: queueChangedAlert) { _, presented in
+                guard !presented else { return }
+                // Dismissal, not the OK tap, is the point when the alert
+                // relinquishes VoiceOver focus. This also covers system-driven
+                // dismissal and uses the latest queue after further advancement.
+                let surviving = playback.queuedTracks
+                pendingQueueFocusID = nil
+                pendingEmptyQueueFocus = false
+                focusedQueueTrackID = surviving.first?.id
+                emptyQueueFocused = surviving.isEmpty
             }
             .navigationTitle("Your queue")
             .navigationBarTitleDisplayMode(.inline)
