@@ -178,6 +178,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     @discardableResult
     func enqueue(source: AudioCatalogMatch, requested: PlaylistWish, playlistID: UUID,
                  alternatives: [AudioCatalogMatch] = [], replacingRetry previousID: UUID? = nil) throws -> Bool {
+        // Discovery may have started before a manual import or another
+        // playlist's transfer finished. Reconcile those completed recordings
+        // before checking capacity, then refuse to enqueue a second copy.
+        // A search result is not proof of a saved recording: only the
+        // authoritative offline library can satisfy this request.
+        reconcileAlreadyStoredDownloads()
+        if library?.hasOfflineRecording(matching: requested) == true { return false }
         // Resolution suspends callers, so an earlier capacity check can be
         // stale. This MainActor check and ticket insertion have no await gap.
         guard BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount()),
@@ -264,8 +271,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             fulfilled.failureReason = "This recording is already saved offline"
             fulfilled.nextRetryAt = nil
             fulfilled.alternativeSources = nil
-            tickets[id] = fulfilled
-            persist()
+            // A retry may discover that another import already fulfilled this
+            // recording. Commit the terminal ticket before acknowledging it to
+            // the library; otherwise a failed manifest write resurrects the
+            // obsolete failed ticket on the next launch.
+            var updated = tickets
+            updated[id] = fulfilled
+            do {
+                try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            } catch {
+                noteQueueWriteFailure(error, for: id)
+                return
+            }
+            tickets = updated
             library.finishedBackgroundDownload(for: previous.playlistID, succeeded: true)
             reconcileAlreadyStoredDownloads()
             updatePending()
@@ -294,26 +312,63 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func clearFinishedHistory() {
         let removed = tickets.values.filter { $0.status != .queued }
+        guard !removed.isEmpty else { return }
+
+        // A failed manifest write must not resurrect cleared history on the
+        // next launch. Keep live state and staged files intact until the
+        // replacement queue is durably recorded.
+        let remaining = tickets.filter { $0.value.status == .queued }
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(remaining.values), to: manifestURL)
+        } catch {
+            // Keep history visible so the user can retry clearing it when
+            // storage becomes writable; do not discard recovery evidence.
+            revision += 1
+            return
+        }
+        tickets = remaining
         for item in removed {
             sourceResolutionTasks[item.id]?.cancel()
-            try? fm.removeItem(at: Self.stagingURL(item.id))
+            sourceResolutionTasks.removeValue(forKey: item.id)
+            // A conversion may still be reading its staged file. Cancel it,
+            // but let the conversion's cleanup own removal of that file.
+            let conversion = conversions[item.id]
+            conversion?.cancel()
+            // Conversion ownership can precede insertion into processing.
+            // Retain staging until its completion handler performs cleanup.
+            if !processing.contains(item.id) && conversion == nil {
+                try? fm.removeItem(at: Self.stagingURL(item.id))
+            }
         }
-        tickets = tickets.filter { $0.value.status == .queued }
-        persist()
-        revision += 1
+        updatePending()
     }
 
     func cancelTransfer(_ id: UUID, reason: String = "Cancelled") {
         guard var ticket = tickets[id], ticket.status == .queued else { return }
-        conversions[id]?.cancel()
         ticket.status = .cancelled
         ticket.failureReason = reason
-        tickets[id] = ticket
-        // An idle staged file has no owner left after explicit cancellation.
-        // Active conversion owns cleanup until its cancellation check returns.
-        if !processing.contains(id) { try? fm.removeItem(at: Self.stagingURL(id)) }
-        persist()
-        revision += 1
+
+        // Commit the terminal state before touching a running conversion,
+        // staged media or the OS-owned task. If storage is unavailable, keep
+        // the existing transfer recoverable after process termination.
+        var updated = tickets
+        updated[id] = ticket
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        } catch {
+            noteQueueWriteFailure(error, for: id)
+            return
+        }
+        tickets = updated
+        conversions[id]?.cancel()
+        // An active import owns its staged file until its cancellation
+        // check finishes; never remove the file underneath conversion.
+        // A conversion can own the staging file before its ticket enters
+        // processing. Its completion handler is responsible for cleanup;
+        // deleting the input here races the decoder and can corrupt imports.
+        if !processing.contains(id) && conversions[id] == nil {
+            try? fm.removeItem(at: Self.stagingURL(id))
+        }
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         updatePending()
         session.getAllTasks { tasks in
@@ -434,6 +489,26 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         task.taskDescription = ticket.id.uuidString
         task.earliestBeginDate = ticket.nextRetryAt
         task.resume()
+        // The replacement is durable and scheduled. Retire the predecessor's
+        // daemon task as well: changing its manifest status alone does not stop
+        // URLSession from transferring the same bytes in parallel. Late
+        // callbacks remain harmless because each attempt has a distinct ID.
+        if let previous {
+            let retiredID = previous.id.uuidString
+            session.getAllTasks { tasks in
+                for oldTask in tasks where oldTask.taskDescription == retiredID {
+                    oldTask.cancel()
+                }
+            }
+            // An active staged import owns its file until its cancellation
+            // check completes; never remove that file underneath conversion.
+            // A conversion can claim staging before it enters processing.
+            // Its completion handler owns cleanup after cooperative cancellation.
+            conversions[previous.id]?.cancel()
+            if !processing.contains(previous.id) && conversions[previous.id] == nil {
+                try? fm.removeItem(at: Self.stagingURL(previous.id))
+            }
+        }
         updatePending()
     }
 
@@ -463,23 +538,40 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// Finish those tickets without re-downloading an already stored track.
     private func reconcileAlreadyStoredDownloads(excluding excluded: UUID? = nil) {
         guard let library else { return }
-        var duplicateTaskIDs: Set<String> = []
+        // Build the entire transition before touching live state. If the
+        // manifest cannot be saved, keep the daemon tasks alive so a relaunch
+        // can still recover them instead of losing the only queue record.
+        var updated = tickets
+        var fulfilled: [BackgroundAudioTicket] = []
         for ticket in tickets.values where ticket.status == .queued && ticket.id != excluded {
             guard library.hasOfflineRecording(matching: ticket.requested),
-                  var current = tickets[ticket.id], current.status == .queued else { continue }
-            conversions[ticket.id]?.cancel()
+                  var current = updated[ticket.id], current.status == .queued else { continue }
             current.status = .imported
             current.failureReason = "This recording is already saved offline"
             current.alternativeSources = nil
             current.nextRetryAt = nil
-            tickets[ticket.id] = current
-            duplicateTaskIDs.insert(ticket.id.uuidString)
-            library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: true)
-            // Completed transfer may already have left a staging copy.
-            try? fm.removeItem(at: Self.stagingURL(ticket.id))
+            updated[ticket.id] = current
+            fulfilled.append(ticket)
         }
-        guard !duplicateTaskIDs.isEmpty else { return }
-        persist()
+        guard !fulfilled.isEmpty else { return }
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        } catch {
+            // Never cancel a background task when its terminal state was not
+            // durably recorded. A later reconciliation can safely retry.
+            return
+        }
+        tickets = updated
+        let duplicateTaskIDs = Set(fulfilled.map { $0.id.uuidString })
+        for ticket in fulfilled {
+            conversions[ticket.id]?.cancel()
+            library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: true)
+            // Cancellation is cooperative. An active decoder/converter still
+            // owns this file until its next cancellation check completes.
+            if !processing.contains(ticket.id) && conversions[ticket.id] == nil {
+                try? fm.removeItem(at: Self.stagingURL(ticket.id))
+            }
+        }
         updatePending()
         session.getAllTasks { tasks in
             for task in tasks where duplicateTaskIDs.contains(task.taskDescription ?? "") {
@@ -584,8 +676,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         ticket.status = .failed
         ticket.failureReason = failure
         ticket.mayTryAnotherSource = canTryAnotherSource
-        tickets[id] = ticket
-        persist()
+        // A terminal failure must survive relaunch before notifying the
+        // library or scheduling another source search. Otherwise a failed
+        // manifest write can strand a phantom queued ticket after restart.
+        // Keep the original ticket in memory and on disk if persistence fails.
+        var updated = tickets
+        updated[id] = ticket
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        } catch {
+            noteQueueWriteFailure(error, for: id)
+            return
+        }
+        tickets = updated
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         if canTryAnotherSource { library?.recoverRecordingSource(after: ticket, notBefore: earliestRecovery) }
         updatePending()
@@ -606,8 +709,24 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
         ticket.bytesReceived = received
         ticket.totalBytes = knownTotal
-        tickets[id] = ticket
-        if resumedRetry { persist() }
+        if resumedRetry {
+            // Clearing a scheduled retry changes recovery semantics after a
+            // process restart. Commit that transition before publishing it:
+            // a failed manifest write must not silently discard retry state.
+            var updated = tickets
+            updated[id] = ticket
+            do {
+                try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            } catch {
+                noteQueueWriteFailure(error, for: id)
+                return
+            }
+            tickets = updated
+        } else {
+            // Byte-level progress is ephemeral and reconstructed from the OS
+            // task on reattachment; avoid a disk write per progress callback.
+            tickets[id] = ticket
+        }
         revision += 1
         // Byte-level progress is intentionally not flushed to disk for each callback;
         // the OS restores actual task progress after process reattachment.
@@ -632,6 +751,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // A transfer can be cancelled or cleared while its delegate callback is
         // in flight. Remove files that no longer correspond to queued tickets.
         for ticket in tickets.values where ticket.status != .queued {
+            // A terminal ticket may still own a live conversion. Cancelling
+            // Progress is cooperative: the decoder can continue reading its
+            // staged input until its completion handler exits. The conversion
+            // path, not this sweep, must remove that input after it releases it.
+            guard !processing.contains(ticket.id), conversions[ticket.id] == nil else { continue }
             let leftover = Self.stagingURL(ticket.id)
             if fm.fileExists(atPath: leftover.path) { try? fm.removeItem(at: leftover) }
         }
@@ -661,6 +785,30 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             let stagedURL = Self.stagingURL(ticket.id)
             do {
+                // URLSession stages every provider at a legacy .mp3 path, even
+                // when the actual bytes contain MP4/AAC. AVAudioFile can choose
+                // the wrong parser from the suffix and emit packet-scan errors.
+                // Reject non-audio before decoding and preserve the original
+                // staged file for crash/cancellation recovery.
+                guard let detected = try DownloadedAudioSignature.identify(stagedURL) else {
+                    throw DownloadedAudioSignature.Error.unsupportedOrInvalidAudio
+                }
+                let decodingURL: URL
+                if detected.fileExtension == stagedURL.pathExtension.lowercased() {
+                    decodingURL = stagedURL
+                } else {
+                    // A hard link uses no second copy of a large download and
+                    // gives AVFoundation its actual container extension.
+                    // Recreate an alias left by a previous interrupted import.
+                    let alias = stagedURL.deletingPathExtension()
+                        .appendingPathExtension(detected.fileExtension)
+                    try? fm.removeItem(at: alias)
+                    try fm.linkItem(at: stagedURL, to: alias)
+                    decodingURL = alias
+                }
+                defer {
+                    if decodingURL != stagedURL { try? fm.removeItem(at: decodingURL) }
+                }
                 #if DEBUG
                 var fixtureInput: (ticketID: UUID, bytes: Int, sha256: String)?
                 if let fixtureURL = DownloadPathProof.fixtureDownloadURL, ticket.downloadURL == fixtureURL {
@@ -675,7 +823,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                     licenseURL: ticket.licensePage?.absoluteString ?? "",
                     providerName: ticket.provider)
                 let imported = try await library.importStagedAudio(
-                    from: stagedURL, matching: ticket.requested, attribution: attribution, conversionProgress: conversion)
+                    from: decodingURL, matching: ticket.requested, attribution: attribution, conversionProgress: conversion)
                 if imported {
                     if var current = tickets[ticket.id], current.status == .queued {
                         #if DEBUG
@@ -689,8 +837,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                         current.failureReason = nil
                         current.nextRetryAt = nil
                         current.alternativeSources = nil
-                        tickets[ticket.id] = current
-                        persist()
+                        // Import may have succeeded even when the queue manifest
+                        // cannot be written (for example, during low storage).
+                        // Keep the queued ticket and staged file until the
+                        // completed transition is durable. On the next recovery
+                        // pass, offline-recording reconciliation can finish it
+                        // without downloading the recording a second time.
+                        var updated = tickets
+                        updated[ticket.id] = current
+                        do {
+                            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+                        } catch {
+                            noteQueueWriteFailure(error, for: ticket.id)
+                            continue
+                        }
+                        tickets = updated
                         revision += 1
                         library.finishedBackgroundDownload(for: ticket.playlistID, succeeded: true)
                         // One verified import can satisfy multiple playlists.
@@ -726,12 +887,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private func backgroundTaskInventory() async -> BackgroundTaskInventory {
         await withCheckedContinuation { continuation in
             session.getAllTasks { tasks in
-                let ids = Set(tasks.compactMap { task -> UUID? in
+                let identified = tasks.compactMap { task -> UUID? in
                     guard let description = task.taskDescription else { return nil }
                     return UUID(uuidString: description)
-                })
+                }
+                // A daemon can temporarily expose two tasks for one ticket
+                // during replacement. Duplicate known IDs are not unidentified
+                // tasks: comparing Set.count with tasks.count would suppress
+                // unrelated orphan recovery indefinitely.
                 continuation.resume(returning: BackgroundTaskInventory(
-                    ids: ids, hasUnknownTasks: ids.count != tasks.count))
+                    ids: Set(identified), hasUnknownTasks: identified.count != tasks.count))
             }
         }
     }
@@ -762,7 +927,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 secondScanHasTask: false,
                 hasUnidentifiedTasks: first.hasUnknownTasks,
                 hasStagedFile: fm.fileExists(atPath: Self.stagingURL(ticket.id).path),
-                isImporting: processing.contains(ticket.id))
+                isImporting: processing.contains(ticket.id) || conversions[ticket.id] != nil)
         }.map(\.id)
         guard !possible.isEmpty else { return }
 
@@ -773,7 +938,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         } catch { return }
         let second = await backgroundTaskInventory()
         guard !second.hasUnknownTasks else { return }
-        var completedLocally = false
         for id in possible {
             guard let current = tickets[id], current.status == .queued,
                   let library, library.hasCurrentSourceRequest(current.requested, for: current.playlistID),
@@ -783,7 +947,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                       secondScanHasTask: second.ids.contains(id),
                       hasUnidentifiedTasks: second.hasUnknownTasks,
                       hasStagedFile: fm.fileExists(atPath: Self.stagingURL(id).path),
-                      isImporting: processing.contains(id)) else { continue }
+                      isImporting: processing.contains(id) || conversions[id] != nil) else { continue }
 
             // A recording might already have been imported before a crash
             // prevented the transfer manifest from being finalized.
@@ -793,9 +957,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 finished.failureReason = nil
                 finished.nextRetryAt = nil
                 finished.alternativeSources = nil
-                tickets[id] = finished
+                // The OS task has disappeared. Persist the completed ticket
+                // before notifying the library, so a crash or a manifest write
+                // failure cannot leave a phantom queued download on relaunch.
+                var updated = tickets
+                updated[id] = finished
+                do {
+                    try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+                } catch {
+                    // Preserve the queued ticket for a later reconciliation.
+                    // Never acknowledge completion that cannot survive restart.
+                    continue
+                }
+                tickets = updated
                 library.finishedBackgroundDownload(for: current.playlistID, succeeded: true)
-                completedLocally = true
+                updatePending()
                 continue
             }
             guard Self.allowedDownloadURL(current.downloadURL) else {
@@ -825,10 +1001,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             } catch {
                 setFailed(id, reason: error.localizedDescription, allowAlternative: false)
             }
-        }
-        if completedLocally {
-            persist()
-            updatePending()
         }
     }
 
@@ -917,14 +1089,23 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: location, to: destination)
+            // A duplicate URLSession completion may arrive while the first
+            // staged copy is being decoded. Never unlink or replace that input:
+            // the conversion owns it until its completion handler finishes.
+            // Retain the first complete staged file and let recovery validate it.
+            if !FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.moveItem(at: location, to: destination)
+            }
             Task { @MainActor in
                 // History may have been cleared after cancellation while this
                 // delegate was moving the completed file. Unknown tickets must
                 // never leave an orphan staged copy or import cancelled audio.
                 guard self.tickets[id]?.status == .queued else {
-                    try? self.fm.removeItem(at: destination)
+                    // A cancelled duplicate callback must not delete the
+                    // first callback's file while a decoder still owns it.
+                    if !self.processing.contains(id) && self.conversions[id] == nil {
+                        try? self.fm.removeItem(at: destination)
+                    }
                     return
                 }
                 await self.recoverStagedDownloads()
@@ -965,6 +1146,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let connectionLost = systemError.domain == NSURLErrorDomain &&
             BackgroundTransferRetryPolicy.isConnectivityInterruption(systemError.code)
         Task { @MainActor in
+            // A completed download is moved into staging by didFinishDownloadingTo.
+            // A later error callback from a duplicate/retired daemon task must not
+            // replace the queued ticket or discard a complete file awaiting import.
+            // Staging is created only after HTTP, size, type and range checks.
+            guard self.tickets[id]?.status == .queued else { return }
+            if self.fm.fileExists(atPath: Self.stagingURL(id).path) {
+                await self.recoverStagedDownloads()
+                return
+            }
             if shouldRetry {
                 self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.message(for: error),
                                             connectivityInterruption: connectionLost)

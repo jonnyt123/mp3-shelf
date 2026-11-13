@@ -75,7 +75,7 @@ class DownloadProofTests(unittest.TestCase):
                 file.write(b"x" * len(original))
 
         def open_with_source_change(path, *args, **kwargs):
-            if path == self.audio and args == ("rb",):
+            if path.resolve() == self.audio.resolve() and args == ("rb",):
                 return read_then_change(path, *args, **kwargs)
             return open_path(path, *args, **kwargs)
 
@@ -196,11 +196,13 @@ class RestartWorkflowTests(unittest.TestCase):
         self.tools.mkdir()
         self.env = dict(os.environ, PATH=str(self.tools) + os.pathsep + os.environ["PATH"],
                         TMPDIR=str(self.root),
-                        MOCK_PROOF_CONTAINER=str(self.root / "container"), MOCK_PROOF_LOG=str(self.root / "calls.jsonl"))
+                        MOCK_PROOF_CONTAINER=str(self.root / "container"), MOCK_PROOF_LOG=str(self.root / "calls.jsonl"),
+                        MOCK_BUILD_ARGUMENTS=str(self.root / "build-arguments.json"))
         self.tool("uname", "#!/bin/sh\necho Darwin\n")
         self.tool("xcodebuild", f"#!{sys.executable}\n" + '''
-import pathlib, plistlib, sys
+import json, os, pathlib, plistlib, sys
 args=sys.argv[1:]
+pathlib.Path(os.environ["MOCK_BUILD_ARGUMENTS"]).write_text(json.dumps(args))
 root=pathlib.Path(args[args.index('-derivedDataPath')+1])
 app=root/'Build/Products/Debug-iphonesimulator/MP3Shelf.app'
 app.mkdir(parents=True)
@@ -309,6 +311,15 @@ elif command=='launch':
                 self.assertIn("Result: PASS", report.read_text())
                 self.assertIn("Last step: complete", report.read_text())
                 self.assertIn("Proof mode: " + mode, report.read_text())
+                self.assertIn("Running build...", result.stdout)
+                self.assertIn("Sign to Run Locally", report.read_text())
+                build = json.loads((self.root / "build-arguments.json").read_text())
+                settings = dict(argument.split("=", 1) for argument in build if "=" in argument)
+                self.assertEqual(settings["CODE_SIGNING_ALLOWED"], "YES")
+                self.assertEqual(settings["CODE_SIGN_IDENTITY"], "-")
+                derived = Path(build[build.index("-derivedDataPath") + 1]).resolve()
+                self.assertFalse(derived.is_relative_to(self.candidate.resolve()))
+                self.assertTrue(derived.name.startswith("mp3shelf-proof-build."))
         calls = [json.loads(line) for line in (self.root / "calls.jsonl").read_text().splitlines()]
         launches = [i for i, call in enumerate(calls) if call[1] == "launch"]
         self.assertEqual(len(launches), 6)

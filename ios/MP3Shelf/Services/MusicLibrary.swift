@@ -50,6 +50,10 @@ final class MusicLibrary: ObservableObject {
     }()
     @Published private(set) var playlists: [MusicPlaylist] = []
     @Published var isImporting = false
+    // Fail closed if the saved catalog exists but cannot be read (for example,
+    // while iOS file protection is active). Never replace it with an empty one.
+    @Published private(set) var libraryStorageError: String?
+    private var isLibraryPersistenceSafe = false
     @Published var pendingBackgroundDownloads = 0
     @Published private(set) var automaticDownloadProgress: AutomaticDownloadProgress?
     private var automaticDownloadTask: Task<Void, Never>?
@@ -97,6 +101,15 @@ final class MusicLibrary: ObservableObject {
     /// A visible, active SwiftUI scene owns unbounded source lookups. iOS may
     /// create MusicLibrary for a background URLSession callback without a scene.
     func setForegroundDiscoveryEnabled(_ enabled: Bool) {
+        // Foreground activation is the first safe opportunity to retry an
+        // iOS protected-file read after a locked background launch. Retry even
+        // when the discovery flag was already enabled on a previous scene.
+        if enabled && !isLibraryPersistenceSafe {
+            let recovered = recoverLibraryIfAccessible()
+            if recovered && foregroundDiscoveryEnabled {
+                resumePendingDiscovery()
+            }
+        }
         guard foregroundDiscoveryEnabled != enabled else { return }
         foregroundDiscoveryEnabled = enabled
         if enabled {
@@ -145,11 +158,14 @@ final class MusicLibrary: ObservableObject {
             try manager.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
             try manager.createDirectory(at: artworkDirectory, withIntermediateDirectories: true)
             try manager.createDirectory(at: lyricsDirectory, withIntermediateDirectories: true)
-            if let data = try? Data(contentsOf: databaseURL) {
-                let saved = try JSONDecoder().decode(PersistedLibrary.self, from: data)
-                tracks = saved.tracks.filter { manager.fileExists(atPath: musicDirectory.appendingPathComponent($0.fileName).path) }
+            if let saved = try PersistedLibrary.readIfPresent(from: databaseURL) {
+                // Keep metadata even when a recording is temporarily unavailable
+                // (Files, protection or storage interruption). Removing its entry
+                // here would permanently erase its identity on the next save.
+                tracks = saved.tracks
                 playlists = saved.playlists
             }
+            isLibraryPersistenceSafe = true
             if let saved = try? Data(contentsOf: discoveryURL),
                let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
                 discoveryJobs = decoded.compactMap { checkpoint in
@@ -162,6 +178,8 @@ final class MusicLibrary: ObservableObject {
                 }
             }
         } catch {
+            isLibraryPersistenceSafe = false
+            libraryStorageError = "Saved music library could not be opened. Your existing files and playlists are preserved, but changes are disabled until storage becomes available."
             print("MP3 Shelf could not initialize local storage: \(error)")
         }
         networkMonitor.pathUpdateHandler = { [weak self] path in
@@ -177,14 +195,45 @@ final class MusicLibrary: ObservableObject {
     /// Creates the same v1 .mp3shelf archive used by the browser PWA.
     /// No Spotify tokens, account secrets or discovery queue internals are exported.
     func exportPortableBackup() async throws -> URL {
-        let items = tracks.map { track in
-            let lyrics = track.lyricsFileName.flatMap {
-                try? String(contentsOf: lyricsDirectory.appendingPathComponent($0), encoding: .utf8)
+        // A protected or damaged catalog can make the in-memory library appear
+        // empty. Never export that fallback as an apparently valid backup.
+        try requireLibraryPersistence()
+        // A sidecar reference is user-owned library data, not an optional
+        // decoding hint. Never publish a backup that silently omits referenced
+        // artwork/lyrics because the file was protected, missing or corrupt.
+        // Only a nil reference means the recording genuinely has no sidecar.
+        let items = try tracks.map { track -> PortableShelfArchive.MediaInput in
+            try Task.checkCancellation()
+            let lyricBytes = try PortableShelfArchive.readSidecar(
+                named: track.lyricsFileName, from: lyricsDirectory,
+                maximumBytes: 500 * 1024)
+            let lyrics: String?
+            if let lyricBytes {
+                guard let text = String(data: lyricBytes, encoding: .utf8) else {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
+                lyrics = text
+            } else {
+                lyrics = nil
+            }
+
+            let imageBytes = try PortableShelfArchive.readSidecar(
+                named: track.artworkFileName, from: artworkDirectory,
+                maximumBytes: 20 * 1024 * 1024)
+            let artwork: Data?
+            if let imageBytes {
+                guard let image = UIImage(data: imageBytes),
+                      let jpeg = image.jpegData(compressionQuality: 0.9),
+                      !jpeg.isEmpty else {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
+                artwork = jpeg
+            } else {
+                artwork = nil
             }
             return PortableShelfArchive.MediaInput(
                 track: track, audioURL: fileURL(for: track),
-                artwork: artwork(for: track)?.jpegData(compressionQuality: 0.9),
-                lyrics: lyrics
+                artwork: artwork, lyrics: lyrics
             )
         }
         let destination = manager.temporaryDirectory
@@ -192,21 +241,148 @@ final class MusicLibrary: ObservableObject {
         // Gather UI-dependent artwork before leaving the main actor, then
         // stream potentially gigabytes of audio to disk off the UI thread.
         let playlistSnapshot = playlists
-        return try await Task.detached(priority: .userInitiated) {
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) {
+            // The export may finish publishing just as cancellation arrives.
+            // Own the output until a successful return; remove it on every
+            // thrown path, including cancellation after publication.
+            var published = false
+            defer {
+                if !published {
+                    try? FileManager.default.removeItem(at: destination)
+                }
+            }
+            try Task.checkCancellation()
             try PortableShelfArchive.export(items, playlists: playlistSnapshot, to: destination)
+            try Task.checkCancellation()
+            published = true
             return destination
-        }.value
+        }
+        // Detached work does not inherit the caller's cancellation. Without
+        // forwarding it, dismissing the export UI can leave a large archive
+        // streaming for minutes and publish a backup nobody requested.
+        return try await withTaskCancellationHandler {
+            let exported = try await worker.value
+            do {
+                try Task.checkCancellation()
+                return exported
+            } catch {
+                // The worker may have completed just as cancellation arrived.
+                // Remove only our unique temporary export, never source audio.
+                try? manager.removeItem(at: exported)
+                throw error
+            }
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     /// Adds valid files from a browser or native backup without deleting
     /// anything already on this iPhone. Archive metadata is validated first.
     func importPortableBackup(from url: URL) async throws -> ImportReport {
+        try requireLibraryPersistence()
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        try Task.checkCancellation()
         let archive = try PortableShelfArchive.open(url)
+        try Task.checkCancellation()
         var report = ImportReport()
         var restoredIDs: [String: UUID] = [:]
+        // Index candidate sizes once per restore instead of scanning every
+        // recording for each archive entry (quadratic on large libraries).
+        // Verify actual bytes before reuse; equal sizes are not identity.
+        var recordingsBySize: [Int64: [MusicTrack]] = [:]
+        for track in tracks {
+            try Task.checkCancellation()
+            if let size = try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                recordingsBySize[Int64(size), default: []].append(track)
+            }
+        }
+        // Byte-identical audio is often already present when restoring a
+        // backup over a partial library. Restore missing sidecars too; otherwise
+        // the early duplicate-audio path silently drops backed-up artwork and
+        // lyrics. Never replace a user's existing sidecar or audio file.
+        func restoreMissingSidecars(for archived: PortableShelfArchive.Track,
+                                    existingID: UUID) throws {
+            try Task.checkCancellation()
+            guard let index = tracks.firstIndex(where: { $0.id == existingID }) else { return }
+            let current = tracks[index]
+            // A non-nil filename may refer to a deleted, protected, corrupt,
+            // or non-regular file. Repeated restores must repair that state
+            // rather than silently keeping a broken artwork/lyrics reference.
+            // Never modify or delete the previous sidecar: recovery uses a
+            // fresh filename and publishes it only after the catalog commits.
+            let needsArtwork = archived.artwork != nil &&
+                PortableShelfArchive.sidecarNeedsRecovery(
+                    named: current.artworkFileName, from: artworkDirectory,
+                    maximumBytes: 20 * 1024 * 1024,
+                    isValid: { UIImage(data: $0) != nil })
+            let needsLyrics = !(archived.lyrics ?? "").isEmpty &&
+                PortableShelfArchive.sidecarNeedsRecovery(
+                    named: current.lyricsFileName, from: lyricsDirectory,
+                    maximumBytes: 500 * 1024,
+                    isValid: { String(data: $0, encoding: .utf8) != nil })
+            try Task.checkCancellation()
+            guard needsArtwork || needsLyrics else { return }
+
+            var restored = current
+            var created: [URL] = []
+            // Cancellation must discard unpublished sidecars, not leave orphans.
+            var committed = false
+            defer {
+                if !committed {
+                    for url in created { try? manager.removeItem(at: url) }
+                }
+            }
+            if needsArtwork, let artwork = archived.artwork {
+                do {
+                    try Task.checkCancellation()
+                    let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
+                    try Task.checkCancellation()
+                    guard UIImage(data: bytes) != nil else {
+                        throw PortableShelfArchive.ArchiveError.invalidManifest
+                    }
+                    let name = existingID.uuidString + "-" + UUID().uuidString + ".img"
+                    let destination = artworkDirectory.appendingPathComponent(name)
+                    try bytes.write(to: destination, options: .atomic)
+                    created.append(destination)
+                    restored.artworkFileName = name
+                } catch {
+                    try Task.checkCancellation()
+                    report.errors.append("\(archived.name): missing cover artwork could not be restored (\(error.localizedDescription)).")
+                }
+            }
+            if needsLyrics, let lyrics = archived.lyrics {
+                do {
+                    try Task.checkCancellation()
+                    let name = existingID.uuidString + "-" + UUID().uuidString + ".lrc"
+                    let destination = lyricsDirectory.appendingPathComponent(name)
+                    try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                    created.append(destination)
+                    restored.lyricsFileName = name
+                } catch {
+                    try Task.checkCancellation()
+                    report.errors.append("\(archived.name): missing lyrics could not be restored (\(error.localizedDescription)).")
+                }
+            }
+            try Task.checkCancellation()
+            guard !created.isEmpty else { return }
+            do {
+                var candidate = tracks
+                candidate[index] = restored
+                try Task.checkCancellation()
+                try PersistedLibrary(tracks: candidate, playlists: playlists).write(to: databaseURL)
+                tracks = candidate
+                committed = true
+            } catch {
+                // Never publish a reference to an uncommitted sidecar. An
+                // interrupted/low-storage restore must preserve old catalog.
+                throw error
+            }
+        }
+
         for archived in archive.manifest.tracks {
+            try Task.checkCancellation()
             var temporary: URL?
             do {
                 let ext = try PortableShelfArchive.audioExtension(for: archived)
@@ -218,125 +394,273 @@ final class MusicLibrary: ObservableObject {
                 let rawName = initialName.flatMap { $0.isEmpty ? nil : $0 }
                     ?? archived.name + "." + ext
                 let original = URL(fileURLWithPath: rawName).lastPathComponent
-                // Match an existing recording by its portable identity only
-                // when the bytes still match. A reused ID with different audio
-                // must not silently link a playlist to the wrong song.
-                if let existing = tracks.first(where: { candidate in
-                    (candidate.portableBackupID == archived.id ||
-                     candidate.id.uuidString == archived.id) &&
-                    PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
-                }) {
+                // An earlier restore may have imported these exact audio bytes
+                // under a different filename, or the user may have renamed the
+                // recording. Compare same-sized files before copying another
+                // potentially large track; never trust names or portable IDs
+                // without checking the actual bytes.
+                try Task.checkCancellation()
+                let extractedSize = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+                // Compare candidates explicitly rather than using first(where:).
+                // The byte comparator cannot throw, and cancellation inside
+                // its read loop returns false; check between candidates and
+                // before accepting a match so cancellation never becomes a miss.
+                var identicalRecording: MusicTrack?
+                if extractedSize >= 0 {
+                    for candidate in recordingsBySize[Int64(extractedSize)] ?? [] {
+                        try Task.checkCancellation()
+                        let identical = PortableShelfArchive.audioFilesIdentical(
+                            file, fileURL(for: candidate))
+                        try Task.checkCancellation()
+                        if identical {
+                            identicalRecording = candidate
+                            break
+                        }
+                    }
+                }
+                if let existing = identicalRecording {
+                    try Task.checkCancellation()
+                    // Byte-identical reuse must also retain the browser's
+                    // portable identity for a later native re-export. Never
+                    // replace an established identity or steal another song's.
+                    if let index = tracks.firstIndex(where: { $0.id == existing.id }),
+                       tracks[index].portableBackupID == nil,
+                       !tracks.contains(where: {
+                           $0.id != existing.id &&
+                           ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
+                       }) {
+                        var updatedTracks = tracks
+                        updatedTracks[index].portableBackupID = archived.id
+                        try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+                        tracks = updatedTracks
+                    }
+                    try restoreMissingSidecars(for: archived, existingID: existing.id)
                     restoredIDs[archived.id] = existing.id
                     report.skipped += 1
                     continue
                 }
 
+                // The byte comparator deliberately returns false on cancellation;
+                // do not interpret that as permission to import another copy.
+                try Task.checkCancellation()
                 let imported = try addLocalAudio(
-                    sourceURL: file, originalName: original)
+                    sourceURL: file, originalName: original,
+                    cancellationAware: true)
                 if imported { report.imported += 1 }
                 else { report.skipped += 1 }
 
                 if !imported {
                     // Names and sizes alone are not sufficient: multiple local
                     // recordings can share both while containing different audio.
-                    if let index = tracks.firstIndex(where: { candidate in
-                        candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame &&
-                        PortableShelfArchive.audioFilesIdentical(file, fileURL(for: candidate))
-                    }) {
-                        restoredIDs[archived.id] = tracks[index].id
+                    var duplicateIndex: Int?
+                    for index in tracks.indices {
+                        try Task.checkCancellation()
+                        let candidate = tracks[index]
+                        guard candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame else {
+                            continue
+                        }
+                        let identical = PortableShelfArchive.audioFilesIdentical(
+                            file, fileURL(for: candidate))
+                        try Task.checkCancellation()
+                        if identical {
+                            duplicateIndex = index
+                            break
+                        }
+                    }
+                    if let index = duplicateIndex {
                         if !tracks.contains(where: {
                             $0.id != tracks[index].id &&
                             ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
                         }) {
-                            tracks[index].portableBackupID = archived.id
-                            save()
+                            if tracks[index].portableBackupID == nil {
+                                var updatedTracks = tracks
+                                updatedTracks[index].portableBackupID = archived.id
+                                try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+                                tracks = updatedTracks
+                            }
                         }
+                        try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
+                        restoredIDs[archived.id] = tracks[index].id
                     }
                     continue
                 }
                 guard let index = tracks.indices.last else { continue }
+                if extractedSize >= 0 {
+                    recordingsBySize[Int64(extractedSize), default: []].append(tracks[index])
+                }
                 restoredIDs[archived.id] = tracks[index].id
+                // Keep archive metadata private until its catalog write succeeds.
+                // Published tracks must never expose references to uncommitted sidecars.
+                var restoredTrack = tracks[index]
                 // If the archived identifier belongs to a different local
                 // recording, keep this song's new UUID as its export identity.
                 if !tracks.contains(where: {
                     $0.id != tracks[index].id &&
                             ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
                 }) {
-                    tracks[index].portableBackupID = archived.id
+                    restoredTrack.portableBackupID = archived.id
                 }
-                tracks[index].title = archived.name
-                if let artist = archived.artist { tracks[index].artist = artist }
-                if let album = archived.album { tracks[index].album = album }
-                tracks[index].isFavorite = archived.isFavorite ?? false
+                restoredTrack.title = archived.name
+                if let artist = archived.artist { restoredTrack.artist = artist }
+                if let album = archived.album { restoredTrack.album = album }
+                restoredTrack.isFavorite = archived.isFavorite ?? false
                 let epoch = archived.importedAt / 1000
                 if epoch.isFinite && epoch > 0 {
-                    tracks[index].addedAt = Date(timeIntervalSince1970: epoch)
+                    restoredTrack.addedAt = Date(timeIntervalSince1970: epoch)
                 }
                 if let attribution = archived.attribution,
                    attribution.sourceURL.hasPrefix("https://"),
                    (attribution.licenseURL.isEmpty || attribution.licenseURL.hasPrefix("https://")) {
-                    tracks[index].sourceAttribution = AudioSourceAttribution(
+                    restoredTrack.sourceAttribution = AudioSourceAttribution(
                         pageURL: attribution.sourceURL,
                         licenseURL: attribution.licenseURL,
                         providerName: attribution.provider
                     )
                 }
+                // Imported audio is already durable. Never overwrite existing
+                // artwork/lyrics sidecars before their new catalog references
+                // are durable: a failed catalog write must preserve old bytes.
+                // Optional sidecar failures are reported without losing audio.
+                var createdSidecars: [URL] = []
+                var sidecarsCommitted = false
+                // The catalog is the commit point. Cancellation, low storage,
+                // or a failed write must never strand unpublished sidecars.
+                defer {
+                    if !sidecarsCommitted {
+                        for sidecar in createdSidecars { try? manager.removeItem(at: sidecar) }
+                    }
+                }
                 if let artwork = archived.artwork {
-                    let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
-                    if UIImage(data: bytes) != nil {
-                        let filename = tracks[index].id.uuidString + ".img"
-                        try bytes.write(to: artworkDirectory.appendingPathComponent(filename),
-                                        options: .atomic)
-                        tracks[index].artworkFileName = filename
-                        artworkCache.removeObject(forKey: filename as NSString)
+                    do {
+                        try Task.checkCancellation()
+                        let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
+                        if UIImage(data: bytes) != nil {
+                            let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".img"
+                            let destination = artworkDirectory.appendingPathComponent(filename)
+                            try bytes.write(to: destination, options: .atomic)
+                            createdSidecars.append(destination)
+                            try Task.checkCancellation()
+                            restoredTrack.artworkFileName = filename
+                        } else {
+                            report.errors.append("\(archived.name): invalid cover artwork; audio restored.")
+                        }
+                    } catch {
+                        try Task.checkCancellation()
+                        report.errors.append("\(archived.name): cover artwork not restored (\(error.localizedDescription)); audio restored.")
                     }
                 }
                 if let lyrics = archived.lyrics, !lyrics.isEmpty {
-                    let filename = tracks[index].id.uuidString + ".lrc"
-                    try Data(lyrics.utf8).write(
-                        to: lyricsDirectory.appendingPathComponent(filename), options: .atomic)
-                    tracks[index].lyricsFileName = filename
+                    do {
+                        try Task.checkCancellation()
+                        let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".lrc"
+                        let destination = lyricsDirectory.appendingPathComponent(filename)
+                        try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                        createdSidecars.append(destination)
+                        try Task.checkCancellation()
+                        restoredTrack.lyricsFileName = filename
+                    } catch {
+                        try Task.checkCancellation()
+                        report.errors.append("\(archived.name): lyrics not restored (\(error.localizedDescription)); audio restored.")
+                    }
                 }
-                save()
+                do {
+                    // save() only logs errors; archive restore must surface them.
+                    try Task.checkCancellation()
+                    var candidateTracks = tracks
+                    candidateTracks[index] = restoredTrack
+                    try PersistedLibrary(tracks: candidateTracks, playlists: playlists).write(to: databaseURL)
+                    tracks = candidateTracks
+                    sidecarsCommitted = true
+                } catch {
+                    // Audio was already committed by addLocalAudio. Leave its
+                    // published metadata unchanged when this write fails.
+                    throw error
+                }
+            } catch is CancellationError {
+                // Previously completed track writes remain durable; do not
+                // continue importing or publish incomplete playlist links.
+                throw CancellationError()
             } catch {
+                if Task.isCancelled { throw CancellationError() }
                 report.errors.append("\(archived.name): \(error.localizedDescription)")
             }
             if let temporary { try? manager.removeItem(at: temporary) }
         }
+        // Track imports above are individually durable. Playlist edits below
+        // are not: stage playlist changes until their final durable write.
+        var candidatePlaylists = playlists
         for item in archive.manifest.playlists {
+            try Task.checkCancellation()
             // Web backups use string playlist IDs, not necessarily UUIDs.
             // Keep their source ID so restoring the same archive again (or
             // after an app restart) does not create another copy.
-            let resolvedTrackIDs = item.trackIds.compactMap { restoredIDs[$0] }
-            if let index = playlists.firstIndex(where: { $0.matchesPortableBackupID(item.id) }) {
+            // Different archive IDs can resolve to the same local recording
+            // after byte-identical duplicate reuse. Keep one occurrence in the
+            // playlist, in first-seen archive order, even for malformed backups.
+            var resolvedTrackIDs: [UUID] = []
+            var resolvedSet = Set<UUID>()
+            for backupID in item.trackIds {
+                try Task.checkCancellation()
+                if let localID = restoredIDs[backupID], resolvedSet.insert(localID).inserted {
+                    resolvedTrackIDs.append(localID)
+                }
+            }
+            if let index = candidatePlaylists.firstIndex(where: { $0.matchesPortableBackupID(item.id) }) {
                 // A previous restore might have imported only some recordings.
                 // Complete missing links on retry, preserving user-customized order.
+                // A set also avoids quadratic lookups on very large playlists.
+                var linked = Set(candidatePlaylists[index].trackIDs)
                 var addedLinks = 0
-                for id in resolvedTrackIDs where !playlists[index].trackIDs.contains(id) {
-                    playlists[index].trackIDs.append(id)
-                    addedLinks += 1
+                for id in resolvedTrackIDs {
+                    // Check every archived link, including links already present
+                    // in the destination. A large repeat restore can otherwise
+                    // skip every cancellation checkpoint in this loop.
+                    try Task.checkCancellation()
+                    if linked.insert(id).inserted {
+                        candidatePlaylists[index].trackIDs.append(id)
+                        addedLinks += 1
+                    }
                 }
                 if addedLinks > 0 { report.playlistsUpdated += 1 }
                 continue
             }
-            let id = UUID(uuidString: item.id) ?? UUID()
+            // An archive ID can parse as a UUID already occupied by a
+            // different local playlist. Do not create duplicate local IDs:
+            // they make playlist selection, edits and later restores ambiguous.
+            let id = MusicPlaylist.restoredLocalID(for: item.id, existing: candidatePlaylists)
             var playlist = MusicPlaylist(id: id, name: item.name)
             playlist.portableBackupID = item.id
             playlist.sourceURL = item.sourceURL
             playlist.appleMusicLibraryID = AppleMusicLibraryIdentity.canonical(item.appleMusicLibraryID)
             playlist.trackIDs = resolvedTrackIDs
-            playlist.sourceOrder = (item.wishes ?? []).map {
-                PlaylistWish(title: $0.title, artist: $0.artist,
+            // Large imported playlists can contain thousands of wishes. Do not
+            // let cancellation finish an expensive metadata rebuild and publish
+            // a playlist the user explicitly stopped restoring.
+            playlist.sourceOrder = try (item.wishes ?? []).map {
+                try Task.checkCancellation()
+                return PlaylistWish(title: $0.title, artist: $0.artist,
                              album: $0.album, spotifyURL: $0.spotifyURL,
                              durationSeconds: $0.durationSeconds, artistNames: $0.artistNames,
                              appleMusicItemID: AppleMusicLibraryIdentity.canonical($0.appleMusicItemID))
             }
             playlist.missingTracks = playlist.sourceOrder
-            playlists.append(playlist)
+            candidatePlaylists.append(playlist)
             report.playlistsAdded += 1
         }
-        reconcileMissingSongs()
-        save()
+        // A restore is not complete until playlist links are durably saved.
+        // The ordinary save() helper logs failures because most UI edits are
+        // synchronous, but backup restore is throwing and must report storage
+        // exhaustion or file-protection errors to its caller.
+        // Do not call reconcileMissingSongs() here: it calls save(), which
+        // swallows write failures and could publish a partially restored catalog.
+        // Reconcile in memory, then commit exactly once. A failed commit must
+        // never publish a candidate playlist before its write succeeds.
+        try Task.checkCancellation()
+        candidatePlaylists = reconciledPlaylists(using: tracks, from: candidatePlaylists)
+        try Task.checkCancellation()
+        try requireLibraryPersistence()
+        try PersistedLibrary(tracks: tracks, playlists: candidatePlaylists).write(to: databaseURL)
+        playlists = candidatePlaylists
         return report
     }
 
@@ -366,16 +690,43 @@ final class MusicLibrary: ObservableObject {
     }
 
     func importLyrics(from url: URL, for trackID: UUID) throws {
+        // Do not overwrite an existing sidecar while protected storage or
+        // catalog persistence is unavailable. A failed save must leave the
+        // previous lyrics and their persisted reference untouched.
+        try requireLibraryPersistence()
         guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         guard ["lrc", "txt"].contains(url.pathExtension.lowercased()) else { throw LyricsError.unsupported }
         let data = try Data(contentsOf: url)
         guard data.count <= 512_000, String(data: data, encoding: .utf8) != nil else { throw LyricsError.unsupported }
-        let filename = trackID.uuidString + ".lrc"
-        try data.write(to: lyricsDirectory.appendingPathComponent(filename), options: .atomic)
-        tracks[index].lyricsFileName = filename
-        save()
+
+        let previousLyrics = tracks[index].lyricsFileName
+        let filename = trackID.uuidString + "-" + UUID().uuidString + ".lrc"
+        let destination = lyricsDirectory.appendingPathComponent(filename)
+        try data.write(to: destination, options: .atomic)
+        do {
+            var updatedTracks = tracks
+            updatedTracks[index].lyricsFileName = filename
+            try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+            tracks = updatedTracks
+            // Cleanup follows the durable catalog write. Restored/legacy
+            // recordings can share a lyrics filename; preserve shared files.
+            if let previousLyrics,
+               previousLyrics != filename,
+               !updatedTracks.contains(where: { $0.lyricsFileName == previousLyrics }) {
+                do {
+                    try manager.removeItem(at: lyricsDirectory.appendingPathComponent(previousLyrics))
+                } catch {
+                    print("MP3 Shelf retained an unreferenced lyrics sidecar: \(error)")
+                }
+            }
+        } catch {
+            // Only delete the new, unreferenced sidecar. The previous lyrics
+            // and catalog remain available for recovery.
+            try? manager.removeItem(at: destination)
+            throw error
+        }
     }
 
     private func refreshTrackIndexIfNeeded() {
@@ -446,7 +797,54 @@ final class MusicLibrary: ObservableObject {
         return playlist.trackIDs.compactMap { indexedTracksByID[$0] }
     }
 
+    /// Recover only from the saved on-disk snapshot. Never merge an in-memory
+    /// empty fallback into an existing catalog, and never write during retry.
+    /// A corrupt catalog stays blocked until it can be repaired independently.
+    @discardableResult
+    func recoverLibraryIfAccessible() -> Bool {
+        guard !isLibraryPersistenceSafe else { return true }
+        do {
+            // If startup failed while creating storage directories, a missing
+            // catalog is not proof of first launch. Only recover a real file.
+            guard manager.fileExists(atPath: databaseURL.path),
+                  let restored = try PersistedLibrary.readIfPresent(from: databaseURL) else {
+                return false
+            }
+            tracks = restored.tracks
+            playlists = restored.playlists
+            isLibraryPersistenceSafe = true
+            libraryStorageError = nil
+            // Discovery checkpoints may also have been protected at startup.
+            if let saved = try? Data(contentsOf: discoveryURL),
+               let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
+                discoveryJobs = decoded.compactMap { checkpoint in
+                    guard let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) else { return nil }
+                    var repaired = checkpoint
+                    repaired.repairPersistedCheckpoint()
+                    repaired.refreshMissingWishes(playlist.missingTracks)
+                    return repaired
+                }
+            }
+            return true
+        } catch {
+            // Do not discard metadata or weaken the guard on a failed retry.
+            print("MP3 Shelf could not reopen the saved library: \(error)")
+            return false
+        }
+    }
+
+    private func requireLibraryPersistence() throws {
+        guard isLibraryPersistenceSafe else {
+            throw NSError(domain: PersistedLibrary.writeFailureDomain, code: 2,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            libraryStorageError ?? "The existing music library is unavailable; changes are disabled to prevent data loss."])
+        }
+    }
+
     func save() {
+        // A headless iOS background wake can occur before protected files are
+        // accessible. Never replace an unreadable catalog with an empty snapshot.
+        guard isLibraryPersistenceSafe else { return }
         do {
             try PersistedLibrary(tracks: tracks, playlists: playlists).write(to: databaseURL)
         } catch {
@@ -459,23 +857,40 @@ final class MusicLibrary: ObservableObject {
         defer { isImporting = false }
         var report = ImportReport()
         for source in urls {
+            // A defer in this loop's enclosing function would retain every
+            // security-scoped Files grant until the entire batch finished.
+            // Release each grant before starting the next recording, including
+            // failed copies, invalid audio and duplicate imports.
             let accessing = source.startAccessingSecurityScopedResource()
-            defer { if accessing { source.stopAccessingSecurityScopedResource() } }
-            do {
-                let outcome = try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent)
-                if outcome { report.imported += 1 } else { report.skipped += 1 }
-            } catch {
+            let result: Result<Bool, Error> = {
+                defer { if accessing { source.stopAccessingSecurityScopedResource() } }
+                return Result {
+                    try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent)
+                }
+            }()
+            switch result {
+            case .success(true): report.imported += 1
+            case .success(false): report.skipped += 1
+            case .failure(let error):
                 report.errors.append(source.lastPathComponent + ": " + error.localizedDescription)
             }
         }
-        if report.imported > 0 { reconcileMissingSongs() }
+        // Each successful import commits its playlist reconciliation together
+        // with the track. Never perform a second nonthrowing save here: that
+        // could leave the visible playlists ahead of the durable catalog.
         return report
     }
 
     private func addLocalAudio(sourceURL: URL, originalName: String,
                                expectedDuration: TimeInterval? = nil,
                                matching wish: PlaylistWish? = nil,
-                               attribution: AudioSourceAttribution? = nil) throws -> Bool {
+                               attribution: AudioSourceAttribution? = nil,
+                               cancellationAware: Bool = false) throws -> Bool {
+        // Archive restoration is cancellable; ordinary synchronous imports
+        // retain their existing behavior. Check at expensive I/O boundaries
+        // before publishing any new catalog entry.
+        if cancellationAware { try Task.checkCancellation() }
+        try requireLibraryPersistence()
         // A different import may have saved this recording while a download
         // or AAC conversion was suspended. Recheck at the library write boundary.
         if let wish, hasOfflineRecording(matching: wish) { return false }
@@ -483,21 +898,41 @@ final class MusicLibrary: ObservableObject {
         let allowed = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
         guard allowed.contains(extensionName) else { throw MusicLibraryError.unsupportedFormat }
         let fileSize = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-        // Avoid importing the same file more than once, without treating all tracks with the same title as duplicates.
-        if fileSize >= 0 && tracks.contains(where: { track in
-            let existingURL = fileURL(for: track)
-            return track.originalFileName.caseInsensitiveCompare(originalName) == .orderedSame &&
-                ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -2) == fileSize &&
-                PortableShelfArchive.audioFilesIdentical(sourceURL, existingURL)
-        }) { return false }
+        // Detect identical audio even when Files renamed the source (for example,
+        // "song (1).mp3"). Names and metadata are not reliable content identities.
+        // Compare only equal-sized candidates; the archive comparator streams in
+        // bounded chunks rather than loading entire recordings into memory.
+        // An unreadable candidate is never considered a duplicate.
+        if fileSize > 0 {
+            for track in tracks {
+                // The comparator deliberately returns false when cancelled,
+                // because its nonthrowing API also serves ordinary imports.
+                // A cancellable restore must not interpret that false result
+                // as permission to import a duplicate recording.
+                if cancellationAware { try Task.checkCancellation() }
+                let existingURL = fileURL(for: track)
+                guard ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) == fileSize else {
+                    continue
+                }
+                let identical = PortableShelfArchive.audioFilesIdentical(sourceURL, existingURL)
+                if cancellationAware { try Task.checkCancellation() }
+                if identical { return false }
+            }
+        }
 
+        if cancellationAware { try Task.checkCancellation() }
         let id = UUID()
         let destinationName = LocalAudioFileNaming.storageName(
             originalName: originalName, id: id, fileExtension: extensionName)
         let destination = musicDirectory.appendingPathComponent(destinationName)
-        try manager.copyItem(at: sourceURL, to: destination)
         var artworkName: String?
         do {
+            // FileManager.copyItem may leave a partial destination when storage
+            // fills or a coordinated source read fails. Keep the copy inside
+            // the same rollback scope as validation and catalog persistence.
+            // The UUID destination is new; never clean up the caller's source.
+            try manager.copyItem(at: sourceURL, to: destination)
+            if cancellationAware { try Task.checkCancellation() }
             let asset = AVURLAsset(url: destination)
             // Fail immediately for renamed HTML, corrupt files or codecs that AVAudioPlayer cannot decode.
             let playbackProbe = try AVAudioPlayer(contentsOf: destination)
@@ -530,10 +965,15 @@ final class MusicLibrary: ObservableObject {
                 if !wish.album.isEmpty { track.album = wish.album }
                 track.sourceAttribution = attribution
             }
+            if cancellationAware { try Task.checkCancellation() }
             let updatedTracks = tracks + [track]
-            let updatedPlaylists = wish == nil ? playlists : reconciledPlaylists(using: updatedTracks)
+            // Local Files imports can satisfy missing source-playlist wishes
+            // too. Persist the new recording and resolved playlist links in a
+            // single catalog transaction, regardless of the import origin.
+            let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
             // Report import success only after the complete record is written.
             // A failed write must leave both the live and saved library intact.
+            if cancellationAware { try Task.checkCancellation() }
             try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists).write(to: databaseURL)
             tracks = updatedTracks
             playlists = updatedPlaylists
@@ -1123,95 +1563,192 @@ final class MusicLibrary: ObservableObject {
                                                originalName: filename + "." + actualExtension,
                                                expectedDuration: wish?.durationSeconds,
                                                matching: wish, attribution: attribution)
-        if imported && wish == nil { reconcileMissingSongs() }
+        // addLocalAudio already commits the imported recording and resolved playlist
+        // references in one atomic catalog write, including manual URL imports.
         return ImportReport(imported: imported ? 1 : 0, skipped: imported ? 0 : 1)
     }
 
     func rename(_ track: MusicTrack, title: String, artist: String) {
+        guard isLibraryPersistenceSafe else { return }
         guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanTitle.isEmpty else { return }
-        tracks[index].title = cleanTitle
-        tracks[index].artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        save()
+        var updatedTracks = tracks
+        updatedTracks[index].title = cleanTitle
+        updatedTracks[index].artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Never publish a rename that has not been durably committed.
+        do {
+            try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+            tracks = updatedTracks
+            libraryStorageError = nil
+        } catch {
+            libraryStorageError = "Could not save the recording name. Your previous metadata was preserved."
+            print("MP3 Shelf could not persist recording rename: \(error)")
+        }
     }
 
     func toggleFavorite(_ id: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
-        tracks[index].isFavorite.toggle()
-        save()
+        var updatedTracks = tracks
+        updatedTracks[index].isFavorite.toggle()
+        // Publish the favorite change only after the catalog is durable.
+        // A best-effort save previously left an unsaved favorite visible.
+        do {
+            try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+            tracks = updatedTracks
+        } catch {
+            libraryStorageError = "Could not save the favorite change. Your music library was preserved."
+            print("MP3 Shelf could not persist favorite change: \(error)")
+        }
     }
 
     func removeTrack(_ id: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         guard let track = song(with: id) else { return }
-        try? manager.removeItem(at: fileURL(for: track))
-        if let artwork = track.artworkFileName {
+        // Commit the catalog change before deleting user-owned audio. If the
+        // database is protected, full, or otherwise unwritable, leave both the
+        // recording and its playlist references untouched.
+        let remainingTracks = tracks.filter { $0.id != id }
+        var remainingPlaylists = playlists
+        for index in remainingPlaylists.indices {
+            remainingPlaylists[index].trackIDs.removeAll { $0 == id }
+        }
+        // Reconcile source-backed playlists in the SAME durable transaction.
+        // A second best-effort save after deleting audio could leave the live
+        // playlist state different from the last committed catalog.
+        remainingPlaylists = reconciledPlaylists(using: remainingTracks, from: remainingPlaylists)
+        do {
+            try PersistedLibrary(tracks: remainingTracks, playlists: remainingPlaylists)
+                .write(to: databaseURL)
+        } catch {
+            libraryStorageError = "Could not save the music library. The recording was not deleted."
+            print("MP3 Shelf refused to delete audio before saving its catalog: \\(error)")
+            return
+        }
+        tracks = remainingTracks
+        playlists = remainingPlaylists
+        // A crash here may leave an orphan file, never a catalog referencing
+        // audio already deleted. Sidecar removal remains best effort.
+        // Restored or legacy catalogs may share a stored filename across
+        // multiple track records. Only delete files with no remaining owner.
+        if !remainingTracks.contains(where: { $0.fileName == track.fileName }) {
+            do {
+                try manager.removeItem(at: fileURL(for: track))
+            } catch {
+                print("MP3 Shelf retained an orphaned audio file after catalog removal: \(error)")
+            }
+        }
+        if let artwork = track.artworkFileName,
+           !remainingTracks.contains(where: { $0.artworkFileName == artwork }) {
             artworkCache.removeObject(forKey: artwork as NSString)
             try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artwork))
         }
-        if let lyrics = track.lyricsFileName {
+        if let lyrics = track.lyricsFileName,
+           !remainingTracks.contains(where: { $0.lyricsFileName == lyrics }) {
             try? manager.removeItem(at: lyricsDirectory.appendingPathComponent(lyrics))
         }
-        tracks.removeAll { $0.id == id }
-        for index in playlists.indices { playlists[index].trackIDs.removeAll { $0 == id } }
-        reconcileMissingSongs()
+    }
+
+    /// Playlist edits must be durable before SwiftUI observes the new state.
+    /// A failed atomic catalog write leaves the previous playlist snapshot intact.
+    @discardableResult
+    private func commitPlaylistEdit(_ updated: [MusicPlaylist]) -> Bool {
+        guard isLibraryPersistenceSafe else { return false }
+        do {
+            try PersistedLibrary(tracks: tracks, playlists: updated).write(to: databaseURL)
+            playlists = updated
+            libraryStorageError = nil
+            return true
+        } catch {
+            libraryStorageError = "Could not save playlist changes. Your previous playlists were preserved."
+            print("MP3 Shelf could not persist playlist edit: \(error)")
+            return false
+        }
     }
 
     func createPlaylist(_ name: String) {
+        guard isLibraryPersistenceSafe else { return }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
-        playlists.append(MusicPlaylist(name: clean))
-        save()
+        var updated = playlists
+        updated.append(MusicPlaylist(name: clean))
+        commitPlaylistEdit(updated)
     }
 
     func duplicatePlaylist(_ id: UUID) {
+        guard isLibraryPersistenceSafe else { return }
         guard let original = playlists.first(where: { $0.id == id }) else { return }
-        playlists.append(original.localCopy())
-        save()
+        var updated = playlists
+        updated.append(original.localCopy())
+        commitPlaylistEdit(updated)
     }
 
     func renamePlaylist(_ id: UUID, to name: String) {
+        guard isLibraryPersistenceSafe else { return }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, let index = playlists.firstIndex(where: { $0.id == id }) else { return }
-        playlists[index].name = clean
-        save()
+        var updated = playlists
+        updated[index].name = clean
+        commitPlaylistEdit(updated)
     }
 
     func deletePlaylist(_ id: UUID) {
-        stopBackgroundTransfers(for: id)
-        playlists.removeAll { $0.id == id }
-        discoveryJobs.removeAll { $0.playlistID == id }
-        persistDiscovery()
-        save()
+        guard isLibraryPersistenceSafe, playlists.contains(where: { $0.id == id }) else { return }
+        let updated = playlists.filter { $0.id != id }
+        // Do not cancel transfers or discard discovery checkpoints unless
+        // the playlist deletion has actually been committed to disk.
+        do {
+            try PersistedLibrary(tracks: tracks, playlists: updated).write(to: databaseURL)
+            playlists = updated
+            libraryStorageError = nil
+            stopBackgroundTransfers(for: id)
+            discoveryJobs.removeAll { $0.playlistID == id }
+            persistDiscovery()
+        } catch {
+            libraryStorageError = "Could not delete the playlist. Your previous playlists were preserved."
+            print("MP3 Shelf could not persist playlist deletion: \(error)")
+        }
     }
 
     func addTrack(_ trackID: UUID, to playlistID: UUID) {
-        guard let index = playlists.firstIndex(where: { $0.id == playlistID }),
+        guard isLibraryPersistenceSafe, tracks.contains(where: { $0.id == trackID }),
+              let index = playlists.firstIndex(where: { $0.id == playlistID }),
               !playlists[index].trackIDs.contains(trackID) else { return }
-        playlists[index].trackIDs.append(trackID)
-        save()
+        var updated = playlists
+        updated[index].trackIDs.append(trackID)
+        commitPlaylistEdit(updated)
     }
 
     func removeTrack(_ trackID: UUID, from playlistID: UUID) {
-        guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
-        playlists[index].trackIDs.removeAll { $0 == trackID }
+        guard isLibraryPersistenceSafe,
+              let index = playlists.firstIndex(where: { $0.id == playlistID }),
+              playlists[index].trackIDs.contains(trackID) else { return }
+        var updated = playlists
+        updated[index].trackIDs.removeAll { $0 == trackID }
         if let track = song(with: trackID),
-           let wishIndex = playlists[index].sourceOrder.firstIndex(where: { MusicMatching.reusableOfflineTrack(for: $0, in: [track]) != nil }) {
-            playlists[index].sourceOrder.remove(at: wishIndex)
+           let wishIndex = updated[index].sourceOrder.firstIndex(where: {
+               MusicMatching.reusableOfflineTrack(for: $0, in: [track]) != nil
+           }) {
+            updated[index].sourceOrder.remove(at: wishIndex)
         }
-        save()
+        commitPlaylistEdit(updated)
     }
 
     func moveTracks(in playlistID: UUID, from offsets: IndexSet, to index: Int) {
-        guard let playlistIndex = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        guard isLibraryPersistenceSafe,
+              let playlistIndex = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         var items = playlists[playlistIndex].trackIDs
-        // SwiftUI's move semantics: remove then insert at destination adjusted for removed positions.
+        guard index >= 0, index <= items.count,
+              offsets.allSatisfy({ $0 >= 0 && $0 < items.count }),
+              !offsets.isEmpty else { return }
         let moved = offsets.sorted().map { items[$0] }
         let insertionIndex = index - offsets.filter { $0 < index }.count
         for offset in offsets.sorted(by: >) { items.remove(at: offset) }
         items.insert(contentsOf: moved, at: max(0, min(insertionIndex, items.count)))
-        playlists[playlistIndex].trackIDs = items
-        save()
+        var updated = playlists
+        updated[playlistIndex].trackIDs = items
+        commitPlaylistEdit(updated)
     }
 
     func importPlaylistCSV(data: Data, name: String, spotifyURL: String? = nil) throws -> PlaylistImportReport {
@@ -1245,22 +1782,31 @@ final class MusicLibrary: ObservableObject {
                     pair.0.artistNames != pair.1.artistNames || pair.0.appleMusicItemID != pair.1.appleMusicItemID
                 })
             if listChanged {
-                if automaticDownloadProgress?.playlistID == old.id {
-                    automaticDownloadTask?.cancel()
-                }
                 // Distinguish manually added local files from tracks that
                 // belonged to the previous Spotify source-order mapping.
                 let formerlySourced = Set(old.sourceOrder.compactMap {
                     indexedByTitle.reusableTrack(for: $0)?.id
                 })
-                playlists[index].trackIDs.removeAll { formerlySourced.contains($0) }
-                playlists[index].sourceOrder = updated
-                playlists[index].name = displayName
-                playlists[index].sourceURL = sourceURL
-                playlists[index].appleMusicLibraryID = appleID
-                reconcileMissingSongs()
+                var candidate = playlists
+                candidate[index].trackIDs.removeAll { formerlySourced.contains($0) }
+                candidate[index].sourceOrder = updated
+                candidate[index].name = displayName
+                candidate[index].sourceURL = sourceURL
+                candidate[index].appleMusicLibraryID = appleID
+                candidate = reconciledPlaylists(using: tracks, from: candidate)
+                guard commitPlaylistEdit(candidate) else {
+                    return PlaylistImportReport(playlistID: old.id, playlistName: old.name,
+                                                matched: old.trackIDs.count, missing: old.missingTracks.count)
+                }
+                if automaticDownloadProgress?.playlistID == old.id {
+                    automaticDownloadTask?.cancel()
+                }
             } else {
-                reconcileMissingSongs()
+                let candidate = reconciledPlaylists(using: tracks)
+                guard commitPlaylistEdit(candidate) else {
+                    return PlaylistImportReport(playlistID: old.id, playlistName: old.name,
+                                                matched: old.trackIDs.count, missing: old.missingTracks.count)
+                }
             }
             var hasNewLookups = false
             if let jobIndex = discoveryJobs.firstIndex(where: { $0.playlistID == old.id }) {
@@ -1296,8 +1842,11 @@ final class MusicLibrary: ObservableObject {
                 playlist.missingTracks.append(wish)
             }
         }
-        playlists.append(playlist)
-        save()
+        guard commitPlaylistEdit(playlists + [playlist]) else {
+            // Preserve the previous catalog; the storage error is exposed to the UI.
+            return PlaylistImportReport(playlistID: playlist.id, playlistName: playlist.name,
+                                        matched: 0, missing: wishes.count)
+        }
         return PlaylistImportReport(playlistID: playlist.id, playlistName: playlist.name,
                                     matched: playlist.trackIDs.count,
                                     missing: playlist.missingTracks.count)
@@ -1306,15 +1855,19 @@ final class MusicLibrary: ObservableObject {
     func recheckSavedAudio() { reconcileMissingSongs() }
 
     private func reconcileMissingSongs() {
-        playlists = reconciledPlaylists(using: tracks)
-        save()
+        // Rechecking offline availability must not publish unsaved playlist links.
+        // A protected or full catalog leaves the last durable snapshot visible.
+        let candidate = reconciledPlaylists(using: tracks)
+        guard candidate != playlists else { return }
+        commitPlaylistEdit(candidate)
     }
 
-    private func reconciledPlaylists(using updatedTracks: [MusicTrack]) -> [MusicPlaylist] {
+    private func reconciledPlaylists(using updatedTracks: [MusicTrack],
+                                     from sourcePlaylists: [MusicPlaylist]? = nil) -> [MusicPlaylist] {
         let allTracksIndex = OfflineTrackIndex(tracks: updatedTracks)
         let available = updatedTracks.filter { manager.fileExists(atPath: fileURL(for: $0).path) }
         let availableIndex = OfflineTrackIndex(tracks: available)
-        var updated = playlists
+        var updated = sourcePlaylists ?? playlists
         for index in updated.indices where !updated[index].sourceOrder.isEmpty {
             let existing = updated[index].trackIDs
             var ordered: [UUID] = []
@@ -1411,8 +1964,14 @@ private final class ShelfPCMConversion {
                 let state = Unmanaged<ShelfPCMConversion>.fromOpaque(raw).takeUnretainedValue()
                 let buffer = state.buffer
                 guard capacity > 0, capacity <= Int(buffer.frameCapacity) else { return -1 }
+                // AVAudioFile can throw on an AAC read made after its final
+                // frame instead of returning an empty buffer. Tell the encoder
+                // to flush at EOF, and bound the final read to remaining audio.
+                let remaining = state.file.length - state.file.framePosition
+                guard remaining > 0 else { return 0 }
                 do {
-                    try state.file.read(into: buffer, frameCount: AVAudioFrameCount(capacity))
+                    try state.file.read(into: buffer,
+                        frameCount: AVAudioFrameCount(min(Int64(capacity), remaining)))
                     if buffer.frameLength == 0 { return 0 }
                     guard let data = buffer.int16ChannelData else { return -1 }
                     output.update(from: data.pointee,
