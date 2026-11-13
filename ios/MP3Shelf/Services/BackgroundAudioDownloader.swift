@@ -1077,7 +1077,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 // delegate was moving the completed file. Unknown tickets must
                 // never leave an orphan staged copy or import cancelled audio.
                 guard self.tickets[id]?.status == .queued else {
-                    try? self.fm.removeItem(at: destination)
+                    // A cancelled duplicate callback must not delete the
+                    // first callback's file while a decoder still owns it.
+                    if !self.processing.contains(id) && self.conversions[id] == nil {
+                        try? self.fm.removeItem(at: destination)
+                    }
                     return
                 }
                 await self.recoverStagedDownloads()
