@@ -22,6 +22,13 @@ guard let decodeStart = proof.range(of: "let decoded = try await Task.detached(p
     fatalError("Production full-decode boundary changed; update the fixture explicitly")
 }
 let proofDecode = String(proof[decodeStart.upperBound..<decodeEnd.lowerBound])
+guard let probeStart = proof.range(of: "    private static func writeStorageFailureProbe(to url: URL) throws {"),
+      let probeEnd = proof.range(of: "    private static func verifyRejectedSave(", range: probeStart.upperBound..<proof.endIndex) else {
+    fatalError("Production storage-probe boundary changed; update the fixture explicitly")
+}
+let storageProbe = "enum StorageProbe {\n" + String(proof[probeStart.lowerBound..<probeEnd.lowerBound])
+    .replacingOccurrences(of: "private static func", with: "static func") + "\n}\n"
+
 
 let fixture = #"""
 import Foundation
@@ -32,6 +39,7 @@ enum MusicLibraryError: Error {
     case downloadFailed, conversionUnsupportedFormat, conversionTooLong, recordingDurationMismatch
 }
 __CONVERTER__
+__STORAGE_PROBE__
 @main enum PCMConversionTests {
     static func main() throws {
         func check(_ value: Bool, _ name: String) {
@@ -82,6 +90,17 @@ __CONVERTER__
         try verifyMP3(converted, duration: 2, channels: 1)
         try verifyProofDecode(converted)
         print("PASS: complete AAC recording converts through final partial block and EOF")
+        let storageInput = folder.appendingPathComponent("distinct-storage-probe.wav")
+        try StorageProbe.writeStorageFailureProbe(to: storageInput)
+        let storageAudio = try AVAudioFile(forReading: storageInput)
+        check(storageAudio.length == 4096 && storageAudio.processingFormat.sampleRate == 44100,
+              "production storage probe is complete valid audio")
+        check(storageAudio.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatLinearPCM,
+              "storage probe uses independently generated PCM")
+        let storageBytes = try Data(contentsOf: storageInput)
+        let convertedBytes = try Data(contentsOf: converted)
+        check(storageBytes != convertedBytes, "storage-failure probe cannot be skipped as byte-identical MP3")
+
 
         let stereo = folder.appendingPathComponent("stereo.wav")
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
@@ -138,6 +157,7 @@ defer { try? FileManager.default.removeItem(at: temporary) }
 let file = temporary.appendingPathComponent("Tests.swift")
 try fixture.replacingOccurrences(of: "__CONVERTER__", with: converter)
     .replacingOccurrences(of: "__PROOF_DECODE__", with: proofDecode)
+    .replacingOccurrences(of: "__STORAGE_PROBE__", with: storageProbe)
     .write(to: file, atomically: true, encoding: .utf8)
 let header = root.appendingPathComponent("ios/Packages/ShelfMP3Encoder/Adapter/include/ShelfEncoder.h")
 try "module ShelfEncoder { header \"\(header.path)\" export * }\n"

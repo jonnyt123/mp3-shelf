@@ -373,6 +373,23 @@ enum DownloadPathProof {
         }
     }
 
+    private static func writeStorageFailureProbe(to url: URL) throws {
+        // Byte-identical imports are skipped before catalog persistence. Use
+        // new valid audio so this proof reaches the deliberately blocked write.
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096),
+              let samples = buffer.floatChannelData?[0] else {
+            throw NSError(domain: "MP3Shelf.DownloadProof", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Could not create distinct storage-failure audio"])
+        }
+        buffer.frameLength = 4096
+        for frame in 0..<4096 {
+            samples[frame] = Float(sin(Double(frame) * 2 * Double.pi * 440 / 44_100) * 0.2)
+        }
+        let writer = try AVAudioFile(forWriting: url, settings: format.settings)
+        try writer.write(from: buffer)
+    }
+
     private static func verifyRejectedSave(using file: URL, library: MusicLibrary) async throws {
         let fm = FileManager.default
         let database = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -383,8 +400,8 @@ enum DownloadPathProof {
         let originalPlaylists = library.playlists
         let originalFiles = Set(try fm.contentsOfDirectory(atPath: music.path))
         let backup = database.deletingLastPathComponent().appendingPathComponent("proof-save-\(UUID().uuidString).json")
-        let probe = fm.temporaryDirectory.appendingPathComponent("proof-save-\(UUID().uuidString).mp3")
-        try fm.copyItem(at: file, to: probe)
+        let probe = fm.temporaryDirectory.appendingPathComponent("proof-save-\(UUID().uuidString).wav")
+        try writeStorageFailureProbe(to: probe)
         defer { try? fm.removeItem(at: probe) }
         try fm.moveItem(at: database, to: backup)
         var restored = false
@@ -403,11 +420,18 @@ enum DownloadPathProof {
         restored = true
         let currentFiles = Set(try fm.contentsOfDirectory(atPath: music.path))
         let currentDatabase = try Data(contentsOf: database)
-        guard rejected.imported == 0, !rejected.errors.isEmpty,
-              library.tracks == originalTracks, library.playlists == originalPlaylists,
-              currentFiles == originalFiles, currentDatabase == original else {
+        let invariants: [(String, Bool)] = [
+            ("import reported success", rejected.imported == 0),
+            ("storage error was not surfaced", !rejected.errors.isEmpty),
+            ("tracks changed", library.tracks == originalTracks),
+            ("playlists changed", library.playlists == originalPlaylists),
+            ("music files changed", currentFiles == originalFiles),
+            ("saved catalog bytes changed", currentDatabase == original)
+        ]
+        let failures = invariants.filter { !$0.1 }.map { $0.0 }
+        guard failures.isEmpty else {
             throw NSError(domain: "MP3Shelf.DownloadProof", code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "A failed save reported import success or changed the existing library"])
+                userInfo: [NSLocalizedDescriptionKey: "Failed-save invariant: " + failures.joined(separator: ", ")])
         }
     }
 
