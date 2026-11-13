@@ -842,15 +842,26 @@ enum PortableShelfArchive {
     }
 
     static func audioExtension(for track: Track) throws -> String {
+        // A portable archive's original filename is display metadata, not
+        // authoritative media identity. Browser imports can preserve a stale
+        // ".mp3" filename for AAC/MP4 bytes. Selecting the suffix from that
+        // name first causes AVFoundation to use the wrong container parser.
+        // Prefer the declared media type, retaining the filename only as a
+        // compatibility fallback for older archives without a known MIME type.
         let ext = URL(fileURLWithPath: track.originalName ?? "").pathExtension.lowercased()
-        if ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(ext) { return ext }
-        switch track.audio.type.lowercased() {
+        switch track.audio.type.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
         case "audio/mpeg", "audio/mp3": return "mp3"
         case "audio/mp4", "audio/x-m4a": return "m4a"
         case "audio/wav", "audio/x-wav": return "wav"
         case "audio/aac": return "aac"
         case "audio/aiff", "audio/x-aiff": return "aiff"
-        default: throw ArchiveError.unsupportedAudio
+        case "", "application/octet-stream":
+            if ["mp3", "m4a", "aac", "wav", "aif", "aiff"].contains(ext) { return ext }
+            throw ArchiveError.unsupportedAudio
+        default:
+            // Do not reinterpret a declared but unsupported container as MP3
+            // just because the untrusted filename ends in ".mp3".
+            throw ArchiveError.unsupportedAudio
         }
     }
 
