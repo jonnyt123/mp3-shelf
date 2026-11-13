@@ -43,6 +43,63 @@ struct PortableShelfArchiveTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
+        // A valid recovery journal is durable metadata, not permission to
+        // delete or overwrite unknown audio. A process may die after writing
+        // the intent, before publishing or committing the catalog.
+        let recoveryTrack = MusicTrack(
+            id: UUID(), title: "Interrupted import", artist: "Local",
+            album: "Recovery", fileName: "Interrupted [123456789ABC].mp3",
+            originalFileName: "interrupted.mp3", duration: 13)
+        let recoveryStage = ".mp3shelf-import-recovery-fixture.mp3"
+        let recoveryBytes = Data(repeating: 0x49, count: 65_536)
+        let recoveryStageURL = folder.appendingPathComponent(recoveryStage)
+        try recoveryBytes.write(to: recoveryStageURL)
+        let recoveryRecord = LocalAudioRecoveryRecord(
+            version: 1, track: recoveryTrack,
+            stagingName: recoveryStage, audioLength: Int64(recoveryBytes.count))
+        let recoveryJournal = LocalAudioRecoveryRecord.journalURL(
+            for: recoveryTrack.id, in: folder)
+        try JSONEncoder().encode(recoveryRecord).write(to: recoveryJournal, options: .atomic)
+        assert(LocalAudioRecoveryRecord.pending(in: folder).contains(recoveryJournal))
+        let reopenedRecovery = try LocalAudioRecoveryRecord.read(
+            recoveryJournal, in: folder)
+        assert(reopenedRecovery.track.id == recoveryTrack.id)
+        assert(reopenedRecovery.track.fileName == recoveryTrack.fileName)
+        assert(reopenedRecovery.audioLength == Int64(recoveryBytes.count))
+        // An unrelated file may coexist with the journal and must be retained.
+        let recoveryUnknown = folder.appendingPathComponent("user-owned-audio.mp3")
+        let unknownBytes = Data([0xDE, 0xAD, 0xBE, 0xEF])
+        try unknownBytes.write(to: recoveryUnknown)
+        // A forged journal name cannot reassign the track's intended identity.
+        let changedJournal = folder.appendingPathComponent(
+            ".mp3shelf-recovery-\(UUID().uuidString).json")
+        try JSONEncoder().encode(recoveryRecord).write(to: changedJournal)
+        do {
+            _ = try LocalAudioRecoveryRecord.read(changedJournal, in: folder)
+            fatalError("Accepted recovery intent under the wrong journal identity")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest { }
+        try FileManager.default.removeItem(at: changedJournal)
+        try FileManager.default.createSymbolicLink(
+            at: folder.appendingPathComponent(
+                ".mp3shelf-recovery-\(UUID().uuidString).json"),
+            withDestinationURL: recoveryJournal)
+        // A wrong-name journal never grants authority over source audio.
+        let symlinkJournal = try FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: nil).first {
+                $0.lastPathComponent.hasPrefix(".mp3shelf-recovery-") &&
+                $0 != recoveryJournal
+            }!
+        do {
+            _ = try LocalAudioRecoveryRecord.read(symlinkJournal, in: folder)
+            fatalError("Accepted a symlink as a recovery journal")
+        } catch { }
+        try FileManager.default.removeItem(at: symlinkJournal)
+        try assertThrowing(try Data(contentsOf: recoveryStageURL) == recoveryBytes)
+        try assertThrowing(try Data(contentsOf: recoveryUnknown) == unknownBytes)
+        try FileManager.default.removeItem(at: recoveryJournal)
+        try FileManager.default.removeItem(at: recoveryStageURL)
+        print("PASS: recovery journals round-trip, reject aliasing and preserve original files")
+
         // A colliding generated destination is a pre-existing user recording,
         // not a partial copy belonging to the new import. Never delete it
         // when copy or catalog persistence fails.

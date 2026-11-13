@@ -38,25 +38,113 @@ enum LocalAudioFileNaming {
 /// Validate a unique extension-preserving staging copy, then publish with a
 /// no-replace hard link. The catalog commit is the last step; failed commits
 /// unlink only the recording published by this transaction.
+/// Only imports with a durable, app-created intent are eligible for automatic
+/// recovery. Unidentified files and stale staging copies are never deleted.
+struct LocalAudioRecoveryRecord: Codable {
+    let version: Int
+    let track: MusicTrack
+    let stagingName: String
+    let audioLength: Int64
+
+    static func journalName(for id: UUID) -> String {
+        ".mp3shelf-recovery-\(id.uuidString).json"
+    }
+
+    static func journalURL(for id: UUID, in directory: URL) -> URL {
+        directory.appendingPathComponent(journalName(for: id))
+    }
+
+    static func pending(in directory: URL) -> [URL] {
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil)) ?? []
+        return entries.filter {
+            $0.lastPathComponent.hasPrefix(".mp3shelf-recovery-") &&
+            $0.pathExtension == "json"
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    static func read(_ journal: URL, in directory: URL) throws -> Self {
+        guard LocalLibraryFileSafety.validName(journal.lastPathComponent),
+              journal.deletingLastPathComponent().standardizedFileURL ==
+                directory.standardizedFileURL,
+              let bytes = try PortableShelfArchive.readSidecar(
+                  named: journal.lastPathComponent, from: directory,
+                  maximumBytes: 64 * 1024) else {
+            throw PortableShelfArchive.ArchiveError.invalidManifest
+        }
+        let record = try JSONDecoder().decode(Self.self, from: bytes)
+        let allowed = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
+        guard record.version == 1,
+              journal.lastPathComponent == journalName(for: record.track.id),
+              LocalLibraryFileSafety.validName(record.track.fileName),
+              LocalLibraryFileSafety.validName(record.stagingName),
+              record.stagingName.hasPrefix(".mp3shelf-import-"),
+              !record.track.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              record.audioLength > 0,
+              record.audioLength <= PortableShelfArchive.maxTrackBytes,
+              record.track.duration.isFinite, record.track.duration > 0,
+              allowed.contains(URL(fileURLWithPath: record.track.fileName).pathExtension.lowercased()),
+              URL(fileURLWithPath: record.stagingName).pathExtension.lowercased() ==
+                  URL(fileURLWithPath: record.track.fileName).pathExtension.lowercased() else {
+            throw PortableShelfArchive.ArchiveError.invalidManifest
+        }
+        return record
+    }
+}
+
+/// A new import validates a unique staged file before publishing an audio
+/// destination with no-replace semantics. The optional recovery intent is
+/// written before publication, so an OS termination between the hard link
+/// and catalog commit never permanently hides the recording from the library.
 enum LocalAudioImportTransaction {
     static func perform(from source: URL, to destination: URL,
                         validate: (URL) throws -> Void,
+                        recoveryTrack: (() throws -> MusicTrack)? = nil,
                         persist: () throws -> Void) throws {
         let manager = FileManager.default
-        let staging = destination.deletingLastPathComponent().appendingPathComponent(
+        let directory = destination.deletingLastPathComponent()
+        let staging = directory.appendingPathComponent(
             ".mp3shelf-import-\(UUID().uuidString).\(destination.pathExtension)")
-        // A short copy after low storage or a decoder error must clean up
-        // only this attempt's staging path, never the final catalog path.
         defer { try? manager.removeItem(at: staging) }
         try manager.copyItem(at: source, to: staging)
         try validate(staging)
-        // Fails with file-exists if another recording already owns the path.
-        // moveItem/rename are unsafe here because they can replace user audio.
+        var journal: URL?
+        defer { if let journal { try? manager.removeItem(at: journal) } }
+        if let recoveryTrack {
+            let track = try recoveryTrack()
+            guard track.fileName == destination.lastPathComponent,
+                  LocalLibraryFileSafety.validName(track.fileName) else {
+                throw PortableShelfArchive.ArchiveError.invalidManifest
+            }
+            let size = (try manager.attributesOfItem(atPath: staging.path)[.size] as? NSNumber)?
+                .int64Value ?? -1
+            guard size > 0, size <= PortableShelfArchive.maxTrackBytes else {
+                throw PortableShelfArchive.ArchiveError.oversized
+            }
+            let record = LocalAudioRecoveryRecord(
+                version: 1, track: track,
+                stagingName: staging.lastPathComponent, audioLength: size)
+            let bytes = try JSONEncoder().encode(record)
+            guard bytes.count <= 64 * 1024 else {
+                throw PortableShelfArchive.ArchiveError.oversized
+            }
+            let target = LocalAudioRecoveryRecord.journalURL(for: track.id, in: directory)
+            // A temporary journal + no-replace publication prevents an old
+            // interrupted intent from being overwritten by a new attempt.
+            let temporaryJournal = directory.appendingPathComponent(
+                ".mp3shelf-recovery-\(UUID().uuidString).partial")
+            defer { try? manager.removeItem(at: temporaryJournal) }
+            try bytes.write(to: temporaryJournal, options: .atomic)
+            try manager.linkItem(at: temporaryJournal, to: target)
+            journal = target
+        }
+        // Never overwrite an earlier recording, even on a filename collision.
         try manager.linkItem(at: staging, to: destination)
         do {
             try persist()
         } catch {
-            // Only the successful link above grants ownership of this path.
+            // Only this transaction published the destination. A killed process
+            // leaves the journal for recovery; ordinary failures roll back.
             try? manager.removeItem(at: destination)
             throw error
         }
@@ -68,6 +156,11 @@ enum LocalAudioImportTransaction {
 /// a successful catalog transaction. Fail closed for missing, linked or
 /// malformed legacy paths instead of touching files outside the library.
 enum LocalLibraryFileSafety {
+    static func validName(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".." &&
+        !name.contains("/") && !name.contains("\\") && !name.contains("\0")
+    }
+
     /// APFS on iPhone is normally case-insensitive. Legacy catalogs can hold
     /// differently cased spellings of one physical filename. When deleting a
     /// track, conservatively retain any file still referenced under a spelling
@@ -80,8 +173,7 @@ enum LocalLibraryFileSafety {
         }
     }
     static func regularFile(named name: String?, in directory: URL) -> URL? {
-        guard let name, !name.isEmpty, name != ".", name != "..",
-              !name.contains("/"), !name.contains("\\"), !name.contains("\0") else {
+        guard let name, validName(name) else {
             return nil
         }
         let root = directory.resolvingSymlinksInPath().standardizedFileURL
