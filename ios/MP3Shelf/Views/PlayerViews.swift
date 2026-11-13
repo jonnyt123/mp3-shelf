@@ -486,6 +486,7 @@ struct NowPlayingView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .foregroundStyle(ShelfTheme.accent)
+                                    .accessibilityFocused($queueButtonFocused)
                                     .accessibilityLabel("Manage queue, \(upcoming.count) \(upcoming.count == 1 ? "song" : "songs")")
                                     .accessibilityHint(hiddenUpcomingCount > 0
                                         ? "\(hiddenUpcomingCount) additional songs. Open the full queue to reorder or remove recordings"
@@ -544,7 +545,7 @@ struct NowPlayingView: View {
                 if let id = playback.currentTrackID { LyricsView(songID: id) }
             }
              .onChange(of: showQueue) { _, presented in
-                 if !presented { queueButtonFocused = true }
+                 queueButtonFocused = !presented
              }
             .sheet(isPresented: $showQueue) {
                 PlaybackQueueSheet()
@@ -596,7 +597,11 @@ struct PlaybackQueueSheet: View {
         // Resolve against the live queue rather than a row's captured render.
         // Playback may advance between opening a menu and choosing Remove.
         let current = playback.queuedTracks
-        guard let index = current.firstIndex(where: { $0.id == trackID }) else { return }
+        guard let index = current.firstIndex(where: { $0.id == trackID }) else {
+            pendingQueueFocusID = nil
+            pendingEmptyQueueFocus = false
+            return
+        }
         let remaining = current.filter { $0.id != trackID }
         pendingQueueFocusID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
         pendingEmptyQueueFocus = remaining.isEmpty
@@ -614,7 +619,11 @@ struct PlaybackQueueSheet: View {
         // A queued row can outlive the snapshot it rendered from. Always
         // recheck live boundaries before changing the play order.
         let current = playback.queuedTracks
-        guard let index = current.firstIndex(where: { $0.id == trackID }) else { return }
+        guard let index = current.firstIndex(where: { $0.id == trackID }) else {
+            pendingQueueFocusID = nil
+            pendingEmptyQueueFocus = false
+            return
+        }
         guard earlier ? index > 0 : index < current.count - 1 else {
             // An obsolete context-menu action must not leave focus pending.
             pendingQueueFocusID = nil
@@ -628,7 +637,11 @@ struct PlaybackQueueSheet: View {
         // A context menu can stay open after playback advances or a queue edit.
         // Do not issue a mutation or retain a focus request for a vanished row.
         let current = playback.queuedTracks
-        guard let index = current.firstIndex(where: { $0.id == trackID }) else { return }
+        guard let index = current.firstIndex(where: { $0.id == trackID }) else {
+            pendingQueueFocusID = nil
+            pendingEmptyQueueFocus = false
+            return
+        }
         // Already next: no queue publication will follow, so avoid leaving a
         // pending focus request that could hijack a later unrelated queue edit.
         guard index > 0 else {
@@ -644,7 +657,11 @@ struct PlaybackQueueSheet: View {
     private func playNow(_ trackID: UUID) {
         // Resolve from the live queue; a captured MusicTrack may no longer be
         // queued when a menu action is selected after automatic advancement.
-        guard let track = playback.queuedTracks.first(where: { $0.id == trackID }) else { return }
+        guard let track = playback.queuedTracks.first(where: { $0.id == trackID }) else {
+            pendingQueueFocusID = nil
+            pendingEmptyQueueFocus = false
+            return
+        }
         pendingQueueFocusID = nil
         pendingEmptyQueueFocus = false
         playback.play(track)
