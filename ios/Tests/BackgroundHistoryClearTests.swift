@@ -14,6 +14,16 @@ func extract(_ source: String, _ start: String, _ end: String) -> String {
 }
 let method = extract(source, "    func clearFinishedHistory() {", "    func cancelTransfer(")
 let writer = extract(model, "enum BackgroundTicketManifestPolicy {", "/// Small, bounded recovery budget")
+// Guard the companion cancellation path against the same conversion ownership
+// race. The dynamic history fixture below exercises the matching cleanup rule.
+let cancellation = extract(source, "    func cancelTransfer(", "    func pendingCount(")
+guard cancellation.contains("if !processing.contains(id) && conversions[id] == nil"),
+      cancellation.range(of: "try BackgroundTicketManifestPolicy.write") != nil,
+      cancellation.range(of: "try BackgroundTicketManifestPolicy.write")!.lowerBound <
+          cancellation.range(of: "try? fm.removeItem(at: Self.stagingURL(id))")!.lowerBound else {
+    fatalError("Cancellation must persist terminal state and retain conversion-owned staging")
+}
+
 let fixture = #"""
 import Foundation
 struct BackgroundAudioTicket: Codable {
