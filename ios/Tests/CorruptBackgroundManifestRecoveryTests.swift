@@ -6,8 +6,8 @@ import Foundation
 //
 // The default mode checks the real downloader source as well as the deterministic
 // Foundation fixture. --fixture-only never claims production behavior is verified.
-func require(_ condition: @autoclosure () -> Bool, _ message: String) {
-    guard condition() else {
+func require(_ condition: Bool, _ message: String) {
+    guard condition else {
         fputs("FAIL: \(message)\n", stderr)
         exit(1)
     }
