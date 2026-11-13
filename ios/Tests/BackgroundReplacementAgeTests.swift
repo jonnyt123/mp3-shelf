@@ -39,6 +39,6 @@ precondition(!isStale(replacement, at: now.addingTimeInterval(11), minimumAge: 3
 precondition(!isStale(replacement, at: now.addingTimeInterval(299), minimumAge: 300))
 precondition(isStale(replacement, at: now.addingTimeInterval(301), minimumAge: 300))
 precondition(replacement.nextRetryAt == futureRetry)
-let alternate = scheduleReplacement(now: now, retryAt: nil)
-precondition(!isStale(alternate, at: now.addingTimeInterval(10), minimumAge: 300))
+let alternateTicket = scheduleReplacement(now: now, retryAt: nil)
+precondition(!isStale(alternateTicket, at: now.addingTimeInterval(10), minimumAge: 300))
 print("PASS: retries and alternate sources have fresh orphan age and retain scheduling")
