@@ -375,4 +375,29 @@ describe("durable backup export",()=>{
   expect(slices).toBe(1);
  });
 
+ it("yields to browser tasks during medium recording fingerprinting and aborts a stale export",async()=>{
+  const storage=store();
+  const bytes=new Uint8Array(512*1024);
+  const media={...track,size:bytes.length,blob:new Blob([bytes])};
+  const updated=JSON.stringify([{...playlist[0],name:"Edited during yield"}]);
+  // Timers cannot fire while a synchronous hashing loop monopolizes the UI
+  // thread. A scheduled cross-tab change must interrupt fingerprinting.
+  const timer=setTimeout(()=>storage.values.set(key,updated),0);
+  try{
+   await expect(createStoredLibraryBackup(storage,key,async()=>[media]))
+    .rejects.toThrow("Playlists changed");
+   expect(storage.values.get(key)).toBe(updated);
+  }finally{clearTimeout(timer)}
+ });
+ it("exports an unchanged medium recording after cooperative fingerprint yields",async()=>{
+  const storage=store();
+  const bytes=new Uint8Array(512*1024);
+  bytes[300*1024]=77;
+  const media={...track,size:bytes.length,blob:new Blob([bytes])};
+  const result=await createStoredLibraryBackup(storage,key,async()=>[media]);
+  const restored=await parseLibraryBackup(result);
+  expect(restored.tracks).toHaveLength(1);
+  expect(new Uint8Array(await restored.tracks[0].blob.slice(300*1024,300*1024+1).arrayBuffer())[0]).toBe(77);
+ });
+
 });
