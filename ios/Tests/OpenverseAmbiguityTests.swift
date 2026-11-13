@@ -48,3 +48,27 @@ check(selection([["https://audio.example/a.mp3"], ["https://audio.example/b.mp3"
 check(selection([[], ["https://audio.example/a.mp3"]]) != nil,
       "later-page single candidate remains eligible")
 check(selection([[], []]) == nil, "no match remains unavailable")
+
+check(implementation.contains("if page >= maxOpenversePages && hasMorePages"),
+      "last inspected page rejects a catalog reporting further unseen results")
+check(implementation.contains("throw SourceError.catalogsUnavailable"),
+      "page-budget exhaustion remains retryable rather than auto-selecting")
+check(implementation.contains("result.page_count.map { page < $0 }"),
+      "explicit catalog page count governs completion")
+check(implementation.contains("result.results.count >= 50"),
+      "full-page fallback cannot silently imply a completed search")
+
+// Offline pagination boundary fixtures. A unique URL is not sufficient when
+// unexamined catalog pages might contain a conflicting recording.
+func completeScan(page: Int, pageCount: Int?, returned: Int, budget: Int = 2) -> Bool {
+    let hasMore = pageCount.map { page < $0 } ?? (returned >= 50)
+    return !(page >= budget && hasMore)
+}
+check(!completeScan(page: 2, pageCount: 3, returned: 1),
+      "third advertised page makes a single match unsafe")
+check(completeScan(page: 2, pageCount: 2, returned: 1),
+      "terminal second page permits unique-match evaluation")
+check(!completeScan(page: 2, pageCount: nil, returned: 50),
+      "unknown page count and full second page remain incomplete")
+check(completeScan(page: 2, pageCount: nil, returned: 12),
+      "short final page terminates an uncounted result set")
