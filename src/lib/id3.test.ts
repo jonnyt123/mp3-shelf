@@ -304,3 +304,33 @@ describe("ID3 embedded artwork MIME validation",()=>{
   }
  });
 });
+
+
+describe("ID3 artwork field boundaries",()=>{
+ function tag(payload:number[]){
+  const bytes=new Uint8Array(20+payload.length);
+  bytes.set([73,68,51,3,0,0,0,0,0,10+payload.length]);
+  bytes.set(new TextEncoder().encode("APIC"),10);
+  new DataView(bytes.buffer).setUint32(14,payload.length);
+  bytes.set(payload,20);
+  return bytes;
+ }
+ it("rejects a missing MIME terminator even when the payload contains image-like bytes",async()=>{
+  const bytes=tag([0,...new TextEncoder().encode("image/jpeg"),1,2,3,4]);
+  expect(parseId3Bytes(bytes).artwork).toBeUndefined();
+  expect((await readAudioMetadata(new Blob([bytes]))).artwork).toBeUndefined();
+ });
+ it("rejects missing picture type and description terminator",()=>{
+  const mime=[0,...new TextEncoder().encode("image/png"),0];
+  expect(parseId3Bytes(tag(mime)).artwork).toBeUndefined();
+  expect(parseId3Bytes(tag([...mime,3])).artwork).toBeUndefined();
+  expect(parseId3Bytes(tag([...mime,3,65,66,67])).artwork).toBeUndefined();
+ });
+ it("preserves valid artwork after an explicitly terminated description",async()=>{
+  const payload=[0,...new TextEncoder().encode("image/png"),0,3,65,0,137,80,78,71];
+  const bytes=tag(payload);
+  const artwork=(await readAudioMetadata(new Blob([bytes]))).artwork;
+  expect(artwork?.type).toBe("image/png");
+  expect(Array.from(new Uint8Array(await artwork!.arrayBuffer()))).toEqual([137,80,78,71]);
+ });
+});
