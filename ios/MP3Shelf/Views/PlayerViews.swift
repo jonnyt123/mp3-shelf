@@ -393,6 +393,7 @@ struct NowPlayingView: View {
                                                  action: { playback.isShuffled.toggle() })
                                         .accessibilityLabel("Shuffle")
                                         .accessibilityValue(playback.isShuffled ? "On" : "Off")
+                                        .accessibilityHint("Double tap to \(playback.isShuffled ? "disable" : "enable") shuffled playback")
                                     Spacer()
                                     Button { playback.previous() } label: {
                                         Image(systemName: "backward.end.fill")
@@ -400,6 +401,7 @@ struct NowPlayingView: View {
                                             .frame(width: 44, height: 56)
                                     }
                                     .accessibilityLabel("Previous track")
+                                    .accessibilityHint("Restart the current recording or play the previous recording")
                                     Spacer()
                                     Button { playback.togglePlayback() } label: {
                                         Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
@@ -411,6 +413,7 @@ struct NowPlayingView: View {
                                                     radius: 20, y: 8)
                                     }
                                     .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
+                                    .accessibilityHint(playback.isPlaying ? "Pause the current recording" : "Resume the current recording")
                                     Spacer()
                                     Button { playback.next() } label: {
                                         Image(systemName: "forward.end.fill")
@@ -418,12 +421,14 @@ struct NowPlayingView: View {
                                             .frame(width: 44, height: 56)
                                     }
                                     .accessibilityLabel("Next track")
+                                    .accessibilityHint("Skip to the next recording in playback order")
                                     Spacer()
                                     playerButton(playback.repeatMode.systemImage,
                                                  active: playback.repeatMode != .off,
                                                  action: { playback.cycleRepeat() })
                                         .accessibilityLabel("Repeat")
                                         .accessibilityValue(playback.repeatMode.rawValue)
+                                        .accessibilityHint("Double tap to change repeat mode")
                                 }
                                 .foregroundStyle(.white)
                                 .buttonStyle(.plain)
