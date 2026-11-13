@@ -683,7 +683,7 @@ struct PlaybackQueueSheet: View {
 
     // Large-text users should not have to open a context menu for every
     // reorder. The same bounded operations back the menu and VoiceOver.
-    private func moveButton(_ track: MusicTrack, earlier: Bool) -> some View {
+    private func moveButton(_ track: MusicTrack, earlier: Bool, available: Bool) -> some View {
         Button {
             reorder(track.id, earlier: earlier)
         } label: {
@@ -694,10 +694,15 @@ struct PlaybackQueueSheet: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(earlier ? "Move earlier" : "Move later"): \(track.title)")
-        .accessibilityHint(earlier
-            ? "Move this song one position toward the start of the queue"
-            : "Move this song one position toward the end of the queue")
+        .disabled(!available)
+        .accessibilityLabel(available
+            ? "\(earlier ? "Move earlier" : "Move later"): \(track.title)"
+            : "\(earlier ? "Already first" : "Already last"): \(track.title)")
+        .accessibilityHint(available
+            ? (earlier
+                ? "Move this song one position toward the start of the queue"
+                : "Move this song one position toward the end of the queue")
+            : "This song cannot move any further in that direction")
     }
 
     // Use a vertical fallback when enlarged labels cannot fit beside two
@@ -708,10 +713,10 @@ struct PlaybackQueueSheet: View {
         if stacked {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    moveButton(track, earlier: true)
-                        .disabled(!canMove(index: index, count: upcoming.count, earlier: true))
-                    moveButton(track, earlier: false)
-                        .disabled(!canMove(index: index, count: upcoming.count, earlier: false))
+                    moveButton(track, earlier: true,
+                               available: canMove(index: index, count: upcoming.count, earlier: true))
+                    moveButton(track, earlier: false,
+                               available: canMove(index: index, count: upcoming.count, earlier: false))
                     Spacer(minLength: 0)
                     Text("Position \(index + 1) of \(upcoming.count)")
                         .font(.caption)
@@ -723,10 +728,10 @@ struct PlaybackQueueSheet: View {
             }
         } else {
             HStack(spacing: 8) {
-                moveButton(track, earlier: true)
-                    .disabled(!canMove(index: index, count: upcoming.count, earlier: true))
-                moveButton(track, earlier: false)
-                    .disabled(!canMove(index: index, count: upcoming.count, earlier: false))
+                moveButton(track, earlier: true,
+                           available: canMove(index: index, count: upcoming.count, earlier: true))
+                moveButton(track, earlier: false,
+                           available: canMove(index: index, count: upcoming.count, earlier: false))
                 Spacer(minLength: 0)
                 playNextButton(track, alreadyNext: index == 0)
             }
@@ -737,14 +742,15 @@ struct PlaybackQueueSheet: View {
         Button {
             playNext(track.id)
         } label: {
-            Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
+            Label(alreadyNext ? "Already next" : "Play next",
+                      systemImage: alreadyNext ? "checkmark.circle" : "text.line.first.and.arrowtriangle.forward")
                 .font(.caption.weight(.semibold))
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                 .frame(minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(ShelfTheme.accent)
+        .foregroundStyle(alreadyNext ? ShelfTheme.subdued : ShelfTheme.accent)
         .disabled(alreadyNext)
         .accessibilityLabel(alreadyNext ? "Already next: \(track.title)" : "Play next: \(track.title)")
         .accessibilityHint(alreadyNext ? "This song is already first in the upcoming queue" : "Make this song the next recording to play")
@@ -790,6 +796,7 @@ struct PlaybackQueueSheet: View {
                         if upcoming.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Image(systemName: "music.note.list")
+                                    .accessibilityHidden(true)
                                     .font(.largeTitle)
                                     .foregroundStyle(ShelfTheme.accent)
                                 Text("You're all caught up")
@@ -965,7 +972,10 @@ struct PlaybackQueueSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                         .foregroundStyle(ShelfTheme.accent)
+                        .accessibilityHint("Close the queue and return to Now Playing")
                 }
             }
         }
