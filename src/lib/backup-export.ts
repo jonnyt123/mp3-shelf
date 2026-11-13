@@ -51,6 +51,13 @@ export async function createStoredLibraryBackup(
    const bytes=new Uint8Array(await blob.slice(offset,offset+window).arrayBuffer());
    assertSnapshot();
    for(const byte of bytes)hash=Math.imul(hash^byte,16777619)>>>0;
+   // Hashing a medium-sized library is CPU-heavy even with bounded buffers.
+   // Yield after at most 256 KiB so Safari can paint, process taps and let
+   // another tab's storage event become visible before more work is done.
+   if(offsets.length>4 && (offsets.indexOf(offset)+1)%4===0){
+    await new Promise<void>(resolve=>setTimeout(resolve,0));
+    assertSnapshot();
+   }
   }
   return `${blob.size}:${hash}`;
  };
