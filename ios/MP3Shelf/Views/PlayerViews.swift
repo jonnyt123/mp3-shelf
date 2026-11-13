@@ -895,16 +895,26 @@ struct PlaybackQueueSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            HStack(spacing: 8) {
-                moveButton(track, earlier: true,
-                           available: canMove(index: index, count: upcoming.count, earlier: true),
+            // Keep transport labels on their own row at standard text sizes.
+            // Four actions in one HStack can clip on narrow iPhones.
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    moveButton(track, earlier: true,
+                               available: canMove(index: index, count: upcoming.count, earlier: true),
                                searching: searching)
-                moveButton(track, earlier: false,
-                           available: canMove(index: index, count: upcoming.count, earlier: false),
+                    moveButton(track, earlier: false,
+                               available: canMove(index: index, count: upcoming.count, earlier: false),
                                searching: searching)
-                Spacer(minLength: 0)
-                playNowButton(track)
-                playNextButton(track, alreadyNext: index == 0)
+                    Spacer(minLength: 0)
+                    Text("Position \(index + 1) of \(upcoming.count)")
+                        .font(.caption)
+                        .foregroundStyle(ShelfTheme.subdued)
+                        .accessibilityHidden(true)
+                }
+                HStack(spacing: 16) {
+                    playNowButton(track)
+                    playNextButton(track, alreadyNext: index == 0)
+                }
             }
         }
     }
