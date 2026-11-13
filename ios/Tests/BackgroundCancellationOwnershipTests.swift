@@ -118,3 +118,76 @@ check(try Data(contentsOf: lateLocation) == second,
 check(inMemory.status == .cancelled, "Late callback changed terminal ticket")
 print("PASS: failed manifest write survives relaunch; durable cancellation rejects late completion")
 
+
+
+// Multi-ticket recovery isolation: cancellation of one transfer must never
+// erase a second queued ticket or its independently owned staging bytes.
+// Persist the complete manifest on each transition, then simulate a restart
+// by discarding the in-memory map and decoding the on-disk journal.
+struct JournalEntry: Codable, Equatable {
+    let id: UUID
+    var status: FixtureStatus
+}
+let cancelledID = UUID()
+let survivingID = UUID()
+let journal = root.appendingPathComponent("multi-ticket-journal.json")
+let cancelledStage = root.appendingPathComponent(cancelledID.uuidString + ".mp3")
+let survivingStage = root.appendingPathComponent(survivingID.uuidString + ".mp3")
+try first.write(to: cancelledStage)
+try second.write(to: survivingStage)
+var journalEntries = [
+    JournalEntry(id: cancelledID, status: .queued),
+    JournalEntry(id: survivingID, status: .queued)
+]
+func persistJournal(_ entries: [JournalEntry], fail: Bool = false) throws {
+    if fail { throw FixtureWriteFailure.injected }
+    try JSONEncoder().encode(entries).write(to: journal, options: .atomic)
+}
+func reloadJournal() throws -> [JournalEntry] {
+    try JSONDecoder().decode([JournalEntry].self, from: Data(contentsOf: journal))
+}
+try persistJournal(journalEntries)
+var proposedEntries = journalEntries
+proposedEntries[0].status = .cancelled
+do {
+    try persistJournal(proposedEntries, fail: true)
+    fatalError("Multi-ticket manifest failure was not injected")
+} catch FixtureWriteFailure.injected {}
+check(try reloadJournal() == journalEntries, "Failed write corrupted a different queued ticket")
+check(try Data(contentsOf: cancelledStage) == first, "Failed write lost cancelled ticket media")
+check(try Data(contentsOf: survivingStage) == second, "Failed write lost unrelated queued media")
+
+// A retry commits the full journal first, then releases only the terminal
+// ticket's unowned stage. The unrelated ticket must remain resumable.
+try persistJournal(proposedEntries)
+journalEntries = try reloadJournal()
+check(journalEntries[0].status == .cancelled, "Terminal state missing after restart")
+check(journalEntries[1].status == .queued, "Unrelated queued ticket was cancelled")
+try fm.removeItem(at: cancelledStage)
+check(!fm.fileExists(atPath: cancelledStage.path), "Cancelled stage survived terminal cleanup")
+check(try Data(contentsOf: survivingStage) == second, "Cancellation removed another ticket's stage")
+
+// Late duplicate callbacks may target the cancelled ID while the other
+// transfer remains queued. A rejected callback must not mutate the journal,
+// overwrite the surviving stage or consume its bytes.
+let lateCancelled = root.appendingPathComponent("late-cancelled.tmp")
+try first.write(to: lateCancelled)
+let beforeLateCallback = try Data(contentsOf: journal)
+let cancelledIsQueued = journalEntries.first { $0.id == cancelledID }?.status == .queued
+if cancelledIsQueued && !fm.fileExists(atPath: cancelledStage.path) {
+    try fm.moveItem(at: lateCancelled, to: cancelledStage)
+}
+check(!fm.fileExists(atPath: cancelledStage.path), "Late callback restored cancelled transfer")
+check(try Data(contentsOf: survivingStage) == second, "Late callback modified another transfer")
+check(try Data(contentsOf: journal) == beforeLateCallback, "Late callback changed durable queue")
+
+// The remaining queued transfer can still complete normally. A duplicate
+// completion for the same ID must not replace its already staged bytes.
+let duplicateSurvivor = root.appendingPathComponent("duplicate-survivor.tmp")
+try first.write(to: duplicateSurvivor)
+if !fm.fileExists(atPath: survivingStage.path) {
+    try fm.moveItem(at: duplicateSurvivor, to: survivingStage)
+}
+check(try Data(contentsOf: survivingStage) == second, "Duplicate overwrote queued stage")
+check(try Data(contentsOf: duplicateSurvivor) == first, "Duplicate source was unexpectedly moved")
+print("PASS: two-ticket journal isolation, failed persistence, restart and duplicate completion")
