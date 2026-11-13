@@ -707,6 +707,7 @@ struct PlaybackQueueSheet: View {
     @State private var pendingQueueFocusID: UUID?
     @State private var pendingEmptyQueueFocus = false
     @State private var queueChangedAlert = false
+    @State private var queueSearchText = ""
     @AccessibilityFocusState private var emptyQueueFocused: Bool
 
     // Context menus can outlive their row after automatic playback advancement.
@@ -886,6 +887,14 @@ struct PlaybackQueueSheet: View {
 
     var body: some View {
         let upcoming = playback.queuedTracks
+        // Filter presentation only. Keep the original indices for move and
+        // play-next operations so a search never reorders the underlying queue.
+        let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let visibleRows = Array(upcoming.enumerated()).filter { _, track in
+            query.isEmpty || track.title.localizedStandardContains(query)
+                || track.artist.localizedStandardContains(query)
+                || track.album.localizedStandardContains(query)
+        }
         return NavigationStack {
             ZStack {
                 PremiumBackdrop()
@@ -939,8 +948,25 @@ struct PlaybackQueueSheet: View {
                             .premiumCard()
                             .accessibilityElement(children: .combine)
                             .accessibilityFocused($emptyQueueFocused)
+                        } else if visibleRows.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(ShelfTheme.accent)
+                                    .accessibilityHidden(true)
+                                Text("No matching songs")
+                                    .font(.headline)
+                                    .foregroundStyle(.white)
+                                Text("Try a different title, artist, or album. Your playing queue is unchanged.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(ShelfTheme.subdued)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(22)
+                            .premiumCard()
+                            .accessibilityElement(children: .combine)
                         } else {
-                            ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, track in
+                            ForEach(visibleRows, id: \.element.id) { index, track in
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack(spacing: 12) {
                                     ArtworkTile(track: track, size: dynamicTypeSize.isAccessibilitySize ? 40 : 48)
@@ -1120,6 +1146,8 @@ struct PlaybackQueueSheet: View {
                 focusedQueueTrackID = surviving.first?.id
                 emptyQueueFocused = surviving.isEmpty
             }
+            .searchable(text: $queueSearchText, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "Search queued songs")
             .navigationTitle("Your queue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
