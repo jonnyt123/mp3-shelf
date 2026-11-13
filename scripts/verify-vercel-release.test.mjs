@@ -479,3 +479,36 @@ test('invalid UTF-8 in streamed Vercel metadata fails closed before health probe
     else process.env.VERCEL_TOKEN = old;
   }
 });
+
+test('injected metadata fixture without a stream rejects oversized declared and actual JSON before probes', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    for (const mode of ['declared', 'actual']) {
+      let requests = 0, parses = 0;
+      const fetcher = async () => {
+        requests++;
+        return { ok: true, status: 200,
+          headers: { get: key => key === 'content-length' && mode === 'declared' ? String(1024 * 1024 + 1) : null },
+          json: async () => { parses++; return { padding: 'x'.repeat(1024 * 1024) }; } };
+      };
+      await assert.rejects(runReleaseCheck({ ...valid, autoRollback: true }, { fetcher }), /Oversized/);
+      assert.equal(requests, 1, 'no health probes or production writes');
+      assert.equal(parses, mode === 'declared' ? 0 : 1);
+    }
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});
+
+test('injected metadata without a stream rejects malformed content-length and missing body', async () => {
+  const old = process.env.VERCEL_TOKEN; process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    for (const response of [
+      { ok: true, headers: { get: () => 'not-a-number' }, json: async () => identity.current },
+      { ok: true, headers: { get: () => null } }
+    ]) {
+      let requests = 0;
+      await assert.rejects(runReleaseCheck(valid, { fetcher: async () => { requests++; return response; } }),
+        /invalid Vercel metadata|Missing Vercel metadata/i);
+      assert.equal(requests, 1);
+    }
+  } finally { if (old === undefined) delete process.env.VERCEL_TOKEN; else process.env.VERCEL_TOKEN = old; }
+});

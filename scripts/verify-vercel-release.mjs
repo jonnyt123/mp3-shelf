@@ -150,12 +150,25 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
     // Deployment metadata is untrusted network input. Bound its bytes before
     // JSON parsing just as we bound public health responses; an unexpectedly
     // large API payload must never exhaust the release guard's memory.
+    const limit = 1024 * 1024;
     if (response.body?.getReader) {
-      const raw = await readProbeBody(response, 1024 * 1024);
+      const raw = await readProbeBody(response, limit);
       return JSON.parse(raw);
     }
-    // Compatibility with injected metadata fixtures without a stream.
-    return response.json();
+    // Native fetch responses always expose a readable body. Never use the
+    // unbounded response.json() fallback with authenticated production traffic.
+    if (fetcher === fetch) throw Error('Vercel metadata response has no readable stream.');
+    // Only injected test fixtures may omit a stream. Bound their declared and
+    // serialized sizes too, so fixtures cannot silently bypass the release gate.
+    const declared = response.headers?.get?.('content-length');
+    if (declared !== null && declared !== undefined && declared !== '') {
+      const size = Number(declared);
+      if (!Number.isSafeInteger(size) || size < 0 || size > limit) throw Error('Oversized or invalid Vercel metadata response.');
+    }
+    if (typeof response.json !== 'function') throw Error('Missing Vercel metadata response body.');
+    const fixture = await response.json();
+    if (Buffer.byteLength(JSON.stringify(fixture) ?? '', 'utf8') > limit) throw Error('Oversized Vercel metadata response.');
+    return fixture;
   };
   const current = await api(`/v13/deployments/${args.deployment}`);
   const previous = await api(`/v13/deployments/${args.previous}`);
