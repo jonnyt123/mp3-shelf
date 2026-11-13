@@ -77,8 +77,8 @@ export function parseId3Bytes(bytes:Uint8Array):AudioMetadata{
   const data=bytes.slice(offset+10,offset+10+size);
   // ID3 text encodings are 0=Latin-1, 1=UTF-16, 2=UTF-16BE,
   // 3=UTF-8. Unknown encodings must not silently fall back to Latin-1.
-  if(textFrames[id]&&data.length>1&&data[0]<=(version===3?1:3)){const value=decode(data.slice(1),data[0]);if(value)(result as Record<string,unknown>)[textFrames[id]]=value}
-  if(id==="APIC"&&data.length>4&&data[0]<=(version===3?1:3)){const encoding=data[0],mimeEnd=terminator(data,1,false),mime=new TextDecoder().decode(data.slice(1,mimeEnd))||"image/jpeg",pictureType=mimeEnd+1,descStart=pictureType+1,descEnd=terminator(data,descStart,encoding===1||encoding===2),imageStart=Math.min(data.length,descEnd+(encoding===1||encoding===2?2:1));if(imageStart<data.length)result.artwork=new Blob([data.slice(imageStart)],{type:mime})}
+  if(textFrames[id]&&data.length>1&&data[0]<=3){const value=decode(data.slice(1),data[0]);if(value)(result as Record<string,unknown>)[textFrames[id]]=value}
+  if(id==="APIC"&&data.length>4&&data[0]<=3){const encoding=data[0],mimeEnd=terminator(data,1,false),mime=new TextDecoder().decode(data.slice(1,mimeEnd))||"image/jpeg",pictureType=mimeEnd+1,descStart=pictureType+1,descEnd=terminator(data,descStart,encoding===1||encoding===2),imageStart=Math.min(data.length,descEnd+(encoding===1||encoding===2?2:1));if(imageStart<data.length)result.artwork=new Blob([data.slice(imageStart)],{type:mime})}
   offset+=10+size;
  }
  return result;
