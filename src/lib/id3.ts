@@ -10,6 +10,12 @@ export function parseId3Bytes(bytes:Uint8Array):AudioMetadata{
  // v2.2 uses six-byte frame headers; v2.3/v2.4 use ten-byte headers.
  // Never interpret an unsupported layout as valid artwork or song metadata.
  if(version!==3&&version!==4)return result;
+ // Whole-tag unsynchronisation inserts 0x00 after 0xff bytes and changes
+ // frame payload offsets. Do not present altered text/artwork as genuine
+ // metadata until this transformation is explicitly supported.
+ // Reject unknown header flags too: their layouts are not safe to guess.
+ const allowedFlags=version===3?0xe0:0xf0;
+ if((bytes[5]&~allowedFlags)!==0||(bytes[5]&0x80)!==0)return result;
  if(bytes.slice(6,10).some(byte=>byte>127))return result;
  const declared=10+syncSafe(bytes,6);
  // Never return partially parsed metadata from a truncated tag.
@@ -54,7 +60,10 @@ export async function readAudioMetadata(file:Blob):Promise<AudioMetadata>{
   if(header.length<10||header[0]!==73||header[1]!==68||header[2]!==51)return{};
   // ID3v2 sizes are four 7-bit syncsafe bytes. Refuse malformed headers
   // rather than trusting a corrupt length or reading beyond our memory cap.
-  if((header[3]!==3&&header[3]!==4)||header.slice(6,10).some(byte=>byte>127))return{};
+  const allowedFlags=header[3]===3?0xe0:0xf0;
+  if((header[3]!==3&&header[3]!==4)||
+     (header[5]&~allowedFlags)!==0||(header[5]&0x80)!==0||
+     header.slice(6,10).some(byte=>byte>127))return{};
   const declared=10+syncSafe(header,6);
   if(declared<=10||declared>file.size)return{};
   const bytes=new Uint8Array(await file.slice(0,Math.min(MAX_TAG_READ,declared)).arrayBuffer());
