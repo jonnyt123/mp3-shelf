@@ -125,6 +125,32 @@ struct PortableShelfArchiveTests {
         let missingStage = try reopenedRecovery.restorePublication(in: folder) { _ in true }
         assert(missingStage == nil)
         assert(FileManager.default.fileExists(atPath: recoveryJournal.path))
+        // A previously saved library entry does not justify discarding its
+        // recovery intent while its audio is missing or file-protected.
+        let unrelatedSaved = MusicTrack(
+            id: UUID(), title: recoveryTrack.title, artist: recoveryTrack.artist,
+            album: recoveryTrack.album, fileName: recoveryTrack.fileName,
+            originalFileName: recoveryTrack.originalFileName,
+            duration: recoveryTrack.duration)
+        let unrelatedResult = try reopenedRecovery.restoreExistingTrack(
+            unrelatedSaved, in: folder, verify: { _ in true })
+        assert(!unrelatedResult)
+        let missingSaved = try reopenedRecovery.restoreExistingTrack(
+            recoveryTrack, in: folder, verify: { _ in true })
+        assert(!missingSaved)
+        assert(FileManager.default.fileExists(atPath: recoveryJournal.path))
+        // A later foreground retry can safely reattach staged bytes without
+        // replacing the catalog's UUID, title or other user-owned metadata.
+        try recoveryBytes.write(to: recoveryStageURL)
+        let restoredSaved = try reopenedRecovery.restoreExistingTrack(
+            recoveryTrack, in: folder, verify: {
+                (try? Data(contentsOf: $0)) == recoveryBytes
+            })
+        assert(restoredSaved)
+        try assertThrowing(try Data(contentsOf: recoveryPublished) == recoveryBytes)
+        try FileManager.default.removeItem(at: recoveryPublished)
+        try FileManager.default.removeItem(at: recoveryStageURL)
+        print("PASS: cataloged recovery retains intent until audio is readable")
         print("PASS: recovery publication is byte-preserving, idempotent and no-replace")
         try FileManager.default.removeItem(at: recoveryJournal)
         print("PASS: recovery journals round-trip, reject aliasing and preserve original files")
