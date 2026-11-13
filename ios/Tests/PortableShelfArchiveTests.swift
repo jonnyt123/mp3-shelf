@@ -435,6 +435,29 @@ struct PortableShelfArchiveTests {
             named: "saved.img", from: sidecarDirectory,
             maximumBytes: 20 * 1024 * 1024)
         assert(loadedArtwork == artworkBytes)
+        // These are also the runtime artwork/lyrics readers' limits. A damaged
+        // catalog must not allocate an unbounded sidecar or escape the shelf.
+        let oversizedLyrics = sidecarDirectory.appendingPathComponent("oversized.lrc")
+        let oversizedBytes = Data(repeating: 0x61, count: 500 * 1024 + 1)
+        try oversizedBytes.write(to: oversizedLyrics)
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: "oversized.lrc", from: sidecarDirectory,
+                maximumBytes: 500 * 1024)
+            fatalError("Runtime lyrics reader accepted an oversized sidecar")
+        } catch PortableShelfArchive.ArchiveError.oversized {
+            // Expected: no large allocation or partial lyrics.
+        }
+        try assertThrowing(try Data(contentsOf: oversizedLyrics) == oversizedBytes)
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: folder.appendingPathComponent("private-artwork.img").path, from: sidecarDirectory,
+                maximumBytes: 20 * 1024 * 1024)
+            fatalError("Runtime artwork reader accepted an absolute path")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+        print("PASS: runtime sidecar size and path limits preserve source bytes")
         do {
             _ = try PortableShelfArchive.readSidecar(
                 named: "lost.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
