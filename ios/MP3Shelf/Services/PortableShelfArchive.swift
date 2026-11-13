@@ -591,6 +591,9 @@ enum PortableShelfArchive {
                   !track.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   track.audio.length > 0, track.audio.length <= maxTrackBytes,
                   track.importedAt.isFinite else { throw ArchiveError.invalidManifest }
+            // Reject unsupported media before any recording is restored.
+            // A late unsupported item must not leave a partial library restore.
+            _ = try audioExtension(for: track)
             try validate(track.audio, payloadSize: payloadSize)
             mediaRanges.append((track.audio.offset, track.audio.offset + track.audio.length))
             audioParts.insert(MediaPartKey(track.audio))
@@ -872,7 +875,12 @@ enum PortableShelfArchive {
         // Prefer the declared media type, retaining the filename only as a
         // compatibility fallback for older archives without a known MIME type.
         let ext = URL(fileURLWithPath: track.originalName ?? "").pathExtension.lowercased()
-        switch track.audio.type.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        // MIME parameters (e.g. audio/mp4; codecs="mp4a.40.2") do not
+        // change the media container. Preserve valid browser exports.
+        let mediaType = track.audio.type.split(separator: ";", maxSplits: 1,
+                                               omittingEmptySubsequences: false)[0]
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch mediaType {
         case "audio/mpeg", "audio/mp3": return "mp3"
         case "audio/mp4", "audio/x-m4a": return "m4a"
         case "audio/wav", "audio/x-wav": return "wav"
