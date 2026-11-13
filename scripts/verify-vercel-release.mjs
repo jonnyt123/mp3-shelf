@@ -147,6 +147,13 @@ export async function runReleaseCheck(args, { fetcher = fetch, sleep = ms => new
       if (response.body?.cancel) await response.body.cancel().catch(() => {});
       throw Error(`Vercel API returned HTTP ${response.status} for ${options.method ?? 'GET'}.`);
     }
+    // A successful rollback request may return HTTP 204 (no JSON body).
+    // Only the mutation endpoint may omit metadata; subsequent alias readback
+    // remains mandatory before claiming that traffic actually moved.
+    if (options.method === 'POST' && response.status === 204) {
+      if (response.body?.cancel) await response.body.cancel().catch(() => {});
+      return null;
+    }
     // Deployment metadata is untrusted network input. Bound its bytes before
     // JSON parsing just as we bound public health responses; an unexpectedly
     // large API payload must never exhaust the release guard's memory.
