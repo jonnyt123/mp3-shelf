@@ -44,7 +44,12 @@ export async function createStoredLibraryBackup(
   }
   let hash=2166136261;
   for(const offset of offsets){
+   // A second tab may mutate the library while a large fingerprint is read.
+   // Check on both sides of each asynchronous slice rather than only once
+   // per recording, so superseded exports stop without scanning more data.
+   assertSnapshot();
    const bytes=new Uint8Array(await blob.slice(offset,offset+window).arrayBuffer());
+   assertSnapshot();
    for(const byte of bytes)hash=Math.imul(hash^byte,16777619)>>>0;
   }
   return `${blob.size}:${hash}`;
