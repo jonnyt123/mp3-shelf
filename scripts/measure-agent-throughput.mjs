@@ -19,6 +19,20 @@ export function classifyPath(path) {
   if (/^(?:ios\/MP3Shelf\/|src\/|scripts\/|ios\/scripts\/)/.test(path)) return 'source';
   return 'other';
 }
+// Prevent a merge of the consolidated candidate from being credited as new
+// source development in every worker lane. Paths are matched to owned surfaces.
+export function laneOwnsPath(lane, path) {
+  if (lane === 'playback') return /^ios\/MP3Shelf\/(?:Services\/(?:PlaybackController|MusicLibrary|PortableShelfArchive)\.swift|Models\/)/.test(path) ||
+    path === 'ios/Tests/PortableShelfArchiveTests.swift';
+  if (lane === 'downloads') return /^ios\/MP3Shelf\/Services\/(?:SpotifyService|AudioSourceFinder|BackgroundAudioDownloader|SourceDiscoveryJob|DownloadPathProof)\.swift$/.test(path) ||
+    path === 'ios/MP3Shelf/Views/DownloadManagerView.swift' || /^ios\/Tests\//.test(path);
+  if (lane === 'iphone-ux') return /^ios\/MP3Shelf\/Views\//.test(path) &&
+    path !== 'ios/MP3Shelf/Views/DownloadManagerView.swift';
+  if (lane === 'web-qa') return /^src\//.test(path) || /^ios\/Tests\//.test(path);
+  if (lane === 'integration-staging') return /^ios\/(?:MP3Shelf\/|Tests\/)/.test(path);
+  if (lane === 'release-tooling') return /^scripts\//.test(path);
+  return false;
+}
 function validDate(value) {
   const date = typeof value === 'string' ? Date.parse(value) : NaN;
   return Number.isFinite(date) ? date : null;
@@ -68,6 +82,7 @@ export async function collectThroughput({ api, now = Date.now(), hours = 1, lane
             !Number.isSafeInteger(file.deletions) || file.deletions < 0) {
           throw Error(`Commit ${sha} has incomplete diff statistics`);
         }
+        if (!laneOwnsPath(lane.name, file.filename)) continue;
         const kind = classifyPath(file.filename);
         if (kind === 'source') {
           sourceTouched = true;
