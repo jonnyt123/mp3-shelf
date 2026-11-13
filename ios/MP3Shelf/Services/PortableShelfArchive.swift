@@ -497,20 +497,20 @@ enum PortableShelfArchive {
     /// before open. lstat deliberately does not follow a replaced symlink.
     /// Keep the descriptor alive for the subsequent streaming copy.
     private static func verifyOpenedAudioSource(_ handle: FileHandle, at url: URL,
-                                                 expectedLength: Int64) throws {
+                                                 expectedLength: Int64) throws -> ArchiveSourceIdentity {
         var opened = stat()
         var named = stat()
         guard fstat(handle.fileDescriptor, &opened) == 0,
               lstat(url.path, &named) == 0,
               (opened.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
               (named.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
-              opened.st_dev == named.st_dev,
-              opened.st_ino == named.st_ino,
               opened.st_size == expectedLength,
-              named.st_size == expectedLength,
-              ArchiveSourceIdentity(opened).matches(named) else {
+              named.st_size == expectedLength else {
             throw ArchiveError.invalidRange
         }
+        let identity = ArchiveSourceIdentity(opened)
+        guard identity.matches(named) else { throw ArchiveError.invalidRange }
+        return identity
     }
 
     /// Stream one source into an archive and close its descriptor before the
@@ -524,7 +524,8 @@ enum PortableShelfArchive {
         // Path validation and open are separate operations. A replaced path
         // must not let the exporter read a symlink target or a different inode.
         // Compare the opened descriptor with a fresh non-following path stat.
-        try verifyOpenedAudioSource(input, at: url, expectedLength: expectedLength)
+        let originalIdentity = try verifyOpenedAudioSource(input, at: url,
+                                                           expectedLength: expectedLength)
         // The manifest records the size measured before export. Reject both
         // shrinking and growing files to avoid misaligned payload offsets.
         var remaining = expectedLength
@@ -542,7 +543,20 @@ enum PortableShelfArchive {
         guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
             throw ArchiveError.invalidRange
         }
-        try verifyOpenedAudioSource(input, at: url, expectedLength: expectedLength)
+        // A file may be rewritten in place without changing its inode or
+        // length while a backup is streaming. Reject a torn recording even
+        // when the final pathname still resolves to the same regular file.
+        let finalIdentity = try verifyOpenedAudioSource(input, at: url,
+                                                        expectedLength: expectedLength)
+        guard originalIdentity.device == finalIdentity.device,
+              originalIdentity.inode == finalIdentity.inode,
+              originalIdentity.size == finalIdentity.size,
+              originalIdentity.modifiedSeconds == finalIdentity.modifiedSeconds,
+              originalIdentity.modifiedNanoseconds == finalIdentity.modifiedNanoseconds,
+              originalIdentity.changedSeconds == finalIdentity.changedSeconds,
+              originalIdentity.changedNanoseconds == finalIdentity.changedNanoseconds else {
+            throw ArchiveError.invalidRange
+        }
     }
 
     static func open(_ url: URL) throws -> Opened {
