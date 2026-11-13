@@ -18,7 +18,10 @@ enum AudioSourceFinder {
         }
     }
     private struct SearchResponse: Decodable { let response: SearchBody }
-    private struct SearchBody: Decodable { let docs: [SearchItem] }
+    private struct SearchBody: Decodable {
+        let docs: [SearchItem]
+        let numFound: Int?
+    }
     private struct SearchItem: Decodable {
         let identifier: String
         let title: FlexibleText?
@@ -263,10 +266,15 @@ enum AudioSourceFinder {
                 searchIncomplete = true
                 break
             }
-            if search.response.docs.count < 20 { break }
+            // Archive's numFound is the authoritative total. A full final
+            // page is not necessarily incomplete when exactly 40 hits exist.
+            // If the count is absent, conservatively infer continuation from
+            // a full page rather than silently authorizing a false match.
+            let inspectedThrough = page * 20
+            let hasMorePages = search.response.numFound.map { inspectedThrough < $0 }
+                ?? (search.response.docs.count >= 20)
+            if !hasMorePages { break }
             if page == maxArchiveSearchPages {
-                // The index may have further pages that the bounded search
-                // cannot inspect. Do not certify a unique recording.
                 searchIncomplete = true
             }
         }
