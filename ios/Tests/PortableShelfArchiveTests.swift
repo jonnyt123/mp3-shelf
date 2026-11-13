@@ -41,6 +41,16 @@ struct PortableShelfArchiveTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
+        // Case-insensitive iPhone filesystems may resolve differently cased
+        // legacy catalog names to the same audio or sidecar. Deleting one
+        // entry must retain files referenced by the surviving entry.
+        assert(LocalLibraryFileSafety.isReferenced("Track.MP3", by: ["track.mp3"]))
+        assert(LocalLibraryFileSafety.isReferenced("Café.img", by: ["Cafe.img"]))
+        assert(LocalLibraryFileSafety.isReferenced("Lyrics.LRC", by: [nil, "lyrics.lrc"]))
+        assert(!LocalLibraryFileSafety.isReferenced("track.mp3", by: [nil, "other.mp3"]))
+        assert(!LocalLibraryFileSafety.isReferenced("track.mp3", by: []))
+        print("PASS: shared audio and sidecars survive case-variant catalog references")
+
         // A pre-cancelled export must not publish a misleading empty backup.
         // Gate the worker so cancellation always precedes its first check.
         let cancelledExport = folder.appendingPathComponent("cancelled.mp3shelf")
