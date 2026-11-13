@@ -181,6 +181,56 @@ struct PortableShelfArchiveTests {
         assert(importOrphans.isEmpty)
         print("PASS: import collisions, validation/storage failures and success preserve audio bytes")
 
+        // The durable journal must already exist when the catalog commit
+        // begins. Normal success removes it; a storage failure removes only
+        // this attempt's journal and published file, never the input source.
+        let journaledTrack = MusicTrack(
+            id: UUID(), title: "Journaled recording", artist: "Local",
+            album: "Recovery", fileName: "journaled-recording.mp3",
+            originalFileName: "journaled-recording.mp3", duration: 13)
+        let journaledDestination = folder.appendingPathComponent(journaledTrack.fileName)
+        let journaledIntent = LocalAudioRecoveryRecord.journalURL(
+            for: journaledTrack.id, in: folder)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: journaledDestination,
+                validate: { staged in
+                    let copied = try Data(contentsOf: staged)
+                    assert(copied == incomingBytes)
+                },
+                recoveryTrack: { journaledTrack },
+                persist: {
+                    assert(FileManager.default.fileExists(atPath: journaledDestination.path))
+                    let saved = try LocalAudioRecoveryRecord.read(
+                        journaledIntent, in: folder)
+                    assert(saved.track.id == journaledTrack.id)
+                    assert(saved.audioLength == Int64(incomingBytes.count))
+                    throw ImportTransactionFailure.catalogWrite
+                })
+            fatalError("Simulated failure committed a journaled import")
+        } catch ImportTransactionFailure.catalogWrite { }
+        assert(!FileManager.default.fileExists(atPath: journaledDestination.path))
+        assert(!FileManager.default.fileExists(atPath: journaledIntent.path))
+        try LocalAudioImportTransaction.perform(
+            from: importSource, to: journaledDestination,
+            validate: { _ in },
+            recoveryTrack: { journaledTrack },
+            persist: {
+                let saved = try LocalAudioRecoveryRecord.read(
+                    journaledIntent, in: folder)
+                assert(saved.track.fileName == journaledTrack.fileName)
+            })
+        try assertThrowing(try Data(contentsOf: journaledDestination) == incomingBytes)
+        assert(!FileManager.default.fileExists(atPath: journaledIntent.path))
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        let journalLeftovers = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        assert(!journalLeftovers.contains {
+            $0.hasPrefix(".mp3shelf-recovery-") || $0.hasPrefix(".mp3shelf-import-")
+        })
+        print("PASS: journal intent exists before catalog publication and cleans up safely")
+
+
+
         // Simulate two interruption boundaries: an aborted decoder/probe
         // before publication, and cancellation after publication but before
         // the catalog can durably reference its new recording.
