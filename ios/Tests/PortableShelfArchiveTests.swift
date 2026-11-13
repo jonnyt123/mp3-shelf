@@ -706,14 +706,17 @@ struct PortableShelfArchiveTests {
             rejectedOverwrite = true
         }
         assert(rejectedOverwrite, "Export must reject an existing backup")
-        assert(try Data(contentsOf: portableURL) == protectedBackupBytes)
-        assert(try Data(contentsOf: audio) == originalBytes)
+        let preservedBackupBytes = try Data(contentsOf: portableURL)
+        let preservedSourceBytes = try Data(contentsOf: audio)
+        assert(preservedBackupBytes == protectedBackupBytes)
+        assert(preservedSourceBytes == originalBytes)
         let protectedArchive = try PortableShelfArchive.open(portableURL)
         assert(protectedArchive.manifest.tracks.map(\.id) == ["web-song-1"])
         let protectedExtract = try PortableShelfArchive.extract(
             protectedArchive.manifest.tracks[0].audio,
             from: protectedArchive, extensionName: "mp3")
-        assert(try Data(contentsOf: protectedExtract) == originalBytes)
+        let preservedExtractedBytes = try Data(contentsOf: protectedExtract)
+        assert(preservedExtractedBytes == originalBytes)
         try FileManager.default.removeItem(at: protectedExtract)
         let backupFolderEntries = try FileManager.default.contentsOfDirectory(atPath: folder.path)
         assert(!backupFolderEntries.contains {
