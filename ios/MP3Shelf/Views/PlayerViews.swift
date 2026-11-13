@@ -138,6 +138,7 @@ struct NowPlayingView: View {
     @State private var scrubbingTrackID: UUID?
     @State private var showLyrics = false
     @State private var showQueue = false
+    @State private var previewQueueChanged = false
     @AccessibilityFocusState private var queueButtonFocused: Bool
     private let seekStep: TimeInterval = 15
 
@@ -466,7 +467,13 @@ struct NowPlayingView: View {
                                             Button {
                                                 // A track can advance while this preview is displayed.
                                                 // Resolve the live queue before changing playback.
-                                                guard let queued = playback.queuedTracks.first(where: { $0.id == next.id }) else { return }
+                                                guard let queued = playback.queuedTracks.first(where: { $0.id == next.id }) else {
+                                                    // A preview can become stale when playback advances
+                                                    // before a VoiceOver user activates its button.
+                                                    // Never start a track that is no longer queued.
+                                                    previewQueueChanged = true
+                                                    return
+                                                }
                                                 playback.play(queued)
                                             } label: {
                                                 HStack(spacing: 12) {
@@ -553,6 +560,16 @@ struct NowPlayingView: View {
              .onChange(of: showQueue) { _, presented in
                  queueButtonFocused = !presented
              }
+            .alert("Queue changed", isPresented: $previewQueueChanged) {
+                Button("Review queue") {
+                    // Present the live queue, rather than silently ignoring
+                    // a preview tap or replaying an obsolete recording.
+                    showQueue = true
+                }
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("That song is no longer upcoming. Review the updated queue to choose what plays next.")
+            }
             .sheet(isPresented: $showQueue) {
                 PlaybackQueueSheet()
                     .environmentObject(library)
