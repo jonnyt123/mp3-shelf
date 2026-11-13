@@ -694,6 +694,32 @@ struct PortableShelfArchiveTests {
         let portableArchive = try PortableShelfArchive.open(portableURL)
         assert(portableArchive.manifest.tracks.first?.id == "web-song-1")
         assert(portableArchive.manifest.playlists.first?.trackIds == ["web-song-1"])
+        // A published backup is immutable: a second export to the same path
+        // must fail without changing even one byte of the original archive.
+        let protectedBackupBytes = try Data(contentsOf: portableURL)
+        var rejectedOverwrite = false
+        do {
+            try PortableShelfArchive.export([
+                .init(track: portableSong, audioURL: audio, artwork: nil, lyrics: nil)
+            ], playlists: [portableList], to: portableURL)
+        } catch {
+            rejectedOverwrite = true
+        }
+        assert(rejectedOverwrite, "Export must reject an existing backup")
+        assert(try Data(contentsOf: portableURL) == protectedBackupBytes)
+        assert(try Data(contentsOf: audio) == originalBytes)
+        let protectedArchive = try PortableShelfArchive.open(portableURL)
+        assert(protectedArchive.manifest.tracks.map(\.id) == ["web-song-1"])
+        let protectedExtract = try PortableShelfArchive.extract(
+            protectedArchive.manifest.tracks[0].audio,
+            from: protectedArchive, extensionName: "mp3")
+        assert(try Data(contentsOf: protectedExtract) == originalBytes)
+        try FileManager.default.removeItem(at: protectedExtract)
+        let backupFolderEntries = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        assert(!backupFolderEntries.contains {
+            $0.contains("portable-identities.mp3shelf") && $0.hasSuffix(".partial")
+        })
+        print("PASS: rejected backup overwrite preserves archive and recording bytes")
         // When restore reuses byte-identical audio already on disk, the
         // original local UUID remains stable but the web ID must survive
         // persistence and re-export for browser playlist interoperability.
