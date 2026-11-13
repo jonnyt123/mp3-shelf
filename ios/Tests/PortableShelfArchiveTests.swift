@@ -189,7 +189,7 @@ struct PortableShelfArchiveTests {
             defer { try? FileManager.default.removeItem(at: extractedTrack) }
             let restoredBytes = try Data(contentsOf: extractedTrack)
             assert(restoredBytes == expected,
-                   "Track \\(index) must restore exactly its original audio bytes")
+                   "Track \(index) must restore exactly its original audio bytes")
         }
         // Reopening the published backup must preserve every manifest offset
         // and source recording; extraction must never consume source files.
