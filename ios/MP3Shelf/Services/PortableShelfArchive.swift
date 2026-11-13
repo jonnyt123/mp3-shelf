@@ -810,6 +810,28 @@ enum PortableShelfArchive {
         }
     }
 
+    /// Publish an optional archive sidecar without leaving orphaned files when
+    /// cancellation or a post-write verification fails. The caller must choose
+    /// a fresh UUID-based filename and only persist its reference after return.
+    /// The preflight refuses existing paths rather than replacing user data.
+    static func writeRestoredSidecar(_ bytes: Data, to destination: URL,
+                                     validate: () throws -> Void = {}) throws {
+        try Task.checkCancellation()
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        var published = false
+        do {
+            try bytes.write(to: destination, options: .atomic)
+            published = true
+            try validate()
+            try Task.checkCancellation()
+        } catch {
+            if published { try? FileManager.default.removeItem(at: destination) }
+            throw error
+        }
+    }
+
     static func readBytes(_ part: Part, from archive: Opened) throws -> Data {
         guard containsArtworkPart(part, in: archive) else { throw ArchiveError.invalidRange }
         // Only small artwork/metadata slices belong in memory. A malformed
