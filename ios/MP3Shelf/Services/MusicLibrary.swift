@@ -710,8 +710,23 @@ final class MusicLibrary: ObservableObject {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         guard ["lrc", "txt"].contains(url.pathExtension.lowercased()) else { throw LyricsError.unsupported }
-        let data = try Data(contentsOf: url)
-        guard data.count <= 512_000, String(data: data, encoding: .utf8) != nil else { throw LyricsError.unsupported }
+        // A Files provider may expose a very large or growing text file.
+        // Never load it unbounded into memory before checking the limit.
+        // Read one byte beyond the cap so an oversized input is rejected
+        // without publishing a sidecar or changing the catalog.
+        let input = try FileHandle(forReadingFrom: url)
+        defer { try? input.close() }
+        var data = Data()
+        while data.count <= 512_000 {
+            try Task.checkCancellation()
+            let chunk = try input.read(upToCount: min(64 * 1024, 512_001 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
+        guard data.count <= 512_000, String(data: data, encoding: .utf8) != nil else {
+            throw LyricsError.unsupported
+        }
+        try Task.checkCancellation()
 
         let previousLyrics = tracks[index].lyricsFileName
         let filename = trackID.uuidString + "-" + UUID().uuidString + ".lrc"
@@ -726,7 +741,8 @@ final class MusicLibrary: ObservableObject {
             // recordings can share a lyrics filename; preserve shared files.
             if let previousLyrics,
                previousLyrics != filename,
-               !updatedTracks.contains(where: { $0.lyricsFileName == previousLyrics }),
+               !LocalLibraryFileSafety.isReferenced(
+                   previousLyrics, by: updatedTracks.map(\.lyricsFileName)),
                let owned = LocalLibraryFileSafety.regularFile(
                    named: previousLyrics, in: lyricsDirectory) {
                 do {
