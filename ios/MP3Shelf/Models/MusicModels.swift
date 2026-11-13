@@ -136,7 +136,15 @@ enum LocalAudioImportTransaction {
         try manager.copyItem(at: source, to: staging)
         try validate(staging)
         var journal: URL?
-        defer { if let journal { try? manager.removeItem(at: journal) } }
+        // Retain the intent when an attempted rollback cannot remove the
+        // published file. On relaunch the durable journal can safely reattach
+        // that recording instead of leaving inaccessible user-owned bytes.
+        var mayRemoveJournal = true
+        defer {
+            if mayRemoveJournal, let journal {
+                try? manager.removeItem(at: journal)
+            }
+        }
         if let recoveryTrack {
             let track = try recoveryTrack()
             guard track.fileName == destination.lastPathComponent,
@@ -172,7 +180,12 @@ enum LocalAudioImportTransaction {
         } catch {
             // Only this transaction published the destination. A killed process
             // leaves the journal for recovery; ordinary failures roll back.
-            try? manager.removeItem(at: destination)
+            // A failed unlink must NOT erase the only recovery intent.
+            do {
+                try manager.removeItem(at: destination)
+            } catch {
+                mayRemoveJournal = false
+            }
             throw error
         }
     }

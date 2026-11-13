@@ -228,6 +228,52 @@ struct PortableShelfArchiveTests {
             $0.hasPrefix(".mp3shelf-recovery-") || $0.hasPrefix(".mp3shelf-import-")
         })
         print("PASS: journal intent exists before catalog publication and cleans up safely")
+        // A cancellation after publication must roll back its own recording
+        // and journal without deleting the original source.
+        let cancelledTrack = MusicTrack(
+            id: UUID(), title: "Cancelled journal", artist: "Local",
+            album: "Recovery", fileName: "cancelled-journal.mp3",
+            originalFileName: "cancelled-journal.mp3", duration: 13)
+        let cancelledDestination = folder.appendingPathComponent(cancelledTrack.fileName)
+        let cancelledJournal = LocalAudioRecoveryRecord.journalURL(
+            for: cancelledTrack.id, in: folder)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: cancelledDestination,
+                validate: { _ in },
+                recoveryTrack: { cancelledTrack },
+                persist: { throw CancellationError() })
+            fatalError("Cancelled journaled import unexpectedly committed")
+        } catch is CancellationError { }
+        assert(!FileManager.default.fileExists(atPath: cancelledDestination.path))
+        assert(!FileManager.default.fileExists(atPath: cancelledJournal.path))
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+
+        // A pre-existing recording with the same destination is never
+        // overwritten, even if the import already wrote its recovery intent.
+        let collisionTrack = MusicTrack(
+            id: UUID(), title: "Collision journal", artist: "Local",
+            album: "Recovery", fileName: "collision-journal.mp3",
+            originalFileName: "collision-journal.mp3", duration: 13)
+        let collisionDestination = folder.appendingPathComponent(collisionTrack.fileName)
+        let collisionJournal = LocalAudioRecoveryRecord.journalURL(
+            for: collisionTrack.id, in: folder)
+        try existingBytes.write(to: collisionDestination)
+        var collisionPersisted = false
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: collisionDestination,
+                validate: { _ in },
+                recoveryTrack: { collisionTrack },
+                persist: { collisionPersisted = true })
+            fatalError("Colliding journaled import replaced user audio")
+        } catch { }
+        assert(!collisionPersisted)
+        assert(!FileManager.default.fileExists(atPath: collisionJournal.path))
+        try assertThrowing(try Data(contentsOf: collisionDestination) == existingBytes)
+        try FileManager.default.removeItem(at: collisionDestination)
+        print("PASS: journaled cancellation and collisions preserve original audio")
+
 
 
 
