@@ -1,5 +1,12 @@
 import Foundation
 
+// Evaluate throwing fixture reads before entering assert's nonthrowing closure.
+private func assertThrowing(_ condition: @autoclosure () throws -> Bool,
+                            file: StaticString = #filePath, line: UInt = #line) rethrows {
+    let passed = try condition()
+    assert(passed, file: file, line: line)
+}
+
 @main
 struct PortableShelfArchiveTests {
     static func main() throws {
@@ -311,9 +318,9 @@ struct PortableShelfArchiveTests {
         assert(unchangedDamagedBytes == damagedBytes)
         // Existing catalog paths are never replaced as a side effect of read.
         let savedDatabase = try Data(contentsOf: database)
-        let reopened = try JSONDecoder().decode(PersistedLibrary.self, from: Data(contentsOf: database))
-        assert(reopened.tracks == snapshot.tracks && reopened.playlists == snapshot.playlists)
-        assert(reopened.tracks[0].fileName == "my-song.mp3")
+        let reopenedLibrary = try JSONDecoder().decode(PersistedLibrary.self, from: Data(contentsOf: database))
+        assert(reopenedLibrary.tracks == snapshot.tracks && reopenedLibrary.playlists == snapshot.playlists)
+        assert(reopenedLibrary.tracks[0].fileName == "my-song.mp3")
         let blockedDatabase = folder.appendingPathComponent("database-is-a-directory", isDirectory: true)
         try FileManager.default.createDirectory(at: blockedDatabase, withIntermediateDirectories: true)
         do {
@@ -352,12 +359,12 @@ struct PortableShelfArchiveTests {
         try replacementLyrics.write(to: sidecarReplacement)
         try FileManager.default.removeItem(at: savedLyrics)
         try FileManager.default.moveItem(at: sidecarReplacement, to: savedLyrics)
-        assert(try PortableShelfArchive.readSidecar(
+        try assertThrowing(try PortableShelfArchive.readSidecar(
             named: "song.lrc", from: sidecarDirectory,
             maximumBytes: 500 * 1024) == replacementLyrics)
         // Restore the original fixture before the remaining archive tests.
         try expectedLyrics.write(to: savedLyrics, options: .atomic)
-        assert(try PortableShelfArchive.readSidecar(
+        try assertThrowing(try PortableShelfArchive.readSidecar(
             named: "song.lrc", from: sidecarDirectory,
             maximumBytes: 500 * 1024) == expectedLyrics)
         print("PASS: sidecar reads validate the current file after pathname replacement")
@@ -517,14 +524,14 @@ struct PortableShelfArchiveTests {
         let externalSource = folder.appendingPathComponent("external-source.mp3")
         try originalBytes.write(to: externalSource)
         try FileManager.default.createSymbolicLink(at: linkedSource, withDestinationURL: externalSource)
-        let linkedBackup = folder.appendingPathComponent("linked-source.mp3shelf")
+        let linkedSourceBackup = folder.appendingPathComponent("linked-source.mp3shelf")
         do {
             try PortableShelfArchive.export([
                 .init(track: song, audioURL: linkedSource, artwork: nil, lyrics: nil)
-            ], playlists: [list], to: linkedBackup)
+            ], playlists: [list], to: linkedSourceBackup)
             fatalError("Symlink source should never be exported")
         } catch {
-            assert(!FileManager.default.fileExists(atPath: linkedBackup.path))
+            assert(!FileManager.default.fileExists(atPath: linkedSourceBackup.path))
             let targetAfter = try Data(contentsOf: externalSource)
             assert(targetAfter == originalBytes)
         }
@@ -1001,7 +1008,7 @@ struct PortableShelfArchiveTests {
         try Data(repeating: 0x54, count: comparisonBytes.count)
             .write(to: comparisonB, options: .atomic)
         assert(!PortableShelfArchive.audioFilesIdentical(comparisonA, comparisonB))
-        assert(try Data(contentsOf: comparisonA) == comparisonBytes)
+        try assertThrowing(try Data(contentsOf: comparisonA) == comparisonBytes)
         // A cancelled restore must not continue a potentially multi-gigabyte
         // byte-for-byte duplicate scan. Gate the worker so this is deterministic
         // rather than relying on timing or a large fixture.
@@ -1017,7 +1024,7 @@ struct PortableShelfArchiveTests {
         guard compareFinished.wait(timeout: .now() + 10) == .success else {
             fatalError("Cancelled duplicate comparison did not terminate promptly")
         }
-        assert(try Data(contentsOf: comparisonA) == comparisonBytes)
+        try assertThrowing(try Data(contentsOf: comparisonA) == comparisonBytes)
         print("PASS: cancelled duplicate scan returns false without modifying audio")
         print("PASS: duplicate audio comparison rejects nonfiles and changed bytes")
 
@@ -1045,7 +1052,7 @@ struct PortableShelfArchiveTests {
         }
         let legitimate = try PortableShelfArchive.extract(
             guardedAudio, from: guardedArchive, extensionName: "mp3")
-        assert(try Data(contentsOf: legitimate) == originalBytes)
+        try assertThrowing(try Data(contentsOf: legitimate) == originalBytes)
         try FileManager.default.removeItem(at: legitimate)
         print("PASS: archive extraction permits only declared media slices")
 
