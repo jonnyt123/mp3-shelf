@@ -57,3 +57,64 @@ try cleanup(processing: false, converting: false)
 check(!fm.fileExists(atPath: stage.path), "Unowned cancelled stage leaked")
 check(try Data(contentsOf: duplicate) == second, "Duplicate temporary bytes altered")
 print("PASS: cancellation ordering and staged-file ownership")
+
+// Crash/relaunch model: a failed terminal-manifest write must leave the queued
+// ticket and staged media intact. A successful retry must publish terminal
+// state before cancellation/late delegate callbacks may clean up the stage.
+// The model deliberately injects the persistence failure; the source contract
+// above checks the corresponding production ordering.
+enum FixtureStatus: String, Codable { case queued, cancelled }
+struct FixtureTicket: Codable, Equatable {
+    var status: FixtureStatus
+    var reason: String?
+}
+enum FixtureWriteFailure: Error { case injected }
+let manifest = root.appendingPathComponent("tickets.json")
+let retainedStage = root.appendingPathComponent("retained-stage.mp3")
+try first.write(to: retainedStage)
+var inMemory = FixtureTicket(status: .queued, reason: nil)
+try JSONEncoder().encode(inMemory).write(to: manifest, options: .atomic)
+
+func cancelWithInjectedWriteFailure(_ fail: Bool) throws {
+    guard inMemory.status == .queued else { return }
+    let proposed = FixtureTicket(status: .cancelled, reason: "Cancelled")
+    if fail { throw FixtureWriteFailure.injected }
+    try JSONEncoder().encode(proposed).write(to: manifest, options: .atomic)
+    inMemory = proposed
+    if fm.fileExists(atPath: retainedStage.path) {
+        try fm.removeItem(at: retainedStage)
+    }
+}
+do {
+    try cancelWithInjectedWriteFailure(true)
+    fatalError("Injected manifest write failure unexpectedly succeeded")
+} catch FixtureWriteFailure.injected {}
+check(inMemory.status == .queued, "Failed manifest write published cancellation in memory")
+check(try JSONDecoder().decode(FixtureTicket.self, from: Data(contentsOf: manifest)).status == .queued,
+      "Failed manifest write changed durable ticket")
+check(try Data(contentsOf: retainedStage) == first,
+      "Failed manifest write deleted recoverable media")
+
+// A process restart sees the same queued ticket and audio, so the transfer
+// remains eligible for recovery instead of becoming an unrecoverable phantom.
+inMemory = try JSONDecoder().decode(FixtureTicket.self, from: Data(contentsOf: manifest))
+check(inMemory.status == .queued, "Restart lost recoverable queue state")
+try cancelWithInjectedWriteFailure(false)
+check(inMemory.status == .cancelled, "Successful cancellation was not published")
+check(try JSONDecoder().decode(FixtureTicket.self, from: Data(contentsOf: manifest)).status == .cancelled,
+      "Successful cancellation was not durable")
+check(!fm.fileExists(atPath: retainedStage.path), "Terminal unowned stage was not removed")
+
+// A late duplicate completion must not resurrect a cancelled ticket. Model
+// the delegate's queued-state gate, including a fresh temporary URLSession file.
+let lateLocation = root.appendingPathComponent("late-download.tmp")
+try second.write(to: lateLocation)
+if inMemory.status == .queued && !fm.fileExists(atPath: retainedStage.path) {
+    try fm.moveItem(at: lateLocation, to: retainedStage)
+}
+check(!fm.fileExists(atPath: retainedStage.path), "Late completion resurrected cancelled audio")
+check(try Data(contentsOf: lateLocation) == second,
+      "Rejected late completion modified the temporary payload")
+check(inMemory.status == .cancelled, "Late callback changed terminal ticket")
+print("PASS: failed manifest write survives relaunch; durable cancellation rejects late completion")
+
