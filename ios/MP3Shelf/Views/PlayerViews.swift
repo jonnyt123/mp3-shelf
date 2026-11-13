@@ -741,6 +741,10 @@ struct PlaybackQueueSheet: View {
         let visibleIndex = current.prefix(index).filter { $0.id != trackID && matchesSearch($0, query: query) }.count
         pendingQueueFocusID = visible.isEmpty ? nil : visible[min(visibleIndex, visible.count - 1)].id
         pendingEmptyQueueFocus = remaining.isEmpty
+        // Removing the final search match leaves other queued recordings
+        // intact. Focus the no-results explanation rather than a vanished row.
+        // The queue publication handler applies this after the mutation.
+        noMatchesFocused = false
         playback.removeQueuedTrack(trackID)
     }
 
@@ -1137,6 +1141,16 @@ struct PlaybackQueueSheet: View {
                     focusedQueueTrackID = visibleIDs.contains(target)
                         ? target : visibleIDs.first
                     noMatchesFocused = !currentIDs.isEmpty && visibleIDs.isEmpty
+                } else if !currentIDs.isEmpty && visibleIDs.isEmpty &&
+                            (focusedRowWasRemoved || focusedQueueTrackID != nil) {
+                    // The final matching result can disappear without emptying
+                    // the actual queue. Keep the search active and move focus
+                    // to its explicit no-results state.
+                    pendingQueueFocusID = nil
+                    pendingEmptyQueueFocus = false
+                    focusedQueueTrackID = nil
+                    emptyQueueFocused = false
+                    noMatchesFocused = true
                 } else if focusedRowWasRemoved {
                     // Prefer the same visible position after removal, falling
                     // back to the last surviving row at the end of the queue.
@@ -1164,6 +1178,23 @@ struct PlaybackQueueSheet: View {
                 focusedQueueTrackID = surviving.first(where: { matchesSearch($0, query: query) })?.id
                 emptyQueueFocused = surviving.isEmpty
                 noMatchesFocused = !surviving.isEmpty && focusedQueueTrackID == nil
+            }
+            .onChange(of: queueSearchText) { _, newSearch in
+                // A changed filter can hide the focused options button without
+                // changing the underlying queue IDs. Clear stale row focus and
+                // pending mutation targets; do not steal keyboard focus while
+                // the user is typing a query.
+                pendingQueueFocusID = nil
+                pendingEmptyQueueFocus = false
+                let query = newSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let focused = focusedQueueTrackID,
+                   !playback.queuedTracks.contains(where: {
+                       $0.id == focused && matchesSearch($0, query: query)
+                   }) {
+                    focusedQueueTrackID = nil
+                }
+                noMatchesFocused = false
+                emptyQueueFocused = false
             }
             .searchable(text: $queueSearchText, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "Search queued songs")
