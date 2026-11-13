@@ -497,9 +497,15 @@ enum PortableShelfArchive {
                 throw ArchiveError.invalidManifest
             }
             let input = try FileHandle(forReadingFrom: url)
-            defer { try? input.close() }
-            let current = try verifyOpenedAudioSource(input, at: url,
+            let current: ArchiveSourceIdentity
+            do {
+                current = try verifyOpenedAudioSource(input, at: url,
                                                        expectedLength: part.expectedLength)
+            } catch {
+                try? input.close()
+                throw error
+            }
+            try input.close()
             guard expected.device == current.device,
                   expected.inode == current.inode,
                   expected.size == current.size,
