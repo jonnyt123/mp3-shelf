@@ -8,7 +8,8 @@ export const LANES = Object.freeze([
   { name: 'downloads', pr: 31 },
   { name: 'iphone-ux', pr: 32 },
   { name: 'web-qa', pr: 33 },
-  { name: 'integration', pr: 29 }
+  { name: 'integration-staging', pr: 29 },
+  { name: 'release-tooling', pr: 34 }
 ]);
 const SHA = /^[0-9a-f]{40}$/i;
 const SOURCE = /\.(?:swift|ts|tsx|js|mjs|py|sh)$/i;
