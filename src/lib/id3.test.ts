@@ -127,3 +127,41 @@ describe("ID3 extended headers and truncated metadata",()=>{
   expect(parseId3Bytes(tag)).toEqual({});
  });
 });
+
+describe("ID3 frame payload transformation safety",()=>{
+ function makeTag(version:3|4,frames:Uint8Array[]){
+  const size=frames.reduce((sum,part)=>sum+part.length,0);
+  const tag=new Uint8Array(10+size);
+  tag.set([73,68,51,version,0,0,0,0,0,size],0);
+  let position=10;
+  for(const part of frames){tag.set(part,position);position+=part.length}
+  return tag;
+ }
+ it("skips transformed v2.3 text and artwork frames without losing subsequent ordinary metadata",async()=>{
+  for(const flag of [0x20,0x40,0x80]){
+   const transformed=frame("TIT2","Incorrect Title");
+   transformed[9]=flag;
+   const ordinary=frame("TPE1","Actual Artist");
+   const tag=makeTag(3,[transformed,ordinary]);
+   expect(parseId3Bytes(tag)).toEqual({artist:"Actual Artist"});
+   expect(await readAudioMetadata(new Blob([tag]))).toEqual({artist:"Actual Artist"});
+  }
+ });
+ it("skips v2.4 grouped, compressed, encrypted, unsynchronised and length-indicated frames",async()=>{
+  for(const flag of [0x40,0x08,0x04,0x02,0x01]){
+   const transformed=frame("TIT2","Untrusted Title");
+   transformed[9]=flag;
+   const ordinary=frame("TALB","Safe Album");
+   const tag=makeTag(4,[transformed,ordinary]);
+   expect(parseId3Bytes(tag)).toEqual({album:"Safe Album"});
+   expect(await readAudioMetadata(new Blob([tag]))).toEqual({album:"Safe Album"});
+  }
+ });
+ it("preserves ordinary metadata with non-format status flags",()=>{
+  for(const version of [3,4] as const){
+   const title=frame("TIT2","Readable");
+   title[8]=0x40;
+   expect(parseId3Bytes(makeTag(version,[title]))).toEqual({title:"Readable"});
+  }
+ });
+});
