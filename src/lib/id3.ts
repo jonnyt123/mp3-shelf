@@ -29,6 +29,30 @@ export function parseId3Bytes(bytes:Uint8Array):AudioMetadata{
   const extensionSize=version===4?syncSafe(bytes,offset):uint32(bytes,offset);
   const skip=version===4?extensionSize:extensionSize+4;
   if(skip<6||offset+skip>end)return result;
+  if(version===4){
+   // A v2.4 extended header contains one flag byte followed by exactly
+   // the declared length-prefixed update, CRC and restriction fields.
+   if(bytes[offset+4]!==1)return result;
+   const flags=bytes[offset+5];
+   if((flags&~0x70)!==0)return result;
+   let cursor=offset+6;
+   for(const bit of [0x40,0x20,0x10]){
+    if(!(flags&bit))continue;
+    if(cursor>=offset+skip)return result;
+    const length=bytes[cursor++];
+    if((bit===0x40&&length!==0)||(bit===0x20&&length!==5)||
+       (bit===0x10&&length!==1)||cursor+length>offset+skip)return result;
+    cursor+=length;
+   }
+   if(cursor!==offset+skip)return result;
+  }else{
+   // v2.3 permits only the CRC-present flag; size 6 without CRC or 10
+   // with CRC. Padding size occupies the four bytes after the flags.
+   if(extensionSize!==6&&extensionSize!==10)return result;
+   const crc=(bytes[offset+4]&0x80)!==0;
+   if((bytes[offset+4]&0x7f)!==0||bytes[offset+5]!==0||
+      extensionSize!==(crc?10:6))return result;
+  }
   offset+=skip;
  }
  while(offset+10<=end){const id=String.fromCharCode(...bytes.slice(offset,offset+4));if(!/^[A-Z0-9]{4}$/.test(id))break;

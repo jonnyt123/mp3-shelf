@@ -199,3 +199,40 @@ describe("ID3 whole-tag unsynchronisation safety",()=>{
   }
  });
 });
+
+describe("ID3 extended-header structural validation",()=>{
+ function tag(version:3|4,extension:number[]){
+  const title=frame("TIT2","Verified");
+  const size=extension.length+title.length;
+  const bytes=new Uint8Array(10+size);
+  bytes.set([73,68,51,version,0,0x40,0,0,0,size]);
+  bytes.set(extension,10);
+  bytes.set(title,10+extension.length);
+  return bytes;
+ }
+ it("accepts valid v2.4 update, CRC and restriction extensions",()=>{
+  for(const extension of [
+   [0,0,0,7,1,0x40,0],
+   [0,0,0,12,1,0x20,5,0,0,0,0,0],
+   [0,0,0,8,1,0x10,1,0],
+  ])expect(parseId3Bytes(tag(4,extension))).toMatchObject({title:"Verified"});
+ });
+ it("rejects malformed v2.4 extension flags, payload sizes and trailing bytes",()=>{
+  for(const extension of [
+   [0,0,0,6,2,0],
+   [0,0,0,6,1,0x01],
+   [0,0,0,7,1,0x20,0],
+   [0,0,0,7,1,0,0],
+   [0,0,0,7,1,0x40,1],
+  ])expect(parseId3Bytes(tag(4,extension))).toEqual({});
+ });
+ it("accepts valid v2.3 CRC extension and rejects inconsistent flags",()=>{
+  expect(parseId3Bytes(tag(3,[0,0,0,10,0x80,0,0,0,0,0,0,0,0,0])))
+   .toMatchObject({title:"Verified"});
+  for(const extension of [
+   [0,0,0,6,0x80,0,0,0,0,0],
+   [0,0,0,10,0,0,0,0,0,0,0,0,0,0],
+   [0,0,0,6,0x40,0,0,0,0,0],
+  ])expect(parseId3Bytes(tag(3,extension))).toEqual({});
+ });
+});
