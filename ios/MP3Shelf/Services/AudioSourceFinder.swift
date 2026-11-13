@@ -424,13 +424,16 @@ extension AudioSourceFinder {
                     // Never choose one automatically once ambiguity is known.
                     if candidates.count > 1 { return nil }
                 }
-                // Even with one candidate, inspect a second available page.
-                // Empty or terminal pages stop normally; all traffic is capped
-                // at two pages per query and remains cancellable.
-                if page >= maxOpenversePages ||
-                   !(result.page_count.map { page < $0 } ?? (result.results.count >= 50)) {
-                    break
+                // A bounded scan cannot establish uniqueness if more pages
+                // remain unexamined. Do not auto-import the first match.
+                let hasMorePages = result.page_count.map { page < $0 }
+                    ?? (result.results.count >= 50)
+                if page >= maxOpenversePages && hasMorePages {
+                    throw SourceError.catalogsUnavailable([
+                        "Openverse: search exceeded the safe page budget."
+                    ])
                 }
+                if !hasMorePages { break }
             }
         }
         // An incomplete provider search cannot prove that a single match is
