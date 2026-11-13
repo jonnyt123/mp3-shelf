@@ -134,6 +134,8 @@ struct PortableShelfArchiveTests {
         } catch ImportTransactionFailure.invalidAudio { }
         assert(!FileManager.default.fileExists(atPath: importDestination.path))
         try assertThrowing(try Data(contentsOf: crashedSessionStage) == recoverableBytes)
+        // Keep the recovery fixture from influencing unrelated archive tests.
+        try FileManager.default.removeItem(at: crashedSessionStage)
         try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
         assert(importPersistCalls == 1)
         print("PASS: simulated cancellation leaves no new catalog file; crashed-session bytes survive reentry")
