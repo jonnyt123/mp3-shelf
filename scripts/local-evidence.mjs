@@ -49,7 +49,12 @@ export function readPersistedReceipt(path) {
         current.size !== final.size || current.mtimeMs !== final.mtimeMs ||
         current.ctimeMs !== final.ctimeMs)
       throw Error('Receipt pathname changed during reading.');
-    return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'));
+    // Buffer.toString('utf8') silently replaces invalid byte sequences with U+FFFD.
+    // Release receipts must preserve their exact UTF-8 bytes, not normalize
+    // malformed input into a different, apparently valid JSON document.
+    const json = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+      .decode(Buffer.concat(chunks, bytes));
+    return JSON.parse(json);
   } finally { closeSync(fd); }
 }
 
