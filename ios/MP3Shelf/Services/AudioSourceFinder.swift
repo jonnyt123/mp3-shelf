@@ -18,7 +18,10 @@ enum AudioSourceFinder {
         }
     }
     private struct SearchResponse: Decodable { let response: SearchBody }
-    private struct SearchBody: Decodable { let docs: [SearchItem] }
+    private struct SearchBody: Decodable {
+        let docs: [SearchItem]
+        let numFound: Int?
+    }
     private struct SearchItem: Decodable {
         let identifier: String
         let title: FlexibleText?
@@ -198,10 +201,18 @@ enum AudioSourceFinder {
         // Archive item metadata. All files still require full verification.
         let lookupStartedAt = Date()
         var detailLookupFailed = false
+        // A budget-truncated scan cannot prove a sole candidate is unique.
+        // Keep the result retryable instead of auto-downloading a possibly
+        // different recording hidden in the uninspected results.
+        var searchIncomplete = false
+        var uniqueCandidates: [URL: AudioCatalogMatch] = [:]
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
             guard ArchiveLookupBudget.stillWithinWindow(
-                startedAt: lookupStartedAt, now: Date()) else { break }
+                startedAt: lookupStartedAt, now: Date()) else {
+                searchIncomplete = true
+                break
+            }
             let search: SearchResponse = try await requestJSON(
                 archiveSearchURL(for: wish, page: page),
                 allowsCellular: allowsCellular)
@@ -219,7 +230,15 @@ enum AudioSourceFinder {
                 try Task.checkCancellation()
                 guard ArchiveLookupBudget.canRequestDetails(
                     completed: detailRequests, startedAt: lookupStartedAt,
-                    now: Date()) else { break }
+                    now: Date()) else {
+                    // Only count truncation if there are valid, uninspected
+                    // entries; malformed identifiers cannot hide a match.
+                    if ranked.drop(while: { $0.offset != entry.offset })
+                        .contains(where: { safeIdentifier($0.element.identifier) }) {
+                        searchIncomplete = true
+                    }
+                    break
+                }
                 let result = entry.element
                 guard safeIdentifier(result.identifier) else { continue }
                 detailRequests += 1
@@ -236,17 +255,33 @@ enum AudioSourceFinder {
                     continue
                 }
                 if let match = archiveCandidate(item, identifier: result.identifier, for: wish) {
-                    return match
+                    uniqueCandidates[match.downloadURL] = match
+                    // Different Archive files may be distinct editions with
+                    // identical text metadata. Never auto-select arbitrarily.
+                    if uniqueCandidates.count > 1 { return nil }
                 }
             }
-            if search.response.docs.count < 20 ||
-                !ArchiveLookupBudget.stillWithinWindow(
-                    startedAt: lookupStartedAt, now: Date()) { break }
+            if !ArchiveLookupBudget.stillWithinWindow(
+                startedAt: lookupStartedAt, now: Date()) {
+                searchIncomplete = true
+                break
+            }
+            // Archive's numFound is the authoritative total. A full final
+            // page is not necessarily incomplete when exactly 40 hits exist.
+            // If the count is absent, conservatively infer continuation from
+            // a full page rather than silently authorizing a false match.
+            let inspectedThrough = page * 20
+            let hasMorePages = search.response.numFound.map { inspectedThrough < $0 }
+                ?? (search.response.docs.count >= 20)
+            if !hasMorePages { break }
+            if page == maxArchiveSearchPages {
+                searchIncomplete = true
+            }
         }
         // An unreadable item may contain the requested recording. Allow the
         // caller's bounded retries instead of persisting a false no-match.
-        if detailLookupFailed { throw SourceError.unavailable }
-        return nil
+        if detailLookupFailed || searchIncomplete { throw SourceError.unavailable }
+        return uniqueCandidates.count == 1 ? uniqueCandidates.values.first : nil
     }
 
     static func archiveCandidate(_ item: ArchiveItem, identifier: String,
@@ -397,13 +432,16 @@ extension AudioSourceFinder {
                     // Never choose one automatically once ambiguity is known.
                     if candidates.count > 1 { return nil }
                 }
-                // Even with one candidate, inspect a second available page.
-                // Empty or terminal pages stop normally; all traffic is capped
-                // at two pages per query and remains cancellable.
-                if page >= maxOpenversePages ||
-                   !(result.page_count.map { page < $0 } ?? (result.results.count >= 50)) {
-                    break
+                // A bounded scan cannot establish uniqueness if more pages
+                // remain unexamined. Do not auto-import the first match.
+                let hasMorePages = result.page_count.map { page < $0 }
+                    ?? (result.results.count >= 50)
+                if page >= maxOpenversePages && hasMorePages {
+                    throw SourceError.catalogsUnavailable([
+                        "Openverse: search exceeded the safe page budget."
+                    ])
                 }
+                if !hasMorePages { break }
             }
         }
         // An incomplete provider search cannot prove that a single match is
@@ -659,14 +697,25 @@ extension AudioSourceFinder {
     }
     struct AudiusGate: Decodable {}
 
-    static func audiusSearchURL(for wish: PlaylistWish) -> URL {
+    // Search pagination is bounded: an exact-looking first-page recording is
+    // not unambiguous if another version is hidden on the next page.
+    static let audiusPageSize = 25
+    static let maxAudiusPages = 2
+
+    static func audiusSearchURL(for wish: PlaylistWish, page: Int = 1) -> URL {
         var parts = URLComponents(string: "https://api.audius.co/v1/tracks/search")!
+        let safePage = max(1, min(page, maxAudiusPages))
         parts.queryItems = [
             URLQueryItem(name: "query", value: "\(wish.artist) \(wish.title)"),
-            URLQueryItem(name: "limit", value: "25"),
+            URLQueryItem(name: "limit", value: String(audiusPageSize)),
+            URLQueryItem(name: "offset", value: String((safePage - 1) * audiusPageSize)),
             URLQueryItem(name: "only_downloadable", value: "true")
         ]
         return parts.url!
+    }
+
+    static func audiusHasUninspectedResults(returned: Int, page: Int) -> Bool {
+        returned >= audiusPageSize && page >= maxAudiusPages
     }
 
     static func audiusPermalink(_ raw: String?) -> URL? {
@@ -718,13 +767,27 @@ extension AudioSourceFinder {
     static func findAudius(for wish: PlaylistWish,
                            allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
-        let response: AudiusSearchResponse = try await requestJSON(audiusSearchURL(for: wish),
-                                                                  allowsCellular: allowsCellular)
-        let matched = response.data.compactMap { audiusCandidate($0, for: wish) }
-        let unique = Dictionary(grouping: matched, by: { $0.downloadURL.absoluteString })
-        // Two exact-looking recordings are ambiguous even when both providers
-        // label them as downloadable. Do not silently choose one.
-        return unique.count == 1 ? unique.values.first?.first : nil
+        var candidates: [String: AudioCatalogMatch] = [:]
+        for page in 1...maxAudiusPages {
+            try Task.checkCancellation()
+            let response: AudiusSearchResponse = try await requestJSON(
+                audiusSearchURL(for: wish, page: page), allowsCellular: allowsCellular)
+            try Task.checkCancellation()
+            for match in response.data.compactMap({ audiusCandidate($0, for: wish) }) {
+                candidates[match.downloadURL.absoluteString] = match
+                // Distinct exact-looking downloadable files can be different
+                // masters or versions. Never select one arbitrarily.
+                if candidates.count > 1 { return nil }
+            }
+            // A full final page cannot certify uniqueness. Return a retryable
+            // catalog error instead of automatically importing a possible
+            // wrong recording; do not request unbounded pages per playlist song.
+            if audiusHasUninspectedResults(returned: response.data.count, page: page) {
+                throw SourceError.unavailable
+            }
+            if response.data.count < audiusPageSize { break }
+        }
+        return candidates.count == 1 ? candidates.values.first : nil
     }
 }
 
