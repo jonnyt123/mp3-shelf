@@ -161,6 +161,54 @@ struct PortableShelfArchiveTests {
         assert(FileManager.default.fileExists(atPath: validAudioBackup.path))
         print("PASS: cancelled archive inspection preserves the existing backup")
 
+        // A malformed artwork reference on a later track must fail archive
+        // preflight before a restore can import any earlier recording.
+        // Build a real two-track container, then rewrite only its manifest;
+        // keep the payload bytes unchanged to exercise the actual reader.
+        let secondSong = MusicTrack(
+            id: UUID(), title: "Second song", artist: "Local artist",
+            album: "Album", fileName: "second.mp3",
+            originalFileName: "second.mp3", duration: 30)
+        let secondAudio = folder.appendingPathComponent("second.mp3")
+        let secondBytes = Data([0x49, 0x44, 0x33, 9, 8, 7, 6])
+        try secondBytes.write(to: secondAudio)
+        let twoTrackBackup = folder.appendingPathComponent("two-track-valid.mp3shelf")
+        try PortableShelfArchive.export([
+            .init(track: song, audioURL: audio, artwork: nil, lyrics: nil),
+            .init(track: secondSong, audioURL: secondAudio, artwork: nil, lyrics: nil)
+        ], playlists: [], to: twoTrackBackup)
+        let twoTrackArchive = try PortableShelfArchive.open(twoTrackBackup)
+        assert(twoTrackArchive.manifest.tracks.count == 2)
+        var brokenManifest = twoTrackArchive.manifest
+        brokenManifest.tracks[1].artwork = .init(
+            offset: brokenManifest.tracks[1].audio.offset, length: 0, type: "image/jpeg")
+        let manifestData = try JSONEncoder().encode(brokenManifest)
+        let originalContainer = try Data(contentsOf: twoTrackBackup)
+        let originalPayload = originalContainer.subdata(
+            in: Int(twoTrackArchive.payloadOffset)..<originalContainer.count)
+        var brokenContainer = PortableShelfArchive.magic
+        let manifestLength = UInt32(manifestData.count)
+        brokenContainer.append(contentsOf: [
+            UInt8(truncatingIfNeeded: manifestLength),
+            UInt8(truncatingIfNeeded: manifestLength >> 8),
+            UInt8(truncatingIfNeeded: manifestLength >> 16),
+            UInt8(truncatingIfNeeded: manifestLength >> 24)
+        ])
+        brokenContainer.append(manifestData)
+        brokenContainer.append(originalPayload)
+        let malformedArtworkBackup = folder.appendingPathComponent("late-empty-artwork.mp3shelf")
+        try brokenContainer.write(to: malformedArtworkBackup)
+        do {
+            _ = try PortableShelfArchive.open(malformedArtworkBackup)
+            fatalError("Late zero-length artwork must fail before restoration")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected: reject the entire archive during preflight.
+        }
+        assert(try Data(contentsOf: audio) == originalBytes)
+        assert(try Data(contentsOf: secondAudio) == secondBytes)
+        assert(try Data(contentsOf: twoTrackBackup) == originalContainer)
+        print("PASS: late zero-length artwork rejected without changing audio or valid backup")
+
         let validAudioArchive = try PortableShelfArchive.open(validAudioBackup)
         let validAudioExtract = try PortableShelfArchive.extract(
             validAudioArchive.manifest.tracks[0].audio,
