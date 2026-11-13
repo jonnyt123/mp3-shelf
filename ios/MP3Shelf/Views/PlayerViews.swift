@@ -711,6 +711,7 @@ struct PlaybackQueueSheet: View {
     @State private var settledQueueSearchText = ""
     @AccessibilityFocusState private var emptyQueueFocused: Bool
     @AccessibilityFocusState private var noMatchesFocused: Bool
+    @AccessibilityFocusState private var playbackFailureFocused: Bool
 
     // Context menus can outlive their row after automatic playback advancement.
     // Explain rejected actions instead of silently ignoring the tap, and give
@@ -972,6 +973,38 @@ struct PlaybackQueueSheet: View {
                 PremiumBackdrop()
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
+                        // A failed Play now request can leave the queue sheet open.
+                        // Surface the existing playback failure and recovery command
+                        // here, without requiring dismissal or changing saved audio.
+                        if let failure = playback.playbackError, !failure.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Label("Unable to play recording", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.headline)
+                                    .foregroundStyle(ShelfTheme.coral)
+                                Text(failure)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.white)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                HStack(spacing: 12) {
+                                    Button("Retry playback") {
+                                        playback.retryFailedPlayback()
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(ShelfTheme.accent)
+                                    .frame(minHeight: 44)
+                                    Button("Dismiss warning") {
+                                        playback.playbackError = nil
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .frame(minHeight: 44)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(16)
+                            .premiumCard(radius: 18)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityFocused($playbackFailureFocused)
+                        }
                         if let playing = library.song(with: playback.currentTrackID) {
                             PremiumEyebrow(title: "PLAYING NOW")
                             HStack(spacing: 13) {
@@ -1269,6 +1302,16 @@ struct PlaybackQueueSheet: View {
                 focusedQueueTrackID = queueSearchIsUpdating ? nil : surviving.first(where: { matchesSearch($0, query: query) })?.id
                 emptyQueueFocused = surviving.isEmpty
                 noMatchesFocused = !queueSearchIsUpdating && !surviving.isEmpty && focusedQueueTrackID == nil
+            }
+            .onChange(of: playback.playbackError) { _, error in
+                // A failed direct-play action must be discoverable to VoiceOver
+                // even when focus was previously on the selected queue row.
+                if let error, !error.isEmpty {
+                    focusedQueueTrackID = nil
+                    playbackFailureFocused = true
+                } else {
+                    playbackFailureFocused = false
+                }
             }
             .onChange(of: queueSearchText) { _, newSearch in
                 // A changed filter can hide the focused options button without
