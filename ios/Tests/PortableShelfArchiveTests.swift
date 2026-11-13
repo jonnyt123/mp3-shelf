@@ -43,6 +43,30 @@ struct PortableShelfArchiveTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
+        // Archive sidecar publication is a pre-catalog operation: a failed
+        // post-write check must remove only the new file, while existing
+        // user-owned bytes and filenames are never replaced.
+        let sidecarURL = folder.appendingPathComponent("archive-sidecar.img")
+        let sidecarBytes = Data(repeating: 0xAC, count: 4096)
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL) {
+                throw ImportTransactionFailure.catalogWrite
+            }
+            fatalError("Accepted a rejected sidecar publication")
+        } catch ImportTransactionFailure.catalogWrite { }
+        assert(!FileManager.default.fileExists(atPath: sidecarURL.path))
+        let previousSidecar = Data([0x12, 0x34, 0x56])
+        try previousSidecar.write(to: sidecarURL)
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
+            fatalError("Overwrote a pre-existing user sidecar")
+        } catch { }
+        try assertThrowing(try Data(contentsOf: sidecarURL) == previousSidecar)
+        try FileManager.default.removeItem(at: sidecarURL)
+        try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
+        try assertThrowing(try Data(contentsOf: sidecarURL) == sidecarBytes)
+        print("PASS: failed archive sidecar publication cleans new files without replacing existing bytes")
+
         // A valid recovery journal is durable metadata, not permission to
         // delete or overwrite unknown audio. A process may die after writing
         // the intent, before publishing or committing the catalog.
