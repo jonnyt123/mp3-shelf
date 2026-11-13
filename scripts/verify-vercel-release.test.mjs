@@ -525,6 +525,9 @@ test('successful empty 204 rollback response still requires verified alias readb
         return { ok: true, status: 204, body: null,
           json: async () => { throw Error('204 response has no JSON'); } };
       }
+      if (rollbackRequests && new URL(url).pathname === `/v13/deployments/${valid.domain}`) {
+        return { ok: true, status: 200, json: async () => ({ id: valid.previous }) };
+      }
       return net.fetcher(url, options);
     };
     const result = await runReleaseCheck({ ...valid, autoRollback: true },
