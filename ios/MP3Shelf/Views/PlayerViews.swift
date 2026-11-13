@@ -1159,6 +1159,16 @@ struct PlaybackQueueSheet: View {
                     pendingEmptyQueueFocus = false
                     return
                 }
+                // Search results are intentionally hidden during debounce.
+                // Do not treat that temporary absence as an emptied queue or
+                // move VoiceOver to a no-results state that is not rendered.
+                if queueSearchIsUpdating {
+                    pendingQueueFocusID = nil
+                    pendingEmptyQueueFocus = false
+                    focusedQueueTrackID = nil
+                    noMatchesFocused = false
+                    return
+                }
                 // Queue changes can also originate outside this sheet (playback
                 // advancement, shuffle, or another queue control). Recover only
                 // focus that was actually on a row that disappeared; otherwise
