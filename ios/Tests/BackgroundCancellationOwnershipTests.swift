@@ -1,38 +1,52 @@
 import Foundation
 
-// Run from repo root: swift ios/Tests/BackgroundCancellationOwnershipTests.swift
-// Source contract plus deterministic Foundation file fixture, not real URLSession/iPhone QA.
-let source = try String(contentsOfFile: "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift", encoding: .utf8)
-func slice(_ start: String, _ end: String) -> String {
-    guard let a = source.range(of: start),
-          let b = source.range(of: end, range: a.upperBound..<source.endIndex) else {
-        fatalError("Missing native callback contract: \(start)")
-    }
-    return String(source[a.lowerBound..<b.lowerBound])
-}
+// Run from repo root against integrated candidate #29:
+//   swift ios/Tests/BackgroundCancellationOwnershipTests.swift
+// Run the deterministic Foundation-only fixture on this web/QA branch:
+//   swift ios/Tests/BackgroundCancellationOwnershipTests.swift --fixture-only
+// --fixture-only does NOT verify production source contracts or URLSession behavior.
+let fixtureOnly = CommandLine.arguments.dropFirst().contains("--fixture-only")
+let productionPath = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
 func check(_ ok: Bool, _ why: String) {
     guard ok else { fatalError(why) }
 }
-let cancel = slice("func cancelTransfer(_ id: UUID", "func pendingCount(")
-let finish = slice("didFinishDownloadingTo location: URL)", "didWriteData bytesWritten:")
-let error = slice("didCompleteWithError error: Error?)", "urlSessionDidFinishEvents(")
-let a = cancel.range(of: "try BackgroundTicketManifestPolicy.write(")
-let b = cancel.range(of: "tickets = updated")
-let c = cancel.range(of: "conversions[id]?.cancel()")
-let d = cancel.range(of: "session.getAllTasks")
-check(a != nil && b != nil && c != nil && d != nil, "Cancellation steps missing")
-check(a!.lowerBound < b!.lowerBound && b!.lowerBound < c!.lowerBound &&
-      c!.lowerBound < d!.lowerBound, "Cancellation precedes durable terminal state")
-check(cancel.contains("if !processing.contains(id) && conversions[id] == nil"),
-      "Cancellation must preserve decoder-owned stage")
-check(finish.contains("if !FileManager.default.fileExists(atPath: destination.path)"),
-      "Duplicate completion must not overwrite staged bytes")
-check(finish.contains("guard self.tickets[id]?.status == .queued else"),
-      "Late completion must reject cancelled ticket")
-check(finish.contains("if !self.processing.contains(id) && self.conversions[id] == nil"),
-      "Late completion must preserve decoder-owned stage")
-check(error.contains("guard self.tickets[id]?.status == .queued else { return }"),
-      "Late URLSession errors must not revive cancelled tickets")
+if !fixtureOnly {
+    guard FileManager.default.fileExists(atPath: productionPath) else {
+        fatalError("Native downloader source absent. Run on integrated candidate #29, or pass --fixture-only for Foundation-only QA.")
+    }
+    let source = try String(contentsOfFile: productionPath, encoding: .utf8)
+    func slice(_ start: String, _ end: String) -> String {
+        guard let a = source.range(of: start),
+              let b = source.range(of: end, range: a.upperBound..<source.endIndex) else {
+            fatalError("Missing native callback contract: \(start)")
+        }
+        return String(source[a.lowerBound..<b.lowerBound])
+    }
+    let cancel = slice("func cancelTransfer(_ id: UUID", "func pendingCount(")
+    let finish = slice("didFinishDownloadingTo location: URL)", "didWriteData bytesWritten:")
+    let error = slice("didCompleteWithError error: Error?)", "urlSessionDidFinishEvents(")
+    let a = cancel.range(of: "try BackgroundTicketManifestPolicy.write(")
+    let b = cancel.range(of: "tickets = updated")
+    let c = cancel.range(of: "conversions[id]?.cancel()")
+    let d = cancel.range(of: "session.getAllTasks")
+    check(a != nil && b != nil && c != nil && d != nil, "Cancellation steps missing")
+    check(a!.lowerBound < b!.lowerBound && b!.lowerBound < c!.lowerBound &&
+          c!.lowerBound < d!.lowerBound, "Cancellation precedes durable terminal state")
+    check(cancel.contains("if !processing.contains(id) && conversions[id] == nil"),
+          "Cancellation must preserve decoder-owned stage")
+    check(finish.contains("if !FileManager.default.fileExists(atPath: destination.path)"),
+          "Duplicate completion must not overwrite staged bytes")
+    check(finish.contains("guard self.tickets[id]?.status == .queued else"),
+          "Late completion must reject cancelled ticket")
+    check(finish.contains("if !self.processing.contains(id) && self.conversions[id] == nil"),
+          "Late completion must preserve decoder-owned stage")
+    check(error.contains("guard self.tickets[id]?.status == .queued else { return }"),
+          "Late URLSession errors must not revive cancelled tickets")
+    
+    
+} else {
+    print("UNVERIFIED: production downloader source contract skipped (--fixture-only)")
+}
 
 let fm = FileManager.default
 let root = fm.temporaryDirectory.appendingPathComponent("mp3-shelf-ownership-\(UUID().uuidString)")
