@@ -326,4 +326,53 @@ describe("durable backup export",()=>{
   expect(new Uint8Array(await restored.tracks[0].blob.slice(128*1024,128*1024+1).arrayBuffer())[0]).toBe(23);
  });
 
+
+ it("aborts fingerprint sampling immediately after a concurrent playlist edit",async()=>{
+  const storage=store();
+  const media=new Blob([new Uint8Array(512*1024)]);
+  const slice=media.slice.bind(media);
+  let slices=0;
+  const newer=JSON.stringify([{...playlist[0],name:"Changed in another tab"}]);
+  Object.defineProperty(media,"slice",{value:(start?:number,end?:number,type?:string)=>{
+   slices++;
+   const part=slice(start,end,type);
+   if(slices===1){
+    const arrayBuffer=part.arrayBuffer.bind(part);
+    Object.defineProperty(part,"arrayBuffer",{value:async()=>{
+     const bytes=await arrayBuffer();
+     storage.values.set(key,newer);
+     return bytes;
+    }});
+   }
+   return part;
+  }});
+  const medium={...track,size:media.size,blob:media};
+  await expect(createStoredLibraryBackup(storage,key,async()=>[medium]))
+   .rejects.toThrow("Playlists changed");
+  expect(slices).toBe(1);
+  expect(storage.values.get(key)).toBe(newer);
+ });
+ it("aborts fingerprint sampling when deletion recovery begins during a slice read",async()=>{
+  const storage=store();
+  const media=new Blob([new Uint8Array(512*1024)]);
+  const slice=media.slice.bind(media);
+  let slices=0;
+  Object.defineProperty(media,"slice",{value:(start?:number,end?:number,type?:string)=>{
+   slices++;
+   const part=slice(start,end,type);
+   if(slices===1){
+    const arrayBuffer=part.arrayBuffer.bind(part);
+    Object.defineProperty(part,"arrayBuffer",{value:async()=>{
+     const bytes=await arrayBuffer();
+     storage.values.set("mp3-shelf-delete-recovery","pending");
+     return bytes;
+    }});
+   }
+   return part;
+  }});
+  await expect(createStoredLibraryBackup(storage,key,async()=>[{...track,size:media.size,blob:media}]))
+   .rejects.toThrow("Finish pending library recovery");
+  expect(slices).toBe(1);
+ });
+
 });
