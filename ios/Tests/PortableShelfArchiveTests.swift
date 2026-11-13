@@ -163,6 +163,50 @@ struct PortableShelfArchiveTests {
         assert(beforeEntries == afterEntries)
         print("PASS: archive sidecar no-replace symlink and staging cleanup")
 
+        // Manual lyrics imports use the same publication primitive. Exercise
+        // a real persisted catalog failure boundary: the old lyrics and
+        // library identity must remain intact, and the new destination must
+        // be removable without touching a pre-existing file.
+        let lyricsCatalog = folder.appendingPathComponent("manual-lyrics-library.json")
+        let lyricsTrack = MusicTrack(
+            id: UUID(), title: "Manual lyrics", artist: "Local",
+            album: "Fixtures", fileName: "manual-lyrics.mp3",
+            originalFileName: "manual-lyrics.mp3", duration: 12)
+        let originalLyrics = folder.appendingPathComponent("manual-lyrics-original.lrc")
+        let oldLyricsBytes = Data("[00:01.00]original".utf8)
+        try oldLyricsBytes.write(to: originalLyrics)
+        var savedLyricsTrack = lyricsTrack
+        savedLyricsTrack.lyricsFileName = originalLyrics.lastPathComponent
+        try PersistedLibrary(tracks: [savedLyricsTrack], playlists: []).write(to: lyricsCatalog)
+        let originalCatalogBytes = try Data(contentsOf: lyricsCatalog)
+        let newLyricsURL = folder.appendingPathComponent("manual-lyrics-new.lrc")
+        let newLyricsBytes = Data("[00:02.00]replacement".utf8)
+        try PortableShelfArchive.writeRestoredSidecar(newLyricsBytes, to: newLyricsURL)
+        do {
+            // Inject the same failure a full disk or protected catalog causes
+            // after publication but before the updated catalog is committed.
+            throw ImportTransactionFailure.catalogWrite
+        } catch ImportTransactionFailure.catalogWrite {
+            try FileManager.default.removeItem(at: newLyricsURL)
+        }
+        assert(!FileManager.default.fileExists(atPath: newLyricsURL.path))
+        try assertThrowing(try Data(contentsOf: originalLyrics) == oldLyricsBytes)
+        try assertThrowing(try Data(contentsOf: lyricsCatalog) == originalCatalogBytes)
+        let unchangedLyrics = try PersistedLibrary.readIfPresent(from: lyricsCatalog)
+        assert(unchangedLyrics?.tracks.first?.id == savedLyricsTrack.id)
+        assert(unchangedLyrics?.tracks.first?.lyricsFileName == originalLyrics.lastPathComponent)
+        // A subsequent retry can publish a fresh sidecar and update the
+        // catalog without changing the recording's UUID or original audio.
+        try PortableShelfArchive.writeRestoredSidecar(newLyricsBytes, to: newLyricsURL)
+        savedLyricsTrack.lyricsFileName = newLyricsURL.lastPathComponent
+        try PersistedLibrary(tracks: [savedLyricsTrack], playlists: []).write(to: lyricsCatalog)
+        let retriedLyrics = try PersistedLibrary.readIfPresent(from: lyricsCatalog)
+        assert(retriedLyrics?.tracks.first?.id == lyricsTrack.id)
+        assert(retriedLyrics?.tracks.first?.lyricsFileName == newLyricsURL.lastPathComponent)
+        try assertThrowing(try Data(contentsOf: newLyricsURL) == newLyricsBytes)
+        try assertThrowing(try Data(contentsOf: originalLyrics) == oldLyricsBytes)
+        print("PASS: manual lyrics publication rollback and retry preserve catalog IDs and old bytes")
+
         print("PASS: failed archive sidecar publication cleans new files without replacing existing bytes")
 
         // A valid recovery journal is durable metadata, not permission to
