@@ -1083,7 +1083,12 @@ final class MusicLibrary: ObservableObject {
         } catch {
             // The transaction cleans only its own staging/published file.
             // A colliding destination existed before us and is never removed.
-            if let artworkName {
+            if let artworkName,
+               !LocalAudioRecoveryRecord.retainsArtwork(
+                   artworkName, for: id, in: musicDirectory) {
+                // Ordinary validation/persistence failures remove their new
+                // sidecar. A failed rollback retains a durable recovery intent
+                // that still references it, so keep the sidecar for relaunch.
                 try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artworkName))
             }
             throw error
