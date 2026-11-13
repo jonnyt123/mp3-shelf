@@ -177,7 +177,11 @@ struct NowPlayingView: View {
     }
 
     private func seekBy(_ offset: TimeInterval) {
-        guard seekableDuration > 0 else { return }
+        // Duration can briefly remain populated after a recording is removed.
+        // Never send a transport seek without a current recording identity.
+        guard playback.currentTrackID != nil,
+              seekableDuration > 0,
+              offset.isFinite else { return }
         let destination = min(max(livePlaybackTime + offset, 0), seekableDuration)
         // A transport seek can occur while a finger is still dragging the
         // timeline. End that gesture's authority before moving the playhead;
@@ -662,6 +666,14 @@ struct NowPlayingView: View {
         }
         .onChange(of: playback.currentTrackID) { _, _ in
             invalidateActiveScrub()
+        }
+        .onDisappear {
+            // A dismissed Now Playing sheet may not receive the slider's
+            // editing-ended callback. Do not carry an invalidated gesture
+            // into a newly presented player sheet.
+            clearScrub()
+            sliderEditing = false
+            invalidatedSliderGesture = false
         }
         .onChange(of: playback.duration) { _, duration in
             // Duration can reset during a source transition without an ID change.
