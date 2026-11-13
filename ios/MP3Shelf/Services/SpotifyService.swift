@@ -487,10 +487,12 @@ final class SpotifyService: NSObject, ObservableObject {
             if http.statusCode == 429 {
                 guard let value = http.value(forHTTPHeaderField: "Retry-After"),
                       let seconds = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)),
-                      (1...10).contains(seconds) else {
+                      (0...10).contains(seconds) else {
                     throw SpotifyError.api("Spotify authentication rate limit reached. Try again later.")
                 }
-                delay = seconds
+                // A zero-second hint is valid; use a short minimum delay to
+                // prevent immediate repeated token requests.
+                delay = max(1, seconds)
             } else if (500...599).contains(http.statusCode) {
                 // Bounded deterministic backoff; no retries on 403 or other
                 // permanent client errors and no unbounded provider traffic.
