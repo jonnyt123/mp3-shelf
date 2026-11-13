@@ -619,7 +619,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             requested: previous.requested, downloadURL: previous.downloadURL,
             sourcePage: previous.sourcePage, licensePage: previous.licensePage,
             provider: previous.provider)
-        replacement.startedAt = previous.startedAt ?? .now
+        // Orphan recovery ages the *current daemon task*, not the original
+        // playlist request. An old startedAt could immediately classify a
+        // newly scheduled delayed retry as abandoned after app reattachment.
+        replacement.startedAt = .now
         replacement.automaticRetryCount = connectivityInterruption ?
             previous.automaticRetryCount : nextServerAttempt
         replacement.connectivityRetryCount = connectivityInterruption ?
@@ -652,7 +655,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             requested: old.requested, downloadURL: next.source.downloadURL,
             sourcePage: next.source.itemURL, licensePage: next.source.licenseURL,
             provider: next.source.sourceName)
-        replacement.startedAt = old.startedAt ?? .now
+        // An alternate is a fresh daemon task even when the request is old.
+        // Preserve nextRetryAt separately without inheriting orphan age.
+        replacement.startedAt = .now
         replacement.nextRetryAt = retryAt
         replacement.alternativeSources = next.remaining
         try startTransfer(replacement, replacing: (id, "Replaced by alternate verified source"))
