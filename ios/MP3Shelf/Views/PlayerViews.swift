@@ -985,7 +985,12 @@ struct PlaybackQueueSheet: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.white)
                                     .fixedSize(horizontal: false, vertical: true)
-                                HStack(spacing: 12) {
+                                // Stack at accessibility sizes so neither action
+                                // truncates or drops below the minimum tap height.
+                                let actionLayout = dynamicTypeSize.isAccessibilitySize
+                                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                                    : AnyLayout(HStackLayout(spacing: 12))
+                                actionLayout {
                                     Button("Retry playback") {
                                         playback.retryFailedPlayback()
                                     }
