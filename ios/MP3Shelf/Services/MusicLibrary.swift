@@ -2071,8 +2071,14 @@ private final class ShelfPCMConversion {
                 let state = Unmanaged<ShelfPCMConversion>.fromOpaque(raw).takeUnretainedValue()
                 let buffer = state.buffer
                 guard capacity > 0, capacity <= Int(buffer.frameCapacity) else { return -1 }
+                // AVAudioFile can throw on an AAC read made after its final
+                // frame instead of returning an empty buffer. Tell the encoder
+                // to flush at EOF, and bound the final read to remaining audio.
+                let remaining = state.file.length - state.file.framePosition
+                guard remaining > 0 else { return 0 }
                 do {
-                    try state.file.read(into: buffer, frameCount: AVAudioFrameCount(capacity))
+                    try state.file.read(into: buffer,
+                        frameCount: AVAudioFrameCount(min(Int64(capacity), remaining)))
                     if buffer.frameLength == 0 { return 0 }
                     guard let data = buffer.int16ChannelData else { return -1 }
                     output.update(from: data.pointee,
