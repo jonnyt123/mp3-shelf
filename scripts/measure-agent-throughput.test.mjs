@@ -55,6 +55,20 @@ test('classifies fixtures and scripts without crediting documentation', () => {
   assert.equal(classifyPath('src/components/music-library.tsx'), 'source');
   assert.equal(classifyPath('ios/DEVICE_QA.md'), 'other');
 });
+test('unrelated merged source is not misattributed to the owner lane', async () => {
+  const api = mock({
+    '/pulls/30': { head: { sha: one }, commits: 1 },
+    '/pulls/30/commits?per_page=100&page=1': [{ sha: one, commit: { committer: { date: recent } } }],
+    [`/commits/${one}`]: { files: [
+      { filename: 'ios/MP3Shelf/Services/SpotifyService.swift', additions: 900, deletions: 3 },
+      { filename: 'ios/MP3Shelf/Services/MusicLibrary.swift', additions: 7, deletions: 2 }
+    ] }
+  });
+  const r = await collectThroughput({ api, now, lanes: [{ name: 'playback', pr: 30 }] });
+  assert.equal(r.results[0].codeCommits, 1);
+  assert.equal(r.results[0].sourceAdditions, 7);
+  assert.equal(r.results[0].sourceDeletions, 2);
+});
 test('bounded pagination and missing file statistics fail closed', async () => {
   const api = mock({
     '/pulls/31': { head: { sha: one }, commits: 1 },
