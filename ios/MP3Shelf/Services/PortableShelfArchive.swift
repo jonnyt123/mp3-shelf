@@ -485,6 +485,31 @@ enum PortableShelfArchive {
               staged.manifest.playlists.count == lists.count else {
             throw ArchiveError.invalidManifest
         }
+        // Sources can change after their individual copy completes while the
+        // remaining tracks are exported. Recheck every preflight identity
+        // immediately before publication so an already-copied recording that
+        // was replaced or edited during a later track cannot be silently
+        // included in a supposedly consistent backup.
+        for part in parts {
+            try Task.checkCancellation()
+            guard let url = part.url else { continue }
+            guard let expected = part.sourceIdentity else {
+                throw ArchiveError.invalidManifest
+            }
+            let input = try FileHandle(forReadingFrom: url)
+            defer { try? input.close() }
+            let current = try verifyOpenedAudioSource(input, at: url,
+                                                       expectedLength: part.expectedLength)
+            guard expected.device == current.device,
+                  expected.inode == current.inode,
+                  expected.size == current.size,
+                  expected.modifiedSeconds == current.modifiedSeconds,
+                  expected.modifiedNanoseconds == current.modifiedNanoseconds,
+                  expected.changedSeconds == current.changedSeconds,
+                  expected.changedNanoseconds == current.changedNanoseconds else {
+                throw ArchiveError.invalidRange
+            }
+        }
         // Publish without replacing an existing user backup. A fileExists
         // check followed by rename/move is not atomic: another export can
         // create the destination between those operations, and POSIX rename
