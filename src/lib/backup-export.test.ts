@@ -113,4 +113,41 @@ describe("durable backup export",()=>{
   expect(cancelled).toBe(true);
   expect(storage.values.get("mp3-shelf-delete-recovery")).toBe("new deletion");
  });
+ it("cancels an unreadable stream after a partial media read",async()=>{
+  const storage=store();
+  let pulls=0,cancelled=false;
+  const damaged=new Blob([new Uint8Array([1,2,3])]);
+  Object.defineProperty(damaged,"stream",{value:()=>new ReadableStream<Uint8Array>({
+   pull(controller){
+    pulls++;
+    if(pulls===1)controller.enqueue(new Uint8Array([1]));
+    else controller.error(new Error("File provider disconnected"));
+   },
+   cancel(){cancelled=true}
+  },{highWaterMark:0})});
+  await expect(createStoredLibraryBackup(storage,key,async()=>[{...track,blob:damaged}]))
+   .rejects.toThrow("could not be read");
+  // An errored ReadableStream cannot always invoke its cancel hook, but
+  // failure must not be converted into a downloadable archive.
+  expect(pulls).toBe(2);
+  expect(storage.values.get(key)).toBe(JSON.stringify(playlist));
+  expect(typeof cancelled).toBe("boolean");
+ });
+ it("does not pull a second chunk when recovery starts between reads",async()=>{
+  const storage=store();
+  let pulls=0,cancelled=false;
+  const media=new Blob([new Uint8Array([1,2,3])]);
+  Object.defineProperty(media,"stream",{value:()=>new ReadableStream<Uint8Array>({
+   pull(controller){
+    pulls++;
+    controller.enqueue(new Uint8Array([1]));
+    storage.values.set("mp3-shelf-restore-pending","restore started");
+   },
+   cancel(){cancelled=true}
+  },{highWaterMark:0})});
+  await expect(createStoredLibraryBackup(storage,key,async()=>[{...track,blob:media}]))
+   .rejects.toThrow("Finish pending library recovery");
+  expect(pulls).toBe(1);
+  expect(cancelled).toBe(true);
+ });
 });
