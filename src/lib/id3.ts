@@ -27,7 +27,18 @@ export function parseId3Bytes(bytes:Uint8Array):AudioMetadata{
  }
  while(offset+10<=end){const id=String.fromCharCode(...bytes.slice(offset,offset+4));if(!/^[A-Z0-9]{4}$/.test(id))break;
   if(version===4&&bytes.slice(offset+4,offset+8).some(byte=>byte>127))break;
-  const size=version===4?syncSafe(bytes,offset+4):uint32(bytes,offset+4);if(size<=0||offset+10+size>end)break;const data=bytes.slice(offset+10,offset+10+size);
+  const size=version===4?syncSafe(bytes,offset+4):uint32(bytes,offset+4);
+  if(size<=0||offset+10+size>end)break;
+  // ID3 frame format flags change the on-disk payload layout. Encrypted,
+  // compressed, grouped, data-length-indicated and unsynchronised frames
+  // cannot safely be decoded as ordinary text or artwork. Skip only the
+  // affected frame so later unmodified frames still import correctly.
+  const formatFlags=bytes[offset+9];
+  const unsupported=version===3
+   ?Boolean(formatFlags&0xe0)
+   :Boolean(formatFlags&0x4f);
+  if(unsupported){offset+=10+size;continue}
+  const data=bytes.slice(offset+10,offset+10+size);
   if(textFrames[id]&&data.length>1){const value=decode(data.slice(1),data[0]);if(value)(result as Record<string,unknown>)[textFrames[id]]=value}
   if(id==="APIC"&&data.length>4){const encoding=data[0],mimeEnd=terminator(data,1,false),mime=new TextDecoder().decode(data.slice(1,mimeEnd))||"image/jpeg",pictureType=mimeEnd+1,descStart=pictureType+1,descEnd=terminator(data,descStart,encoding===1||encoding===2),imageStart=Math.min(data.length,descEnd+(encoding===1||encoding===2?2:1));if(imageStart<data.length)result.artwork=new Blob([data.slice(imageStart)],{type:mime})}
   offset+=10+size;
