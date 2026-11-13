@@ -367,15 +367,15 @@ extension AudioSourceFinder {
     static func findOpenverse(for wish: PlaylistWish,
                              allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
-        // Openverse supports field-based search. Try title+creator first so
-        // independent recordings don't get buried beneath general relevance
-        // matches; use the broader query only if no unique eligible result.
+        // A single page's unique match is not necessarily unambiguous:
+        // another page or the broader query can contain a different recording
+        // with the same title/creator. Gather a bounded cross-query inventory
+        // before authorizing an automatic download.
         var firstSearchError: Error?
+        var candidates: [String: AudioCatalogMatch] = [:]
         for fieldSearch in [true, false] {
             for page in 1...maxOpenversePages {
                 try Task.checkCancellation()
-                // A failed focused request must not skip the broader lookup.
-                // Keep errors retryable if no trustworthy result is found.
                 let result: OpenverseResponse
                 do {
                     result = try await requestJSON(
@@ -386,27 +386,31 @@ extension AudioSourceFinder {
                     if firstSearchError == nil { firstSearchError = error }
                     break
                 }
-                let matches = result.results.compactMap {
+                for match in result.results.compactMap({
                     openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
                                        landing: $0.foreign_landing_url, license: $0.license_url,
                                        filetype: $0.filetype, duration: $0.duration,
                                        source: $0.source, filesize: $0.filesize, wish: wish)
+                }) {
+                    candidates[match.downloadURL.absoluteString] = match
+                    // Different URLs may represent different recordings.
+                    // Never choose one automatically once ambiguity is known.
+                    if candidates.count > 1 { return nil }
                 }
-                // Different URLs could be distinct performances. Do not silently
-                // choose between two matching candidates, even on later pages.
-                let unique = Dictionary(grouping: matches,
-                                        by: { $0.downloadURL.absoluteString })
-                if unique.count == 1 { return unique.values.first?.first }
-                if unique.count > 1 { return nil }
-                if !shouldSearchNextOpenversePage(
-                    page: page, pageCount: result.page_count,
-                    returned: result.results.count, eligible: unique.count) { break }
+                // Even with one candidate, inspect a second available page.
+                // Empty or terminal pages stop normally; all traffic is capped
+                // at two pages per query and remains cancellable.
+                if page >= maxOpenversePages ||
+                   !(result.page_count.map { page < $0 } ?? (result.results.count >= 50)) {
+                    break
+                }
             }
         }
+        // An incomplete provider search cannot prove that a single match is
+        // unambiguous. Let the caller retry instead of auto-importing it.
         if let firstSearchError { throw firstSearchError }
-        return nil
+        return candidates.count == 1 ? candidates.values.first : nil
     }
-
 
     // Wikimedia Commons' MediaWiki file API is a separate upstream catalog:
     // Commons recordings may be absent from Openverse's index. Only explicit
