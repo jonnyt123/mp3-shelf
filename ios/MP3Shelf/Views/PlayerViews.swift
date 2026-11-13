@@ -190,6 +190,13 @@ struct NowPlayingView: View {
         playback.seek(to: destination)
     }
 
+    // Playback navigation can publish a replacement recording after this
+    // action returns. Revoke the old gesture before invoking the command.
+    private func navigatePlayback(_ action: () -> Void) {
+        invalidateActiveScrub()
+        action()
+    }
+
     private var displayedTime: Double {
         let raw = (scrubbingTrackID == playback.currentTrackID ? draggingTime : nil)
             ?? playback.currentTime
@@ -444,7 +451,7 @@ struct NowPlayingView: View {
                                         .accessibilityValue(playback.isShuffled ? "On" : "Off")
                                         .accessibilityHint("Double tap to \(playback.isShuffled ? "disable" : "enable") shuffled playback")
                                     Spacer()
-                                    Button { playback.previous() } label: {
+                                    Button { navigatePlayback { playback.previous() } } label: {
                                         Image(systemName: "backward.end.fill")
                                             .font(.system(size: 25, weight: .medium))
                                             .frame(width: 44, height: 56)
@@ -464,7 +471,7 @@ struct NowPlayingView: View {
                                     .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
                                     .accessibilityHint(playback.isPlaying ? "Pause the current recording" : "Resume the current recording")
                                     Spacer()
-                                    Button { playback.next() } label: {
+                                    Button { navigatePlayback { playback.next() } } label: {
                                         Image(systemName: "forward.end.fill")
                                             .font(.system(size: 25, weight: .medium))
                                             .frame(width: 44, height: 56)
@@ -533,7 +540,7 @@ struct NowPlayingView: View {
                                                     previewQueueChanged = true
                                                     return
                                                 }
-                                                playback.play(queued)
+                                                navigatePlayback { playback.play(queued) }
                                             } label: {
                                                 HStack(spacing: 12) {
                                                     ArtworkTile(track: next, size: 46)
