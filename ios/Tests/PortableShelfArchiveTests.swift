@@ -93,7 +93,8 @@ struct PortableShelfArchiveTests {
         let roundTrip = try PersistedLibrary.readIfPresent(from: catalog)
         assert(roundTrip?.tracks.isEmpty == true && roundTrip?.playlists.isEmpty == true)
         try FileManager.default.removeItem(at: catalog)
-        assert(try PersistedLibrary.readIfPresent(from: catalog) == nil)
+        let missingCatalog = try PersistedLibrary.readIfPresent(from: catalog)
+        assert(missingCatalog == nil)
         print("PASS: catalog symlink, dangling link and hardlink protection")
 
         // Archive sidecar publication is a pre-catalog operation: a failed
