@@ -84,6 +84,20 @@ __METHOD__
         precondition(blocked.updates == 0)
         print("PASS: manifest failure preserves history and recovery state")
 
+        // Conversion may own the staging file before processing is registered.
+        // Clearing history must not delete the decoder's input in that window.
+        let early = BackgroundAudioTicket(id: UUID(), status: .failed)
+        let earlyHarness = Harness(root.appendingPathComponent("early-queue.json"))
+        earlyHarness.tickets[early.id] = early
+        let earlyConversion = Progress(totalUnitCount: 1)
+        earlyHarness.conversions[early.id] = earlyConversion
+        try Data("converting".utf8).write(to: Harness.stagingURL(early.id))
+        earlyHarness.clearFinishedHistory()
+        precondition(earlyConversion.isCancelled)
+        precondition(fm.fileExists(atPath: Harness.stagingURL(early.id).path))
+        precondition(earlyHarness.tickets.isEmpty)
+        print("PASS: conversion-owned staging survives pre-processing cleanup")
+
         h.clearFinishedHistory()
         precondition(h.updates == 1)
         print("PASS: clearing empty history is idempotent")
