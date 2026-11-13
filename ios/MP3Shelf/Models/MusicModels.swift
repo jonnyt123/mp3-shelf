@@ -529,13 +529,37 @@ struct PersistedLibrary: Codable {
 
     /// Only a truly absent catalog means first launch. An existing but unreadable
     /// or malformed library must throw instead of masquerading as an empty one.
+    /// Distinguish a genuinely absent catalog from a dangling symbolic link,
+    /// directory or other non-regular entry. Treating those as first launch
+    /// can overwrite a recoverable library on the next save.
+    private static func catalogEntry(at url: URL) throws -> Bool {
+        var info = stat()
+        if lstat(url.path, &info) != 0 {
+            if errno == ENOENT { return false }
+            throw NSError(domain: writeFailureDomain, code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "The music library cannot be inspected safely."
+            ])
+        }
+        guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              info.st_nlink == 1 else {
+            throw NSError(domain: writeFailureDomain, code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "The music library path is not a private regular file."
+            ])
+        }
+        return true
+    }
+
     static func readIfPresent(from url: URL) throws -> Self? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard try catalogEntry(at: url) else { return nil }
         return try JSONDecoder().decode(Self.self, from: Data(contentsOf: url))
     }
 
     func write(to url: URL) throws {
         do {
+            // An existing symlink, hard-linked catalog or directory is never
+            // an acceptable replacement target. Preserve its bytes and fail
+            // rather than silently publishing a fresh library over it.
+            _ = try Self.catalogEntry(at: url)
             try JSONEncoder().encode(self).write(to: url, options: .atomic)
         } catch {
             throw NSError(domain: Self.writeFailureDomain, code: 1, userInfo: [
