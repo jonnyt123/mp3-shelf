@@ -315,10 +315,31 @@ struct NowPlayingView: View {
                                         get: {
                                             min(displayedTime, max(seekableDuration, 1))
                                         },
-                                        set: { draggingTime = $0.isFinite ? $0 : nil }
+                                        set: { proposedTime in
+                                            // The slider binding may receive updates before
+                                            // onEditingChanged(true), especially with assistive
+                                            // input. Bind the pending value to the recording
+                                            // that actually received the interaction.
+                                            guard seekableDuration > 0, proposedTime.isFinite,
+                                                  let currentID = playback.currentTrackID else {
+                                                clearScrub()
+                                                return
+                                            }
+                                            if scrubbingTrackID == nil {
+                                                scrubbingTrackID = currentID
+                                            }
+                                            // Never transfer a drag from a previous song to
+                                            // a newly advanced recording.
+                                            guard scrubbingTrackID == currentID else { return }
+                                            draggingTime = min(max(proposedTime, 0), seekableDuration)
+                                        }
                                     ), in: 0...max(seekableDuration, 1), onEditingChanged: { editing in
                                         if editing {
-                                            scrubbingTrackID = playback.currentTrackID
+                                            // Do not overwrite the identity captured by the
+                                            // binding if a track switched mid-interaction.
+                                            if scrubbingTrackID == nil {
+                                                scrubbingTrackID = playback.currentTrackID
+                                            }
                                         } else {
                                             if scrubbingTrackID == playback.currentTrackID,
                                                seekableDuration > 0,
