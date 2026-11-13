@@ -142,6 +142,7 @@ struct NowPlayingView: View {
     @State private var showLyrics = false
     @State private var showQueue = false
     @State private var previewQueueChanged = false
+    @State private var openQueueAfterPreviewAlert = false
     @AccessibilityFocusState private var queueButtonFocused: Bool
     private let seekStep: TimeInterval = 15
 
@@ -479,6 +480,8 @@ struct NowPlayingView: View {
                                                     // A preview can become stale when playback advances
                                                     // before a VoiceOver user activates its button.
                                                     // Never start a track that is no longer queued.
+                                                    openQueueAfterPreviewAlert = false
+                                                    queueButtonFocused = false
                                                     previewQueueChanged = true
                                                     return
                                                 }
@@ -565,16 +568,32 @@ struct NowPlayingView: View {
             .navigationDestination(isPresented: $showLyrics) {
                 if let id = playback.currentTrackID { LyricsView(songID: id) }
             }
-             .onChange(of: showQueue) { _, presented in
-                 queueButtonFocused = !presented
-             }
+            .onChange(of: showQueue) { _, presented in
+                // A modal alert owns VoiceOver focus until it is dismissed.
+                queueButtonFocused = !presented && !previewQueueChanged
+            }
+            .onChange(of: previewQueueChanged) { _, presented in
+                guard !presented else {
+                    queueButtonFocused = false
+                    return
+                }
+                if openQueueAfterPreviewAlert {
+                    // Avoid asking SwiftUI to present a sheet from inside an
+                    // alert action while the alert presentation is still active.
+                    openQueueAfterPreviewAlert = false
+                    showQueue = true
+                } else if !showQueue {
+                    queueButtonFocused = true
+                }
+            }
             .alert("Queue changed", isPresented: $previewQueueChanged) {
                 Button("Review queue") {
-                    // Present the live queue, rather than silently ignoring
-                    // a preview tap or replaying an obsolete recording.
-                    showQueue = true
+                    // Defer navigation until the alert binding dismisses.
+                    openQueueAfterPreviewAlert = true
                 }
-                Button("OK", role: .cancel) {}
+                Button("OK", role: .cancel) {
+                    openQueueAfterPreviewAlert = false
+                }
             } message: {
                 Text("That song is no longer upcoming. Review the updated queue to choose what plays next.")
             }
