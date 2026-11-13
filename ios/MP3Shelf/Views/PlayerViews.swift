@@ -712,6 +712,8 @@ struct PlaybackQueueSheet: View {
     @AccessibilityFocusState private var emptyQueueFocused: Bool
     @AccessibilityFocusState private var noMatchesFocused: Bool
     @AccessibilityFocusState private var playbackFailureFocused: Bool
+    @State private var retryFeedback: String?
+    @State private var lastRetryError: String?
 
     // Context menus can outlive their row after automatic playback advancement.
     // Explain rejected actions instead of silently ignoring the tap, and give
@@ -985,6 +987,13 @@ struct PlaybackQueueSheet: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.white)
                                     .fixedSize(horizontal: false, vertical: true)
+                                if let retryFeedback {
+                                    Text(retryFeedback)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(ShelfTheme.mint)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .accessibilityAddTraits(.updatesFrequently)
+                                }
                                 // Stack at accessibility sizes so neither action
                                 // truncates or drops below the minimum tap height.
                                 let actionLayout = dynamicTypeSize.isAccessibilitySize
@@ -992,12 +1001,26 @@ struct PlaybackQueueSheet: View {
                                     : AnyLayout(HStackLayout(spacing: 12))
                                 actionLayout {
                                     Button("Retry playback") {
+                                        // A failed retry may publish the identical error
+                                        // string, which does not trigger onChange. Give
+                                        // explicit feedback without clearing the warning.
+                                        lastRetryError = playback.playbackError
+                                        retryFeedback = "Retrying recording…"
                                         playback.retryFailedPlayback()
+                                        if let error = playback.playbackError, !error.isEmpty {
+                                            retryFeedback = error == lastRetryError
+                                                ? "Still unable to play. Choose another queued song or try again."
+                                                : "Retry failed. \(error)"
+                                        } else {
+                                            retryFeedback = nil
+                                        }
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .tint(ShelfTheme.accent)
                                     .frame(minHeight: 44)
                                     Button("Dismiss warning") {
+                                        retryFeedback = nil
+                                        lastRetryError = nil
                                         playback.playbackError = nil
                                     }
                                     .buttonStyle(.bordered)
@@ -1312,9 +1335,12 @@ struct PlaybackQueueSheet: View {
                 // A failed direct-play action must be discoverable to VoiceOver
                 // even when focus was previously on the selected queue row.
                 if let error, !error.isEmpty {
+                    if error != lastRetryError { retryFeedback = nil }
                     focusedQueueTrackID = nil
                     playbackFailureFocused = true
                 } else {
+                    retryFeedback = nil
+                    lastRetryError = nil
                     playbackFailureFocused = false
                 }
             }
