@@ -334,3 +334,27 @@ describe("ID3 artwork field boundaries",()=>{
   expect(Array.from(new Uint8Array(await artwork!.arrayBuffer()))).toEqual([137,80,78,71]);
  });
 });
+
+describe("ID3 APIC missing MIME regression",()=>{
+ function makeTag(payload:number[]){
+  const frameBytes=new Uint8Array(10+payload.length);
+  frameBytes.set(new TextEncoder().encode("APIC"));
+  new DataView(frameBytes.buffer).setUint32(4,payload.length);
+  frameBytes.set(payload,10);
+  const bytes=new Uint8Array(10+frameBytes.length);
+  bytes.set([73,68,51,3,0,0,0,0,0,frameBytes.length]);
+  bytes.set(frameBytes,10);
+  return bytes;
+ }
+ it("does not assume JPEG for a MIME-less APIC payload",async()=>{
+  const tag=makeTag([0,0,3,0,0x3c,0x73,0x76,0x67,0x3e]);
+  expect(parseId3Bytes(tag).artwork).toBeUndefined();
+  expect((await readAudioMetadata(new Blob([tag]))).artwork).toBeUndefined();
+ });
+ it("preserves valid explicit JPEG MIME metadata",async()=>{
+  const tag=makeTag([0,...new TextEncoder().encode("image/jpeg"),0,3,0,0xff,0xd8,0xff]);
+  const artwork=(await readAudioMetadata(new Blob([tag]))).artwork;
+  expect(artwork?.type).toBe("image/jpeg");
+  expect(Array.from(new Uint8Array(await artwork!.arrayBuffer()))).toEqual([0xff,0xd8,0xff]);
+ });
+});
