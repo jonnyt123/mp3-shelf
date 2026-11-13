@@ -990,7 +990,7 @@ struct PlaybackQueueSheet: View {
                                 if let retryFeedback {
                                     Text(retryFeedback)
                                         .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(ShelfTheme.mint)
+                                        .foregroundStyle(ShelfTheme.coral)
                                         .fixedSize(horizontal: false, vertical: true)
                                         .accessibilityAddTraits(.updatesFrequently)
                                 }
@@ -1004,11 +1004,12 @@ struct PlaybackQueueSheet: View {
                                         // A failed retry may publish the identical error
                                         // string, which does not trigger onChange. Give
                                         // explicit feedback without clearing the warning.
-                                        lastRetryError = playback.playbackError
+                                        let previousError = playback.playbackError
                                         retryFeedback = "Retrying recording…"
                                         playback.retryFailedPlayback()
                                         if let error = playback.playbackError, !error.isEmpty {
-                                            retryFeedback = error == lastRetryError
+                                            lastRetryError = error
+                                            retryFeedback = error == previousError
                                                 ? "Still unable to play. Choose another queued song or try again."
                                                 : "Retry failed. \(error)"
                                         } else {
