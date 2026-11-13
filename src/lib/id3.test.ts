@@ -276,3 +276,31 @@ describe("ID3 reserved frame bits and invalid encoding regression",()=>{
   }
  });
 });
+
+describe("ID3 embedded artwork MIME validation",()=>{
+ function artworkTag(mime:string){
+  const payload=new Uint8Array([0,...new TextEncoder().encode(mime),0,3,0,1,2,3,4]);
+  const frame=new Uint8Array(10+payload.length);
+  frame.set(new TextEncoder().encode("APIC"));
+  new DataView(frame.buffer).setUint32(4,payload.length);
+  frame.set(payload,10);
+  const tag=new Uint8Array(10+frame.length);
+  tag.set([73,68,51,3,0,0,0,0,0,frame.length]);
+  tag.set(frame,10);
+  return tag;
+ }
+ it("preserves supported image artwork and its media type",()=>{
+  for(const mime of ["image/jpeg","image/png","image/gif","image/webp"]){
+   const artwork=parseId3Bytes(artworkTag(mime)).artwork;
+   expect(artwork?.type).toBe(mime);
+   expect(artwork?.size).toBe(4);
+  }
+ });
+ it("does not promote arbitrary embedded data to browser artwork",async()=>{
+  for(const mime of ["text/html","image/svg+xml","application/javascript"]){
+   const tag=artworkTag(mime);
+   expect(parseId3Bytes(tag).artwork).toBeUndefined();
+   expect((await readAudioMetadata(new Blob([tag]))).artwork).toBeUndefined();
+  }
+ });
+});
