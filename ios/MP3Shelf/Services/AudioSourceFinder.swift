@@ -198,6 +198,7 @@ enum AudioSourceFinder {
         // Archive item metadata. All files still require full verification.
         let lookupStartedAt = Date()
         var detailLookupFailed = false
+        var uniqueCandidates: [URL: AudioCatalogMatch] = [:]
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
             guard ArchiveLookupBudget.stillWithinWindow(
@@ -236,7 +237,10 @@ enum AudioSourceFinder {
                     continue
                 }
                 if let match = archiveCandidate(item, identifier: result.identifier, for: wish) {
-                    return match
+                    uniqueCandidates[match.downloadURL] = match
+                    // Different Archive files may be distinct editions with
+                    // identical text metadata. Never auto-select arbitrarily.
+                    if uniqueCandidates.count > 1 { return nil }
                 }
             }
             if search.response.docs.count < 20 ||
@@ -246,7 +250,7 @@ enum AudioSourceFinder {
         // An unreadable item may contain the requested recording. Allow the
         // caller's bounded retries instead of persisting a false no-match.
         if detailLookupFailed { throw SourceError.unavailable }
-        return nil
+        return uniqueCandidates.count == 1 ? uniqueCandidates.values.first : nil
     }
 
     static func archiveCandidate(_ item: ArchiveItem, identifier: String,
