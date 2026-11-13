@@ -237,6 +237,45 @@ struct PortableShelfArchiveTests {
         } catch ImportTransactionFailure.catalogWrite { }
         assert(!FileManager.default.fileExists(atPath: journaledDestination.path))
         assert(!FileManager.default.fileExists(atPath: journaledIntent.path))
+        // Simulate an OS/filesystem refusal to unlink a published file after
+        // catalog persistence fails. Preserve the original source, published
+        // audio, staging bytes and durable journal for a subsequent retry.
+        var injectedRollbackCalls = 0
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: journaledDestination,
+                validate: { _ in },
+                recoveryTrack: { journaledTrack },
+                rollbackPublished: { published in
+                    assert(published == journaledDestination)
+                    injectedRollbackCalls += 1
+                    throw ImportTransactionFailure.catalogWrite
+                },
+                persist: { throw ImportTransactionFailure.catalogWrite })
+            fatalError("Injected rollback failure unexpectedly committed")
+        } catch ImportTransactionFailure.catalogWrite { }
+        assert(injectedRollbackCalls == 1)
+        let retainedIntent = try LocalAudioRecoveryRecord.read(
+            journaledIntent, in: folder)
+        let retainedStage = folder.appendingPathComponent(retainedIntent.stagingName)
+        assert(FileManager.default.fileExists(atPath: retainedStage.path))
+        try assertThrowing(try Data(contentsOf: retainedStage) == incomingBytes)
+        try assertThrowing(try Data(contentsOf: journaledDestination) == incomingBytes)
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        let retryPublished = try retainedIntent.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == incomingBytes
+        }
+        assert(retryPublished == journaledDestination)
+        try FileManager.default.removeItem(at: journaledDestination)
+        let repairedAfterLoss = try retainedIntent.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == incomingBytes
+        }
+        assert(repairedAfterLoss == journaledDestination)
+        try assertThrowing(try Data(contentsOf: journaledDestination) == incomingBytes)
+        try FileManager.default.removeItem(at: journaledDestination)
+        try FileManager.default.removeItem(at: retainedStage)
+        try FileManager.default.removeItem(at: journaledIntent)
+        print("PASS: failed rollback retains staged bytes and journal for retry")
         try LocalAudioImportTransaction.perform(
             from: importSource, to: journaledDestination,
             validate: { _ in },
