@@ -272,9 +272,9 @@ enum PlaylistCSVTests {
               "missing long recording cannot be replaced by an available short cut")
         check(versioned.reusableTrack(for: longWish, isAvailable: { _ in true })?.id == twoCuts[0].id,
               "available exact recording retains the expected match")
-        let unknownDuration = PlaylistWish(title: "Same Song", artist: "One Band",
+        let ambiguousDuration = PlaylistWish(title: "Same Song", artist: "One Band",
                                            album: "", spotifyURL: nil)
-        check(versioned.reusableTrack(for: unknownDuration) == nil,
+        check(versioned.reusableTrack(for: ambiguousDuration) == nil,
               "ambiguous same-name recordings remain unmatched")
         let missingWish = PlaylistWish(title: "Absent track", artist: "One Band",
                                        album: "", spotifyURL: nil)
