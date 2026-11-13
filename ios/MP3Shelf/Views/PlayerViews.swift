@@ -708,6 +708,7 @@ struct PlaybackQueueSheet: View {
     @State private var pendingEmptyQueueFocus = false
     @State private var queueChangedAlert = false
     @State private var queueSearchText = ""
+    @State private var settledQueueSearchText = ""
     @AccessibilityFocusState private var emptyQueueFocused: Bool
     @AccessibilityFocusState private var noMatchesFocused: Bool
 
@@ -758,7 +759,8 @@ struct PlaybackQueueSheet: View {
     private func reorder(_ trackID: UUID, earlier: Bool) {
         // An already-open menu or delayed accessibility action may fire after
         // search begins. Do not silently move hidden neighbors in that case.
-        guard queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard !queueSearchIsUpdating,
+              queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             pendingQueueFocusID = nil
             pendingEmptyQueueFocus = false
             return
@@ -815,6 +817,11 @@ struct PlaybackQueueSheet: View {
         pendingQueueFocusID = nil
         pendingEmptyQueueFocus = false
         playback.play(track)
+    }
+
+    private var queueSearchIsUpdating: Bool {
+        queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            != settledQueueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func matchesSearch(_ track: MusicTrack, query: String) -> Bool {
@@ -918,8 +925,10 @@ struct PlaybackQueueSheet: View {
         let upcoming = playback.queuedTracks
         // Filter presentation only. Keep the original indices for move and
         // play-next operations so a search never reorders the underlying queue.
-        let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let visibleRows = Array(upcoming.enumerated()).filter { _, track in
+        let query = settledQueueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Never expose stale search results while a new query is settling.
+        // Filtering once after typing stops avoids repeated full-queue scans.
+        let visibleRows = queueSearchIsUpdating ? [] : Array(upcoming.enumerated()).filter { _, track in
             matchesSearch(track, query: query)
         }
         let visibleIDs = visibleRows.map { $0.element.id }
@@ -976,6 +985,11 @@ struct PlaybackQueueSheet: View {
                             .premiumCard()
                             .accessibilityElement(children: .combine)
                             .accessibilityFocused($emptyQueueFocused)
+                        } else if queueSearchIsUpdating {
+                            ProgressView("Searching queue…")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 24)
+                                .accessibilityLabel("Updating queue search results")
                         } else if visibleRows.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Image(systemName: "magnifyingglass")
@@ -1207,9 +1221,9 @@ struct PlaybackQueueSheet: View {
                 pendingQueueFocusID = nil
                 pendingEmptyQueueFocus = false
                 let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-                focusedQueueTrackID = surviving.first(where: { matchesSearch($0, query: query) })?.id
+                focusedQueueTrackID = queueSearchIsUpdating ? nil : surviving.first(where: { matchesSearch($0, query: query) })?.id
                 emptyQueueFocused = surviving.isEmpty
-                noMatchesFocused = !surviving.isEmpty && focusedQueueTrackID == nil
+                noMatchesFocused = !queueSearchIsUpdating && !surviving.isEmpty && focusedQueueTrackID == nil
             }
             .onChange(of: queueSearchText) { _, newSearch in
                 // A changed filter can hide the focused options button without
@@ -1227,6 +1241,16 @@ struct PlaybackQueueSheet: View {
                 }
                 noMatchesFocused = false
                 emptyQueueFocused = false
+            }
+            .task(id: queueSearchText) {
+                let requested = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !requested.isEmpty {
+                    do { try await Task.sleep(for: .milliseconds(220)) }
+                    catch { return }
+                }
+                guard !Task.isCancelled,
+                      queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines) == requested else { return }
+                settledQueueSearchText = queueSearchText
             }
             .searchable(text: $queueSearchText, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "Search queued songs")
