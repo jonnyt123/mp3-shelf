@@ -437,3 +437,45 @@ test('healthy probes cannot certify a SHA after the production alias changes', a
     else process.env.VERCEL_TOKEN = old;
   }
 });
+
+test('oversized streamed Vercel metadata fails closed before health probes or rollback', async () => {
+  const old = process.env.VERCEL_TOKEN;
+  process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    let requests = 0;
+    let cancelled = false;
+    const fetcher = async () => {
+      requests++;
+      const stream = new ReadableStream({
+        start(controller) { controller.enqueue(new Uint8Array(1024 * 1024 + 1)); },
+        cancel() { cancelled = true; }
+      });
+      return { ok: true, status: 200, headers: { get: () => null }, body: stream,
+        json: async () => { throw Error('Unbounded JSON parser must not run'); } };
+    };
+    await assert.rejects(runReleaseCheck({ ...valid, autoRollback: true }, { fetcher, sleep: async () => {} }), /Oversized/);
+    assert.equal(requests, 1);
+    assert.equal(cancelled, true);
+  } finally {
+    if (old === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = old;
+  }
+});
+
+test('invalid UTF-8 in streamed Vercel metadata fails closed before health probes', async () => {
+  const old = process.env.VERCEL_TOKEN;
+  process.env.VERCEL_TOKEN = 'fixture';
+  try {
+    let requests = 0;
+    const fetcher = async () => {
+      requests++;
+      return new Response(new Uint8Array([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]),
+        { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    await assert.rejects(runReleaseCheck(valid, { fetcher, sleep: async () => {} }), /encoded|UTF-8|decode/i);
+    assert.equal(requests, 1);
+  } finally {
+    if (old === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = old;
+  }
+});
