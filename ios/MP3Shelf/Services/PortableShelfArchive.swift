@@ -670,12 +670,16 @@ enum PortableShelfArchive {
             mediaRanges.append((track.audio.offset, track.audio.offset + track.audio.length))
             audioParts.insert(MediaPartKey(track.audio))
             if let artwork = track.artwork {
+                // An artwork reference is not optional once present in the
+                // manifest. A zero-length reference passes range validation,
+                // but readBytes() rejects it after earlier tracks may already
+                // have been restored. Reject the entire manifest up front so
+                // malformed late artwork cannot produce a partial restore.
+                guard artwork.length > 0 else { throw ArchiveError.invalidManifest }
                 guard artwork.length <= 20 * 1024 * 1024 else { throw ArchiveError.oversized }
                 try validate(artwork, payloadSize: payloadSize)
-                if artwork.length > 0 {
-                    mediaRanges.append((artwork.offset, artwork.offset + artwork.length))
-                    artworkParts.insert(MediaPartKey(artwork))
-                }
+                mediaRanges.append((artwork.offset, artwork.offset + artwork.length))
+                artworkParts.insert(MediaPartKey(artwork))
             }
             if let lyrics = track.lyrics, Data(lyrics.utf8).count > 500 * 1024 {
                 throw ArchiveError.oversized
