@@ -816,6 +816,8 @@ struct PlaybackQueueSheet: View {
         }
         pendingQueueFocusID = nil
         pendingEmptyQueueFocus = false
+        focusedQueueTrackID = nil
+        noMatchesFocused = false
         playback.play(track)
     }
 
@@ -886,8 +888,11 @@ struct PlaybackQueueSheet: View {
                         .foregroundStyle(ShelfTheme.subdued)
                         .accessibilityHidden(true)
                 }
-                playNextButton(track, alreadyNext: index == 0)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 16) {
+                    playNowButton(track)
+                    playNextButton(track, alreadyNext: index == 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
             HStack(spacing: 8) {
@@ -898,9 +903,29 @@ struct PlaybackQueueSheet: View {
                            available: canMove(index: index, count: upcoming.count, earlier: false),
                                searching: searching)
                 Spacer(minLength: 0)
+                playNowButton(track)
                 playNextButton(track, alreadyNext: index == 0)
             }
         }
+    }
+
+    // Play now is a first-class action in search results as well as the full
+    // queue. A user should not have to discover the overflow menu to play a
+    // matched recording. playNow() revalidates the live queue before playback.
+    private func playNowButton(_ track: MusicTrack) -> some View {
+        Button {
+            playNow(track.id)
+        } label: {
+            Label("Play now", systemImage: "play.fill")
+                .font(.caption.weight(.semibold))
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                .frame(minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(ShelfTheme.mint)
+        .accessibilityLabel("Play now: \(track.title), \(track.artist)")
+        .accessibilityHint("Start this recording immediately from the upcoming queue")
     }
 
     private func playNextButton(_ track: MusicTrack, alreadyNext: Bool) -> some View {
