@@ -602,11 +602,13 @@ struct PlaybackQueueSheet: View {
     // Explain rejected actions instead of silently ignoring the tap, and give
     // VoiceOver a surviving focus target in the refreshed queue.
     private func reportStaleQueueAction() {
+        // An alert temporarily owns accessibility focus. Do not focus a queue
+        // row underneath it: VoiceOver may lose the alert or jump unexpectedly.
+        // Restore a live target only after the user dismisses the alert.
         pendingQueueFocusID = nil
         pendingEmptyQueueFocus = false
-        let current = playback.queuedTracks
-        focusedQueueTrackID = current.first?.id
-        emptyQueueFocused = current.isEmpty
+        focusedQueueTrackID = nil
+        emptyQueueFocused = false
         queueChangedAlert = true
     }
 
@@ -977,7 +979,15 @@ struct PlaybackQueueSheet: View {
                 }
             }
             .alert("Queue changed", isPresented: $queueChangedAlert) {
-                Button("OK", role: .cancel) { }
+                Button("OK", role: .cancel) {
+                    // Re-resolve after dismissal: playback may advance again
+                    // while the alert is visible. Never focus a vanished row.
+                    let surviving = playback.queuedTracks
+                    pendingQueueFocusID = nil
+                    pendingEmptyQueueFocus = false
+                    focusedQueueTrackID = surviving.first?.id
+                    emptyQueueFocused = surviving.isEmpty
+                }
             } message: {
                 Text("That song is no longer in the upcoming queue. The list has been updated.")
             }
