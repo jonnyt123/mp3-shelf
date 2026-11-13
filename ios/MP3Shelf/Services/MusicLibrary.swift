@@ -677,7 +677,11 @@ final class MusicLibrary: ObservableObject {
         guard let name = track.artworkFileName else { return nil }
         let key = name as NSString
         if let cached = artworkCache.object(forKey: key) { return cached }
-        guard let data = try? Data(contentsOf: artworkDirectory.appendingPathComponent(name)),
+        // Catalog filenames are untrusted after legacy restores or corruption.
+        // Reuse the archive reader's descriptor-bound, symlink-safe and size-
+        // limited sidecar checks rather than reading arbitrary paths into memory.
+        guard let data = try? PortableShelfArchive.readSidecar(
+                  named: name, from: artworkDirectory, maximumBytes: 20 * 1024 * 1024),
               let image = UIImage(data: data) else { return nil }
         // Cache is automatically evicted under memory pressure. Decoding the
         // same cover on every library row render would be unnecessarily costly.
@@ -691,7 +695,8 @@ final class MusicLibrary: ObservableObject {
 
     func lyrics(for track: MusicTrack) -> [LyricLine] {
         guard let filename = track.lyricsFileName,
-              let bytes = try? Data(contentsOf: lyricsDirectory.appendingPathComponent(filename)),
+              let bytes = try? PortableShelfArchive.readSidecar(
+                  named: filename, from: lyricsDirectory, maximumBytes: 500 * 1024),
               let content = String(data: bytes, encoding: .utf8) else { return [] }
         return LyricsParser.parse(content)
     }
@@ -1912,7 +1917,12 @@ final class MusicLibrary: ObservableObject {
     }
 
     func trackSizeBytes(_ track: MusicTrack) -> Int64 {
-        let size = (try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        // Never count arbitrary outside files or follow symlinked catalog paths.
+        guard let owned = LocalLibraryFileSafety.regularFile(
+                  named: track.fileName, in: musicDirectory),
+              let size = try? owned.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            return 0
+        }
         return Int64(max(size, 0))
     }
 
