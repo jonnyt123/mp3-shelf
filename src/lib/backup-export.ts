@@ -77,6 +77,18 @@ export async function createStoredLibraryBackup(
    }
   }
  }
+ // A second IndexedDB read catches recordings imported, removed, or edited
+ // by another tab while large media streams were being validated. This is
+ // optimistic conflict detection, not a cross-store atomic snapshot.
  assertSnapshot();
+ const latest=await loadTracks();
+ assertSnapshot();
+ const signature=(items:Track[])=>JSON.stringify(items.map(item=>[
+  item.id,item.name,item.originalName,item.artist,item.album,item.size,
+  item.type,item.importedAt,item.blob.size,item.blob.type,
+  item.artwork?.size??null,item.artwork?.type??null
+ ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
+ if(signature(tracks)!==signature(latest))
+  throw new Error("Saved recordings changed while preparing the backup. Retry export.");
  return backup;
 }
