@@ -688,8 +688,10 @@ struct PlaybackQueueSheet: View {
             return
         }
         guard earlier ? index > 0 : index < current.count - 1 else {
-            // An obsolete context-menu action must not leave focus pending.
-            pendingQueueFocusID = nil
+            // The menu was created for an older queue ordering. An action
+            // that has become impossible must explain the change rather than
+            // silently doing nothing or leaving a stale focus request.
+            reportStaleQueueAction()
             return
         }
         focusAfterQueueMutation(trackID)
@@ -707,8 +709,12 @@ struct PlaybackQueueSheet: View {
         // Already next: no queue publication will follow, so avoid leaving a
         // pending focus request that could hijack a later unrelated queue edit.
         guard index > 0 else {
+            // The row may have moved to first while an old context menu
+            // remained open. The command is now redundant, but the recording
+            // is still present; restore focus to its surviving options.
             pendingQueueFocusID = nil
             pendingEmptyQueueFocus = false
+            emptyQueueFocused = false
             focusedQueueTrackID = trackID
             return
         }
