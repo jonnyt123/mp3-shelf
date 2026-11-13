@@ -18,7 +18,7 @@ check(implementation.contains("uniqueCandidates[match.downloadURL] = match"),
       "candidate inventory persists across pages")
 check(implementation.contains("if uniqueCandidates.count > 1 { return nil }"),
       "distinct matching files block automatic selection")
-check(implementation.contains("if detailLookupFailed { throw SourceError.unavailable }"),
+check(implementation.contains("if detailLookupFailed || searchIncomplete { throw SourceError.unavailable }"),
       "incomplete metadata lookup prevents unsafe auto-selection")
 check(implementation.contains("return uniqueCandidates.count == 1 ? uniqueCandidates.values.first : nil"),
       "selection happens only after the bounded search")
@@ -51,4 +51,49 @@ do {
     preconditionFailure("FAIL: incomplete metadata accepted")
 } catch {
     print("PASS: incomplete metadata does not authorize selection")
+}
+
+check(implementation.contains("var searchIncomplete = false"),
+      "Archive scan tracks incomplete coverage")
+check(implementation.contains("if page == maxArchiveSearchPages"),
+      "full final search page cannot certify uniqueness")
+check(implementation.contains("searchIncomplete = true"),
+      "request budget exhaustion invalidates automatic selection")
+check(implementation.contains("if detailLookupFailed || searchIncomplete"),
+      "incomplete scan retries instead of importing a lone match")
+
+func boundedSelection(_ pages: [[String]], totalPages: Int,
+                      detailBudget: Int, elapsedBudgetExhausted: Bool = false) throws -> String? {
+    var seen = Set<String>()
+    var examined = 0
+    for page in pages {
+        for url in page {
+            if examined >= detailBudget { throw NSError(domain: "budget", code: 1) }
+            examined += 1
+            seen.insert(url)
+            if seen.count > 1 { return nil }
+        }
+    }
+    if elapsedBudgetExhausted || totalPages > pages.count {
+        throw NSError(domain: "incomplete", code: 2)
+    }
+    return seen.first
+}
+check(try boundedSelection([["a.mp3"], ["a.mp3"]], totalPages: 2, detailBudget: 8) == "a.mp3",
+      "complete duplicate inventory permits one recording")
+check(try boundedSelection([["a.mp3"], ["b.mp3"]], totalPages: 2, detailBudget: 8) == nil,
+      "complete conflicting inventory blocks automatic import")
+for fixture in [
+    (pages: [["a.mp3"]], total: 2, budget: 8, elapsed: false),
+    (pages: [["a.mp3", "b.mp3"]], total: 1, budget: 1, elapsed: false),
+    (pages: [["a.mp3"]], total: 1, budget: 8, elapsed: true)
+] {
+    do {
+        _ = try boundedSelection(fixture.pages, totalPages: fixture.total,
+                                 detailBudget: fixture.budget,
+                                 elapsedBudgetExhausted: fixture.elapsed)
+        preconditionFailure("FAIL: truncated scan authorized a recording")
+    } catch {
+        print("PASS: truncated scan remains retryable")
+    }
 }
