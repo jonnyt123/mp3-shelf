@@ -903,7 +903,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 secondScanHasTask: false,
                 hasUnidentifiedTasks: first.hasUnknownTasks,
                 hasStagedFile: fm.fileExists(atPath: Self.stagingURL(ticket.id).path),
-                isImporting: processing.contains(ticket.id))
+                isImporting: processing.contains(ticket.id) || conversions[ticket.id] != nil)
         }.map(\.id)
         guard !possible.isEmpty else { return }
 
@@ -923,7 +923,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                       secondScanHasTask: second.ids.contains(id),
                       hasUnidentifiedTasks: second.hasUnknownTasks,
                       hasStagedFile: fm.fileExists(atPath: Self.stagingURL(id).path),
-                      isImporting: processing.contains(id)) else { continue }
+                      isImporting: processing.contains(id) || conversions[id] != nil) else { continue }
 
             // A recording might already have been imported before a crash
             // prevented the transfer manifest from being finalized.
