@@ -20,17 +20,33 @@ struct MiniPlayer: View {
             // An iPhone in Split View or with larger text can be narrower
             // than its nominal size class. Fit the controls below metadata
             // before compressing the title into an unusable tap target.
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 12) {
-                    openNowPlaying(track)
-                        .frame(minWidth: 155)
-                    transportControls
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    openNowPlaying(track)
-                    HStack(spacing: 12) {
-                        Spacer(minLength: 0)
-                        transportControls
+            Group {
+                // ViewThatFits can accept a compressed HStack even when the
+                // metadata becomes unreadable. At accessibility sizes, give
+                // the song details their own row and preserve full-size
+                // transport targets below them.
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 8) {
+                        openNowPlaying(track)
+                        HStack(spacing: 12) {
+                            Spacer(minLength: 0)
+                            transportControls
+                        }
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: 12) {
+                            openNowPlaying(track)
+                                .frame(minWidth: 155)
+                            transportControls
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            openNowPlaying(track)
+                            HStack(spacing: 12) {
+                                Spacer(minLength: 0)
+                                transportControls
+                            }
+                        }
                     }
                 }
             }
