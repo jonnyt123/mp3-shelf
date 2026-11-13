@@ -363,7 +363,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         conversions[id]?.cancel()
         // An active import owns its staged file until its cancellation
         // check finishes; never remove the file underneath conversion.
-        if !processing.contains(id) { try? fm.removeItem(at: Self.stagingURL(id)) }
+        // A conversion can own the staging file before its ticket enters
+        // processing. Its completion handler is responsible for cleanup;
+        // deleting the input here races the decoder and can corrupt imports.
+        if !processing.contains(id) && conversions[id] == nil {
+            try? fm.removeItem(at: Self.stagingURL(id))
+        }
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         updatePending()
         session.getAllTasks { tasks in
