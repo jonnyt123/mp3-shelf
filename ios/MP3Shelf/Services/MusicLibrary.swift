@@ -789,8 +789,15 @@ final class MusicLibrary: ObservableObject {
         let previousLyrics = tracks[index].lyricsFileName
         let filename = trackID.uuidString + "-" + UUID().uuidString + ".lrc"
         let destination = lyricsDirectory.appendingPathComponent(filename)
-        try data.write(to: destination, options: .atomic)
+        // Manual lyrics imports must use the same no-replace publication as
+        // archive restoration. An atomic rename can overwrite a symlink or
+        // another writer's file even when our generated name was initially free.
+        // Stage and publish first; only commit its catalog reference after the
+        // sidecar exists. No cancellation checkpoint may follow the durable
+        // catalog write, or cleanup could delete a now-referenced sidecar.
+        try PortableShelfArchive.writeRestoredSidecar(data, to: destination)
         do {
+            try Task.checkCancellation()
             var updatedTracks = tracks
             updatedTracks[index].lyricsFileName = filename
             try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
