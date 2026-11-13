@@ -34,6 +34,69 @@ enum LocalAudioFileNaming {
     }
 }
 
+/// A failed import must never delete an existing recording at its destination.
+/// Validate a unique extension-preserving staging copy, then publish with a
+/// no-replace hard link. The catalog commit is the last step; failed commits
+/// unlink only the recording published by this transaction.
+enum LocalAudioImportTransaction {
+    static func perform(from source: URL, to destination: URL,
+                        validate: (URL) throws -> Void,
+                        persist: () throws -> Void) throws {
+        let manager = FileManager.default
+        let staging = destination.deletingLastPathComponent().appendingPathComponent(
+            ".mp3shelf-import-\(UUID().uuidString).\(destination.pathExtension)")
+        // A short copy after low storage or a decoder error must clean up
+        // only this attempt's staging path, never the final catalog path.
+        defer { try? manager.removeItem(at: staging) }
+        try manager.copyItem(at: source, to: staging)
+        try validate(staging)
+        // Fails with file-exists if another recording already owns the path.
+        // moveItem/rename are unsafe here because they can replace user audio.
+        try manager.linkItem(at: staging, to: destination)
+        do {
+            try persist()
+        } catch {
+            // Only the successful link above grants ownership of this path.
+            try? manager.removeItem(at: destination)
+            throw error
+        }
+    }
+}
+
+/// Catalog filenames are data, not authorized filesystem paths. Only files
+/// directly owned by MP3 Shelf may be copied into a backup or unlinked after
+/// a successful catalog transaction. Fail closed for missing, linked or
+/// malformed legacy paths instead of touching files outside the library.
+enum LocalLibraryFileSafety {
+    /// APFS on iPhone is normally case-insensitive. Legacy catalogs can hold
+    /// differently cased spellings of one physical filename. When deleting a
+    /// track, conservatively retain any file still referenced under a spelling
+    /// that could resolve to the same inode. An orphan is safer than data loss.
+    static func isReferenced(_ filename: String, by remainingNames: [String?]) -> Bool {
+        remainingNames.contains { other in
+            guard let other else { return false }
+            return filename.compare(other, options: [.caseInsensitive, .diacriticInsensitive],
+                                    locale: Locale(identifier: "en_US_POSIX")) == .orderedSame
+        }
+    }
+    static func regularFile(named name: String?, in directory: URL) -> URL? {
+        guard let name, !name.isEmpty, name != ".", name != "..",
+              !name.contains("/"), !name.contains("\\"), !name.contains("\0") else {
+            return nil
+        }
+        let root = directory.resolvingSymlinksInPath().standardizedFileURL
+        let file = directory.appendingPathComponent(name, isDirectory: false)
+        // Resolve final-component symlinks as well as parent-directory links.
+        guard file.resolvingSymlinksInPath().standardizedFileURL
+                .deletingLastPathComponent() == root else { return nil }
+        guard let values = try? file.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey]),
+              values.isSymbolicLink == false, values.isRegularFile == true else { return nil }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+              (attributes[.type] as? FileAttributeType) == .typeRegular else { return nil }
+        return file
+    }
+}
+
 enum RepeatMode: String, Codable, CaseIterable {
     case off, all, one
 

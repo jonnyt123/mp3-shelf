@@ -204,6 +204,13 @@ final class MusicLibrary: ObservableObject {
         // Only a nil reference means the recording genuinely has no sidecar.
         let items = try tracks.map { track -> PortableShelfArchive.MediaInput in
             try Task.checkCancellation()
+            // Do not let a malformed/legacy catalog export bytes from outside
+            // the Music directory. The archive exporter revalidates identity
+            // while streaming to catch later pathname replacement.
+            guard let ownedAudio = LocalLibraryFileSafety.regularFile(
+                named: track.fileName, in: musicDirectory) else {
+                throw PortableShelfArchive.ArchiveError.invalidManifest
+            }
             let lyricBytes = try PortableShelfArchive.readSidecar(
                 named: track.lyricsFileName, from: lyricsDirectory,
                 maximumBytes: 500 * 1024)
@@ -232,7 +239,7 @@ final class MusicLibrary: ObservableObject {
                 artwork = nil
             }
             return PortableShelfArchive.MediaInput(
-                track: track, audioURL: fileURL(for: track),
+                track: track, audioURL: ownedAudio,
                 artwork: artwork, lyrics: lyrics
             )
         }
@@ -670,7 +677,11 @@ final class MusicLibrary: ObservableObject {
         guard let name = track.artworkFileName else { return nil }
         let key = name as NSString
         if let cached = artworkCache.object(forKey: key) { return cached }
-        guard let data = try? Data(contentsOf: artworkDirectory.appendingPathComponent(name)),
+        // Catalog filenames are untrusted after legacy restores or corruption.
+        // Reuse the archive reader's descriptor-bound, symlink-safe and size-
+        // limited sidecar checks rather than reading arbitrary paths into memory.
+        guard let data = try? PortableShelfArchive.readSidecar(
+                  named: name, from: artworkDirectory, maximumBytes: 20 * 1024 * 1024),
               let image = UIImage(data: data) else { return nil }
         // Cache is automatically evicted under memory pressure. Decoding the
         // same cover on every library row render would be unnecessarily costly.
@@ -684,7 +695,8 @@ final class MusicLibrary: ObservableObject {
 
     func lyrics(for track: MusicTrack) -> [LyricLine] {
         guard let filename = track.lyricsFileName,
-              let bytes = try? Data(contentsOf: lyricsDirectory.appendingPathComponent(filename)),
+              let bytes = try? PortableShelfArchive.readSidecar(
+                  named: filename, from: lyricsDirectory, maximumBytes: 500 * 1024),
               let content = String(data: bytes, encoding: .utf8) else { return [] }
         return LyricsParser.parse(content)
     }
@@ -698,8 +710,23 @@ final class MusicLibrary: ObservableObject {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         guard ["lrc", "txt"].contains(url.pathExtension.lowercased()) else { throw LyricsError.unsupported }
-        let data = try Data(contentsOf: url)
-        guard data.count <= 512_000, String(data: data, encoding: .utf8) != nil else { throw LyricsError.unsupported }
+        // A Files provider may expose a very large or growing text file.
+        // Never load it unbounded into memory before checking the limit.
+        // Read one byte beyond the cap so an oversized input is rejected
+        // without publishing a sidecar or changing the catalog.
+        let input = try FileHandle(forReadingFrom: url)
+        defer { try? input.close() }
+        var data = Data()
+        while data.count <= 512_000 {
+            try Task.checkCancellation()
+            let chunk = try input.read(upToCount: min(64 * 1024, 512_001 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
+        guard data.count <= 512_000, String(data: data, encoding: .utf8) != nil else {
+            throw LyricsError.unsupported
+        }
+        try Task.checkCancellation()
 
         let previousLyrics = tracks[index].lyricsFileName
         let filename = trackID.uuidString + "-" + UUID().uuidString + ".lrc"
@@ -714,9 +741,12 @@ final class MusicLibrary: ObservableObject {
             // recordings can share a lyrics filename; preserve shared files.
             if let previousLyrics,
                previousLyrics != filename,
-               !updatedTracks.contains(where: { $0.lyricsFileName == previousLyrics }) {
+               !LocalLibraryFileSafety.isReferenced(
+                   previousLyrics, by: updatedTracks.map(\.lyricsFileName)),
+               let owned = LocalLibraryFileSafety.regularFile(
+                   named: previousLyrics, in: lyricsDirectory) {
                 do {
-                    try manager.removeItem(at: lyricsDirectory.appendingPathComponent(previousLyrics))
+                    try manager.removeItem(at: owned)
                 } catch {
                     print("MP3 Shelf retained an unreferenced lyrics sidecar: \(error)")
                 }
@@ -927,60 +957,70 @@ final class MusicLibrary: ObservableObject {
         let destination = musicDirectory.appendingPathComponent(destinationName)
         var artworkName: String?
         do {
-            // FileManager.copyItem may leave a partial destination when storage
-            // fills or a coordinated source read fails. Keep the copy inside
-            // the same rollback scope as validation and catalog persistence.
-            // The UUID destination is new; never clean up the caller's source.
-            try manager.copyItem(at: sourceURL, to: destination)
-            if cancellationAware { try Task.checkCancellation() }
-            let asset = AVURLAsset(url: destination)
-            // Fail immediately for renamed HTML, corrupt files or codecs that AVAudioPlayer cannot decode.
-            let playbackProbe = try AVAudioPlayer(contentsOf: destination)
-            let duration = playbackProbe.duration
-            if let expectedDuration, abs(duration - expectedDuration) > 4 {
-                throw MusicLibraryError.recordingDurationMismatch
-            }
-            let metadata = asset.commonMetadata
-            func metadataString(_ key: AVMetadataKey) -> String? {
-                AVMetadataItem.metadataItems(from: metadata, withKey: key, keySpace: .common)
-                    .first?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            let title = metadataString(.commonKeyTitle).flatMap { $0.isEmpty ? nil : $0 }
-                ?? URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
-            let artist = metadataString(.commonKeyArtist).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Artist"
-            let album = metadataString(.commonKeyAlbumName).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Album"
-            if let imageData = AVMetadataItem.metadataItems(from: metadata, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue,
-               UIImage(data: imageData) != nil {
-                let proposedName = id.uuidString + ".img"
-                if (try? imageData.write(to: artworkDirectory.appendingPathComponent(proposedName), options: .atomic)) != nil {
-                    artworkName = proposedName
+            var preparedTrack: MusicTrack?
+            try LocalAudioImportTransaction.perform(
+                from: sourceURL, to: destination,
+                validate: { staged in
+                    if cancellationAware { try Task.checkCancellation() }
+                    // Staging preserves the extension so AVFoundation can
+                    // validate the audio before any final filename is created.
+                    let asset = AVURLAsset(url: staged)
+                    let playbackProbe = try AVAudioPlayer(contentsOf: staged)
+                    let duration = playbackProbe.duration
+                    if let expectedDuration, abs(duration - expectedDuration) > 4 {
+                        throw MusicLibraryError.recordingDurationMismatch
+                    }
+                    let metadata = asset.commonMetadata
+                    func metadataString(_ key: AVMetadataKey) -> String? {
+                        AVMetadataItem.metadataItems(from: metadata, withKey: key, keySpace: .common)
+                            .first?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    let title = metadataString(.commonKeyTitle).flatMap { $0.isEmpty ? nil : $0 }
+                        ?? URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
+                    let artist = metadataString(.commonKeyArtist).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Artist"
+                    let album = metadataString(.commonKeyAlbumName).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Album"
+                    if let imageData = AVMetadataItem.metadataItems(from: metadata, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue,
+                       UIImage(data: imageData) != nil {
+                        let proposedName = id.uuidString + ".img"
+                        if (try? imageData.write(to: artworkDirectory.appendingPathComponent(proposedName), options: .atomic)) != nil {
+                            artworkName = proposedName
+                        }
+                    }
+                    var track = MusicTrack(id: id, title: title, artist: artist, album: album,
+                                           fileName: destinationName, originalFileName: originalName,
+                                           artworkFileName: artworkName, duration: duration)
+                    if let wish {
+                        track.title = wish.title
+                        track.artist = wish.artist
+                        if !wish.album.isEmpty { track.album = wish.album }
+                        track.sourceAttribution = attribution
+                    }
+                    if cancellationAware { try Task.checkCancellation() }
+                    preparedTrack = track
+                },
+                persist: {
+                    guard let preparedTrack else {
+                        throw MusicLibraryError.unsupportedFormat
+                    }
+                    if cancellationAware { try Task.checkCancellation() }
+                    let updatedTracks = tracks + [preparedTrack]
+                    // Imported recording and reconciled playlist links commit
+                    // together, after no-replace publication of the audio.
+                    let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
+                    if cancellationAware { try Task.checkCancellation() }
+                    try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists)
+                        .write(to: databaseURL)
+                    tracks = updatedTracks
+                    playlists = updatedPlaylists
                 }
-            }
-            var track = MusicTrack(id: id, title: title, artist: artist, album: album,
-                                   fileName: destinationName, originalFileName: originalName,
-                                   artworkFileName: artworkName, duration: duration)
-            if let wish {
-                track.title = wish.title
-                track.artist = wish.artist
-                if !wish.album.isEmpty { track.album = wish.album }
-                track.sourceAttribution = attribution
-            }
-            if cancellationAware { try Task.checkCancellation() }
-            let updatedTracks = tracks + [track]
-            // Local Files imports can satisfy missing source-playlist wishes
-            // too. Persist the new recording and resolved playlist links in a
-            // single catalog transaction, regardless of the import origin.
-            let updatedPlaylists = reconciledPlaylists(using: updatedTracks)
-            // Report import success only after the complete record is written.
-            // A failed write must leave both the live and saved library intact.
-            if cancellationAware { try Task.checkCancellation() }
-            try PersistedLibrary(tracks: updatedTracks, playlists: updatedPlaylists).write(to: databaseURL)
-            tracks = updatedTracks
-            playlists = updatedPlaylists
+            )
             return true
         } catch {
-            try? manager.removeItem(at: destination)
-            if let artworkName { try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artworkName)) }
+            // The transaction cleans only its own staging/published file.
+            // A colliding destination existed before us and is never removed.
+            if let artworkName {
+                try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artworkName))
+            }
             throw error
         }
     }
@@ -1632,21 +1672,28 @@ final class MusicLibrary: ObservableObject {
         // audio already deleted. Sidecar removal remains best effort.
         // Restored or legacy catalogs may share a stored filename across
         // multiple track records. Only delete files with no remaining owner.
-        if !remainingTracks.contains(where: { $0.fileName == track.fileName }) {
+        if !LocalLibraryFileSafety.isReferenced(track.fileName, by: remainingTracks.map(\.fileName)),
+           let ownedAudio = LocalLibraryFileSafety.regularFile(
+               named: track.fileName, in: musicDirectory) {
             do {
-                try manager.removeItem(at: fileURL(for: track))
+                try manager.removeItem(at: ownedAudio)
             } catch {
                 print("MP3 Shelf retained an orphaned audio file after catalog removal: \(error)")
             }
         }
         if let artwork = track.artworkFileName,
-           !remainingTracks.contains(where: { $0.artworkFileName == artwork }) {
+           !LocalLibraryFileSafety.isReferenced(artwork, by: remainingTracks.map(\.artworkFileName)) {
             artworkCache.removeObject(forKey: artwork as NSString)
-            try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artwork))
+            if let ownedArtwork = LocalLibraryFileSafety.regularFile(
+                named: artwork, in: artworkDirectory) {
+                try? manager.removeItem(at: ownedArtwork)
+            }
         }
         if let lyrics = track.lyricsFileName,
-           !remainingTracks.contains(where: { $0.lyricsFileName == lyrics }) {
-            try? manager.removeItem(at: lyricsDirectory.appendingPathComponent(lyrics))
+           !LocalLibraryFileSafety.isReferenced(lyrics, by: remainingTracks.map(\.lyricsFileName)),
+           let ownedLyrics = LocalLibraryFileSafety.regularFile(
+               named: lyrics, in: lyricsDirectory) {
+            try? manager.removeItem(at: ownedLyrics)
         }
     }
 
@@ -1896,7 +1943,12 @@ final class MusicLibrary: ObservableObject {
     }
 
     func trackSizeBytes(_ track: MusicTrack) -> Int64 {
-        let size = (try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        // Never count arbitrary outside files or follow symlinked catalog paths.
+        guard let owned = LocalLibraryFileSafety.regularFile(
+                  named: track.fileName, in: musicDirectory),
+              let size = try? owned.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            return 0
+        }
         return Int64(max(size, 0))
     }
 
@@ -1964,14 +2016,8 @@ private final class ShelfPCMConversion {
                 let state = Unmanaged<ShelfPCMConversion>.fromOpaque(raw).takeUnretainedValue()
                 let buffer = state.buffer
                 guard capacity > 0, capacity <= Int(buffer.frameCapacity) else { return -1 }
-                // AVAudioFile can throw on an AAC read made after its final
-                // frame instead of returning an empty buffer. Tell the encoder
-                // to flush at EOF, and bound the final read to remaining audio.
-                let remaining = state.file.length - state.file.framePosition
-                guard remaining > 0 else { return 0 }
                 do {
-                    try state.file.read(into: buffer,
-                        frameCount: AVAudioFrameCount(min(Int64(capacity), remaining)))
+                    try state.file.read(into: buffer, frameCount: AVAudioFrameCount(capacity))
                     if buffer.frameLength == 0 { return 0 }
                     guard let data = buffer.int16ChannelData else { return -1 }
                     output.update(from: data.pointee,

@@ -1,5 +1,7 @@
 import Foundation
 
+private enum ImportTransactionFailure: Error { case invalidAudio, catalogWrite }
+
 // Evaluate throwing fixture reads before entering assert's nonthrowing closure.
 private func assertThrowing(_ condition: @autoclosure () throws -> Bool,
                             file: StaticString = #filePath, line: UInt = #line) rethrows {
@@ -41,6 +43,114 @@ struct PortableShelfArchiveTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
+        // A colliding generated destination is a pre-existing user recording,
+        // not a partial copy belonging to the new import. Never delete it
+        // when copy or catalog persistence fails.
+        let importSource = folder.appendingPathComponent("incoming-import.mp3")
+        let importDestination = folder.appendingPathComponent("imported-recording.mp3")
+        let incomingBytes = Data(repeating: 0x4D, count: 64 * 1024)
+        let existingBytes = Data(repeating: 0x24, count: 64 * 1024)
+        try incomingBytes.write(to: importSource)
+        try existingBytes.write(to: importDestination)
+        var importPersistCalls = 0
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { staged in
+                    let copied = try Data(contentsOf: staged)
+                    assert(staged.pathExtension == "mp3" && copied == incomingBytes)
+                },
+                persist: { importPersistCalls += 1 })
+            fatalError("Import overwrote a pre-existing recording")
+        } catch {
+            assert(importPersistCalls == 0)
+        }
+        try assertThrowing(try Data(contentsOf: importDestination) == existingBytes)
+        try FileManager.default.removeItem(at: importDestination)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in throw ImportTransactionFailure.invalidAudio },
+                persist: { importPersistCalls += 1 })
+            fatalError("Invalid audio was published")
+        } catch ImportTransactionFailure.invalidAudio { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in },
+                persist: { throw ImportTransactionFailure.catalogWrite })
+            fatalError("Failed catalog commit left published audio")
+        } catch ImportTransactionFailure.catalogWrite { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        try LocalAudioImportTransaction.perform(
+            from: importSource, to: importDestination,
+            validate: { _ in },
+            persist: { importPersistCalls += 1 })
+        assert(importPersistCalls == 1)
+        try assertThrowing(try Data(contentsOf: importDestination) == incomingBytes)
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        let importOrphans = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+            .filter { $0.hasPrefix(".mp3shelf-import-") }
+        assert(importOrphans.isEmpty)
+        print("PASS: import collisions, validation/storage failures and success preserve audio bytes")
+
+        // Simulate two interruption boundaries: an aborted decoder/probe
+        // before publication, and cancellation after publication but before
+        // the catalog can durably reference its new recording.
+        try FileManager.default.removeItem(at: importDestination)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in throw CancellationError() },
+                persist: { importPersistCalls += 1 })
+            fatalError("Cancelled validation published an audio file")
+        } catch is CancellationError { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in },
+                persist: { throw CancellationError() })
+            fatalError("Cancelled catalog update retained unpublished audio")
+        } catch is CancellationError { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        let afterCancellation = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        assert(!afterCancellation.contains { $0.hasPrefix(".mp3shelf-import-") })
+
+        // A process can die between writing the staging copy and publishing.
+        // The next import must never delete another session's recoverable
+        // partial recording: each transaction cleans only its own unique path.
+        let crashedSessionStage = folder.appendingPathComponent(".mp3shelf-import-old-session.mp3")
+        let recoverableBytes = Data([0x49, 0x44, 0x33, 0xAB, 0xCD])
+        try recoverableBytes.write(to: crashedSessionStage)
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: importDestination,
+                validate: { _ in throw ImportTransactionFailure.invalidAudio },
+                persist: { importPersistCalls += 1 })
+            fatalError("Rejected reentry unexpectedly committed audio")
+        } catch ImportTransactionFailure.invalidAudio { }
+        assert(!FileManager.default.fileExists(atPath: importDestination.path))
+        try assertThrowing(try Data(contentsOf: crashedSessionStage) == recoverableBytes)
+        // Keep the recovery fixture from influencing unrelated archive tests.
+        try FileManager.default.removeItem(at: crashedSessionStage)
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        assert(importPersistCalls == 1)
+        print("PASS: simulated cancellation leaves no new catalog file; crashed-session bytes survive reentry")
+
+
+        // Case-insensitive iPhone filesystems may resolve differently cased
+        // legacy catalog names to the same audio or sidecar. Deleting one
+        // entry must retain files referenced by the surviving entry.
+        assert(LocalLibraryFileSafety.isReferenced("Track.MP3", by: ["track.mp3"]))
+        assert(LocalLibraryFileSafety.isReferenced("Café.img", by: ["Cafe.img"]))
+        assert(LocalLibraryFileSafety.isReferenced("Lyrics.LRC", by: [nil, "lyrics.lrc"]))
+        assert(!LocalLibraryFileSafety.isReferenced("track.mp3", by: [nil, "other.mp3"]))
+        assert(!LocalLibraryFileSafety.isReferenced("track.mp3", by: []))
+        print("PASS: shared audio and sidecars survive case-variant catalog references")
+
         // A pre-cancelled export must not publish a misleading empty backup.
         // Gate the worker so cancellation always precedes its first check.
         let cancelledExport = folder.appendingPathComponent("cancelled.mp3shelf")
@@ -71,6 +181,37 @@ struct PortableShelfArchiveTests {
         let audio = folder.appendingPathComponent("my-song.mp3")
         let originalBytes = Data([0x49, 0x44, 0x33, 0, 1, 2, 3, 4, 5, 6, 7])
         try originalBytes.write(to: audio)
+        // A malformed persisted fileName must never escape the owned Music
+        // folder when a backup exports or a recording is removed. Existing
+        // catalog-generated filenames and genuine regular files still work.
+        let ownedFolder = folder.appendingPathComponent("OwnedMusic", isDirectory: true)
+        try FileManager.default.createDirectory(at: ownedFolder, withIntermediateDirectories: true)
+        let ownedAudio = ownedFolder.appendingPathComponent("owned.mp3")
+        let outsideAudio = folder.appendingPathComponent("outside.mp3")
+        try originalBytes.write(to: ownedAudio)
+        try originalBytes.write(to: outsideAudio)
+        let ownedLink = ownedFolder.appendingPathComponent("linked.mp3")
+        try FileManager.default.createSymbolicLink(
+            at: ownedLink, withDestinationURL: outsideAudio)
+        let internalLink = ownedFolder.appendingPathComponent("internal.mp3")
+        try FileManager.default.createSymbolicLink(
+            at: internalLink, withDestinationURL: ownedAudio)
+        let disguisedDirectory = ownedFolder.appendingPathComponent("folder.mp3", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: disguisedDirectory, withIntermediateDirectories: true)
+        assert(LocalLibraryFileSafety.regularFile(named: "owned.mp3", in: ownedFolder) == ownedAudio)
+        for badName in ["../outside.mp3", "../../outside.mp3", "/tmp/outside.mp3",
+                        "sub/owned.mp3", "sub\\owned.mp3", ".", "..", "",
+                        "linked.mp3", "internal.mp3", "folder.mp3", "missing.mp3"] {
+            assert(LocalLibraryFileSafety.regularFile(named: badName, in: ownedFolder) == nil,
+                   "Accepted unsafe catalog filename: \(badName)")
+        }
+        assert(LocalLibraryFileSafety.regularFile(named: nil, in: ownedFolder) == nil)
+        let unaffectedOutsideBytes = try Data(contentsOf: outsideAudio)
+        let unaffectedOwnedBytes = try Data(contentsOf: ownedAudio)
+        assert(unaffectedOutsideBytes == originalBytes && unaffectedOwnedBytes == originalBytes)
+        print("PASS: malformed and linked catalog paths cannot escape owned music storage")
+
         let song = MusicTrack(
             id: UUID(), title: "Test song", artist: "Local artist",
             album: "Album", fileName: "my-song.mp3",
@@ -404,6 +545,43 @@ struct PortableShelfArchiveTests {
             named: "saved.img", from: sidecarDirectory,
             maximumBytes: 20 * 1024 * 1024)
         assert(loadedArtwork == artworkBytes)
+        // These are also the runtime artwork/lyrics readers' limits. A damaged
+        // catalog must not allocate an unbounded sidecar or escape the shelf.
+        let oversizedLyrics = sidecarDirectory.appendingPathComponent("oversized.lrc")
+        let oversizedBytes = Data(repeating: 0x61, count: 500 * 1024 + 1)
+        try oversizedBytes.write(to: oversizedLyrics)
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: "oversized.lrc", from: sidecarDirectory,
+                maximumBytes: 500 * 1024)
+            fatalError("Runtime lyrics reader accepted an oversized sidecar")
+        } catch PortableShelfArchive.ArchiveError.oversized {
+            // Expected: no large allocation or partial lyrics.
+        }
+        try assertThrowing(try Data(contentsOf: oversizedLyrics) == oversizedBytes)
+        do {
+            _ = try PortableShelfArchive.readSidecar(
+                named: folder.appendingPathComponent("private-artwork.img").path, from: sidecarDirectory,
+                maximumBytes: 20 * 1024 * 1024)
+            fatalError("Runtime artwork reader accepted an absolute path")
+        } catch PortableShelfArchive.ArchiveError.invalidManifest {
+            // Expected.
+        }
+        // Replacing lyrics must not delete a sidecar still referenced by a
+        // second legacy recording under a differently cased APFS filename.
+        // The same conservative alias rule protects removeTrack().
+        assert(LocalLibraryFileSafety.isReferenced(
+            "Shared-Lyrics.LRC", by: ["shared-lyrics.lrc", nil]))
+        assert(LocalLibraryFileSafety.isReferenced(
+            "Café.lrc", by: ["cafe.lrc"]))
+        assert(!LocalLibraryFileSafety.isReferenced(
+            "Shared-Lyrics.LRC", by: ["unrelated.lrc", nil]))
+        // A new unique sidecar must be removable after the final owner drops
+        // it, without treating unrelated names as references.
+        assert(!LocalLibraryFileSafety.isReferenced(
+            "new-unique.lrc", by: ["old-shared.lrc"]))
+        print("PASS: lyrics replacement retains case/diacritic aliases")
+        print("PASS: runtime sidecar size and path limits preserve source bytes")
         do {
             _ = try PortableShelfArchive.readSidecar(
                 named: "lost.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)
@@ -781,59 +959,75 @@ struct PortableShelfArchiveTests {
         // Two exporters racing for an absent destination must never replace
         // each other's output. Both candidates contain distinct audio bytes;
         // exactly one must win the atomic publish operation.
-        let raceDestination = folder.appendingPathComponent("racing-export.mp3shelf")
         let raceAudioA = folder.appendingPathComponent("race-a.mp3")
         let raceAudioB = folder.appendingPathComponent("race-b.mp3")
         let raceBytesA = Data(repeating: 0x31, count: 256 * 1024)
         let raceBytesB = Data(repeating: 0x72, count: 256 * 1024)
         try raceBytesA.write(to: raceAudioA)
         try raceBytesB.write(to: raceAudioB)
-        let raceGate = DispatchSemaphore(value: 0)
-        let raceGroup = DispatchGroup()
-        // Mutable captured arrays are rejected by Swift 6's concurrent closure
-        // checking. Keep results behind one synchronized, Sendable reference.
-        let raceResults = ArchiveExportRaceResults()
-        for index in 0..<2 {
-            raceGroup.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
-                defer { raceGroup.leave() }
-                raceGate.wait()
-                do {
-                    try PortableShelfArchive.export([
-                        .init(track: portableSong,
-                              audioURL: index == 0 ? raceAudioA : raceAudioB,
-                              artwork: nil, lyrics: nil)
-                    ], playlists: [portableList], to: raceDestination)
-                    raceResults.recordSuccess(index)
-                } catch {
-                    raceResults.recordFailure(error)
+        // Repeat with fresh destinations: a one-off race can pass even when
+        // a rare publication interleaving would overwrite the winner.
+        // Each iteration has an independent gate, results accumulator and
+        // destination, so stale successes cannot mask a later failure.
+        for iteration in 0..<12 {
+            let raceDestination = folder.appendingPathComponent(
+                "racing-export-\(iteration).mp3shelf")
+            let raceGate = DispatchSemaphore(value: 0)
+            let raceGroup = DispatchGroup()
+            let raceResults = ArchiveExportRaceResults()
+            for index in 0..<2 {
+                raceGroup.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    defer { raceGroup.leave() }
+                    raceGate.wait()
+                    do {
+                        try PortableShelfArchive.export([
+                            .init(track: portableSong,
+                                  audioURL: index == 0 ? raceAudioA : raceAudioB,
+                                  artwork: nil, lyrics: nil)
+                        ], playlists: [portableList], to: raceDestination)
+                        raceResults.recordSuccess(index)
+                    } catch {
+                        raceResults.recordFailure(error)
+                    }
                 }
             }
+            raceGate.signal()
+            raceGate.signal()
+            guard raceGroup.wait(timeout: .now() + 30) == .success else {
+                fatalError("Concurrent archive exporters timed out in iteration \(iteration)")
+            }
+            let raceOutcome = raceResults.snapshot()
+            assert(raceOutcome.winners.count == 1 && raceOutcome.failureCount == 1,
+                   "Exactly one exporter must succeed in iteration \(iteration)")
+            let publishedBefore = try Data(contentsOf: raceDestination)
+            let raceArchive = try PortableShelfArchive.open(raceDestination)
+            assert(raceArchive.manifest.tracks.count == 1)
+            let raceExtract = try PortableShelfArchive.extract(
+                raceArchive.manifest.tracks[0].audio,
+                from: raceArchive, extensionName: "mp3")
+            let raceExtractBytes = try Data(contentsOf: raceExtract)
+            assert(raceExtractBytes ==
+                   (raceOutcome.winners[0] == 0 ? raceBytesA : raceBytesB),
+                   "Winner audio differs in iteration \(iteration)")
+            try FileManager.default.removeItem(at: raceExtract)
+            // A failed contender must not alter the archive after its
+            // successful competitor has returned and the group has joined.
+            let publishedAfter = try Data(contentsOf: raceDestination)
+            assert(publishedAfter == publishedBefore,
+                   "Published archive changed after contention")
+            let raceEntries = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+            assert(!raceEntries.contains {
+                $0.contains("racing-export-\(iteration).mp3shelf") &&
+                $0.hasSuffix(".partial")
+            }, "Export staging leak in iteration \(iteration)")
+            try FileManager.default.removeItem(at: raceDestination)
         }
-        raceGate.signal()
-        raceGate.signal()
-        let raceCompleted = raceGroup.wait(timeout: .now() + 30) == .success
-        assert(raceCompleted, "Concurrent archive exporters did not finish")
-        let raceOutcome = raceResults.snapshot()
-        assert(raceOutcome.winners.count == 1 && raceOutcome.failureCount == 1,
-               "Exactly one concurrent archive export must succeed")
-        let raceArchive = try PortableShelfArchive.open(raceDestination)
-        let raceExtract = try PortableShelfArchive.extract(
-            raceArchive.manifest.tracks[0].audio,
-            from: raceArchive, extensionName: "mp3")
-        let raceExtractBytes = try Data(contentsOf: raceExtract)
-        assert(raceExtractBytes == (raceOutcome.winners[0] == 0 ? raceBytesA : raceBytesB),
-               "Published archive must contain only the winning export's audio")
-        try FileManager.default.removeItem(at: raceExtract)
-        let raceEntries = try FileManager.default.contentsOfDirectory(atPath: folder.path)
-        assert(!raceEntries.contains {
-            $0.contains("racing-export.mp3shelf") && $0.hasSuffix(".partial")
-        }, "Both exporters must clean up their staging files")
         let sourceAfterRaceA = try Data(contentsOf: raceAudioA)
         let sourceAfterRaceB = try Data(contentsOf: raceAudioB)
         assert(sourceAfterRaceA == raceBytesA)
         assert(sourceAfterRaceB == raceBytesB)
-        print("PASS: competing exporters publish exactly one byte-intact backup")
+        print("PASS: 12 competing exporter races each publish one byte-intact backup")
 
         // When restore reuses byte-identical audio already on disk, the
         // original local UUID remains stable but the web ID must survive
