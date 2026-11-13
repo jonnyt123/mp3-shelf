@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Independent downloadable recordings remain individual, recognizable files
 /// in Files → On My iPhone → MP3 Shelf → Music, without filename collisions.
