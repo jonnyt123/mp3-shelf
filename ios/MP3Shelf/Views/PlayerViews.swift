@@ -440,17 +440,22 @@ struct NowPlayingView: View {
                                                 .font(.caption)
                                                 .foregroundStyle(ShelfTheme.subdued)
                                         }
-                                        Spacer()
+                                        Spacer(minLength: 0)
                                         Image(systemName: "chevron.right")
                                             .foregroundStyle(ShelfTheme.subdued)
+                                            .accessibilityHidden(true)
                                     }
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
                                     .padding(15)
                                     .premiumCard(radius: 17)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Manage playing queue")
                                  .accessibilityValue("\(upcoming.count) upcoming \(upcoming.count == 1 ? "song" : "songs")")
-                                 .accessibilityHint("Review and reorder upcoming songs")
+                                 .accessibilityHint(upcoming.isEmpty
+                                     ? "The queue is empty. Open to review playback order"
+                                     : "Open the full queue to play, reorder or remove recordings")
                                  .accessibilityFocused($queueButtonFocused)
 
                                 if !upcomingPreview.isEmpty {
@@ -491,22 +496,7 @@ struct NowPlayingView: View {
                                         }
                                     }
                                     .padding(.top, 24)
-                                    // Queue editing remains discoverable even when all
-                                    // upcoming tracks fit in the five-song preview.
-                                    Button { showQueue = true } label: {
-                                        Label("Manage queue (\(upcoming.count))",
-                                              systemImage: "list.bullet")
-                                            .font(.subheadline.weight(.semibold))
-                                            .frame(maxWidth: .infinity, minHeight: 44,
-                                                   alignment: .leading)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(ShelfTheme.accent)
-                                    .accessibilityFocused($queueButtonFocused)
-                                    .accessibilityLabel("Manage queue, \(upcoming.count) \(upcoming.count == 1 ? "song" : "songs")")
-                                    .accessibilityHint(hiddenUpcomingCount > 0
-                                        ? "\(hiddenUpcomingCount) additional songs. Open the full queue to reorder or remove recordings"
-                                        : "Open the full queue to reorder or remove recordings")
+
                                 }
 
                                 HStack(spacing: 7) {
