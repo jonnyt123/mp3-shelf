@@ -281,6 +281,16 @@ test('persisted receipt reader refuses symlink, hardlink, directory and oversize
   assert.throws(() => readPersistedReceipt(original), /bounded, regular, unlinked/);
 }));
 
+test('persisted receipt rejects malformed UTF-8 instead of silently replacing bytes', () => fixture(dir => {
+  const path = join(dir, 'receipt.json');
+  // JSON strings can contain invalid byte sequences that Buffer.toString
+  // would silently replace with U+FFFD, changing the signed-off evidence.
+  writeFileSync(path, Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d]));
+  assert.throws(() => readPersistedReceipt(path), /encoded data|UTF-8|decode/i);
+  writeFileSync(path, Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xef, 0xbf, 0xbd, 0x22, 0x7d]));
+  assert.deepEqual(readPersistedReceipt(path), { x: '�' });
+}));
+
 test('persisted receipt reader rejects malformed JSON and empty files', () => fixture(dir => {
   const path = join(dir, 'receipt.json');
   writeFileSync(path, '{bad json');
