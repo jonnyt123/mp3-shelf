@@ -319,7 +319,7 @@ enum PortableShelfArchive {
     }
 
     static func export(_ inputs: [MediaInput], playlists: [MusicPlaylist], to destination: URL) throws {
-        var parts: [(url: URL?, bytes: Data?, expectedLength: Int64)] = []
+        var parts: [(url: URL?, bytes: Data?, expectedLength: Int64, sourceIdentity: ArchiveSourceIdentity?)] = []
         var offset: Int64 = 0
         var tracks: [Track] = []
 
@@ -347,14 +347,26 @@ enum PortableShelfArchive {
             guard length > 0, length <= maxTrackBytes else { throw ArchiveError.oversized }
             let audio = Part(offset: offset, length: length,
                              type: audioMIME(for: item.audioURL.pathExtension))
-            parts.append((item.audioURL, nil, length))
+            // Capture the identity used to size this manifest entry. Reject a
+            // same-size replacement between preflight and streaming.
+            let preflight = try FileHandle(forReadingFrom: item.audioURL)
+            let sourceIdentity: ArchiveSourceIdentity
+            do {
+                sourceIdentity = try verifyOpenedAudioSource(preflight, at: item.audioURL,
+                                                               expectedLength: length)
+            } catch {
+                try? preflight.close()
+                throw error
+            }
+            try preflight.close()
+            parts.append((item.audioURL, nil, length, sourceIdentity))
             offset += length
 
             var artwork: Part?
             if let bytes = item.artwork, !bytes.isEmpty {
                 guard bytes.count <= 20 * 1024 * 1024 else { throw ArchiveError.oversized }
                 artwork = Part(offset: offset, length: Int64(bytes.count), type: "image/jpeg")
-                parts.append((nil, bytes, Int64(bytes.count)))
+                parts.append((nil, bytes, Int64(bytes.count), nil))
                 offset += Int64(bytes.count)
             }
             let source = item.track.sourceAttribution
@@ -456,7 +468,11 @@ enum PortableShelfArchive {
                 // Scope each source handle to this part. A defer directly in
                 // the export loop would keep every file descriptor open until
                 // the whole backup completes, exhausting limits on large shelves.
-                try copyAudioPart(from: url, expectedLength: part.expectedLength, to: output)
+                guard let sourceIdentity = part.sourceIdentity else {
+                    throw ArchiveError.invalidManifest
+                }
+                try copyAudioPart(from: url, expectedLength: part.expectedLength,
+                                  preflightIdentity: sourceIdentity, to: output)
             }
         }
         try output.synchronize()
@@ -517,6 +533,7 @@ enum PortableShelfArchive {
     /// next source opens. A failed read or write propagates to export(), which
     /// removes its unpublished partial archive without touching user audio.
     private static func copyAudioPart(from url: URL, expectedLength: Int64,
+                                      preflightIdentity: ArchiveSourceIdentity,
                                       to output: FileHandle) throws {
         try validateAudioSource(url)
         let input = try FileHandle(forReadingFrom: url)
@@ -526,6 +543,16 @@ enum PortableShelfArchive {
         // Compare the opened descriptor with a fresh non-following path stat.
         let originalIdentity = try verifyOpenedAudioSource(input, at: url,
                                                            expectedLength: expectedLength)
+        // Reject changes after manifest preflight, even with identical length.
+        guard originalIdentity.device == preflightIdentity.device,
+              originalIdentity.inode == preflightIdentity.inode,
+              originalIdentity.size == preflightIdentity.size,
+              originalIdentity.modifiedSeconds == preflightIdentity.modifiedSeconds,
+              originalIdentity.modifiedNanoseconds == preflightIdentity.modifiedNanoseconds,
+              originalIdentity.changedSeconds == preflightIdentity.changedSeconds,
+              originalIdentity.changedNanoseconds == preflightIdentity.changedNanoseconds else {
+            throw ArchiveError.invalidRange
+        }
         // The manifest records the size measured before export. Reject both
         // shrinking and growing files to avoid misaligned payload offsets.
         var remaining = expectedLength
