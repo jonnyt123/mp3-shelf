@@ -751,6 +751,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // A transfer can be cancelled or cleared while its delegate callback is
         // in flight. Remove files that no longer correspond to queued tickets.
         for ticket in tickets.values where ticket.status != .queued {
+            // A terminal ticket may still own a live conversion. Cancelling
+            // Progress is cooperative: the decoder can continue reading its
+            // staged input until its completion handler exits. The conversion
+            // path, not this sweep, must remove that input after it releases it.
+            guard !processing.contains(ticket.id), conversions[ticket.id] == nil else { continue }
             let leftover = Self.stagingURL(ticket.id)
             if fm.fileExists(atPath: leftover.path) { try? fm.removeItem(at: leftover) }
         }
