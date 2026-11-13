@@ -826,7 +826,8 @@ struct PlaybackQueueSheet: View {
 
     // Large-text users should not have to open a context menu for every
     // reorder. The same bounded operations back the menu and VoiceOver.
-    private func moveButton(_ track: MusicTrack, earlier: Bool, available: Bool) -> some View {
+    private func moveButton(_ track: MusicTrack, earlier: Bool, available: Bool,
+                            searching: Bool) -> some View {
         Button {
             reorder(track.id, earlier: earlier)
         } label: {
@@ -837,29 +838,34 @@ struct PlaybackQueueSheet: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!available)
-        .accessibilityLabel(available
-            ? "\(earlier ? "Move earlier" : "Move later"): \(track.title)"
-            : "\(earlier ? "Already first" : "Already last"): \(track.title)")
-        .accessibilityHint(available
-            ? (earlier
+        .disabled(!available || searching)
+        .accessibilityLabel(searching
+            ? "Clear search to reorder: \(track.title)"
+            : available ? "\(earlier ? "Move earlier" : "Move later"): \(track.title)"
+                        : "\(earlier ? "Already first" : "Already last"): \(track.title)")
+        .accessibilityHint(searching
+            ? "Reordering is available when all queued songs are visible"
+            : available ? (earlier
                 ? "Move this song one position toward the start of the queue"
                 : "Move this song one position toward the end of the queue")
-            : "This song cannot move any further in that direction")
+                        : "This song cannot move any further in that direction")
     }
 
     // Use a vertical fallback when enlarged labels cannot fit beside two
     // minimum-size reorder targets. Both layouts invoke identical queue actions.
     @ViewBuilder
     private func queueActions(_ track: MusicTrack, index: Int,
-                              upcoming: [MusicTrack], stacked: Bool) -> some View {
+                              upcoming: [MusicTrack], stacked: Bool,
+                              searching: Bool) -> some View {
         if stacked {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     moveButton(track, earlier: true,
-                               available: canMove(index: index, count: upcoming.count, earlier: true))
+                               available: canMove(index: index, count: upcoming.count, earlier: true),
+                               searching: searching)
                     moveButton(track, earlier: false,
-                               available: canMove(index: index, count: upcoming.count, earlier: false))
+                               available: canMove(index: index, count: upcoming.count, earlier: false),
+                               searching: searching)
                     Spacer(minLength: 0)
                     Text("Position \(index + 1) of \(upcoming.count)")
                         .font(.caption)
@@ -872,9 +878,11 @@ struct PlaybackQueueSheet: View {
         } else {
             HStack(spacing: 8) {
                 moveButton(track, earlier: true,
-                           available: canMove(index: index, count: upcoming.count, earlier: true))
+                           available: canMove(index: index, count: upcoming.count, earlier: true),
+                               searching: searching)
                 moveButton(track, earlier: false,
-                           available: canMove(index: index, count: upcoming.count, earlier: false))
+                           available: canMove(index: index, count: upcoming.count, earlier: false),
+                               searching: searching)
                 Spacer(minLength: 0)
                 playNextButton(track, alreadyNext: index == 0)
             }
@@ -984,6 +992,21 @@ struct PlaybackQueueSheet: View {
                                 .foregroundStyle(ShelfTheme.accent)
                                 .accessibilityHint("Show all queued songs without changing their order")
                         } else {
+                            if !query.isEmpty {
+                                HStack(alignment: .center, spacing: 12) {
+                                    Text("Showing \(visibleRows.count) of \(upcoming.count) queued songs. Clear search to reorder the full queue.")
+                                        .font(.caption)
+                                        .foregroundStyle(ShelfTheme.subdued)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                    Button("Clear search") { queueSearchText = "" }
+                                        .font(.subheadline.weight(.semibold))
+                                        .frame(minHeight: 44)
+                                        .foregroundStyle(ShelfTheme.accent)
+                                        .accessibilityHint("Show the complete queue and enable reordering")
+                                }
+                                .accessibilityElement(children: .contain)
+                            }
                             ForEach(visibleRows, id: \.element.id) { index, track in
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack(spacing: 12) {
@@ -1014,14 +1037,14 @@ struct PlaybackQueueSheet: View {
                                                 Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward")
                                             }
                                         }
-                                        if canMove(index: index, count: upcoming.count, earlier: true) {
+                                        if query.isEmpty && canMove(index: index, count: upcoming.count, earlier: true) {
                                             Button {
                                                 reorder(track.id, earlier: true)
                                             } label: {
                                                 Label("Move earlier", systemImage: "arrow.up")
                                             }
                                         }
-                                        if canMove(index: index, count: upcoming.count, earlier: false) {
+                                        if query.isEmpty && canMove(index: index, count: upcoming.count, earlier: false) {
                                             Button {
                                                 reorder(track.id, earlier: false)
                                             } label: {
@@ -1042,7 +1065,9 @@ struct PlaybackQueueSheet: View {
                                             .contentShape(Rectangle())
                                     }
                                     .accessibilityLabel("Queue options for \(track.title)")
-                                    .accessibilityHint("Play, reorder, or remove this song from the upcoming queue")
+                                    .accessibilityHint(query.isEmpty
+                                        ? "Play, reorder, or remove this song from the upcoming queue"
+                                        : "Play or remove this song. Clear search to reorder the full queue")
                                     .accessibilityFocused($focusedQueueTrackID, equals: track.id)
                                     }
                                     // Expose the primary queue actions at every text size.
@@ -1056,10 +1081,10 @@ struct PlaybackQueueSheet: View {
                                     // accessibility sizes to preserve 44-point controls.
                                     if dynamicTypeSize.isAccessibilitySize {
                                         queueActions(track, index: index, upcoming: upcoming,
-                                                     stacked: true)
+                                                     stacked: true, searching: !query.isEmpty)
                                     } else {
                                         queueActions(track, index: index, upcoming: upcoming,
-                                                     stacked: false)
+                                                     stacked: false, searching: !query.isEmpty)
                                     }
                                 }
                                 .padding(.horizontal, 12)
@@ -1077,12 +1102,12 @@ struct PlaybackQueueSheet: View {
                                     if index > 0 {
                                         Button("Play next") { playNext(track.id) }
                                     }
-                                    if canMove(index: index, count: upcoming.count, earlier: true) {
+                                    if query.isEmpty && canMove(index: index, count: upcoming.count, earlier: true) {
                                         Button("Move earlier") {
                                             reorder(track.id, earlier: true)
                                         }
                                     }
-                                    if canMove(index: index, count: upcoming.count, earlier: false) {
+                                    if query.isEmpty && canMove(index: index, count: upcoming.count, earlier: false) {
                                         Button("Move later") {
                                             reorder(track.id, earlier: false)
                                         }
