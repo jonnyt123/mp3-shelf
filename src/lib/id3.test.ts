@@ -236,3 +236,43 @@ describe("ID3 extended-header structural validation",()=>{
   ])expect(parseId3Bytes(tag(3,extension))).toEqual({});
  });
 });
+
+
+describe("ID3 reserved frame bits and invalid encoding regression",()=>{
+ function tagged(version:3|4,first:Uint8Array,second:Uint8Array){
+  const length=first.length+second.length;
+  const tag=new Uint8Array(10+length);
+  tag.set([73,68,51,version,0,0,0,0,0,length]);
+  tag.set(first,10);tag.set(second,10+first.length);
+  return tag;
+ }
+ it("skips reserved status and format flags without losing the next valid frame",async()=>{
+  for(const version of [3,4] as const){
+   for(const [position,flag] of version===3
+    ? [[8,0x01],[9,0x01]] : [[8,0x80],[9,0x80]]){
+    const invalid=frame("TIT2","Untrusted");
+    invalid[position]=flag;
+    const tag=tagged(version,invalid,frame("TPE1","Verified artist"));
+    expect(parseId3Bytes(tag)).toEqual({artist:"Verified artist"});
+    expect(await readAudioMetadata(new Blob([tag]))).toEqual({artist:"Verified artist"});
+   }
+  }
+ });
+ it("rejects unknown text encodings while preserving later valid metadata",()=>{
+  for(const version of [3,4] as const){
+   const invalid=frame("TIT2","Incorrect");
+   invalid[10]=0x7f;
+   const tag=tagged(version,invalid,frame("TALB","Trusted album"));
+   expect(parseId3Bytes(tag)).toEqual({album:"Trusted album"});
+   expect(await readAudioMetadata(new Blob([tag]))).toEqual({album:"Trusted album"});
+  }
+ });
+ it("continues to accept valid status flags and UTF-8 text",()=>{
+  for(const version of [3,4] as const){
+   const valid=frame("TIT2","Still readable");
+   valid[8]=0x40;
+   expect(parseId3Bytes(tagged(version,valid,frame("TPE1","Artist"))))
+    .toEqual({title:"Still readable",artist:"Artist"});
+  }
+ });
+});
