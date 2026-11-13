@@ -179,7 +179,14 @@ struct NowPlayingView: View {
     private func seekBy(_ offset: TimeInterval) {
         guard seekableDuration > 0 else { return }
         let destination = min(max(livePlaybackTime + offset, 0), seekableDuration)
-        clearScrub()
+        // A transport seek can occur while a finger is still dragging the
+        // timeline. End that gesture's authority before moving the playhead;
+        // otherwise its next binding update can overwrite the button seek.
+        if sliderEditing {
+            invalidateActiveScrub()
+        } else {
+            clearScrub()
+        }
         playback.seek(to: destination)
     }
 
@@ -332,6 +339,9 @@ struct NowPlayingView: View {
                                             // onEditingChanged(true), especially with assistive
                                             // input. Bind the pending value to the recording
                                             // that actually received the interaction.
+                                            // A transport action or track transition can
+                                            // invalidate an active drag. Ignore every
+                                            // remaining update until editing ends.
                                             guard !invalidatedSliderGesture,
                                                   seekableDuration > 0, proposedTime.isFinite,
                                                   let currentID = playback.currentTrackID else {
