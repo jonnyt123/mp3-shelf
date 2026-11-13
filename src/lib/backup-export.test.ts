@@ -150,4 +150,60 @@ describe("durable backup export",()=>{
   expect(pulls).toBe(1);
   expect(cancelled).toBe(true);
  });
+ it("rejects a stream that yields empty chunks indefinitely and releases the reader",async()=>{
+  const storage=store();
+  let pulls=0,cancelled=false;
+  const media=new Blob([new Uint8Array([1,2,3])]);
+  Object.defineProperty(media,"stream",{value:()=>new ReadableStream<Uint8Array>({
+   pull(controller){pulls++;controller.enqueue(new Uint8Array(0))},
+   cancel(){cancelled=true}
+  },{highWaterMark:0})});
+  await expect(createStoredLibraryBackup(storage,key,async()=>[{...track,blob:media}]))
+   .rejects.toThrow("could not be read");
+  expect(pulls).toBe(17);
+  expect(cancelled).toBe(true);
+  expect(storage.values.get(key)).toBe(JSON.stringify(playlist));
+ });
+ it("accepts occasional empty chunks when the stream eventually makes progress",async()=>{
+  const storage=store();
+  let pulls=0;
+  const media=new Blob([new Uint8Array([1,2,3])]);
+  Object.defineProperty(media,"stream",{value:()=>new ReadableStream<Uint8Array>({
+   pull(controller){
+    pulls++;
+    if(pulls===1||pulls===3)controller.enqueue(new Uint8Array(0));
+    else if(pulls===2)controller.enqueue(new Uint8Array([1]));
+    else if(pulls===4)controller.enqueue(new Uint8Array([2,3]));
+    else controller.close();
+   }
+  },{highWaterMark:0})});
+  const restored=await parseLibraryBackup(await createStoredLibraryBackup(storage,key,async()=>[{...track,blob:media}]));
+  expect([...new Uint8Array(await restored.tracks[0].blob.arrayBuffer())]).toEqual([1,2,3]);
+ });
+ it("rejects streams exceeding the declared Blob size before offering a backup",async()=>{
+  const storage=store();
+  let cancelled=false;
+  const media=new Blob([new Uint8Array([1,2,3])]);
+  Object.defineProperty(media,"stream",{value:()=>new ReadableStream<Uint8Array>({
+   pull(controller){controller.enqueue(new Uint8Array([1,2,3,4]))},
+   cancel(){cancelled=true}
+  },{highWaterMark:0})});
+  await expect(createStoredLibraryBackup(storage,key,async()=>[{...track,blob:media}]))
+   .rejects.toThrow("could not be read");
+  expect(cancelled).toBe(true);
+ });
+ it("rejects malformed runtime media chunks without publishing an archive",async()=>{
+  const storage=store();
+  const media=new Blob([new Uint8Array([1,2,3])]);
+  Object.defineProperty(media,"stream",{value:()=>({
+   getReader:()=>({
+    read:async()=>({done:false,value:"not binary data"}),
+    cancel:async()=>{},
+    releaseLock:()=>{}
+   })
+  })});
+  await expect(createStoredLibraryBackup(storage,key,async()=>[{...track,blob:media}]))
+   .rejects.toThrow("could not be read");
+ });
+
 });
