@@ -863,12 +863,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private func backgroundTaskInventory() async -> BackgroundTaskInventory {
         await withCheckedContinuation { continuation in
             session.getAllTasks { tasks in
-                let ids = Set(tasks.compactMap { task -> UUID? in
+                let identified = tasks.compactMap { task -> UUID? in
                     guard let description = task.taskDescription else { return nil }
                     return UUID(uuidString: description)
-                })
+                }
+                // A daemon can temporarily expose two tasks for one ticket
+                // during replacement. Duplicate known IDs are not unidentified
+                // tasks: comparing Set.count with tasks.count would suppress
+                // unrelated orphan recovery indefinitely.
                 continuation.resume(returning: BackgroundTaskInventory(
-                    ids: ids, hasUnknownTasks: ids.count != tasks.count))
+                    ids: Set(identified), hasUnknownTasks: identified.count != tasks.count))
             }
         }
     }
