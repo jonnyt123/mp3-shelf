@@ -332,8 +332,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             sourceResolutionTasks.removeValue(forKey: item.id)
             // A conversion may still be reading its staged file. Cancel it,
             // but let the conversion's cleanup own removal of that file.
-            conversions[item.id]?.cancel()
-            if !processing.contains(item.id) {
+            let conversion = conversions[item.id]
+            conversion?.cancel()
+            // Conversion ownership can precede insertion into processing.
+            // Retain staging until its completion handler performs cleanup.
+            if !processing.contains(item.id) && conversion == nil {
                 try? fm.removeItem(at: Self.stagingURL(item.id))
             }
         }
