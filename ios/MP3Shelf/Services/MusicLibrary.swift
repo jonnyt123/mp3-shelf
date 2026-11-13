@@ -409,7 +409,7 @@ final class MusicLibrary: ObservableObject {
                     }
                     let name = existingID.uuidString + "-" + UUID().uuidString + ".img"
                     let destination = artworkDirectory.appendingPathComponent(name)
-                    try bytes.write(to: destination, options: .atomic)
+                    try PortableShelfArchive.writeRestoredSidecar(bytes, to: destination)
                     created.append(destination)
                     restored.artworkFileName = name
                 } catch {
@@ -422,7 +422,7 @@ final class MusicLibrary: ObservableObject {
                     try Task.checkCancellation()
                     let name = existingID.uuidString + "-" + UUID().uuidString + ".lrc"
                     let destination = lyricsDirectory.appendingPathComponent(name)
-                    try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                    try PortableShelfArchive.writeRestoredSidecar(Data(lyrics.utf8), to: destination)
                     created.append(destination)
                     restored.lyricsFileName = name
                 } catch {
@@ -602,7 +602,7 @@ final class MusicLibrary: ObservableObject {
                         if UIImage(data: bytes) != nil {
                             let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".img"
                             let destination = artworkDirectory.appendingPathComponent(filename)
-                            try bytes.write(to: destination, options: .atomic)
+                            try PortableShelfArchive.writeRestoredSidecar(bytes, to: destination)
                             createdSidecars.append(destination)
                             try Task.checkCancellation()
                             restoredTrack.artworkFileName = filename
@@ -619,7 +619,7 @@ final class MusicLibrary: ObservableObject {
                         try Task.checkCancellation()
                         let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".lrc"
                         let destination = lyricsDirectory.appendingPathComponent(filename)
-                        try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                        try PortableShelfArchive.writeRestoredSidecar(Data(lyrics.utf8), to: destination)
                         createdSidecars.append(destination)
                         try Task.checkCancellation()
                         restoredTrack.lyricsFileName = filename
