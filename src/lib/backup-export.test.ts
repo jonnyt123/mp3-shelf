@@ -262,4 +262,36 @@ describe("durable backup export",()=>{
   })).rejects.toThrow("Saved recording bytes changed");
  });
 
+ it("rejects a same-size replacement confined to the middle of a large recording",async()=>{
+  const storage=store();
+  const bytes=new Uint8Array(256*1024);
+  bytes.fill(17);
+  const replaced=bytes.slice();
+  replaced[128*1024]=99;
+  const original={...track,size:bytes.length,blob:new Blob([bytes])};
+  const changed={...original,blob:new Blob([replaced])};
+  let reads=0;
+  await expect(createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[original]:[changed];
+  })).rejects.toThrow("Saved recording bytes changed");
+  expect(reads).toBe(2);
+  expect(storage.values.get(key)).toBe(JSON.stringify(playlist));
+ });
+ it("accepts unchanged large recordings without materializing full-file fingerprints",async()=>{
+  const storage=store();
+  const bytes=new Uint8Array(256*1024);
+  bytes.fill(23);
+  const large={...track,size:bytes.length,blob:new Blob([bytes])};
+  let reads=0;
+  const result=await createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return [{...large}];
+  });
+  expect(reads).toBe(2);
+  const restored=await parseLibraryBackup(result);
+  expect(restored.tracks[0].blob.size).toBe(bytes.length);
+  expect(new Uint8Array(await restored.tracks[0].blob.slice(128*1024,128*1024+1).arrayBuffer())[0]).toBe(23);
+ });
+
 });
