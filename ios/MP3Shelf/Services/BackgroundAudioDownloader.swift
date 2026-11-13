@@ -1065,8 +1065,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: location, to: destination)
+            // A duplicate URLSession completion may arrive while the first
+            // staged copy is being decoded. Never unlink or replace that input:
+            // the conversion owns it until its completion handler finishes.
+            // Retain the first complete staged file and let recovery validate it.
+            if !FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.moveItem(at: location, to: destination)
+            }
             Task { @MainActor in
                 // History may have been cleared after cancellation while this
                 // delegate was moving the completed file. Unknown tickets must
