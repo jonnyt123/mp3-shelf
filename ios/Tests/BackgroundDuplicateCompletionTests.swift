@@ -16,6 +16,9 @@ let staging = String(completion.prefix(upTo: completion.range(of: "Task { @MainA
 precondition(!staging.contains("removeItem(at: destination)"),
              "duplicate completion must not unlink an active decoder's staged input")
 
+precondition(completion.contains("if !self.processing.contains(id) && self.conversions[id] == nil {"),
+             "cancelled duplicate completion must respect active decoder ownership")
+
 let fm = FileManager.default
 let root = fm.temporaryDirectory.appendingPathComponent("mp3-shelf-duplicate-" + UUID().uuidString)
 try fm.createDirectory(at: root, withIntermediateDirectories: true)
