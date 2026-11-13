@@ -86,3 +86,44 @@ describe("ID3 header integrity",()=>{
   expect(await readAudioMetadata(new Blob([tag]))).toMatchObject({title:"Version Four"});
  });
 });
+
+describe("ID3 extended headers and truncated metadata",()=>{
+ const title=frame("TIT2","Extended Title");
+ it("reads ID3v2.3 frames after an extended header",async()=>{
+  const extension=new Uint8Array([0,0,0,6,0,0,0,0,0,0]);
+  const body=new Uint8Array([...extension,...title]);
+  const tag=new Uint8Array(10+body.length);
+  tag.set([73,68,51,3,0,0x40,0,0,0,body.length]);
+  tag.set(body,10);
+  expect(parseId3Bytes(tag)).toMatchObject({title:"Extended Title"});
+  expect(await readAudioMetadata(new Blob([tag]))).toMatchObject({title:"Extended Title"});
+ });
+ it("reads ID3v2.4 frames after a syncsafe extended header",async()=>{
+  const extension=new Uint8Array([0,0,0,6,1,0]);
+  const body=new Uint8Array([...extension,...title]);
+  const tag=new Uint8Array(10+body.length);
+  tag.set([73,68,51,4,0,0x40,0,0,0,body.length]);
+  tag.set(body,10);
+  expect(parseId3Bytes(tag)).toMatchObject({title:"Extended Title"});
+  expect(await readAudioMetadata(new Blob([tag]))).toMatchObject({title:"Extended Title"});
+ });
+ it("rejects malformed extended header sizes and truncated tags",()=>{
+  const tag=new Uint8Array(10+title.length);
+  tag.set([73,68,51,4,0,0x40,0,0,0,title.length]);
+  tag.set(title,10);
+  expect(parseId3Bytes(tag)).toEqual({});
+  const invalid=tag.slice();
+  invalid.set([0,0,0,127],10);
+  expect(parseId3Bytes(invalid)).toEqual({});
+  const valid=tag.slice();
+  valid[5]=0;
+  expect(parseId3Bytes(valid.slice(0,-1))).toEqual({});
+ });
+ it("does not decode invalid ID3v2.4 non-syncsafe frame sizes",()=>{
+  const tag=new Uint8Array(10+title.length);
+  tag.set([73,68,51,4,0,0,0,0,0,title.length]);
+  tag.set(title,10);
+  tag[14]=0x80;
+  expect(parseId3Bytes(tag)).toEqual({});
+ });
+});
