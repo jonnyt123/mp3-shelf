@@ -2228,6 +2228,8 @@ struct PublisherPageInspectorView: View {
     @State private var chosenAudio: WebAudioSelection?
     @State private var inspectionTask: Task<Void, Never>?
     @State private var inspectionID = UUID()
+    @State private var completedInspection = false
+    @AccessibilityFocusState private var inspectionFeedbackFocused: Bool
 
     // Editing the URL or leaving this sheet invalidates the in-flight response.
     // A cancelled network request may still complete; only its matching ID
@@ -2239,6 +2241,8 @@ struct PublisherPageInspectorView: View {
         isInspecting = false
         candidates = []
         error = nil
+        completedInspection = false
+        inspectionFeedbackFocused = false
     }
 
     private func inspectPage() {
@@ -2246,6 +2250,7 @@ struct PublisherPageInspectorView: View {
         guard let pageURL = WebAudioSearch.sanitizedResultURL(input) else {
             invalidateInspection()
             error = "Enter a public HTTPS webpage URL."
+            inspectionFeedbackFocused = true
             return
         }
         invalidateInspection()
@@ -2256,11 +2261,14 @@ struct PublisherPageInspectorView: View {
                 let found = try await AudioLandingPageInspector.inspect(pageURL)
                 guard !Task.isCancelled, inspectionID == requestID else { return }
                 candidates = found
+                completedInspection = true
+                inspectionFeedbackFocused = found.isEmpty
             } catch is CancellationError {
                 return
             } catch {
                 guard !Task.isCancelled, inspectionID == requestID else { return }
                 self.error = error.localizedDescription
+                inspectionFeedbackFocused = true
             }
             guard inspectionID == requestID else { return }
             isInspecting = false
@@ -2303,11 +2311,40 @@ struct PublisherPageInspectorView: View {
                         .accessibilityElement(children: .contain)
                     }
                     if let error {
-                        Text(error).font(.caption).foregroundStyle(.orange)
-                    }
-                    if !isInspecting, candidates.isEmpty, error == nil {
-                        Text("Not all publishers advertise downloadable files in page HTML. A purchase page or streaming player may not expose a direct download URL.")
-                            .font(.caption).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Page inspection failed")
+                                .font(.headline)
+                                .accessibilityAddTraits(.isHeader)
+                                .accessibilityFocused($inspectionFeedbackFocused)
+                            Text(error)
+                                .font(.subheadline)
+                            Button {
+                                inspectPage()
+                            } label: {
+                                Label("Retry page inspection", systemImage: "arrow.clockwise")
+                                    .frame(minHeight: 44)
+                            }
+                            .disabled(isInspecting)
+                            .accessibilityHint("Try the same webpage again without losing its address")
+                        }
+                        .foregroundStyle(.orange)
+                    } else if completedInspection && candidates.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("No downloadable audio links found")
+                                .font(.headline)
+                                .accessibilityAddTraits(.isHeader)
+                                .accessibilityFocused($inspectionFeedbackFocused)
+                            Text("This page did not expose a direct audio file. Try another public publisher page or inspect this page again.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Button {
+                                inspectPage()
+                            } label: {
+                                Label("Inspect page again", systemImage: "arrow.clockwise")
+                                    .frame(minHeight: 44)
+                            }
+                            .accessibilityHint("Repeat the inspection of this webpage")
+                        }
                     }
                 }
                 if !candidates.isEmpty {
