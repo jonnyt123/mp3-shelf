@@ -1013,9 +1013,9 @@ struct PlaybackQueueSheet: View {
                         // A failed Play now request can leave the queue sheet open.
                         // Surface the existing playback failure and recovery command
                         // here, without requiring dismissal or changing saved audio.
-                        if let failure = playback.playbackError, !failure.isEmpty {
+                        if let failure = playback.playbackError ?? (retryTrackID == playback.currentTrackID ? "Waiting for playback to resume." : nil), !failure.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
-                                Label("Unable to play recording", systemImage: "exclamationmark.triangle.fill")
+                                Label(playback.playbackError == nil ? "Playback recovery" : "Unable to play recording", systemImage: playback.playbackError == nil ? "clock.arrow.circlepath" : "exclamationmark.triangle.fill")
                                     .font(.headline)
                                     .foregroundStyle(ShelfTheme.coral)
                                 Text(failure)
@@ -1381,6 +1381,7 @@ struct PlaybackQueueSheet: View {
                 // The playback controller may clear its error before audio
                 // actually begins. A cleared error alone is not success.
                 if playback.isPlaying && playback.playbackError == nil {
+                    retryAttempt += 1
                     retryFeedback = nil
                     lastRetryError = nil
                     retryTrackID = nil
@@ -1395,7 +1396,8 @@ struct PlaybackQueueSheet: View {
                 }
             }
             .onChange(of: playback.isPlaying) { _, playing in
-                if playing && playback.playbackError == nil {
+                if playing && playback.playbackError == nil && retryTrackID == playback.currentTrackID {
+                    retryAttempt += 1
                     retryFeedback = nil
                     lastRetryError = nil
                     retryTrackID = nil
