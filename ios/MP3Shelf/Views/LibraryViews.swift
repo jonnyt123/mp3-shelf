@@ -2229,7 +2229,18 @@ struct PublisherPageInspectorView: View {
     @State private var inspectionTask: Task<Void, Never>?
     @State private var inspectionID = UUID()
     @State private var completedInspection = false
+    @State private var candidateFilter = ""
     @AccessibilityFocusState private var inspectionFeedbackFocused: Bool
+
+    private var visibleCandidates: [URL] {
+        let query = candidateFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return candidates }
+        return candidates.filter {
+            $0.lastPathComponent.localizedStandardContains(query) ||
+            ($0.host?.localizedStandardContains(query) ?? false) ||
+            $0.absoluteString.localizedStandardContains(query)
+        }
+    }
 
     // Editing the URL or leaving this sheet invalidates the in-flight response.
     // A cancelled network request may still complete; only its matching ID
@@ -2240,6 +2251,7 @@ struct PublisherPageInspectorView: View {
         inspectionID = UUID()
         isInspecting = false
         candidates = []
+        candidateFilter = ""
         error = nil
         completedInspection = false
         inspectionFeedbackFocused = false
@@ -2349,19 +2361,49 @@ struct PublisherPageInspectorView: View {
                 }
                 if !candidates.isEmpty {
                     Section("POSSIBLE AUDIO FILES") {
-                        ForEach(candidates, id: \.absoluteString) { file in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(file.lastPathComponent)
+                        Text("\(candidates.count) possible audio links found. Review the recording and publisher before downloading.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        if candidates.count > 5 {
+                            TextField("Filter audio links", text: $candidateFilter)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .accessibilityHint("Filter results by filename or publisher without another network request")
+                            if !candidateFilter.isEmpty {
+                                Button("Clear link filter") { candidateFilter = "" }
+                                    .frame(minHeight: 44)
+                            }
+                        }
+                        if visibleCandidates.isEmpty {
+                            Text("No links match this filter. Clear it to see all discovered files.")
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(visibleCandidates, id: \.absoluteString) { file in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(file.lastPathComponent.removingPercentEncoding ?? file.lastPathComponent)
                                     .font(.subheadline.weight(.semibold))
-                                Text(file.host ?? "")
-                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                                Text(file.host ?? "Unknown publisher")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(file.absoluteString)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .textSelection(.enabled)
                                 Button {
                                     chosenAudio = WebAudioSelection(wish: wish, url: file)
                                 } label: {
-                                    Label("Review and download this file", systemImage: "arrow.down.circle")
-                                        .font(.caption.weight(.semibold))
+                                    Label("Review this audio file", systemImage: "arrow.down.circle")
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .frame(minHeight: 44)
+                                        .contentShape(Rectangle())
                                 }
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Review \(file.lastPathComponent) from \(file.host ?? "unknown publisher")")
+                                .accessibilityHint("Open recording review; no download starts automatically")
                             }
+                            .padding(.vertical, 4)
                         }
                     }
                 }
