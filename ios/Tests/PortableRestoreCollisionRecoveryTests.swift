@@ -164,7 +164,6 @@ try JSONEncoder().encode(baseline).write(to: manifestURL, options: .atomic)
 // Simulate a foreign recording and a truncated staged copy, then retry with
 // the correct bytes. The manifest must remain byte-identical on rejection.
 let baselineBeforeCollision = try Data(contentsOf: manifestURL)
-let recoveredManifestBytes = try Data(contentsOf: manifestURL)
 let copiedPath = library.appendingPathComponent(newTrack.filename)
 for (name, foreignBytes) in [
     ("foreign-recording", oldBytes),
