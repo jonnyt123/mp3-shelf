@@ -820,6 +820,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     private func importStagedDownloadsPass() async {
+        // The persisted journal is the only mapping between daemon task IDs
+        // and user-owned recordings. If it is unreadable, leave staged bytes
+        // untouched for recovery instead of treating every task as unknown.
+        guard manifestLoadError == nil else { return }
         // A queued transfer might have become redundant because a separate
         // playlist or manual import already saved the exact recording.
         reconcileAlreadyStoredDownloads()
@@ -1156,6 +1160,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 // delegate was moving the completed file. Unknown tickets must
                 // never leave an orphan staged copy or import cancelled audio.
                 guard self.tickets[id]?.status == .queued else {
+                    // A damaged manifest hides valid ticket IDs. Keep completed
+                    // bytes until the journal can be repaired; an empty in-memory
+                    // queue is not evidence that the user cancelled this task.
+                    if self.manifestLoadError != nil { return }
                     // A cancelled duplicate callback must not delete the
                     // first callback's file while a decoder still owns it.
                     if !self.processing.contains(id) && self.conversions[id] == nil {
