@@ -44,23 +44,26 @@ async function readCommitSummaries(api, pr, since, now) {
   }
   let page = Math.max(1, Math.ceil(meta.commits / 100));
   const selected = [];
-  let finished = false;
-  let pages = 0;
-  while (page > 0 && pages < 5 && !finished) {
+  // GitHub orders PR commits by ancestry, not committer timestamp. A newer
+  // timestamp may appear before an older one on the same or an earlier page.
+  // Never stop at the first old commit: doing so silently undercounts work.
+  // For large PRs, fail closed instead of presenting a partial hourly total.
+  if (page > 5) throw Error(`PR #${pr} exceeded bounded history; metrics incomplete`);
+  while (page > 0) {
     const commits = await api(`/pulls/${pr}/commits?per_page=100&page=${page}`);
-    if (!Array.isArray(commits)) throw Error(`PR #${pr} commit list unavailable`);
-    for (const commit of [...commits].reverse()) {
+    if (!Array.isArray(commits) || commits.length === 0 ||
+        (page < Math.ceil(meta.commits / 100) && commits.length !== 100)) {
+      throw Error(`PR #${pr} commit list incomplete`);
+    }
+    for (const commit of commits) {
       const timestamp = validDate(commit?.commit?.committer?.date ?? commit?.commit?.author?.date);
       if (timestamp === null || !SHA.test(commit?.sha ?? '')) {
         throw Error(`PR #${pr} contains malformed commit metadata`);
       }
-      if (timestamp < since) { finished = true; break; }
-      if (timestamp <= now) selected.push(commit.sha);
+      if (timestamp >= since && timestamp <= now) selected.push(commit.sha);
     }
-    pages += 1;
     page -= 1;
   }
-  if (!finished && page > 0) throw Error(`PR #${pr} exceeded bounded history; metrics incomplete`);
   return { head: meta.head.sha, commits: selected };
 }
 export async function collectThroughput({ api, now = Date.now(), hours = 1, lanes = LANES }) {
