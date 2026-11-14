@@ -707,6 +707,7 @@ struct PlaybackQueueSheet: View {
     @State private var pendingQueueFocusID: UUID?
     @State private var pendingEmptyQueueFocus = false
     @State private var queueChangedAlert = false
+    @State private var searchChangedAlert = false
     @State private var queueSearchText = ""
     @State private var settledQueueSearchText = ""
     @AccessibilityFocusState private var emptyQueueFocused: Bool
@@ -729,9 +730,26 @@ struct PlaybackQueueSheet: View {
         queueChangedAlert = true
     }
 
+    // Reject commands from context menus captured before the search changed.
+    // A hidden result must not remain actionable after filtering updates.
+    private func actionIsVisible(_ trackID: UUID) -> Bool {
+        let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !queueSearchIsUpdating,
+              let track = playback.queuedTracks.first(where: { $0.id == trackID }),
+              matchesSearch(track, query: query) else {
+            pendingQueueFocusID = nil
+            pendingEmptyQueueFocus = false
+            focusedQueueTrackID = nil
+            searchChangedAlert = true
+            return false
+        }
+        return true
+    }
+
     // Keep VoiceOver on the nearest surviving queue action after a deletion.
     // The focus target must be applied after the queue has published its new rows.
     private func removeFromQueue(_ trackID: UUID) {
+        guard actionIsVisible(trackID) else { return }
         // Resolve against the live queue rather than a row's captured render.
         // Playback may advance between opening a menu and choosing Remove.
         let current = playback.queuedTracks
@@ -787,6 +805,7 @@ struct PlaybackQueueSheet: View {
     }
 
     private func playNext(_ trackID: UUID) {
+        guard actionIsVisible(trackID) else { return }
         // A context menu can stay open after playback advances or a queue edit.
         // Do not issue a mutation or retain a focus request for a vanished row.
         let current = playback.queuedTracks
@@ -811,6 +830,7 @@ struct PlaybackQueueSheet: View {
     }
 
     private func playNow(_ trackID: UUID) {
+        guard actionIsVisible(trackID) else { return }
         // Resolve from the live queue; a captured MusicTrack may no longer be
         // queued when a menu action is selected after automatic advancement.
         guard let track = playback.queuedTracks.first(where: { $0.id == trackID }) else {
@@ -1251,7 +1271,7 @@ struct PlaybackQueueSheet: View {
                 // advance while it is open; defer all row/empty-state focus
                 // recovery until dismissal rather than moving VoiceOver behind
                 // the alert.
-                guard !queueChangedAlert else {
+                guard !queueChangedAlert && !searchChangedAlert else {
                     pendingQueueFocusID = nil
                     pendingEmptyQueueFocus = false
                     return
@@ -1313,6 +1333,11 @@ struct PlaybackQueueSheet: View {
                     noMatchesFocused = visibleIDs.isEmpty
                     emptyQueueFocused = false
                 }
+            }
+            .alert("Search changed", isPresented: $searchChangedAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("The queue search changed before the action completed. Review the current results and try again.")
             }
             .alert("Queue changed", isPresented: $queueChangedAlert) {
                 Button("OK", role: .cancel) {}
