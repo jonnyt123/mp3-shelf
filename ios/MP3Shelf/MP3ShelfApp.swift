@@ -56,6 +56,8 @@ final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions:
                          [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         #if DEBUG
+        PhysicalDeviceAudit.configureLaunch()
+        if PhysicalDeviceAudit.isOfflineRequested { return true }
         if DownloadProofOfflineNetwork.isRequested {
             _ = DownloadProofOfflineNetwork.install()
             return true
@@ -79,6 +81,9 @@ final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
             completionHandler()
             return
         }
+        #if DEBUG
+        PhysicalDeviceAudit.recordEvent("background-session-wake")
+        #endif
         Task { @MainActor in
             // iOS may relaunch us ONLY for the background URLSession, without
             // creating a visible SwiftUI scene. Keep a headless library alive
@@ -86,6 +91,9 @@ final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
             let library = MP3ShelfBackgroundDiscovery.foregroundLibrary ?? MusicLibrary()
             BackgroundAudioDownloader.shared.attach(to: library)
             BackgroundAudioDownloader.shared.setBackgroundEventsCompletion {
+                #if DEBUG
+                PhysicalDeviceAudit.recordEvent("background-session-completed")
+                #endif
                 withExtendedLifetime(library) { completionHandler() }
             }
         }
@@ -102,6 +110,7 @@ struct MP3ShelfApp: App {
     #if DEBUG
     @State private var didStartVisualFixture = false
     @State private var didStartDownloadProof = false
+    @State private var didStartPhysicalDeviceProof = false
     #endif
 
     var body: some Scene {
@@ -114,6 +123,17 @@ struct MP3ShelfApp: App {
                 .onAppear {
                     playback.connect(to: library)
                     #if DEBUG
+                    if PhysicalDeviceAudit.isOfflineRequested {
+                        // Explicit physical QA never attaches source discovery
+                        // or network transfer services during offline playback.
+                        library.setForegroundDiscoveryEnabled(false)
+                        if !didStartPhysicalDeviceProof {
+                            didStartPhysicalDeviceProof = true
+                            Task { await PhysicalDeviceAudit.verifyOffline(
+                                library: library, playback: playback) }
+                        }
+                        return
+                    }
                     if DownloadProofOfflineNetwork.isRequested {
                         library.setForegroundDiscoveryEnabled(false)
                         if !didStartDownloadProof {
@@ -155,7 +175,8 @@ struct MP3ShelfApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     #if DEBUG
-                    if DownloadProofOfflineNetwork.isRequested || DownloadPathProof.fixtureTransferRequested {
+                    if PhysicalDeviceAudit.isOfflineRequested ||
+                       DownloadProofOfflineNetwork.isRequested || DownloadPathProof.fixtureTransferRequested {
                         library.setForegroundDiscoveryEnabled(false)
                         return
                     }
