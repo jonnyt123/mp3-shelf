@@ -906,6 +906,44 @@ struct PlaybackQueueSheet: View {
         playback.play(track)
     }
 
+    // Submitting search is an explicit request to inspect results. Commit the
+    // current query immediately instead of waiting for the typing debounce,
+    // then focus a surviving result or the no-matches explanation. Never
+    // transfer VoiceOver focus to a hidden row from the previous filter.
+    private func submitQueueSearch() {
+        settledQueueSearchText = queueSearchText
+        pendingQueueFocusID = nil
+        pendingEmptyQueueFocus = false
+        focusedQueueTrackID = nil
+        emptyQueueFocused = false
+        noMatchesFocused = false
+        let current = playback.queuedTracks
+        let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if current.isEmpty {
+            emptyQueueFocused = true
+        } else if let first = current.first(where: { matchesSearch($0, query: query) }) {
+            focusedQueueTrackID = first.id
+        } else {
+            noMatchesFocused = true
+        }
+    }
+
+    // Clearing search is immediate, including while the debounce task is
+    // suspended. The task's cancellation/query guard prevents old results
+    // from being restored after the clear action.
+    private func clearQueueSearch() {
+        queueSearchText = ""
+        settledQueueSearchText = ""
+        pendingQueueFocusID = nil
+        pendingEmptyQueueFocus = false
+        noMatchesFocused = false
+        emptyQueueFocused = false
+        focusedQueueTrackID = playback.queuedTracks.first?.id
+        if playback.queuedTracks.isEmpty {
+            emptyQueueFocused = true
+        }
+    }
+
     private var queueSearchIsUpdating: Bool {
         queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
             != settledQueueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1195,7 +1233,7 @@ struct PlaybackQueueSheet: View {
                             .premiumCard()
                             .accessibilityElement(children: .combine)
                             .accessibilityFocused($noMatchesFocused)
-                            Button("Clear search") { queueSearchText = "" }
+                            Button("Clear search") { clearQueueSearch() }
                                 .frame(minHeight: 44)
                                 .foregroundStyle(ShelfTheme.accent)
                                 .accessibilityHint("Show all queued songs without changing their order")
@@ -1207,7 +1245,7 @@ struct PlaybackQueueSheet: View {
                                         .foregroundStyle(ShelfTheme.subdued)
                                         .fixedSize(horizontal: false, vertical: true)
                                     Spacer(minLength: 0)
-                                    Button("Clear search") { queueSearchText = "" }
+                                    Button("Clear search") { clearQueueSearch() }
                                         .font(.subheadline.weight(.semibold))
                                         .frame(minHeight: 44)
                                         .foregroundStyle(ShelfTheme.accent)
@@ -1535,6 +1573,9 @@ struct PlaybackQueueSheet: View {
             }
             .searchable(text: $queueSearchText, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "Search queued songs")
+            .onSubmit(of: .search) {
+                submitQueueSearch()
+            }
             .navigationTitle("Your queue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
