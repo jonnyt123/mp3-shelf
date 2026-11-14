@@ -3,6 +3,7 @@ import ShelfEncoder
 import Foundation
 import Combine
 import UIKit
+import ImageIO
 import Network
 
 struct AutomaticDownloadProgress {
@@ -344,6 +345,23 @@ final class MusicLibrary: ObservableObject {
 
     /// Adds valid files from a browser or native backup without deleting
     /// anything already on this iPhone. Archive metadata is validated first.
+    // Reject compressed image bombs before UIKit allocates a decoded bitmap.
+    // ImageIO reads header properties without caching pixel data; malformed,
+    // animated, or excessively large artwork is optional and never blocks audio.
+    private static func isSafeArtwork(_ bytes: Data) -> Bool {
+        guard !bytes.isEmpty, bytes.count <= 20 * 1024 * 1024,
+              let source = CGImageSourceCreateWithData(bytes as CFData,
+                  [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0,
+              width <= 8192, height <= 8192,
+              width <= 32_000_000 / height else { return false }
+        return UIImage(data: bytes) != nil
+    }
+
     func importPortableBackup(from url: URL) async throws -> ImportReport {
         try requireLibraryPersistence()
         let accessing = url.startAccessingSecurityScopedResource()
@@ -382,7 +400,7 @@ final class MusicLibrary: ObservableObject {
                 PortableShelfArchive.sidecarNeedsRecovery(
                     named: current.artworkFileName, from: artworkDirectory,
                     maximumBytes: 20 * 1024 * 1024,
-                    isValid: { UIImage(data: $0) != nil })
+                    isValid: { Self.isSafeArtwork($0) })
             let needsLyrics = !(archived.lyrics ?? "").isEmpty &&
                 PortableShelfArchive.sidecarNeedsRecovery(
                     named: current.lyricsFileName, from: lyricsDirectory,
@@ -405,7 +423,7 @@ final class MusicLibrary: ObservableObject {
                     try Task.checkCancellation()
                     let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
                     try Task.checkCancellation()
-                    guard UIImage(data: bytes) != nil else {
+                    guard Self.isSafeArtwork(bytes) else {
                         throw PortableShelfArchive.ArchiveError.invalidManifest
                     }
                     let name = existingID.uuidString + "-" + UUID().uuidString + ".img"
@@ -619,7 +637,7 @@ final class MusicLibrary: ObservableObject {
                     do {
                         try Task.checkCancellation()
                         let bytes = try PortableShelfArchive.readBytes(artwork, from: archive)
-                        if UIImage(data: bytes) != nil {
+                        if Self.isSafeArtwork(bytes) {
                             let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".img"
                             let destination = artworkDirectory.appendingPathComponent(filename)
                             try PortableShelfArchive.writeRestoredSidecar(bytes, to: destination)
@@ -1088,7 +1106,7 @@ final class MusicLibrary: ObservableObject {
                     // if a second import races this UUID-derived destination.
                     if let imageData = AVMetadataItem.metadataItems(from: metadata, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue,
                        !imageData.isEmpty, imageData.count <= 20 * 1024 * 1024,
-                       UIImage(data: imageData) != nil {
+                       Self.isSafeArtwork(imageData) {
                         let proposedName = id.uuidString + ".img"
                         let artworkDestination = artworkDirectory.appendingPathComponent(proposedName)
                         if (try? PortableShelfArchive.writeRestoredSidecar(imageData, to: artworkDestination)) != nil {
