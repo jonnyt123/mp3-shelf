@@ -95,7 +95,16 @@ final class PlaybackController: NSObject, ObservableObject {
                 guard let self, let player, self.audioPlayer === player else { return }
                 if succeeded { self.advance(automatically: true) }
                 else {
+                    // A decode failure can arrive while an outgoing player is
+                    // still audible during a crossfade. Stop both players and
+                    // polling before exposing the retry state; otherwise the
+                    // library reports stopped playback while audio continues.
+                    self.positionTimer?.invalidate()
+                    self.positionTimer = nil
+                    self.cancelFade()
+                    player.stop()
                     self.isPlaying = false
+                    self.interruptionState.cancelResume()
                     self.playbackError = "Audio playback stopped unexpectedly. Choose another song or try playing again."
                     self.failedTrackID = self.currentTrackID
                     self.failedPlaybackOrder = self.playbackOrder
