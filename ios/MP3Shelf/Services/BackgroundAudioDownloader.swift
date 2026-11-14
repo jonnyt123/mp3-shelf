@@ -134,7 +134,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                           oldTicket.playlistID == playlistID,
                           oldTicket.status == .queued,
                           !self.fm.fileExists(atPath: Self.stagingURL(oldID).path),
-                          task.originalRequest?.allowsCellularAccess == false
+                          // Restored background tasks may expose only currentRequest.
+                          // Never assume a missing originalRequest means that the
+                          // user already authorized cellular access.
+                          (task.originalRequest ?? task.currentRequest)?.allowsCellularAccess == false
                     else { continue }
                     if BackgroundTransferRetryPolicy.linkExpiresByStart(
                         oldTicket.downloadURL, earliestBeginDate: oldTicket.nextRetryAt) {
