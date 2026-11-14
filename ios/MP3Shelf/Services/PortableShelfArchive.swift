@@ -842,9 +842,11 @@ enum PortableShelfArchive {
             // rollback must never delete that other writer's recording.
             let stagedHandle = try FileHandle(forReadingFrom: staging)
             defer { try? stagedHandle.close() }
-            let identity = try archiveIdentity(of: stagedHandle, at: staging)
+            _ = try archiveIdentity(of: stagedHandle, at: staging)
             try manager.linkItem(at: staging, to: destination)
-            publishedIdentity = identity
+            // link(2) updates inode ctime; capture the post-publication
+            // identity so normal rollback can recognize its own sidecar.
+            publishedIdentity = try archiveIdentity(of: stagedHandle, at: destination)
             try validate()
             try Task.checkCancellation()
         } catch {
