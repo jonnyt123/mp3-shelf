@@ -5,9 +5,30 @@ import Foundation
 import Combine
 
 private final class AudioCompletionRelay: NSObject, AVAudioPlayerDelegate {
-    var finished: ((AVAudioPlayer, Bool) -> Void)?
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finished?(player, flag) }
-    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { finished?(player, false) }
+    // Capture the playback generation synchronously with the delegate event.
+    // A callback queued before pause/resume must not advance the resumed player.
+    private let generationLock = NSLock()
+    private var generation: UInt64 = 0
+    var finished: ((AVAudioPlayer, Bool, UInt64) -> Void)?
+
+    func invalidatePendingCompletions() {
+        generationLock.lock()
+        generation &+= 1
+        generationLock.unlock()
+    }
+
+    func completionGeneration() -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generation
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        finished?(player, flag, completionGeneration())
+    }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        finished?(player, false, completionGeneration())
+    }
 }
 
 @MainActor
@@ -90,9 +111,10 @@ final class PlaybackController: NSObject, ObservableObject {
         self.library = library
         guard !remoteControlsConfigured else { return }
         remoteControlsConfigured = true
-        relay.finished = { [weak self] player, succeeded in
+        relay.finished = { [weak self] player, succeeded, generation in
             Task { @MainActor [weak player] in
-                guard let self, let player, self.audioPlayer === player else { return }
+                guard let self, let player, self.audioPlayer === player,
+                      self.relay.completionGeneration() == generation else { return }
                 // Delegate completion can be queued before a user pause or an
                 // audio-session interruption. Never start the next recording
                 // or overwrite a deliberately paused player's retry state.
@@ -168,6 +190,7 @@ final class PlaybackController: NSObject, ObservableObject {
                 audioPlayer?.stop()
                 audioPlayer = player
             }
+            relay.invalidatePendingCompletions()
             playbackError = nil
             failedTrackID = nil
             failedPlaybackOrder = nil
@@ -221,6 +244,7 @@ final class PlaybackController: NSObject, ObservableObject {
     func togglePlayback() { isPlaying ? pause() : resume() }
 
     func pause() {
+        relay.invalidatePendingCompletions()
         interruptionState.cancelResume()
         if outgoingPlayer != nil { cancelFade(); audioPlayer?.volume = 1 }
         audioPlayer?.pause()
@@ -234,6 +258,7 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func resume() {
+        relay.invalidatePendingCompletions()
         interruptionState.cancelResume()
         guard let audioPlayer else { return }
         do {
@@ -255,6 +280,7 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func stop() {
+        relay.invalidatePendingCompletions()
         playbackError = nil
         failedTrackID = nil
         failedPlaybackOrder = nil
