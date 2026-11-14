@@ -12,6 +12,7 @@ struct CrashJournal: Codable {
     var receipts: Set<UUID>
 }
 enum CrashPoint: Error { case afterCopy, beforeReceipt, afterReceipt }
+enum JournalWriteFault: Error { case injected }
 func ensure(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
     if try !condition() { fatalError("FAIL: \(message)") }
 }
@@ -33,7 +34,14 @@ let initial = CrashJournal(tickets: [
     CrashTicket(id: retired, state: .cancelled),
     CrashTicket(id: other, state: .queued)
 ], receipts: [])
+var failNextReceiptPublication = false
 func publish(_ value: CrashJournal) throws {
+    // Inject a failure at the actual receipt publication boundary, after the
+    // library copy exists but before the terminal state becomes durable.
+    if failNextReceiptPublication && value.receipts.contains(primary) {
+        failNextReceiptPublication = false
+        throw JournalWriteFault.injected
+    }
     try JSONEncoder().encode(value).write(to: journal, options: .atomic)
 }
 enum RecoveryValidationError: Error {
@@ -100,6 +108,36 @@ for point in [CrashPoint.afterCopy, .beforeReceipt, .afterReceipt] {
     try ensure(Data(contentsOf: staged) == bytes &&
                Data(contentsOf: unrelated) == otherBytes, "user audio damaged")
 }
+// The import copy may already exist when durable receipt publication fails.
+// Retrying must recover from the importing journal, preserve the audio bytes,
+// and publish exactly one receipt without acknowledging the failed attempt.
+for iteration in 0..<32 {
+    try publish(initial)
+    if fm.fileExists(atPath: imported.path) { try fm.removeItem(at: imported) }
+    acknowledged = 0
+    failNextReceiptPublication = true
+    var rejected = false
+    do {
+        try complete(primary)
+    } catch JournalWriteFault.injected {
+        rejected = true
+    }
+    try ensure(rejected, "receipt write failure not propagated at iteration \\(iteration)")
+    let interrupted = try recover()
+    try ensure(interrupted.tickets[0].state == .importing && interrupted.receipts.isEmpty,
+               "failed receipt write published terminal state")
+    try ensure(acknowledged == 0, "failed receipt write acknowledged completion")
+    try ensure(Data(contentsOf: imported) == bytes, "failed receipt write damaged copied audio")
+    try ensure(Data(contentsOf: staged) == bytes && Data(contentsOf: unrelated) == otherBytes,
+               "failed receipt write damaged staged or unrelated audio")
+    try complete(primary)
+    for _ in 0..<16 { try complete(primary) }
+    let resumed = try recover()
+    try ensure(resumed.tickets[0].state == .imported && resumed.receipts == Set([primary]),
+               "retry failed to durably publish exactly one completion receipt")
+    try ensure(acknowledged == 1, "retry acknowledged completion more than once")
+    try ensure(Data(contentsOf: imported) == bytes, "retry damaged imported audio")
+}
 // A corrupt persisted receipt journal is not an empty queue. Completion must
 // fail closed, preserve the exact corrupt evidence, and leave audio untouched.
 // Test actual decoder failures rather than inventing a successful recovery.
@@ -159,7 +197,7 @@ try complete(primary)
 try ensure((try recover()).receipts == Set([primary]),
            "valid receipt journal not recoverable after corruption")
 
-print("PASS: 3 crash windows, 384 callback replays, 8 corrupt/unsafe journals, byte-exact 256 KiB staged audio")
+print("PASS: 3 crash windows, 32 failed receipt writes with retries, 384 callback replays, 8 corrupt/unsafe journals, byte-exact 256 KiB staged audio")
 if !CommandLine.arguments.contains("--fixture-only") {
     let path = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
     guard fm.fileExists(atPath: path) else {
