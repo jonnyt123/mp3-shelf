@@ -50,6 +50,13 @@ class ManualDownloadCancellationContract(unittest.TestCase):
         self.assertIn("if cancellationAware { try Task.checkCancellation() }", helper)
         self.assertIn("LocalAudioImportTransaction.perform(", helper)
 
+    def test_redirected_response_must_remain_https(self):
+        body = method_body()
+        self.assertIn('http.url?.scheme?.lowercased() == "https"', body)
+        self.assertLess(body.index('http.url?.scheme?.lowercased() == "https"'),
+                        body.index("manager.moveItem(at: temporary, to: staging)"))
+        self.assertIn("throw MusicLibraryError.invalidDownloadURL", body)
+
     def test_no_cancellation_check_is_swallowed(self):
         body = method_body()
         self.assertNotRegex(body, r"try\?\s*Task\.checkCancellation\(\)")

@@ -1640,6 +1640,10 @@ final class MusicLibrary: ObservableObject {
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MusicLibraryError.downloadFailed
         }
+        // URLSession follows redirects; reject an HTTPS-to-HTTP downgrade before importing bytes.
+        guard http.url?.scheme?.lowercased() == "https" else {
+            throw MusicLibraryError.invalidDownloadURL
+        }
         if let finalHost = http.url?.host?.lowercased(),
            ["spotify.com", "spotifycdn.com", "scdn.co"].contains(where: { finalHost == $0 || finalHost.hasSuffix("." + $0) }) {
             throw MusicLibraryError.invalidDownloadURL
