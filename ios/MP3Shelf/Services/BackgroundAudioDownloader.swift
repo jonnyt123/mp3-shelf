@@ -1123,7 +1123,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// A completed staged file wins over a concurrent duplicate callback's
     /// failed move. The losing callback must not fail the durable ticket.
     nonisolated static func stagedFileSurvivesMoveFailure(at url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path)
+        // A zero-byte placeholder or directory is not a completed transfer.
+        // Never let it suppress an actual failed move or daemon error.
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, let size = values.fileSize else { return false }
+        return size > 0 && Int64(size) <= BackgroundTransferProgressPolicy.maxBytes
     }
 
     nonisolated static func safeRedirectRequest(_ redirected: URLRequest,
@@ -1162,7 +1166,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // staged file belongs to the import/recovery path; a later callback
         // (even one with an error response) must not mark its ticket failed or
         // replace the file while a decoder is reading it.
-        if FileManager.default.fileExists(atPath: Self.stagingURL(id).path) {
+        if Self.stagedFileSurvivesMoveFailure(at: Self.stagingURL(id)) {
             Task { @MainActor in
                 guard self.tickets[id]?.status == .queued else { return }
                 await self.recoverStagedDownloads()
@@ -1286,7 +1290,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // replace the queued ticket or discard a complete file awaiting import.
             // Staging is created only after HTTP, size, type and range checks.
             guard self.tickets[id]?.status == .queued else { return }
-            if self.fm.fileExists(atPath: Self.stagingURL(id).path) {
+            if Self.stagedFileSurvivesMoveFailure(at: Self.stagingURL(id)) {
                 await self.recoverStagedDownloads()
                 return
             }
