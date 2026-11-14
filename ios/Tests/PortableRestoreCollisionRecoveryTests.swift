@@ -82,6 +82,12 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
     for item in archive.tracks where byID[item.id] == nil {
         let source = incoming.appendingPathComponent(item.filename)
         let destination = library.appendingPathComponent(item.filename)
+        // A symlink can escape the staging/library directories even when the
+        // manifest filename itself passes lexical path validation.
+        // Check both paths before reading, copying or comparing any bytes.
+        let sourceIsLink = (try? source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
+        let destinationIsLink = (try? destination.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
+        guard !sourceIsLink, !destinationIsLink else { throw RestoreFault.malformed }
         guard fm.fileExists(atPath: source.path),
               let expected = try? Data(contentsOf: source) else {
             throw RestoreFault.malformed
@@ -215,4 +221,44 @@ try check(Data(contentsOf: original) == oldBytes &&
           Data(contentsOf: copiedPath) == foreignAfterCommit,
           "missing source modified existing audio")
 
-print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; 3 stale-file collision cases; metadata-only isolation; missing-source rejection; byte preservation")
+// Symlink path attacks: a lexically safe .mp3 basename may resolve outside
+// either the staging directory or the library. Reject before reading or
+// copying, including a dangling destination link (fileExists returns false).
+let outside = root.appendingPathComponent("outside-user-audio.mp3")
+let outsideBytes = Data(repeating: 0xD7, count: 8192)
+try outsideBytes.write(to: outside, options: .atomic)
+let linkTrack = ArchiveTrack(id: "link:track/101", filename: "linked.mp3", digest: "link")
+let linkArchive = ArchiveManifest(tracks: [linkTrack], playlists: [])
+let linkSource = incoming.appendingPathComponent(linkTrack.filename)
+let linkDestination = library.appendingPathComponent(linkTrack.filename)
+let manifestBeforeLinks = try Data(contentsOf: manifestURL)
+func expectLinkRejected(_ label: String) throws {
+    var rejected = false
+    do { try restore(linkArchive, failAfterCopy: false) }
+    catch RestoreFault.malformed { rejected = true }
+    try check(rejected, "symlink restore accepted: \\(label)")
+    try check(Data(contentsOf: manifestURL) == manifestBeforeLinks,
+              "symlink restore published metadata: \\(label)")
+    try check(Data(contentsOf: outside) == outsideBytes,
+              "symlink restore changed external audio: \\(label)")
+    try check(Data(contentsOf: original) == oldBytes,
+              "symlink restore damaged existing recording: \\(label)")
+}
+try fm.createSymbolicLink(at: linkSource, withDestinationURL: outside)
+try expectLinkRejected("source points outside staging")
+try fm.removeItem(at: linkSource)
+try newBytes.write(to: linkSource)
+try fm.createSymbolicLink(at: linkDestination, withDestinationURL: outside)
+try expectLinkRejected("destination points outside library")
+try fm.removeItem(at: linkDestination)
+let missingOutside = root.appendingPathComponent("not-present.mp3")
+try fm.createSymbolicLink(at: linkDestination, withDestinationURL: missingOutside)
+try expectLinkRejected("dangling destination")
+try fm.removeItem(at: linkDestination)
+try restore(linkArchive, failAfterCopy: false)
+try check(Data(contentsOf: linkDestination) == newBytes,
+          "valid non-symlink retry did not restore audio")
+try check(Data(contentsOf: outside) == outsideBytes,
+          "valid retry mutated unrelated external audio")
+
+print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; 3 stale-file collision cases; metadata-only isolation; missing-source rejection; 3 symlink path attacks; byte preservation")
