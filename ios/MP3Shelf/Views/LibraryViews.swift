@@ -2286,8 +2286,22 @@ struct PublisherPageInspectorView: View {
                         Label(isInspecting ? "Reading source page…" : "Find downloadable audio on this page",
                               systemImage: "doc.text.magnifyingglass")
                     }
-                    .disabled(isInspecting || pageText.isEmpty)
-                    if isInspecting { ProgressView() }
+                    .disabled(isInspecting || pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if isInspecting {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                                .accessibilityHidden(true)
+                            Text("Inspecting this page…")
+                                .font(.subheadline)
+                            Spacer(minLength: 0)
+                            Button("Cancel inspection") {
+                                invalidateInspection()
+                            }
+                            .frame(minHeight: 44)
+                            .accessibilityHint("Stop inspecting this page without changing the URL")
+                        }
+                        .accessibilityElement(children: .contain)
+                    }
                     if let error {
                         Text(error).font(.caption).foregroundStyle(.orange)
                     }
@@ -2323,8 +2337,11 @@ struct PublisherPageInspectorView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { dismiss() }
-                        .disabled(isInspecting)
+                    Button("Close") {
+                        invalidateInspection()
+                        dismiss()
+                    }
+                    .accessibilityHint("Close the page inspector and cancel any active inspection")
                 }
             }
             .sheet(item: $chosenAudio) { selected in
