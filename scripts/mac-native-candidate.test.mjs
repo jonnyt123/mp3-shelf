@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { BASE_REF, PREVIEW_REF, promotionPolicy, executeNativePreflight }
+import { BASE_REF, PREVIEW_REF, promotionPolicy, verifyDraftPreflightPR, executeNativePreflight }
   from './mac-native-candidate.mjs';
 const base = 'a'.repeat(40), proposed = 'b'.repeat(40);
 const paths = [
@@ -43,5 +43,25 @@ test('missing, failed or unavailable native evidence blocks auto staging', () =>
 test('non-macOS runtime fails before git, build or promotion', async () => {
   if (process.platform !== 'darwin') {
     await assert.rejects(executeNativePreflight({ promote: true }), /MAC_XCODE_REQUIRED/);
+  }
+});
+
+test('draft PR review metadata must agree with both Git SHA refs', () => {
+  const pr = { number: 37, state: 'open', draft: true,
+    head: { sha: proposed, ref: 'agent/mp3-native-integration-preflight',
+      repo: { full_name: 'jonnyt123/mp3-shelf' } },
+    base: { sha: base, ref: 'feat/ios-consolidated-candidate',
+      repo: { full_name: 'jonnyt123/mp3-shelf' } } };
+  assert.deepEqual(verifyDraftPreflightPR(pr, { base, proposed }), []);
+  for (const mutation of [
+    p => { p.head.sha = 'c'.repeat(40); },
+    p => { p.base.sha = 'c'.repeat(40); },
+    p => { p.draft = false; },
+    p => { p.state = 'closed'; },
+    p => { p.head.repo.full_name = 'unknown/fork'; },
+    p => { p.base.ref = 'main'; }
+  ]) {
+    const modified = structuredClone(pr); mutation(modified);
+    assert(verifyDraftPreflightPR(modified, { base, proposed }).length > 0);
   }
 });
