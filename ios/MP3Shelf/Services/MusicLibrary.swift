@@ -350,8 +350,7 @@ final class MusicLibrary: ObservableObject {
     // animated, or excessively large artwork is optional and never blocks audio.
     private static func isSafeArtwork(_ bytes: Data) -> Bool {
         guard !bytes.isEmpty, bytes.count <= 20 * 1024 * 1024,
-              let source = CGImageSourceCreateWithData(bytes as CFData,
-                  [kCGImageSourceShouldCache: false] as CFDictionary),
+              let source = CGImageSourceCreateWithData(bytes as CFData, nil),
               CGImageSourceGetCount(source) == 1,
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? NSDictionary,
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
