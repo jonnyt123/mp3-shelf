@@ -77,7 +77,15 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
         playlists: existing.playlists + archive.playlists.filter { item in !existing.playlists.contains(where: { $0.id == item.id }) }
     )
     let copied = library.appendingPathComponent(newTrack.filename)
-    if !fm.fileExists(atPath: copied.path) { try fm.copyItem(at: candidate, to: copied) }
+    // A previous interrupted restore may leave a file with the expected name.
+    // Never publish a manifest that points at unrelated or damaged bytes.
+    if fm.fileExists(atPath: copied.path) {
+        guard try Data(contentsOf: copied) == Data(contentsOf: candidate) else {
+            throw RestoreFault.malformed
+        }
+    } else {
+        try fm.copyItem(at: candidate, to: copied)
+    }
     if failAfterCopy { throw RestoreFault.interrupted }
     try JSONEncoder().encode(next).write(to: manifestURL, options: .atomic)
 }
@@ -140,4 +148,32 @@ for (index, invalid) in conflictCases.enumerated() {
     try check(Data(contentsOf: manifestURL) == before, "collision case \(index) published")
     try check(Data(contentsOf: original) == oldBytes, "collision case damaged existing audio")
 }
-print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; byte preservation")
+// Interrupted recovery must not trust a pre-existing destination filename.
+// Simulate a foreign recording and a truncated staged copy, then retry with
+// the correct bytes. The manifest must remain byte-identical on rejection.
+let recoveredManifestBytes = try Data(contentsOf: manifestURL)
+let copiedPath = library.appendingPathComponent(newTrack.filename)
+for (name, foreignBytes) in [
+    ("foreign-recording", oldBytes),
+    ("truncated-copy", Data(newBytes.prefix(1024))),
+    ("empty-copy", Data())
+] {
+    try foreignBytes.write(to: copiedPath, options: .atomic)
+    var rejected = false
+    do { try restore(archive, failAfterCopy: false) }
+    catch RestoreFault.malformed { rejected = true }
+    try check(rejected, "pre-existing collision accepted: \\(name)")
+    try check(Data(contentsOf: manifestURL) == recoveredManifestBytes,
+              "collision modified manifest: \\(name)")
+    try check(Data(contentsOf: copiedPath) == foreignBytes,
+              "collision erased forensic bytes: \\(name)")
+    try check(Data(contentsOf: original) == oldBytes,
+              "collision damaged existing recording: \\(name)")
+}
+try newBytes.write(to: copiedPath, options: .atomic)
+try restore(archive, failAfterCopy: false)
+try check(Data(contentsOf: manifestURL) == recoveredManifestBytes,
+          "valid retry changed committed manifest")
+try check(Data(contentsOf: copiedPath) == newBytes,
+          "valid retry did not preserve restored audio")
+print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; 3 stale-file collision cases; byte preservation")
