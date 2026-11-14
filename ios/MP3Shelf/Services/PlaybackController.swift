@@ -139,7 +139,8 @@ final class PlaybackController: NSObject, ObservableObject {
     /// Playback order commits only after AVAudioPlayer successfully starts.
     /// A corrupted or missing file cannot consume shuffle history.
     private func beginPlayback(_ track: MusicTrack, using nextOrder: PlaybackOrder,
-                               transition: TimeInterval = 0) {
+                               transition: TimeInterval = 0,
+                               preserveExistingOnFailure: Bool = true) {
         guard let library else { return }
         do {
             try activateAudio()
@@ -180,18 +181,22 @@ final class PlaybackController: NSObject, ObservableObject {
             // outgoing recording finished, however, no audio remains: retire
             // polling and any overlapping fade rather than leaving an idle
             // 200 ms timer alive indefinitely.
+            // A failed manual selection must not destroy a paused recording:
+            // the listener may resume it after dismissing the error. Automatic
+            // advancement has no such fallback because its predecessor ended.
             let previousIsAudible = audioPlayer?.isPlaying == true
-            if !previousIsAudible {
+            if !preserveExistingOnFailure || audioPlayer == nil {
                 positionTimer?.invalidate()
                 positionTimer = nil
                 cancelFade()
                 audioPlayer?.stop()
+                if !preserveExistingOnFailure { audioPlayer = nil }
             }
             failedTrackID = track.id
             failedPlaybackOrder = nextOrder
             playbackError = "Could not play \(track.title). Check that its audio file is still available, then retry or choose another song."
-            isPlaying = previousIsAudible
-            interruptionState.cancelResume()
+            isPlaying = preserveExistingOnFailure && previousIsAudible
+            if !preserveExistingOnFailure { interruptionState.cancelResume() }
             updateNowPlaying()
         }
     }
@@ -302,7 +307,8 @@ final class PlaybackController: NSObject, ObservableObject {
         }
         if nextID == currentTrackID { seek(to: 0); resume(); return }
         beginPlayback(target, using: nextOrder,
-                      transition: crossfading ? crossfadeSeconds : 0)
+                      transition: crossfading ? crossfadeSeconds : 0,
+                      preserveExistingOnFailure: !automatically)
     }
 
     func cycleRepeat() {
