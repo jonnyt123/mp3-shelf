@@ -549,11 +549,17 @@ extension AudioSourceFinder {
     private struct CommonsResponse: Decodable {
         let query: CommonsQuery?
         let continuation: CommonsContinuation?
+        let error: CommonsAPIError?
 
         enum CodingKeys: String, CodingKey {
             case query
             case continuation = "continue"
+            case error
         }
+    }
+    private struct CommonsAPIError: Decodable {
+        let code: String?
+        let info: String?
     }
     private struct CommonsContinuation: Decodable {
         let gsroffset: Int?
@@ -588,10 +594,13 @@ extension AudioSourceFinder {
     /// In particular, never authorize a first-page match after a broken
     /// second-page response. Empty pages dictionaries are valid zero hits.
     static func commonsPageIsReadable(hasQuery: Bool, hasContinuation: Bool,
-                                      hasOffset: Bool, hasToken: Bool) -> Bool {
-        hasQuery && (!hasContinuation || (hasOffset && hasToken))
+                                      hasOffset: Bool, hasToken: Bool,
+                                      hasAPIError: Bool = false) -> Bool {
+        !hasAPIError && hasQuery && (!hasContinuation || (hasOffset && hasToken))
     }
-    private struct CommonsQuery: Decodable { let pages: [String: CommonsPage] }
+    // MediaWiki may omit pages for a valid zero-result search.
+    // Never interpret an API error as a completed empty search.
+    private struct CommonsQuery: Decodable { let pages: [String: CommonsPage]? }
     private struct CommonsPage: Decodable {
         let title: String
         let imageinfo: [CommonsImage]?
@@ -665,11 +674,12 @@ extension AudioSourceFinder {
                 hasQuery: result.query != nil,
                 hasContinuation: result.continuation != nil,
                 hasOffset: result.continuation?.gsroffset != nil,
-                hasToken: result.continuation?.token != nil
-            ), let pages = result.query?.pages else {
+                hasToken: result.continuation?.token != nil,
+                hasAPIError: result.error != nil
+            ), let query = result.query else {
                 throw SourceError.invalidResponse
             }
-            for page in pages.values {
+            for page in (query.pages ?? [:]).values {
                 for info in page.imageinfo ?? [] {
                     if let candidate = commonsCandidate(
                         fileTitle: page.title,
