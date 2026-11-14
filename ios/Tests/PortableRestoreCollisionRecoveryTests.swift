@@ -16,6 +16,12 @@ struct ArchiveManifest: Codable {
     let playlists: [ArchivePlaylist]
 }
 enum RestoreFault: Error { case interrupted, malformed }
+func safeAudioFilename(_ name: String) -> Bool {
+    guard !name.isEmpty, name != ".", name != "..", !name.contains("/"),
+          !name.contains("\\\\"), !name.contains(":"), !name.hasPrefix("."),
+          name.lowercased().hasSuffix(".mp3") else { return false }
+    return name.unicodeScalars.allSatisfy { $0.value >= 32 && $0.value != 127 }
+}
 func check(_ condition: @autoclosure () throws -> Bool, _ label: String) throws {
     guard try condition() else { throw NSError(domain: "PortableRestoreQA", code: 1, userInfo: [NSLocalizedDescriptionKey: label]) }
 }
@@ -45,13 +51,13 @@ func load() throws -> ArchiveManifest {
 }
 func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
     let ids = archive.tracks.map(\.id)
-    guard Set(ids).count == ids.count,
+    guard Set(ids).count == ids.count,\n          archive.tracks.allSatisfy({ safeAudioFilename($0.filename) }),\n          Set(archive.tracks.map { $0.filename.lowercased() }).count == archive.tracks.count,
           Set(archive.playlists.map(\.id)).count == archive.playlists.count,
           archive.playlists.allSatisfy({ $0.trackIDs.allSatisfy(Set(ids).contains) }) else {
         throw RestoreFault.malformed
     }
     let existing = try load()
-    let byID = Dictionary(uniqueKeysWithValues: existing.tracks.map { ($0.id, $0) })
+    let byID = Dictionary(uniqueKeysWithValues: existing.tracks.map { ($0.id, $0) })\n    let existingFilenames = Dictionary(uniqueKeysWithValues: existing.tracks.map { ($0.filename.lowercased(), $0.id) })\n    guard archive.tracks.allSatisfy({ item in\n        existingFilenames[item.filename.lowercased()].map { $0 == item.id } ?? true\n    }) else { throw RestoreFault.malformed }\n    for playlist in archive.playlists {\n        if let old = existing.playlists.first(where: { $0.id == playlist.id }), old != playlist {\n            throw RestoreFault.malformed\n        }\n    }
     for item in archive.tracks where byID[item.id] != nil {
         guard byID[item.id] == item else { throw RestoreFault.malformed }
     }
@@ -93,4 +99,34 @@ for invalid in [
     try check(Data(contentsOf: manifestURL) == before, "invalid archive mutated manifest")
     try check(Data(contentsOf: original) == oldBytes, "invalid archive mutated audio")
 }
-print("PASS: 32 interruption/retry cycles; 4 invalid archives; non-UUID IDs, ordered playlists and byte preservation")
+
+// Reject untrusted archive filenames before any copy, including traversal,
+// absolute paths, case-folding collisions and control characters. A restore
+// must never overwrite a different recording or alter existing playlists.
+let unsafeNames = ["../escape.mp3", "/tmp/escape.mp3", "subdir/song.mp3",
+                   "subdir\\\\song.mp3", "..", ".hidden.mp3", "C:evil.mp3",
+                   "bad\\u{0000}name.mp3", "bad\\u{000A}name.mp3"]
+for (index, filename) in unsafeNames.enumerated() {
+    let before = try Data(contentsOf: manifestURL)
+    let invalid = ArchiveManifest(tracks: [
+        oldTrack, ArchiveTrack(id: "unsafe-\\(index)", filename: filename, digest: "new")
+    ], playlists: [])
+    do { try restore(invalid, failAfterCopy: false); throw NSError(domain: "QA", code: 3) }
+    catch RestoreFault.malformed { }
+    try check(Data(contentsOf: manifestURL) == before, "unsafe filename published")
+    try check(Data(contentsOf: original) == oldBytes, "unsafe filename damaged audio")
+}
+let conflictCases: [ArchiveManifest] = [
+    ArchiveManifest(tracks: [oldTrack, ArchiveTrack(id: "different", filename: "existing.mp3", digest: "new")], playlists: []),
+    ArchiveManifest(tracks: [oldTrack, ArchiveTrack(id: "different", filename: "EXISTING.MP3", digest: "new")], playlists: []),
+    ArchiveManifest(tracks: [oldTrack, newTrack, ArchiveTrack(id: "third", filename: "NEW.MP3", digest: "new")], playlists: []),
+    ArchiveManifest(tracks: [oldTrack], playlists: [ArchivePlaylist(id: oldPlaylist.id, trackIDs: [])])
+]
+for (index, invalid) in conflictCases.enumerated() {
+    let before = try Data(contentsOf: manifestURL)
+    do { try restore(invalid, failAfterCopy: false); throw NSError(domain: "QA", code: 4) }
+    catch RestoreFault.malformed { }
+    try check(Data(contentsOf: manifestURL) == before, "collision case \\(index) published")
+    try check(Data(contentsOf: original) == oldBytes, "collision case damaged existing audio")
+}
+print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; byte preservation")
