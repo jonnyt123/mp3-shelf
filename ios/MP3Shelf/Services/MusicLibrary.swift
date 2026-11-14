@@ -473,6 +473,11 @@ final class MusicLibrary: ObservableObject {
                 // before accepting a match so cancellation never becomes a miss.
                 var identicalRecording: MusicTrack?
                 if extractedSize >= 0 {
+                    // Multiple library entries may legitimately reference identical
+                    // audio bytes while carrying different user metadata. Prefer
+                    // the recording already bound to this archive's portable ID;
+                    // otherwise choose the first verified match deterministically.
+                    // Do not let a same-byte sibling steal playlist membership.
                     for candidate in recordingsBySize[Int64(extractedSize)] ?? [] {
                         try Task.checkCancellation()
                         guard let owned = LocalLibraryFileSafety.regularFile(
@@ -480,10 +485,13 @@ final class MusicLibrary: ObservableObject {
                         let identical = PortableShelfArchive.audioFilesIdentical(
                             file, owned)
                         try Task.checkCancellation()
-                        if identical {
+                        guard identical else { continue }
+                        if candidate.portableBackupID == archived.id ||
+                            candidate.id.uuidString == archived.id {
                             identicalRecording = candidate
                             break
                         }
+                        if identicalRecording == nil { identicalRecording = candidate }
                     }
                 }
                 if let existing = identicalRecording {
