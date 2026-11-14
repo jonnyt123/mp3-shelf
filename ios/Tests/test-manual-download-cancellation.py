@@ -123,6 +123,22 @@ class ManualDownloadCancellationContract(unittest.TestCase):
             self.assertIn("defer { endImportOperation() }", method[:450])
         self.assertEqual(source.count("defer { isImporting = false }"), 0)
 
+    def test_redirected_direct_audio_extension_is_recognized(self):
+        body = method_body()
+        self.assertIn('let finalExtension = http.url?.pathExtension.lowercased() ?? ""', body)
+        self.assertIn('let requestedExtension = remoteURL.pathExtension.lowercased()', body)
+        self.assertIn('let ext = supported.contains(finalExtension) ? finalExtension : requestedExtension', body)
+        self.assertLess(body.index('ManualAudioURLPolicy.permits(http.url)'),
+                        body.index('let finalExtension = http.url?.pathExtension.lowercased()'))
+        self.assertLess(body.index('let ext = supported.contains(finalExtension)'),
+                        body.index('let actualExtension ='))
+
+    def test_redirected_extension_fallback_preserves_existing_opaque_url_imports(self):
+        body = method_body()
+        self.assertIn('let requestedExtension = remoteURL.pathExtension.lowercased()', body)
+        self.assertIn('supported.contains(finalExtension) ? finalExtension : requestedExtension', body)
+        self.assertIn('mimeExtensions[mime] != nil', body)
+
     def test_no_cancellation_check_is_swallowed(self):
         body = method_body()
         self.assertNotRegex(body, r"try\?\s*Task\.checkCancellation\(\)")
