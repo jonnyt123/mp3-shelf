@@ -65,7 +65,8 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
         existingFilenames[item.filename.lowercased()].map { $0 == item.id } ?? true
     }) else { throw RestoreFault.malformed }
     for playlist in archive.playlists {
-        if let old = existing.playlists.first(where: { $0.id == playlist.id }), old != playlist {\n            throw RestoreFault.malformed
+        if let old = existing.playlists.first(where: { $0.id == playlist.id }), old != playlist {
+            throw RestoreFault.malformed
         }
     }
     for item in archive.tracks where byID[item.id] != nil {
