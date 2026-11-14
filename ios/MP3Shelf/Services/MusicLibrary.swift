@@ -1702,9 +1702,14 @@ final class MusicLibrary: ObservableObject {
             contentRange: http.value(forHTTPHeaderField: "Content-Range"), downloadedBytes: downloadedBytes) else {
             throw MusicLibraryError.incompleteDownload
         }
-        let ext = remoteURL.pathExtension.lowercased()
-        let mime = (http.mimeType ?? "").lowercased()
+        // Prefer the final validated HTTPS response URL: a direct-file link may
+        // redirect from an extensionless endpoint to the actual recording.
+        // Retain the original extension for servers that use an opaque final URL.
+        let finalExtension = http.url?.pathExtension.lowercased() ?? ""
+        let requestedExtension = remoteURL.pathExtension.lowercased()
         let supported = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
+        let ext = supported.contains(finalExtension) ? finalExtension : requestedExtension
+        let mime = (http.mimeType ?? "").lowercased()
         let mimeExtensions = ["audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/mp4": "m4a",
                               "audio/x-m4a": "m4a", "audio/aac": "aac", "audio/wav": "wav",
                               "audio/x-wav": "wav", "audio/aiff": "aiff", "audio/x-aiff": "aiff"]
