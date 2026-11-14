@@ -169,6 +169,23 @@ if [[ "$MODE" != builds ]]; then
     ios/MP3Shelf/Services/PlaylistCSV.swift \
     ios/MP3Shelf/Services/AudioSourceFinder.swift \
     ios/Tests/AudioSourceFinderTests.swift
+  run_suite catalog-retry-policy \
+    ios/MP3Shelf/Models/MusicModels.swift \
+    ios/MP3Shelf/Services/PlaylistCSV.swift \
+    ios/MP3Shelf/Services/AudioSourceFinder.swift \
+    ios/Tests/AudioCatalogRetryPolicyTests.swift
+  run_suite catalog-origin-safety \
+    ios/MP3Shelf/Models/MusicModels.swift \
+    ios/MP3Shelf/Services/PlaylistCSV.swift \
+    ios/MP3Shelf/Services/AudioSourceFinder.swift \
+    ios/Tests/CatalogResponseOriginTests.swift
+  # These delegate fixtures currently require the complete app module. Parse
+  # their Swift syntax here; the subsequent Xcode Debug/Release builds typecheck
+  # the production downloader and DEBUG physical QA audit. Parsing is NOT
+  # a substitute for running their behavioral assertions on a Mac/iPhone.
+  run_step downloader-fixtures-parse swiftc -frontend -parse \
+    ios/Tests/BackgroundRedirectNetworkPolicyTests.swift \
+    ios/Tests/DuplicateCompletionStagingRaceTests.swift
   run_suite discovery-resume \
     ios/MP3Shelf/Models/MusicModels.swift \
     ios/MP3Shelf/Models/SourceDiscoveryJob.swift \
