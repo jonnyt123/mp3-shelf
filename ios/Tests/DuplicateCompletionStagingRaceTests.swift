@@ -17,6 +17,13 @@ enum DuplicateCompletionStagingRaceTests {
             print("PASS: \(label)")
         }
         assertPolicy(false, "missing staging file does not suppress genuine failure")
+        try Data().write(to: staged)
+        assertPolicy(false, "zero-byte staging placeholder cannot mask a failed transfer")
+        try fm.removeItem(at: staged)
+        try fm.createDirectory(at: staged, withIntermediateDirectories: false)
+        assertPolicy(false, "directory at staging path cannot masquerade as audio")
+        try fm.removeItem(at: staged)
+
         let original = Data([0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00])
         try original.write(to: staged, options: .atomic)
         assertPolicy(true, "first callback staged bytes win duplicate move race")
