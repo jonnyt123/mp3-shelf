@@ -306,9 +306,18 @@ final class PlaybackController: NSObject, ObservableObject {
             return
         }
         if nextID == currentTrackID { seek(to: 0); resume(); return }
+        // An early crossfade is speculative: the outgoing recording still has
+        // playable audio. If the next file cannot be opened, keep that audio
+        // and its clock intact instead of treating the attempt like an
+        // end-of-track advance. The recorded error suppresses repeated fade
+        // attempts on subsequent position ticks.
+        //
+        // At natural completion no playable predecessor remains, so a failed
+        // automatic advance must still retire the old player and polling.
+        let preserveOutgoing = !automatically || crossfading
         beginPlayback(target, using: nextOrder,
                       transition: crossfading ? crossfadeSeconds : 0,
-                      preserveExistingOnFailure: !automatically)
+                      preserveExistingOnFailure: preserveOutgoing)
     }
 
     func cycleRepeat() {
