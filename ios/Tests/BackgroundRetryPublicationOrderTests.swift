@@ -113,6 +113,44 @@ try check(Data(contentsOf: stage) == audio && Data(contentsOf: unrelated) == oth
           "stale retry destroyed staged audio")
 print("PASS: stale retry rejected without erasing concurrent journal or audio")
 
+// A delayed completion callback from a retired task must not replace the
+// successor or delete its staged recording. Replay the same callback many
+// times, including after a simulated process restart.
+struct CompletionState {
+    var tickets: [UUID: RetryTicket]
+    var staged: [UUID: Data]
+    var imports: [UUID: Int] = [:]
+    mutating func complete(_ id: UUID, bytes: Data) {
+        guard let ticket = tickets[id], ticket.status == "queued",
+              staged[id] == bytes else { return }
+        tickets[id] = RetryTicket(id: id, status: "imported")
+        imports[id, default: 0] += 1
+    }
+}
+var callbacks = CompletionState(
+    tickets: Dictionary(uniqueKeysWithValues: next.map { ($0.id, $0) }),
+    staged: [old.id: audio, replacement.id: otherAudio])
+for _ in 0..<64 {
+    callbacks.complete(old.id, bytes: audio) // cancelled predecessor
+}
+try check(callbacks.imports.isEmpty, "late predecessor callback imported cancelled audio")
+try check(callbacks.staged[old.id] == audio && callbacks.staged[replacement.id] == otherAudio,
+          "late callback removed staged media")
+callbacks.complete(replacement.id, bytes: otherAudio)
+let persistedCallbacks = try JSONEncoder().encode(callbacks.tickets)
+callbacks.tickets = try JSONDecoder().decode([UUID: RetryTicket].self, from: persistedCallbacks)
+for _ in 0..<64 {
+    callbacks.complete(replacement.id, bytes: otherAudio) // repeated after relaunch
+}
+try check(callbacks.imports[replacement.id] == 1,
+          "duplicate completion imported the same recording twice")
+try check(callbacks.tickets[replacement.id]?.status == "imported",
+          "duplicate completion changed terminal status")
+try check(callbacks.staged[replacement.id] == otherAudio,
+          "duplicate completion destroyed successor staged bytes")
+print("PASS: 128 late/duplicate callbacks, one import, both staged files preserved")
+
+
 try validJournal.write(to: journal, options: .atomic)
 try check(JSONDecoder().decode([RetryTicket].self, from: Data(contentsOf: journal)) == next,
           "valid recovery journal not restorable after corruption")
