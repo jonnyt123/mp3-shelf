@@ -1,26 +1,12 @@
 import Foundation
 
 // Run from integrated candidate: swift ios/Tests/BackgroundPersistFailureVisibilityTests.swift
+// Standalone: swift ios/Tests/BackgroundPersistFailureVisibilityTests.swift --fixture-only
 // Source-bound regression plus deterministic journal-write fault injection.
 // This does not simulate URLSession or prove iPhone behavior.
 func require(_ ok: Bool, _ why: String) {
     guard ok else { fputs("FAIL: \(why)\n", stderr); exit(1) }
 }
-let sourcePath = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
-guard FileManager.default.fileExists(atPath: sourcePath) else {
-    fputs("UNVERIFIED: native downloader source missing\n", stderr)
-    exit(2)
-}
-let source = try String(contentsOfFile: sourcePath, encoding: .utf8)
-guard let begin = source.range(of: "private func persist()"),
-      let end = source.range(of: "private func updatePending()", range: begin.upperBound..<source.endIndex) else {
-    fputs("FAIL: cannot locate native persistence helper\n", stderr)
-    exit(1)
-}
-let helper = String(source[begin.lowerBound..<end.lowerBound])
-require(!helper.contains("try? BackgroundTicketManifestPolicy.write"),
-        "P0: persist() silently swallows a failed queue manifest write")
-
 struct Ticket: Codable, Equatable {
     enum Status: String, Codable { case queued, imported }
     let id: UUID
@@ -59,12 +45,32 @@ for _ in 0..<24 {
     require(memory == initial, "Failed write mutated in-memory queue")
     let recovered = try JSONDecoder().decode([Ticket].self, from: Data(contentsOf: journal))
     require(recovered == initial, "Failed write mutated durable queue")
-    require(try Data(contentsOf: audioA) == bytesA, "Failed write removed first recording")
-    require(try Data(contentsOf: audioB) == bytesB, "Failed write removed unrelated recording")
+    try require(Data(contentsOf: audioA) == bytesA, "Failed write removed first recording")
+    try require(Data(contentsOf: audioB) == bytesB, "Failed write removed unrelated recording")
 }
 try publish(terminal, fail: false)
 require(acknowledged, "Successful write not acknowledged")
 let recovered = try JSONDecoder().decode([Ticket].self, from: Data(contentsOf: journal))
 require(recovered == terminal, "Successful retry not durable after restart")
-require(try Data(contentsOf: audioB) == bytesB, "Retry damaged unrelated audio")
-print("PASS: production persistence source contract and 24 injected journal failures")
+try require(Data(contentsOf: audioB) == bytesB, "Retry damaged unrelated audio")
+print("PASS: 24 injected journal failures and durable retry (Foundation model)")
+if !CommandLine.arguments.contains("--fixture-only") {
+let sourcePath = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
+guard FileManager.default.fileExists(atPath: sourcePath) else {
+    fputs("UNVERIFIED: native downloader source missing\n", stderr)
+    exit(2)
+}
+let source = try String(contentsOfFile: sourcePath, encoding: .utf8)
+guard let begin = source.range(of: "private func persist()"),
+      let end = source.range(of: "private func updatePending()", range: begin.upperBound..<source.endIndex) else {
+    fputs("FAIL: cannot locate native persistence helper\n", stderr)
+    exit(1)
+}
+let helper = String(source[begin.lowerBound..<end.lowerBound])
+require(!helper.contains("try? BackgroundTicketManifestPolicy.write"),
+        "P0: persist() silently swallows a failed queue manifest write")
+
+
+print("PASS: production persistence source contract (static inspection only)")
+}
+
