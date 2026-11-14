@@ -692,24 +692,83 @@ struct RenameTrackView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var artist = ""
+    @State private var editError: String?
+    @FocusState private var titleFocused: Bool
+
+    private var cleanTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var cleanArtist: String { artist.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    // A track can disappear while this sheet is open (for example after a
+    // library restore). Never silently dismiss an edit that did not apply.
+    private func saveEdit() {
+        guard !cleanTitle.isEmpty else {
+            editError = "Enter a song title before saving."
+            titleFocused = true
+            return
+        }
+        guard let current = library.tracks.first(where: { $0.id == track.id }) else {
+            editError = "This song is no longer in your library. Your changes were not saved."
+            return
+        }
+        if current.title == cleanTitle && current.artist == cleanArtist {
+            dismiss()
+            return
+        }
+        library.rename(current, title: cleanTitle, artist: cleanArtist)
+        guard let updated = library.tracks.first(where: { $0.id == track.id }),
+              updated.title == cleanTitle && updated.artist == cleanArtist else {
+            editError = "The song could not be updated. Your edits are still here so you can retry."
+            return
+        }
+        dismiss()
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Song title", text: $title)
-                TextField("Artist", text: $artist)
-                Text("Changes affect your local library only, not the audio file's ID3 tags.")
-                    .foregroundStyle(ShelfTheme.subdued).font(.caption)
+                Section("Song details") {
+                    TextField("Song title", text: $title)
+                        .focused($titleFocused)
+                        .submitLabel(.next)
+                        .accessibilityIdentifier("edit-song-title")
+                    TextField("Artist", text: $artist)
+                        .submitLabel(.done)
+                        .accessibilityIdentifier("edit-song-artist")
+                }
+                if let editError {
+                    Section {
+                        Text(editError)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.updatesFrequently)
+                            .accessibilityIdentifier("edit-song-error")
+                        Button("Try saving again", action: saveEdit)
+                            .disabled(cleanTitle.isEmpty)
+                            .frame(minHeight: 44)
+                    }
+                }
+                Section {
+                    Text("Changes affect your local library only, not the audio file's ID3 tags.")
+                        .foregroundStyle(ShelfTheme.subdued)
+                        .font(.caption)
+                }
             }
             .navigationTitle("Edit Song")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                        .frame(minWidth: 44, minHeight: 44)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") { library.rename(track, title: title, artist: artist); dismiss() }
-                        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Save", action: saveEdit)
+                        .disabled(cleanTitle.isEmpty)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
             }
             .onAppear { title = track.title; artist = track.artist }
+            .onChange(of: title) { _, _ in editError = nil }
+            .onChange(of: artist) { _, _ in editError = nil }
         }
     }
 }
