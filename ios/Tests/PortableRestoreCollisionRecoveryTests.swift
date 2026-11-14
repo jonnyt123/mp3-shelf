@@ -76,19 +76,15 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
         tracks: existing.tracks + archive.tracks.filter { byID[$0.id] == nil },
         playlists: existing.playlists + archive.playlists.filter { item in !existing.playlists.contains(where: { $0.id == item.id }) }
     )
-    // Copy only the files referenced by the incoming manifest. A metadata-only
-    // restore must not inspect or mutate unrelated files left by an earlier run.
-    // Verify source bytes before touching a destination or publishing metadata.
+    // Preflight every incoming recording before any filesystem mutation.
+    // A late missing/corrupt source must not leave earlier tracks copied.
+    var pendingCopies: [(URL, URL)] = []
     for item in archive.tracks where byID[item.id] == nil {
         let source = incoming.appendingPathComponent(item.filename)
         let destination = library.appendingPathComponent(item.filename)
-        // A symlink can escape the staging/library directories even when the
-        // manifest filename itself passes lexical path validation.
-        // Check both paths before reading, copying or comparing any bytes.
-        let sourceIsLink = (try? fm.destinationOfSymbolicLink(atPath: source.path)) != nil
-        let destinationIsLink = (try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil
-        guard !sourceIsLink, !destinationIsLink else { throw RestoreFault.malformed }
-        guard fm.fileExists(atPath: source.path),
+        guard (try? fm.destinationOfSymbolicLink(atPath: source.path)) == nil,
+              (try? fm.destinationOfSymbolicLink(atPath: destination.path)) == nil,
+              fm.fileExists(atPath: source.path),
               let expected = try? Data(contentsOf: source) else {
             throw RestoreFault.malformed
         }
@@ -96,8 +92,11 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
             guard let actual = try? Data(contentsOf: destination),
                   actual == expected else { throw RestoreFault.malformed }
         } else {
-            try fm.copyItem(at: source, to: destination)
+            pendingCopies.append((source, destination))
         }
+    }
+    for (source, destination) in pendingCopies {
+        try fm.copyItem(at: source, to: destination)
     }
     if failAfterCopy { throw RestoreFault.interrupted }
     try JSONEncoder().encode(next).write(to: manifestURL, options: .atomic)
@@ -221,6 +220,36 @@ try check(Data(contentsOf: original) == oldBytes &&
           Data(contentsOf: copiedPath) == foreignAfterCommit,
           "missing source modified existing audio")
 
+// A valid first source followed by a missing second source must not create
+// a partially copied library. Preflight all inputs before writing any track.
+let firstNew = ArchiveTrack(id: "batch:first", filename: "batch-first.mp3", digest: "first")
+let secondNew = ArchiveTrack(id: "batch:second", filename: "batch-second.mp3", digest: "second")
+let firstSource = incoming.appendingPathComponent(firstNew.filename)
+let firstDestination = library.appendingPathComponent(firstNew.filename)
+let secondSource = incoming.appendingPathComponent(secondNew.filename)
+let secondDestination = library.appendingPathComponent(secondNew.filename)
+let batch = ArchiveManifest(tracks: [firstNew, secondNew], playlists: [
+    ArchivePlaylist(id: "batch:playlist", trackIDs: [firstNew.id, secondNew.id])
+])
+try newBytes.write(to: firstSource)
+let manifestBeforeBatch = try Data(contentsOf: manifestURL)
+var batchRejected = false
+do { try restore(batch, failAfterCopy: false) }
+catch RestoreFault.malformed { batchRejected = true }
+try check(batchRejected, "batch with missing second source accepted")
+try check(!fm.fileExists(atPath: firstDestination.path) &&
+          !fm.fileExists(atPath: secondDestination.path),
+          "invalid batch copied a partial library")
+try check(Data(contentsOf: manifestURL) == manifestBeforeBatch,
+          "invalid batch published metadata")
+try newBytes.write(to: secondSource)
+try restore(batch, failAfterCopy: false)
+try check(Data(contentsOf: firstDestination) == newBytes &&
+          Data(contentsOf: secondDestination) == newBytes,
+          "valid batch retry did not preserve both recordings")
+try check((try load()).playlists.last?.trackIDs == [firstNew.id, secondNew.id],
+          "valid batch retry lost playlist order")
+
 // Symlink path attacks: a lexically safe .mp3 basename may resolve outside
 // either the staging directory or the library. Reject before reading or
 // copying, including a dangling destination link (fileExists returns false).
@@ -261,4 +290,4 @@ try check(Data(contentsOf: linkDestination) == newBytes,
 try check(Data(contentsOf: outside) == outsideBytes,
           "valid retry mutated unrelated external audio")
 
-print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; 3 stale-file collision cases; metadata-only isolation; missing-source rejection; 3 symlink path attacks; byte preservation")
+print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; 3 stale-file collision cases; metadata-only isolation; missing-source rejection; 3 symlink path attacks; two-track preflight/retry; byte preservation")
