@@ -5,8 +5,8 @@ import Foundation
 @main
 enum ArchiveOriginalRecordingSelectionTests {
     static func main() throws {
-        func expect(_ value: @autoclosure () -> Bool, _ message: String) {
-            guard value() else { fatalError("FAIL: \(message)") }
+        func expect(_ value: Bool, _ message: String) {
+            guard value else { fatalError("FAIL: \(message)") }
             print("PASS: \(message)")
         }
         let wish = PlaylistWish(title: "Example Song", artist: "Example Artist", album: "")
