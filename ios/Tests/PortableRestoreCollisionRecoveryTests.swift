@@ -155,9 +155,15 @@ for (index, invalid) in conflictCases.enumerated() {
     try check(Data(contentsOf: manifestURL) == before, "collision case \(index) published")
     try check(Data(contentsOf: original) == oldBytes, "collision case damaged existing audio")
 }
+// Rewind only the manifest to the pre-import snapshot. The destination audio
+// remains on disk, exactly as it would after a crash between copy and commit.
+// Previously these checks ran against an already committed manifest, causing
+// byID to skip the destination entirely and masking the collision.
+try JSONEncoder().encode(baseline).write(to: manifestURL, options: .atomic)
 // Interrupted recovery must not trust a pre-existing destination filename.
 // Simulate a foreign recording and a truncated staged copy, then retry with
 // the correct bytes. The manifest must remain byte-identical on rejection.
+let baselineBeforeCollision = try Data(contentsOf: manifestURL)
 let recoveredManifestBytes = try Data(contentsOf: manifestURL)
 let copiedPath = library.appendingPathComponent(newTrack.filename)
 for (name, foreignBytes) in [
@@ -179,8 +185,8 @@ for (name, foreignBytes) in [
 }
 try newBytes.write(to: copiedPath, options: .atomic)
 try restore(archive, failAfterCopy: false)
-try check(Data(contentsOf: manifestURL) == recoveredManifestBytes,
-          "valid retry changed committed manifest")
+try check((try load()).tracks.count == 2 && (try load()).playlists.count == 2,
+          "valid retry failed to commit recovered manifest")
 try check(Data(contentsOf: copiedPath) == newBytes,
           "valid retry did not preserve restored audio")
 // A metadata-only restore must not re-copy or validate unrelated staged files.
