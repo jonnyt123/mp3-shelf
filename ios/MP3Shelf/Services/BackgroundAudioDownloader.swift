@@ -1120,6 +1120,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return true
     }
 
+    nonisolated static func safeRedirectRequest(_ redirected: URLRequest,
+                                                 original: URLRequest?) -> URLRequest? {
+        guard let destination = redirected.url, allowedDownloadURL(destination) else { return nil }
+        var safe = redirected
+        // Redirect requests cannot grant cellular permission to a Wi-Fi-only
+        // task. Missing restored original metadata is treated conservatively.
+        let cellular = original?.allowsCellularAccess == true && redirected.allowsCellularAccess
+        safe.allowsCellularAccess = cellular
+        safe.allowsExpensiveNetworkAccess = cellular &&
+            original?.allowsExpensiveNetworkAccess == true && redirected.allowsExpensiveNetworkAccess
+        safe.allowsConstrainedNetworkAccess = cellular &&
+            original?.allowsConstrainedNetworkAccess == true && redirected.allowsConstrainedNetworkAccess
+        return safe
+    }
+
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask,
                                 willPerformHTTPRedirection response: HTTPURLResponse,
                                 newRequest request: URLRequest,
@@ -1130,7 +1145,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return
         }
         #endif
-        completionHandler(request.url.map { Self.allowedDownloadURL($0) } == true ? request : nil)
+        completionHandler(Self.safeRedirectRequest(request, original: task.originalRequest))
     }
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
