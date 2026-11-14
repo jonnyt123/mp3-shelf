@@ -359,7 +359,8 @@ final class MusicLibrary: ObservableObject {
         var recordingsBySize: [Int64: [MusicTrack]] = [:]
         for track in tracks {
             try Task.checkCancellation()
-            if let size = try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize {
+            if let owned = LocalLibraryFileSafety.regularFile(named: track.fileName, in: musicDirectory),
+               let size = try? owned.resourceValues(forKeys: [.fileSizeKey]).fileSize {
                 recordingsBySize[Int64(size), default: []].append(track)
             }
         }
@@ -474,8 +475,10 @@ final class MusicLibrary: ObservableObject {
                 if extractedSize >= 0 {
                     for candidate in recordingsBySize[Int64(extractedSize)] ?? [] {
                         try Task.checkCancellation()
+                        guard let owned = LocalLibraryFileSafety.regularFile(
+                            named: candidate.fileName, in: musicDirectory) else { continue }
                         let identical = PortableShelfArchive.audioFilesIdentical(
-                            file, fileURL(for: candidate))
+                            file, owned)
                         try Task.checkCancellation()
                         if identical {
                             identicalRecording = candidate
@@ -524,8 +527,10 @@ final class MusicLibrary: ObservableObject {
                         guard candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame else {
                             continue
                         }
+                        guard let owned = LocalLibraryFileSafety.regularFile(
+                            named: candidate.fileName, in: musicDirectory) else { continue }
                         let identical = PortableShelfArchive.audioFilesIdentical(
-                            file, fileURL(for: candidate))
+                            file, owned)
                         try Task.checkCancellation()
                         if identical {
                             duplicateIndex = index
