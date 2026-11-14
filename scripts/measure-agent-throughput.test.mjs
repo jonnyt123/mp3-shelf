@@ -78,3 +78,39 @@ test('bounded pagination and missing file statistics fail closed', async () => {
   await assert.rejects(collectThroughput({ api, now, lanes: [{ name: 'downloads', pr: 31 }] }),
     /incomplete diff statistics/);
 });
+
+test('counts recent commits even when an older commit appears later in ancestry', async () => {
+  const third = 'c'.repeat(40);
+  const api = mock({
+    '/pulls/31': { head: third, commits: 3 },
+    '/pulls/31/commits?per_page=100&page=1': [
+      { sha: one, commit: { committer: { date: recent } } },
+      { sha: two, commit: { committer: { date: old } } },
+      { sha: third, commit: { committer: { date: recent } } }
+    ],
+    [`/commits/${one}`]: { files: [
+      { filename: 'ios/MP3Shelf/Services/SpotifyService.swift', additions: 4, deletions: 1 }
+    ] },
+    [`/commits/${third}`]: { files: [
+      { filename: 'ios/MP3Shelf/Services/AudioSourceFinder.swift', additions: 8, deletions: 2 }
+    ] }
+  });
+  const r = await collectThroughput({ api, now, lanes: [{ name: 'downloads', pr: 31 }] });
+  assert.equal(r.results[0].codeCommits, 2);
+  assert.equal(r.results[0].sourceAdditions, 12);
+  assert.equal(r.results[0].sourceDeletions, 3);
+});
+
+test('refuses incomplete history and missing commit pages rather than reporting partial metrics', async () => {
+  await assert.rejects(collectThroughput({
+    api: mock({ '/pulls/31': { head: one, commits: 501 } }),
+    now, lanes: [{ name: 'downloads', pr: 31 }]
+  }), /exceeded bounded history/);
+  await assert.rejects(collectThroughput({
+    api: mock({
+      '/pulls/31': { head: one, commits: 1 },
+      '/pulls/31/commits?per_page=100&page=1': []
+    }),
+    now, lanes: [{ name: 'downloads', pr: 31 }]
+  }), /commit list incomplete/);
+});
