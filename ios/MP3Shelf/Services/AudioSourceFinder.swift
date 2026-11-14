@@ -103,17 +103,23 @@ enum AudioSourceFinder {
         return nil
     }
 
-    private static func requestJSON<T: Decodable>(
-        _ url: URL, allowsCellular: Bool = false
-    ) async throws -> T {
+    /// Shared bounded transport for JSON and RSS catalogs. Keeping ccMixter on
+    /// the same retry path prevents a single 429/503 from silently dropping an
+    /// otherwise eligible playlist recording while other providers recover.
+    private static func requestCatalogData(
+        _ url: URL, allowsCellular: Bool = false, maximumBytes: Int
+    ) async throws -> Data {
         let request = catalogRequest(for: url, allowsCellular: allowsCellular)
         for attempt in 0...1 {
             try Task.checkCancellation()
             let (data, response) = try await URLSession.shared.data(for: request)
+            try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
             if http.statusCode == 200 {
-                guard data.count < 2_000_000 else { throw SourceError.invalidResponse }
-                return try JSONDecoder().decode(T.self, from: data)
+                guard !data.isEmpty, data.count <= maximumBytes else {
+                    throw SourceError.invalidResponse
+                }
+                return data
             }
             guard let delay = catalogRetryDelay(
                 status: http.statusCode,
@@ -123,6 +129,14 @@ enum AudioSourceFinder {
             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
         throw SourceError.invalidResponse
+    }
+
+    private static func requestJSON<T: Decodable>(
+        _ url: URL, allowsCellular: Bool = false
+    ) async throws -> T {
+        let data = try await requestCatalogData(
+            url, allowsCellular: allowsCellular, maximumBytes: 1_999_999)
+        return try JSONDecoder().decode(T.self, from: data)
     }
 
     enum SourceError: LocalizedError {
@@ -1751,13 +1765,10 @@ extension AudioSourceFinder {
     static func findCCMixter(for wish: PlaylistWish,
                              allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
-        let request = catalogRequest(for: ccMixterSearchURL(for: wish),
-                                     allowsCellular: allowsCellular)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
-        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
-        guard !data.isEmpty, data.count <= 1_000_000,
-              let matches = ccMixterCandidates(in: data, matching: wish)
+        let data = try await requestCatalogData(
+            ccMixterSearchURL(for: wish), allowsCellular: allowsCellular,
+            maximumBytes: 1_000_000)
+        guard let matches = ccMixterCandidates(in: data, matching: wish)
         else { throw SourceError.invalidResponse }
         // Distinct eligible uploads may be separate remixes or releases.
         // Do not treat matching RSS text as proof that versions are identical.
