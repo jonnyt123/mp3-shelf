@@ -649,7 +649,7 @@ struct PortableShelfArchiveTests {
         try originalBytes.write(to: incomingAudio)
         for unsafe in ["../outside.mp3", "linked.mp3", "internal.mp3", "folder.mp3"] {
             let candidate = LocalLibraryFileSafety.regularFile(named: unsafe, in: ownedFolder)
-            assert(candidate == nil, "Unsafe duplicate candidate was accepted: \\(unsafe)")
+            assert(candidate == nil, "Unsafe duplicate candidate was accepted: \(unsafe)")
         }
         let verifiedCandidate = LocalLibraryFileSafety.regularFile(
             named: "owned.mp3", in: ownedFolder)
