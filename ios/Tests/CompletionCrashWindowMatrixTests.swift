@@ -36,8 +36,22 @@ let initial = CrashJournal(tickets: [
 func publish(_ value: CrashJournal) throws {
     try JSONEncoder().encode(value).write(to: journal, options: .atomic)
 }
+enum RecoveryValidationError: Error {
+    case duplicateTicket, orphanReceipt, nonterminalReceipt, importedWithoutReceipt
+}
 func recover() throws -> CrashJournal {
-    try JSONDecoder().decode(CrashJournal.self, from: Data(contentsOf: journal))
+    let decoded = try JSONDecoder().decode(CrashJournal.self, from: Data(contentsOf: journal))
+    let ids = decoded.tickets.map(\.id)
+    guard Set(ids).count == ids.count else { throw RecoveryValidationError.duplicateTicket }
+    let byID = Dictionary(uniqueKeysWithValues: decoded.tickets.map { ($0.id, $0.state) })
+    for receipt in decoded.receipts {
+        guard let state = byID[receipt] else { throw RecoveryValidationError.orphanReceipt }
+        guard state == .imported else { throw RecoveryValidationError.nonterminalReceipt }
+    }
+    guard !decoded.tickets.contains(where: { $0.state == .imported && !decoded.receipts.contains($0.id) }) else {
+        throw RecoveryValidationError.importedWithoutReceipt
+    }
+    return decoded
 }
 var acknowledged = 0
 func complete(_ id: UUID, crash: CrashPoint? = nil) throws {
@@ -113,12 +127,39 @@ for (index, invalid) in invalidJournals.enumerated() {
                Data(contentsOf: unrelated) == otherBytes,
                "corrupt receipt recovery damaged staged audio in case \(index)")
 }
+// Syntactically valid but semantically unsafe journals must also fail closed.
+// These can arise from partial migrations, interrupted writes or stale callbacks.
+// Preserve both the evidence and all user audio on every rejected recovery.
+let malformedModels: [(String, CrashJournal)] = [
+    ("duplicate-ticket", CrashJournal(tickets: initial.tickets + [initial.tickets[0]], receipts: [])),
+    ("orphan-receipt", CrashJournal(tickets: initial.tickets, receipts: [UUID()])),
+    ("receipt-for-queued", CrashJournal(tickets: initial.tickets, receipts: [primary])),
+    ("receipt-for-cancelled", CrashJournal(tickets: initial.tickets, receipts: [retired])),
+    ("imported-without-receipt", CrashJournal(
+        tickets: [CrashTicket(id: primary, state: .imported)] + Array(initial.tickets.dropFirst()),
+        receipts: []))
+]
+for (name, model) in malformedModels {
+    let invalid = try JSONEncoder().encode(model)
+    try invalid.write(to: journal, options: .atomic)
+    var rejected = false
+    do {
+        try complete(primary)
+    } catch is RecoveryValidationError {
+        rejected = true
+    }
+    try ensure(rejected, "unsafe journal accepted: \(name)")
+    try ensure(Data(contentsOf: journal) == invalid, "unsafe journal overwritten: \(name)")
+    try ensure(Data(contentsOf: imported) == validImported, "imported audio changed: \(name)")
+    try ensure(Data(contentsOf: staged) == bytes &&
+               Data(contentsOf: unrelated) == otherBytes, "staged audio changed: \(name)")
+}
 try validJournal.write(to: journal, options: .atomic)
 try complete(primary)
 try ensure((try recover()).receipts == Set([primary]),
            "valid receipt journal not recoverable after corruption")
 
-print("PASS: 3 crash windows, 384 callback replays, byte-exact 256 KiB staged audio")
+print("PASS: 3 crash windows, 384 callback replays, 8 corrupt/unsafe journals, byte-exact 256 KiB staged audio")
 if !CommandLine.arguments.contains("--fixture-only") {
     let path = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
     guard fm.fileExists(atPath: path) else {
