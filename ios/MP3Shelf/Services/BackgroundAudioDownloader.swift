@@ -53,7 +53,42 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private var conversions: [UUID: Progress] = [:]
     private var reconcilingOrphans = false
     private weak var library: MusicLibrary?
+    // Explicit per-playlist consent must survive an OS kill: a replacement
+    // background task created after relaunch otherwise silently reverts to
+    // Wi-Fi-only even while the user is waiting on cellular.
+    // Consent expires after 24 hours to avoid indefinite cellular use.
+    private static let cellularConsentKey = "backgroundAudio.cellularConsent.v1"
+    private static let cellularConsentLifetime: TimeInterval = 24 * 60 * 60
     private var cellularApprovedPlaylists = Set<UUID>()
+    private var cellularConsentExpirations: [UUID: Date] = [:]
+
+    private func restoreCellularConsent(now: Date = .now) {
+        let stored = UserDefaults.standard.dictionary(forKey: Self.cellularConsentKey) as? [String: Date] ?? [:]
+        cellularConsentExpirations = Dictionary(uniqueKeysWithValues: stored.compactMap { raw, expiry in
+            guard let id = UUID(uuidString: raw), expiry > now,
+                  expiry.timeIntervalSince(now) <= Self.cellularConsentLifetime else { return nil }
+            return (id, expiry)
+        })
+        cellularApprovedPlaylists = Set(cellularConsentExpirations.keys)
+        persistCellularConsent()
+    }
+
+    private func persistCellularConsent() {
+        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues:
+            cellularConsentExpirations.map { ($0.key.uuidString, $0.value) }),
+            forKey: Self.cellularConsentKey)
+    }
+
+    private func cellularAllowed(for playlistID: UUID, now: Date = .now) -> Bool {
+        guard let expiry = cellularConsentExpirations[playlistID], expiry > now else {
+            if cellularConsentExpirations.removeValue(forKey: playlistID) != nil {
+                cellularApprovedPlaylists.remove(playlistID)
+                persistCellularConsent()
+            }
+            return false
+        }
+        return true
+    }
     private var backgroundEventsCompletion: (() -> Void)?
 
     private lazy var session: URLSession = {
@@ -69,7 +104,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         var request = URLRequest(url: url)
         // Background session is configured to support manual cellular opt-in,
         // but EVERY task defaults to Wi-Fi-only at the request level.
-        let cellular = cellularApprovedPlaylists.contains(playlistID)
+        let cellular = cellularAllowed(for: playlistID)
         request.allowsCellularAccess = cellular
         request.allowsExpensiveNetworkAccess = cellular
         request.allowsConstrainedNetworkAccess = cellular
@@ -81,6 +116,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// callbacks from cancelled tasks cannot corrupt the replacement.
     func enableCellular(for playlistID: UUID) {
         cellularApprovedPlaylists.insert(playlistID)
+        cellularConsentExpirations[playlistID] = Date().addingTimeInterval(Self.cellularConsentLifetime)
+        persistCellularConsent()
         session.getAllTasks { [weak self] tasks in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -132,6 +169,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 saved, id: { $0.id }, startedAt: { $0.startedAt })
         }
         super.init()
+        restoreCellularConsent()
     }
 
     /// iOS calls this even when the user does not open a SwiftUI scene.
