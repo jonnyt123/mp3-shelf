@@ -1,9 +1,8 @@
 import Foundation
 
-// Run from integrated candidate: swift ios/Tests/BackgroundPersistFailureVisibilityTests.swift
-// Standalone: swift ios/Tests/BackgroundPersistFailureVisibilityTests.swift --fixture-only
-// Source-bound regression plus deterministic journal-write fault injection.
-// This does not simulate URLSession or prove iPhone behavior.
+// Run from repo root: swift ios/Tests/BackgroundPersistFailureVisibilityTests.swift --fixture-only
+// Without --fixture-only, also enforce the production downloader source contract.
+// No URLSession, simulator, or physical-device behavior is asserted.
 func require(_ ok: Bool, _ why: String) {
     guard ok else { fputs("FAIL: \(why)\n", stderr); exit(1) }
 }
@@ -12,9 +11,8 @@ struct Ticket: Codable, Equatable {
     let id: UUID
     var status: Status
 }
-enum DiskFault: Error { case injected }
 let fm = FileManager.default
-let root = fm.temporaryDirectory.appendingPathComponent("mp3shelf-persist-\(UUID())")
+let root = fm.temporaryDirectory.appendingPathComponent("mp3shelf-persist-\(UUID().uuidString)")
 try fm.createDirectory(at: root, withIntermediateDirectories: true)
 defer { try? fm.removeItem(at: root) }
 let journal = root.appendingPathComponent("tickets.json")
@@ -25,35 +23,51 @@ let bytesB = Data(repeating: 0x42, count: 8192)
 try bytesA.write(to: audioA)
 try bytesB.write(to: audioB)
 let initial = [Ticket(id: UUID(), status: .queued), Ticket(id: UUID(), status: .queued)]
-try JSONEncoder().encode(initial).write(to: journal, options: .atomic)
+let encoder = JSONEncoder()
+let decoder = JSONDecoder()
+try encoder.encode(initial).write(to: journal, options: .atomic)
 var memory = initial
 var acknowledged = false
-func publish(_ proposed: [Ticket], fail: Bool) throws {
-    if fail { throw DiskFault.injected }
-    try JSONEncoder().encode(proposed).write(to: journal, options: .atomic)
+func publish(_ proposed: [Ticket], at destination: URL) throws {
+    // Exercise actual Foundation atomic publication, not a simulated error flag.
+    try encoder.encode(proposed).write(to: destination, options: .atomic)
     memory = proposed
     acknowledged = true
 }
 var terminal = initial
 terminal[0].status = .imported
-for _ in 0..<24 {
+
+// Directory collision is deterministic even when the runner has root permissions.
+// Failed writes must not acknowledge completion or alter the durable queue/audio.
+let blocked = root.appendingPathComponent("blocked-manifest")
+try fm.createDirectory(at: blocked, withIntermediateDirectories: false)
+let sentinel = blocked.appendingPathComponent("keep.txt")
+try Data("sentinel".utf8).write(to: sentinel)
+for attempt in 0..<32 {
+    var failed = false
     do {
-        try publish(terminal, fail: true)
-        require(false, "Injected persistence failure was swallowed")
-    } catch DiskFault.injected {}
-    require(!acknowledged, "Failed write acknowledged completed transfer")
-    require(memory == initial, "Failed write mutated in-memory queue")
-    let recovered = try JSONDecoder().decode([Ticket].self, from: Data(contentsOf: journal))
-    require(recovered == initial, "Failed write mutated durable queue")
-    try require(Data(contentsOf: audioA) == bytesA, "Failed write removed first recording")
-    try require(Data(contentsOf: audioB) == bytesB, "Failed write removed unrelated recording")
+        try publish(terminal, at: blocked)
+    } catch {
+        failed = true
+    }
+    require(failed, "directory write barrier unexpectedly succeeded on attempt \(attempt)")
+    require(!acknowledged, "failed publication acknowledged completed transfer")
+    require(memory == initial, "failed publication mutated in-memory queue")
+    require(try decoder.decode([Ticket].self, from: Data(contentsOf: journal)) == initial,
+            "failed publication changed durable queue")
+    require(try Data(contentsOf: sentinel) == Data("sentinel".utf8), "barrier directory replaced")
+    require(try Data(contentsOf: audioA) == bytesA, "failed publication lost first recording")
+    require(try Data(contentsOf: audioB) == bytesB, "failed publication lost unrelated recording")
 }
-try publish(terminal, fail: false)
-require(acknowledged, "Successful write not acknowledged")
-let recovered = try JSONDecoder().decode([Ticket].self, from: Data(contentsOf: journal))
-require(recovered == terminal, "Successful retry not durable after restart")
-try require(Data(contentsOf: audioB) == bytesB, "Retry damaged unrelated audio")
-print("PASS: 24 injected journal failures and durable retry (Foundation model)")
+// Retry after clearing the barrier and simulate restart from the persisted manifest.
+try fm.removeItem(at: blocked)
+try publish(terminal, at: journal)
+require(acknowledged && memory == terminal, "successful retry not acknowledged")
+require(try decoder.decode([Ticket].self, from: Data(contentsOf: journal)) == terminal,
+        "successful retry not durable after restart")
+require(try Data(contentsOf: audioA) == bytesA && Data(contentsOf: audioB) == bytesB,
+        "retry damaged staged recordings")
+print("PASS: 32 real filesystem write failures, two-track preservation, durable retry (Foundation fixture)")
 if !CommandLine.arguments.contains("--fixture-only") {
 let sourcePath = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
 guard FileManager.default.fileExists(atPath: sourcePath) else {
