@@ -9,7 +9,7 @@ const CHECKS = [
   'playback-order', 'playback-interruptions', 'downloaded-audio-signature',
   'downloaded-audio-format', 'playlist-parser', 'lyrics-parser',
   'authorized-audio-sources', 'catalog-retry-policy', 'catalog-origin-safety',
-  'downloader-fixtures-parse', 'discovery-resume', 'portable-backup',
+  'downloader-policy-runtime', 'discovery-resume', 'portable-backup',
   'recording-matching-core', 'recording-matcher',
   'simulator-debug', 'simulator-release', 'iphoneos-arm64-release'
 ];
