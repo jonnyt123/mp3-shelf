@@ -721,8 +721,11 @@ struct PlaybackQueueSheet: View {
     // A retry may complete asynchronously. Do not report success merely
     // because the controller has not published a new error synchronously.
     private func retryPlayback() {
-        retryTrackID = playback.currentTrackID
-        lastRetryError = playback.playbackError
+        // A retry belongs to one recording and one visible error.
+        guard let trackID = playback.currentTrackID,
+              let error = playback.playbackError, !error.isEmpty else { return }
+        retryTrackID = trackID
+        lastRetryError = error
         retryFeedback = "Retrying recording…"
         retryAttempt += 1
         playback.retryFailedPlayback()
@@ -1039,6 +1042,9 @@ struct PlaybackQueueSheet: View {
                                     .tint(ShelfTheme.accent)
                                     .frame(minHeight: 44)
                                     Button("Dismiss warning") {
+                                        // Cancel the pending status check before dismissal.
+                                        retryAttempt += 1
+                                        retryTrackID = nil
                                         retryFeedback = nil
                                         lastRetryError = nil
                                         playback.playbackError = nil
@@ -1357,13 +1363,14 @@ struct PlaybackQueueSheet: View {
                 noMatchesFocused = !queueSearchIsUpdating && !surviving.isEmpty && focusedQueueTrackID == nil
             }
             .task(id: retryAttempt) {
-                guard retryAttempt > 0 else { return }
+                guard retryAttempt > 0, retryTrackID != nil else { return }
                 // Give an asynchronous playback attempt time to publish its
                 // outcome. A repeat of the same error string does not fire
                 // onChange, so a bounded check is necessary.
                 do { try await Task.sleep(for: .seconds(5)) }
                 catch { return }
-                guard !Task.isCancelled, retryTrackID == playback.currentTrackID else {
+                guard !Task.isCancelled, retryTrackID == playback.currentTrackID,
+                      retryTrackID != nil, playback.playbackError != nil else {
                     retryFeedback = nil
                     return
                 }
@@ -1383,6 +1390,16 @@ struct PlaybackQueueSheet: View {
                 if playing && playback.playbackError == nil {
                     retryFeedback = nil
                     lastRetryError = nil
+                    retryTrackID = nil
+                }
+            }
+            .onChange(of: playback.currentTrackID) { _, newID in
+                // Never show the previous recording's retry outcome after a skip.
+                if retryTrackID != nil && retryTrackID != newID {
+                    retryAttempt += 1
+                    retryTrackID = nil
+                    retryFeedback = nil
+                    lastRetryError = nil
                 }
             }
             .onChange(of: playback.playbackError) { _, error in
@@ -1393,6 +1410,8 @@ struct PlaybackQueueSheet: View {
                     focusedQueueTrackID = nil
                     playbackFailureFocused = true
                 } else {
+                    if retryTrackID != nil { retryAttempt += 1 }
+                    retryTrackID = nil
                     retryFeedback = nil
                     lastRetryError = nil
                     playbackFailureFocused = false
