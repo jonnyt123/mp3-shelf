@@ -18,7 +18,7 @@ struct ArchiveManifest: Codable {
 enum RestoreFault: Error { case interrupted, malformed }
 func safeAudioFilename(_ name: String) -> Bool {
     guard !name.isEmpty, name != ".", name != "..", !name.contains("/"),
-          !name.contains("\\\\"), !name.contains(":"), !name.hasPrefix("."),
+          !name.contains("\\"), !name.contains(":"), !name.hasPrefix("."),
           name.lowercased().hasSuffix(".mp3") else { return false }
     return name.unicodeScalars.allSatisfy { $0.value >= 32 && $0.value != 127 }
 }
