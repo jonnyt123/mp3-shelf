@@ -85,8 +85,8 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
         // A symlink can escape the staging/library directories even when the
         // manifest filename itself passes lexical path validation.
         // Check both paths before reading, copying or comparing any bytes.
-        let sourceIsLink = (try? source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
-        let destinationIsLink = (try? destination.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
+        let sourceIsLink = (try? fm.destinationOfSymbolicLink(atPath: source.path)) != nil
+        let destinationIsLink = (try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil
         guard !sourceIsLink, !destinationIsLink else { throw RestoreFault.malformed }
         guard fm.fileExists(atPath: source.path),
               let expected = try? Data(contentsOf: source) else {
