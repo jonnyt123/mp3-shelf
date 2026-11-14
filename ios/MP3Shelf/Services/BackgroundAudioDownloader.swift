@@ -1120,6 +1120,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return true
     }
 
+    /// A completed staged file wins over a concurrent duplicate callback's
+    /// failed move. The losing callback must not fail the durable ticket.
+    nonisolated static func stagedFileSurvivesMoveFailure(at url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
     nonisolated static func safeRedirectRequest(_ redirected: URLRequest,
                                                  original: URLRequest?) -> URLRequest? {
         guard let destination = redirected.url, allowedDownloadURL(destination) else { return nil }
@@ -1234,10 +1240,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // won that race, its staged bytes are authoritative; a losing
             // move must not mark the shared ticket failed or replace the file.
             // Never suppress a genuine staging error when no file exists.
-            let alreadyStaged = FileManager.default.fileExists(atPath: destination.path)
+            let alreadyStaged = Self.stagedFileSurvivesMoveFailure(at: destination)
             Task { @MainActor in
                 guard self.tickets[id]?.status == .queued else { return }
-                if alreadyStaged || self.fm.fileExists(atPath: destination.path) {
+                if alreadyStaged || Self.stagedFileSurvivesMoveFailure(at: destination) {
                     await self.recoverStagedDownloads()
                     return
                 }
