@@ -44,6 +44,40 @@ export function promotionPolicy({ base, proposed, current, latestPreview, change
   return errors;
 }
 
+export function verifyDraftPreflightPR(pr, { base, proposed }) {
+  const errors = [];
+  if (!pr || pr.number !== 37 || pr.state !== 'open' || pr.draft !== true)
+    errors.push('Expected open draft preflight PR #37.');
+  if (pr?.head?.sha !== proposed || pr?.head?.ref !==
+      'agent/mp3-native-integration-preflight' ||
+      pr?.head?.repo?.full_name !== 'jonnyt123/mp3-shelf')
+    errors.push('Draft review head does not match exact proposed source SHA.');
+  if (pr?.base?.sha !== base || pr?.base?.ref !==
+      'feat/ios-consolidated-candidate' ||
+      pr?.base?.repo?.full_name !== 'jonnyt123/mp3-shelf')
+    errors.push('Draft PR target differs from the exact current iOS candidate.');
+  return errors;
+}
+
+async function githubDraftReview(base, proposed) {
+  const url = 'https://api.github.com/repos/jonnyt123/mp3-shelf/pulls/37';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    const response = await fetch(url, {
+      headers: { Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      signal: controller.signal
+    });
+    if (!response.ok) throw Error('Unable to verify live draft PR status (HTTP ' + response.status + ')');
+    const snapshot = await response.json();
+    const errors = verifyDraftPreflightPR(snapshot, { base, proposed });
+    if (errors.length) throw Error(errors.join('; '));
+  } finally { clearTimeout(timeout); }
+}
+
 function git(repo, ...args) {
   return execFileSync('git', ['-C', repo, ...args], {
     encoding: 'utf8', timeout: 90_000, maxBuffer: 1024 * 1024,
@@ -110,6 +144,7 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
     changedFiles, gateErrors: [] });
   if (scopeErrors.length) throw Error(scopeErrors.join('; '));
   git(project, 'diff', '--check', base, proposed);
+  await githubDraftReview(base, proposed);
 
   // A single lock avoids overlapping local Xcode sessions on the same Mac.
   const lock = join(tmpdir(), 'mp3shelf-exact-native-preflight.lock');
@@ -156,6 +191,8 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
     const errors = promotionPolicy({ base, proposed, current, latestPreview, changedFiles, gateErrors });
     if (errors.length) throw Error(errors.join('; '));
     if (!promote) return { status: 'verified-not-staged', sha: proposed, evidence: output };
+    // A draft PR may have been closed, superseded or retargeted during Xcode.
+    await githubDraftReview(base, proposed);
     assertWorktreeClean(worktree, proposed);
     // NEVER force-push: GitHub refuses non-fast-forward and protected updates.
     git(worktree, 'push', '--porcelain', 'origin', proposed + ':' + BASE_REF);
