@@ -1634,6 +1634,9 @@ final class MusicLibrary: ObservableObject {
         defer { isImporting = false }
         let (temporary, response) = try await URLSession.shared.download(from: remoteURL)
         defer { try? manager.removeItem(at: temporary) }
+        // A cancellation racing a completed URLSession download must not
+        // publish a recording after the caller has dismissed the import.
+        try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MusicLibraryError.downloadFailed
         }
@@ -1668,7 +1671,8 @@ final class MusicLibrary: ObservableObject {
         let imported = try addLocalAudio(sourceURL: staging,
                                                originalName: filename + "." + actualExtension,
                                                expectedDuration: wish?.durationSeconds,
-                                               matching: wish, attribution: attribution)
+                                               matching: wish, attribution: attribution,
+                                               cancellationAware: true)
         // addLocalAudio already commits the imported recording and resolved playlist
         // references in one atomic catalog write, including manual URL imports.
         return ImportReport(imported: imported ? 1 : 0, skipped: imported ? 0 : 1)
