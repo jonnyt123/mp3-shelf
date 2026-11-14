@@ -751,7 +751,7 @@ struct PlaybackQueueSheet: View {
     // first available upcoming song at activation time, not from a stale view
     // snapshot, and leave saved playlists and downloaded files untouched.
     private func continueWithNextQueuedSong() {
-        guard let next = playback.queuedTracks.first else {
+        guard !playback.queuedTracks.isEmpty else {
             reportStaleQueueAction()
             return
         }
