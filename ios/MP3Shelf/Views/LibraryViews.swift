@@ -26,6 +26,8 @@ struct LibraryView: View {
     @State private var favoritesOnly = false
     // Avoid rescanning large collections on every intermediate keystroke.
     @State private var settledSearchText = ""
+    @AccessibilityFocusState private var searchResultsFocused: Bool
+    @State private var searchSubmission = 0
     @State private var sortMode: LibraryTrackSort = .title
     @State private var message: String?
     @State private var renaming: MusicTrack?
@@ -82,6 +84,21 @@ struct LibraryView: View {
             != settledSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    // Search submission bypasses the typing debounce; stale tasks cannot publish
+    // results after a newer query or a clear action.
+    private func submitSearch() {
+        settledSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchSubmission &+= 1
+        searchResultsFocused = true
+    }
+
+    private func clearSearch() {
+        searchText = ""
+        settledSearchText = ""
+        searchSubmission &+= 1
+        searchResultsFocused = false
+    }
+
     private var sortMenu: some View {
         Menu {
             Picker("Sort songs", selection: $sortMode) {
@@ -103,13 +120,15 @@ struct LibraryView: View {
         VStack(alignment: .leading, spacing: 8) {
             PremiumEyebrow(title: "SEARCH YOUR LIBRARY")
             Text("Search results")
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused($searchResultsFocused)
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
             // Keep a recovery action in the scroll content even when the
             // navigation search field is offscreen or the keyboard is hidden.
             Button {
-                searchText = ""
+                clearSearch()
             } label: {
                 Label("Clear song search", systemImage: "xmark.circle.fill")
                     .font(.subheadline.weight(.semibold))
@@ -236,7 +255,7 @@ struct LibraryView: View {
                                     .accessibilityHint("Keep the search and include songs that are not favorites")
                                 }
                                 Button {
-                                    searchText = ""
+                                    clearSearch()
                                     favoritesOnly = false
                                 } label: {
                                     Label("Show complete library", systemImage: "arrow.uturn.backward")
@@ -487,6 +506,7 @@ struct LibraryView: View {
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
+        .onSubmit(of: .search) { submitSearch() }
         .task(id: searchText) {
             // Clearing or whitespace-only input restores the full library
             // immediately; nonempty queries debounce until typing settles.
