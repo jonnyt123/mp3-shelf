@@ -76,15 +76,22 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
         tracks: existing.tracks + archive.tracks.filter { byID[$0.id] == nil },
         playlists: existing.playlists + archive.playlists.filter { item in !existing.playlists.contains(where: { $0.id == item.id }) }
     )
-    let copied = library.appendingPathComponent(newTrack.filename)
-    // A previous interrupted restore may leave a file with the expected name.
-    // Never publish a manifest that points at unrelated or damaged bytes.
-    if fm.fileExists(atPath: copied.path) {
-        guard try Data(contentsOf: copied) == Data(contentsOf: candidate) else {
+    // Copy only the files referenced by the incoming manifest. A metadata-only
+    // restore must not inspect or mutate unrelated files left by an earlier run.
+    // Verify source bytes before touching a destination or publishing metadata.
+    for item in archive.tracks where byID[item.id] == nil {
+        let source = incoming.appendingPathComponent(item.filename)
+        let destination = library.appendingPathComponent(item.filename)
+        guard fm.fileExists(atPath: source.path),
+              let expected = try? Data(contentsOf: source) else {
             throw RestoreFault.malformed
         }
-    } else {
-        try fm.copyItem(at: candidate, to: copied)
+        if fm.fileExists(atPath: destination.path) {
+            guard let actual = try? Data(contentsOf: destination),
+                  actual == expected else { throw RestoreFault.malformed }
+        } else {
+            try fm.copyItem(at: source, to: destination)
+        }
     }
     if failAfterCopy { throw RestoreFault.interrupted }
     try JSONEncoder().encode(next).write(to: manifestURL, options: .atomic)
@@ -176,4 +183,31 @@ try check(Data(contentsOf: manifestURL) == recoveredManifestBytes,
           "valid retry changed committed manifest")
 try check(Data(contentsOf: copiedPath) == newBytes,
           "valid retry did not preserve restored audio")
-print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; 3 stale-file collision cases; byte preservation")
+// A metadata-only restore must not re-copy or validate unrelated staged files.
+// The old model unconditionally copied new.mp3 even when it was absent from
+// the archive; this scenario detects that false-positive reference behavior.
+let metadataOnly = ArchiveManifest(tracks: [oldTrack], playlists: [oldPlaylist])
+let committedBeforeMetadata = try Data(contentsOf: manifestURL)
+let foreignAfterCommit = Data(repeating: 0xA5, count: 4096)
+try foreignAfterCommit.write(to: copiedPath, options: .atomic)
+try restore(metadataOnly, failAfterCopy: false)
+try check(Data(contentsOf: copiedPath) == foreignAfterCommit,
+          "metadata-only restore touched unrelated destination audio")
+try check(Data(contentsOf: manifestURL) == committedBeforeMetadata,
+          "metadata-only restore changed library manifest")
+
+// A missing incoming recording must fail before publishing its track metadata.
+// Use a distinct ID and filename to ensure the copy path is actually exercised.
+let missingTrack = ArchiveTrack(id: "missing:track/100", filename: "missing.mp3", digest: "missing")
+let missingArchive = ArchiveManifest(tracks: [missingTrack], playlists: [])
+var missingRejected = false
+do { try restore(missingArchive, failAfterCopy: false) }
+catch RestoreFault.malformed { missingRejected = true }
+try check(missingRejected, "missing archive audio accepted")
+try check(Data(contentsOf: manifestURL) == committedBeforeMetadata,
+          "missing source published orphan track metadata")
+try check(Data(contentsOf: original) == oldBytes &&
+          Data(contentsOf: copiedPath) == foreignAfterCommit,
+          "missing source modified existing audio")
+
+print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; 3 stale-file collision cases; metadata-only isolation; missing-source rejection; byte preservation")
