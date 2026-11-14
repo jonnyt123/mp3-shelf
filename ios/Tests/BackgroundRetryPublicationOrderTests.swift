@@ -89,6 +89,30 @@ for (index, corrupt) in corruptCases.enumerated() {
     try check(Data(contentsOf: stage) == audio && Data(contentsOf: unrelated) == otherAudio,
               "corrupt journal destroyed audio on case \\(index)")
 }
+// Simulate a second process publishing a newer queue snapshot while the retry
+// is preparing its replacement. A stale writer must not erase that snapshot.
+let concurrent = RetryTicket(id: UUID(), status: "queued")
+let concurrentJournal = try JSONEncoder().encode([old, other, concurrent])
+try concurrentJournal.write(to: journal, options: .atomic)
+let scheduledAtConflict = scheduled
+let liveAtConflict = live
+func commitIfUnchanged(_ proposed: [RetryTicket], expected: Data) throws {
+    let observed = try Data(contentsOf: journal)
+    guard observed == expected else { throw RetryFailure.corrupt }
+    try commitAndSchedule(proposed, fail: false)
+}
+do {
+    try commitIfUnchanged(next, expected: validJournal)
+    try check(false, "stale retry overwrote concurrent durable queue")
+} catch RetryFailure.corrupt {}
+try check(Data(contentsOf: journal) == concurrentJournal,
+          "stale retry destroyed a newer durable queue snapshot")
+try check(scheduled == scheduledAtConflict && live == liveAtConflict,
+          "stale retry changed live queue or started another transfer")
+try check(Data(contentsOf: stage) == audio && Data(contentsOf: unrelated) == otherAudio,
+          "stale retry destroyed staged audio")
+print("PASS: stale retry rejected without erasing concurrent journal or audio")
+
 try validJournal.write(to: journal, options: .atomic)
 try check(JSONDecoder().decode([RetryTicket].self, from: Data(contentsOf: journal)) == next,
           "valid recovery journal not restorable after corruption")
