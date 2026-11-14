@@ -724,6 +724,7 @@ struct PlaylistsView: View {
     @State private var showCreate = false
     @State private var newName = ""
     @State private var pendingDelete: MusicPlaylist?
+    @State private var playlistActionFeedback: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     // Adapt to the available width: compact iPhones must not squeeze playlist
@@ -739,6 +740,24 @@ struct PlaylistsView: View {
     private func revealPlaylists() {
         playlistQuery = ""
         playlistResultsFocused = true
+    }
+
+    // A duplicate must be discoverable even when the source was found through
+    // a search that excludes the generated copy's name. Keep audio untouched.
+    private func copyPlaylist(_ playlist: MusicPlaylist) {
+        library.duplicatePlaylist(playlist.id)
+        revealPlaylists()
+        playlistActionFeedback = "Created a local copy of \(playlist.name)."
+    }
+
+    private func deleteConfirmedPlaylist() {
+        guard let playlist = pendingDelete else { return }
+        library.deletePlaylist(playlist.id)
+        pendingDelete = nil
+        // If the last matching collection disappeared, return focus to a
+        // stable heading rather than an inaccessible deleted card.
+        playlistResultsFocused = true
+        playlistActionFeedback = "Deleted \(playlist.name). Your songs remain in your library."
     }
 
     private var hasPlaylistQuery: Bool {
@@ -793,6 +812,20 @@ struct PlaylistsView: View {
         .background(PremiumBackdrop())
         .searchable(text: $playlistQuery, prompt: "Find playlists")
         .navigationTitle("Playlists")
+        .overlay(alignment: .bottom) {
+            if let playlistActionFeedback {
+                Text(playlistActionFeedback)
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(ShelfTheme.background, in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
+                    .accessibilityAddTraits(.updatesFrequently)
+                    .accessibilityIdentifier("playlist-action-feedback")
+            }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -847,8 +880,7 @@ struct PlaylistsView: View {
             titleVisibility: .visible
         ) {
             Button("Delete playlist", role: .destructive) {
-                if let playlist = pendingDelete { library.deletePlaylist(playlist.id) }
-                pendingDelete = nil
+                deleteConfirmedPlaylist()
             }
             Button("Keep playlist", role: .cancel) { pendingDelete = nil }
         } message: {
@@ -959,7 +991,7 @@ struct PlaylistsView: View {
                     pendingRename = list
                 }
                 .accessibilityAction(named: "Make local copy") {
-                    library.duplicatePlaylist(list.id)
+                    copyPlaylist(list)
                 }
                 .accessibilityAction(named: "Delete playlist") {
                     pendingDelete = list
@@ -969,7 +1001,7 @@ struct PlaylistsView: View {
                         renamedName = list.name
                         pendingRename = list
                     } label: { Label("Rename Playlist", systemImage: "pencil") }
-                    Button { library.duplicatePlaylist(list.id) } label: {
+                    Button { copyPlaylist(list) } label: {
                         Label("Make local copy", systemImage: "doc.on.doc")
                     }
                     Button(role: .destructive) {
