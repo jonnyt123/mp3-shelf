@@ -784,7 +784,31 @@ struct PlaylistsView: View {
     @State private var newName = ""
     @State private var pendingDelete: MusicPlaylist?
     @State private var playlistActionFeedback: String?
+    @State private var failedPlaylistEdit: FailedPlaylistEdit?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private enum FailedPlaylistEdit {
+        case create
+        case rename(id: UUID)
+    }
+
+    // Restore the original input when a failed write is retried instead of
+    // requiring the user to reconstruct a playlist name.
+    private func retryPlaylistEdit() {
+        guard let failedPlaylistEdit else { return }
+        playlistActionFeedback = nil
+        self.failedPlaylistEdit = nil
+        switch failedPlaylistEdit {
+        case .create:
+            showCreate = true
+        case .rename(let id):
+            guard let playlist = library.playlists.first(where: { $0.id == id }) else {
+                playlistActionFeedback = "This playlist is no longer available to rename."
+                return
+            }
+            pendingRename = playlist
+        }
+    }
 
     // Adapt to the available width: compact iPhones must not squeeze playlist
     // names and status labels into two narrow cards. Accessibility sizes
@@ -889,8 +913,16 @@ struct PlaylistsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.updatesFrequently)
                     Spacer(minLength: 0)
+                    if failedPlaylistEdit != nil {
+                        Button("Retry", action: retryPlaylistEdit)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(ShelfTheme.accent)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityHint("Reopen the playlist editor with your previous name")
+                    }
                     Button {
                         self.playlistActionFeedback = nil
+                        self.failedPlaylistEdit = nil
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .frame(minWidth: 44, minHeight: 44)
@@ -928,14 +960,19 @@ struct PlaylistsView: View {
                 if library.playlists.contains(where: { !existingIDs.contains($0.id) }) {
                     revealPlaylists()
                     newName = ""
+                    failedPlaylistEdit = nil
                     playlistActionFeedback = "Created \(name)."
                 } else {
+                    failedPlaylistEdit = .create
                     playlistActionFeedback = library.libraryStorageError
                         ?? "Could not create this playlist. Your existing playlists were preserved."
                 }
             }
             .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("Cancel", role: .cancel) { newName = "" }
+            Button("Cancel", role: .cancel) {
+                newName = ""
+                failedPlaylistEdit = nil
+            }
         } message: { Text("Songs stay on your device.") }
         .alert("Rename Playlist", isPresented: Binding(
             get: { pendingRename != nil },
@@ -949,8 +986,10 @@ struct PlaylistsView: View {
                     library.renamePlaylist(playlist.id, to: name)
                     if library.playlists.first(where: { $0.id == playlist.id })?.name == name {
                         revealPlaylists()
+                        failedPlaylistEdit = nil
                         playlistActionFeedback = "Renamed playlist to \(name)."
                     } else {
+                        failedPlaylistEdit = .rename(id: playlist.id)
                         playlistActionFeedback = library.libraryStorageError
                             ?? "Could not rename this playlist. Its previous name was preserved."
                     }
