@@ -1,0 +1,1339 @@
+import {describe,it,expect} from "vitest";
+import {deleteTrackWithPlaylistCleanup,recoverFailedTrackDeletion,commitPlaylistEdit,cancelPlaylistRestore,cancelOwnedPlaylistRestore,hasPendingPlaylistRestore,parseStoredPlaylists,persistRestoredPlaylists,recoverPlaylistRestore,selectPlaylistTracks,stagePlaylistRestore,updateStoredPlaylists} from "./playlist-storage";
+describe("persistent playlist hydration",()=>{
+ it("loads existing playlists without dropping order or track references",()=>{
+  const saved=[{id:"mix",name:"Road trip",trackIds:["a","b"]}];
+  expect(parseStoredPlaylists(JSON.stringify(saved))).toEqual(saved);
+ });
+ it("allows first launch with no storage entry",()=>expect(parseStoredPlaylists(null)).toEqual([]));
+ it.each(['not json','{}','[null]','[{"id":"x","name":"a","trackIds":[4]}]','[{"id":"x","name":"a","trackIds":[]},{"id":"x","name":"b","trackIds":[]}]'])("rejects corrupt storage instead of silently clearing it: %s",raw=>{
+  expect(()=>parseStoredPlaylists(raw)).toThrow();
+ });
+});
+
+describe("large offline playlist selection",()=>{
+ it("preserves library order, ignores missing IDs and duplicate playlist references",()=>{
+  const tracks=[{id:"a"},{id:"b"},{id:"c"}];
+  expect(selectPlaylistTracks(tracks,["c","c","missing","a"])).toEqual([tracks[0],tracks[2]]);
+ });
+ it("handles large imports without repeatedly scanning playlist IDs",()=>{
+  const tracks=Array.from({length:10000},(_,i)=>({id:`track-${i}`}));
+  const ids=Array.from({length:10000},(_,i)=>`track-${i}`);
+  const result=selectPlaylistTracks(tracks,ids);
+  expect(result).toHaveLength(10000);
+  expect(result[9999]).toBe(tracks[9999]);
+ });
+});
+
+describe("playlist restore commit",()=>{
+ it("preserves local playlist edits and adds missing backup links after a successful write",()=>{
+  const storage=new Map([["playlists",JSON.stringify([{id:"existing",name:"Old",trackIds:["a"]}])]]);
+  const adapter={getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>{storage.set(key,value)}};
+  const next=persistRestoredPlaylists(adapter,"playlists",[{id:"existing",name:"Updated",trackIds:["b"]},{id:"new",name:"New",trackIds:[]}]);
+  expect(next).toEqual([{id:"existing",name:"Old",trackIds:["a","b"]},{id:"new",name:"New",trackIds:[]}]);
+  expect(parseStoredPlaylists(storage.get("playlists")!)).toEqual(next);
+ });
+ it("deduplicates track references when importing a new playlist without changing existing playlist order",()=>{
+  const saved=[{id:"existing",name:"Keep",trackIds:["local","local"]}];
+  const data=new Map([["playlists",JSON.stringify(saved)]]);
+  const storage={getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)}};
+  const incoming=[{id:"new",name:"Imported",trackIds:["a","b","a","c","b"]}];
+  const result=persistRestoredPlaylists(storage,"playlists",incoming);
+  expect(result).toEqual([...saved,{id:"new",name:"Imported",trackIds:["a","b","c"]}]);
+  expect(persistRestoredPlaylists(storage,"playlists",incoming)).toEqual(result);
+  expect(parseStoredPlaylists(data.get("playlists")!)).toEqual(result);
+ });
+ it("is idempotent and never reorders or deletes locally edited playlist tracks",()=>{
+  const storage=new Map([["playlists",JSON.stringify([{id:"mix",name:"My edited mix",trackIds:["local","shared"]}])]]);
+  const adapter={getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>{storage.set(key,value)}};
+  const incoming=[{id:"mix",name:"Outdated backup name",trackIds:["shared","archived","archived"]}];
+  const first=persistRestoredPlaylists(adapter,"playlists",incoming);
+  expect(first).toEqual([{id:"mix",name:"My edited mix",trackIds:["local","shared","archived"]}]);
+  expect(persistRestoredPlaylists(adapter,"playlists",incoming)).toEqual(first);
+ });
+ it("does not claim success or replace the existing playlists when storage is full",()=>{
+  const saved=JSON.stringify([{id:"safe",name:"Saved",trackIds:["audio"]}]);
+  let writes=0;
+  const storage={getItem:(key:string)=>key==="playlists"?saved:null,setItem:()=>{writes++;throw new DOMException("Storage full","QuotaExceededError")}};
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[{id:"restored",name:"Restored",trackIds:[]}])).toThrow();
+  expect(writes).toBe(1);
+  expect(storage.getItem("playlists")).toBe(saved);
+ });
+ it("rejects duplicate or malformed incoming playlist IDs without touching saved playlists",()=>{
+  const saved=JSON.stringify([{id:"safe",name:"My playlist",trackIds:["audio"]}]);
+  let writes=0;
+  const storage={getItem:()=>saved,setItem:()=>{writes++}};
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[
+   {id:"collision",name:"First",trackIds:[]},
+   {id:"collision",name:"Second",trackIds:[]}
+  ])).toThrow("Duplicate saved playlist ID");
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[
+   {id:"new",name:"Bad",trackIds:[""]}
+  ])).toThrow("Invalid saved playlists");
+  expect(writes).toBe(0);
+  expect(storage.getItem()).toBe(saved);
+ });
+ it("rejects deletion recovery staged during backup merge without overwriting playlists",()=>{
+  const saved=JSON.stringify([{id:"local",name:"Keep",trackIds:["audio"]}]);
+  const data=new Map<string,string>([["playlists",saved]]);
+  let reads=0;let writes=0;
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===2){
+     data.set("mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"audio",original:JSON.parse(saved)}));
+    }
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{writes++;data.set(key,value)}
+  };
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[{id:"backup",name:"Backup",trackIds:[]}]))
+   .toThrow("Track deletion started during backup restore");
+  expect(data.get("playlists")).toBe(saved);
+  expect(data.has("mp3-shelf-delete-recovery")).toBe(true);
+  expect(writes).toBe(0);
+ });
+ it("rejects a deletion journal staged at the final playlist check",()=>{
+  const saved=JSON.stringify([{id:"local",name:"Keep",trackIds:["audio"]}]);
+  const data=new Map<string,string>([["playlists",saved]]);
+  let reads=0;let writes=0;
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="mp3-shelf-delete-recovery"&&++reads===2){
+     data.set("mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"audio",original:JSON.parse(saved)}));
+    }
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{writes++;data.set(key,value)}
+  };
+  expect(()=>persistRestoredPlaylists(storage,"playlists",[])).toThrow("Track deletion started during backup restore");
+  expect(writes).toBe(0);
+  expect(data.get("playlists")).toBe(saved);
+ });
+ it("refuses to overwrite malformed existing playlists",()=>{
+  let wrote=false;
+  expect(()=>persistRestoredPlaylists({getItem:()=>"{bad",setItem:()=>{wrote=true}},"playlists",[])).toThrow();
+  expect(wrote).toBe(false);
+ });
+});
+
+describe("crash-safe backup restoration journal",()=>{
+ function store(){
+  const data=new Map<string,string>([["playlists",JSON.stringify([{id:"local",name:"Edited",trackIds:["a"]}])]]);
+  return{getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)},removeItem:(key:string)=>{data.delete(key)}};
+ }
+ const incoming=[{id:"local",name:"Old",trackIds:["b"]},{id:"new",name:"New",trackIds:["b"]}];
+ it("rejects corrupt destination playlists before staging any audio restore",()=>{
+  const storage=store();
+  storage.setItem("playlists","{damaged");
+  const original=storage.getItem("playlists");
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toThrow();
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+  expect(storage.getItem("playlists")).toBe(original);
+ });
+ it("validates the actual destination key, not a hardcoded production key",()=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-playlists",JSON.stringify([{id:"unrelated",name:"Other",trackIds:[]}]));
+  storage.setItem("playlists","{broken");
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toThrow();
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+  storage.setItem("playlists",JSON.stringify([{id:"local",name:"Edited",trackIds:["a"]}]));
+  storage.setItem("mp3-shelf-playlists","{broken");
+  expect(stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toBe(true);
+ });
+ it("refuses to replay a pending restore into a different playlist namespace",()=>{
+  const storage=store();
+  const other="other-playlists";
+  storage.setItem(other,JSON.stringify([{id:"other",name:"Untouched",trackIds:["a"]}]));
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
+  const original=storage.getItem(other);
+  expect(()=>recoverPlaylistRestore(storage,new Set(["a","b"]),other)).toThrow("different playlist storage key");
+  expect(storage.getItem(other)).toBe(original);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")).not.toBeNull();
+ });
+ it("rejects malformed pending journals without modifying any playlist namespace",()=>{
+  const malformed=[
+   {version:1,key:"playlists",trackIds:["a","a"],playlists:[]},
+   {version:1,key:"playlists",trackIds:[""],playlists:[]},
+   {version:1,key:"playlists",trackIds:["a"],playlists:[{id:"duplicate",name:"First",trackIds:[]},{id:"duplicate",name:"Second",trackIds:[]}]},
+   {version:1,key:"",trackIds:["a"],playlists:[]},
+   {version:2,key:"playlists",trackIds:["a"],playlists:[]}
+  ];
+  for(const journal of malformed){
+   const storage=store();
+   const before=storage.getItem("playlists");
+   storage.setItem("mp3-shelf-restore-pending",JSON.stringify(journal));
+   expect(()=>recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")).toThrow();
+   expect(storage.getItem("playlists")).toBe(before);
+   expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  }
+ });
+ it("rejects duplicate backup track IDs before creating a recovery journal",()=>{
+  const storage=store();
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"b"},{id:"b"}],incoming)).toThrow("Invalid backup track IDs");
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+ });
+ it("can recover legacy version-one restore journals without a storage key",()=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-restore-pending",JSON.stringify({version:1,trackIds:["b"],playlists:incoming}));
+  expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")?.[0].trackIds).toEqual(["a","b"]);
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+ });
+ it("recovers after audio commits but before playlists are saved, without reverting local edits",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  const result=recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists");
+  expect(result).toEqual([{id:"local",name:"Edited",trackIds:["a","b"]},{id:"new",name:"New",trackIds:["b"]}]);
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+  expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists")).toBeNull();
+ });
+ it("rejects dangling playlist links even after all imported recordings are present",()=>{
+  const storage=store();
+  const bad=[{id:"new",name:"Incomplete archive",trackIds:["b","missing"]}];
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],bad);
+  const before=storage.getItem("playlists");
+  expect(()=>recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists"))
+   .toThrow("references missing audio");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+ });
+ it("allows restored playlists to reference recordings already in the local library",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],[{id:"new",name:"Mixed",trackIds:["a","b"]}]);
+  expect(recoverPlaylistRestore(storage,new Set(["a","b"]),"playlists"))
+   .toContainEqual({id:"new",name:"Mixed",trackIds:["a","b"]});
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+ });
+ it("never publishes playlist links if a crash happened before audio insertion",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
+  expect(()=>recoverPlaylistRestore(storage,new Set(["a"]),"playlists")).toThrow("interrupted");
+  expect(JSON.parse(storage.getItem("playlists")!)[0].trackIds).toEqual(["a"]);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"different"}],incoming)).toThrow("original backup");
+  expect(stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toBe(false);
+ });
+ it("retains an existing interrupted restore journal when the same backup is retried and audio storage fails",()=>{
+  const storage=store();
+  expect(stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming)).toBe(true);
+  const original=storage.getItem("mp3-shelf-restore-pending");
+  const newlyStaged=stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
+  expect(newlyStaged).toBe(false);
+  // A failed retry must not call cancelPlaylistRestore on another run's journal.
+  if(newlyStaged)cancelPlaylistRestore(storage);
+  expect(storage.getItem("mp3-shelf-restore-pending")).toBe(original);
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+ });
+ it("retains pending recovery after playlist quota failure",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,"playlists",[{id:"b"}],incoming);
+  const failed={...storage,setItem:(key:string,value:string)=>{if(key==="playlists")throw new Error("QuotaExceeded");storage.setItem(key,value)}};
+  expect(()=>recoverPlaylistRestore(failed,new Set(["a","b"]),"playlists")).toThrow("QuotaExceeded");
+  expect(hasPendingPlaylistRestore(storage)).toBe(true);
+  expect(JSON.parse(storage.getItem("playlists")!)[0].trackIds).toEqual(["a"]);
+  cancelPlaylistRestore(storage);
+  expect(hasPendingPlaylistRestore(storage)).toBe(false);
+ });
+});
+
+ describe("durable ordinary playlist edits",()=>{
+  it("writes a valid edit before returning it to the UI",()=>{
+   const data=new Map<string,string>();
+   const next=[{id:"mix",name:"Favorites",trackIds:["a","b"]}];
+   const saved=commitPlaylistEdit({setItem:(key,value)=>{data.set(key,value)}},"playlists",next);
+   expect(saved).toEqual(next);
+   expect(parseStoredPlaylists(data.get("playlists")!)).toEqual(next);
+  });
+  it("does not publish an edit when the device refuses the storage write",()=>{
+   const old=JSON.stringify([{id:"mix",name:"Keep",trackIds:["a"]}]);
+   const data=new Map([["playlists",old]]);
+   expect(()=>commitPlaylistEdit({setItem:()=>{throw new DOMException("Full","QuotaExceededError")}},"playlists",[{id:"mix",name:"New",trackIds:["b"]}])).toThrow();
+   expect(data.get("playlists")).toBe(old);
+  });
+  it("rejects duplicate IDs before attempting a write",()=>{
+   let writes=0;
+   expect(()=>commitPlaylistEdit({setItem:()=>{writes++}},"playlists",[{id:"a",name:"A",trackIds:[]},{id:"a",name:"B",trackIds:[]}])).toThrow("Duplicate saved playlist ID");
+   expect(writes).toBe(0);
+  });
+ });
+
+describe("track deletion consistency",()=>{
+ const original=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
+ function storage(){
+  const values=new Map<string,string>([["playlists",JSON.stringify(original)]]);
+  return {values,setItem:(key:string,value:string)=>{values.set(key,value)},getItem:(key:string)=>values.get(key)??null,removeItem:(key:string)=>{values.delete(key)}};
+ }
+ it("refuses audio deletion while a backup restore is staged",async()=>{
+  const store=storage();
+  const staged=stagePlaylistRestore(store,"playlists",[{id:"restored"}],[{id:"restored-list",name:"Imported",trackIds:["restored"]}]);
+  expect(staged).toBe(true);
+  let called=false;
+  await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{called=true}))
+   .rejects.toThrow("pending backup restore");
+  expect(called).toBe(false);
+  expect(hasPendingPlaylistRestore(store)).toBe(true);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
+ });
+ it("refuses backup staging during an in-flight audio deletion without replacing its journal",async()=>{
+  const store=storage();
+  let complete!:()=>void;
+  const pending=new Promise<void>(resolve=>{complete=resolve});
+  const deleting=deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{await pending});
+  const before=store.getItem("mp3-shelf-delete-recovery");
+  expect(before).not.toBeNull();
+  expect(()=>stagePlaylistRestore(store,"playlists",[{id:"restored"}],[{id:"new",name:"New",trackIds:["restored"]}]))
+   .toThrow("pending track deletion recovery");
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBe(before);
+  expect(hasPendingPlaylistRestore(store)).toBe(false);
+  complete();
+  await deleting;
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("rejects empty backup destination keys before writing recovery intent",()=>{
+  const store=storage();
+  expect(()=>stagePlaylistRestore(store," ",[{id:"restored"}],[])).toThrow("Invalid playlist storage key");
+  expect(hasPendingPlaylistRestore(store)).toBe(false);
+ });
+ it("persists reference cleanup before deleting the audio record",async()=>{
+  const store=storage();
+  const next=await deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{
+   expect(parseStoredPlaylists(store.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+  });
+  expect(next[0].trackIds).toEqual(["keep"]);
+ });
+ it("returns latest playlist edits after an asynchronous audio deletion",async()=>{
+  const store=storage();
+  let finishDeletion!:()=>void;
+  const pending=new Promise<void>(resolve=>{finishDeletion=resolve});
+  const deleting=deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{await pending});
+  // The user renames a playlist and adds another track while IDB is pending.
+  commitPlaylistEdit(store,"playlists",[{id:"mix",name:"Updated",trackIds:["keep","new"]}]);
+  finishDeletion();
+  expect(await deleting).toEqual([{id:"mix",name:"Updated",trackIds:["keep","new"]}]);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual([{id:"mix",name:"Updated",trackIds:["keep","new"]}]);
+ });
+ it("preserves audio when another tab reattaches a track before deletion",async()=>{
+  const store=storage();let deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{
+   deleted=true;
+  })).resolves.toEqual([{id:"mix",name:"Mix",trackIds:["keep"]}]);
+  expect(deleted).toBe(true);
+  // Inject a synchronous cross-tab write immediately after the playlist
+  // cleanup commit, before the asynchronous IndexedDB deletion begins.
+  const other=storage();
+  const interfering={...other,
+   getItem:store.getItem,
+   removeItem:store.removeItem,
+   setItem:(key:string,value:string)=>{
+    store.setItem(key,value);
+    if(key==="playlists"){
+     store.setItem(key,JSON.stringify([{id:"mix",name:"Concurrent",trackIds:["keep","remove"]}]));
+    }
+   }
+  };
+  deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(interfering,"playlists",original,"remove",async()=>{deleted=true}))
+   .rejects.toThrow("added to a playlist during deletion");
+  expect(deleted).toBe(false);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual([{id:"mix",name:"Concurrent",trackIds:["keep","remove"]}]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("removes references reattached while IndexedDB deletion is pending",async()=>{
+  const store=storage();
+  let complete!:()=>void;
+  const pending=new Promise<void>(resolve=>{complete=resolve});
+  const deletion=deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{await pending});
+  // A second tab updates the durable playlist after the pre-delete check.
+  store.setItem("playlists",JSON.stringify([
+   {id:"mix",name:"Concurrent rename",trackIds:["keep","remove","new"]},
+   {id:"other",name:"New playlist",trackIds:["remove","new"]}
+  ]));
+  complete();
+  const result=await deletion;
+  expect(result).toEqual([
+   {id:"mix",name:"Concurrent rename",trackIds:["keep","new"]},
+   {id:"other",name:"New playlist",trackIds:["new"]}
+  ]);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(result);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("retains recovery journal if post-delete reference cleanup cannot persist",async()=>{
+  const store=storage();
+  let writes=0;
+  const failing={...store,setItem:(key:string,value:string)=>{
+   if(key==="playlists"&&++writes===2)throw new Error("QuotaExceededError");
+   store.setItem(key,value);
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{
+   store.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","remove"]}]));
+  })).rejects.toThrow("QuotaExceededError");
+  expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(store,new Set(["keep"]))).toEqual([{id:"mix",name:"Other tab",trackIds:["keep"]}]);
+  // Startup uses the actual surviving IndexedDB IDs to remove dangling links.
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it.each(["", " ", "\t"])("rejects blank playlist namespaces before staging deletion (%s)",async key=>{
+  const store=storage();
+  const before=store.getItem("playlists");
+  let deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(store,key,original,"remove",async()=>{deleted=true}))
+   .rejects.toThrow("Invalid playlist storage key for deletion");
+  expect(deleted).toBe(false);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+  expect(store.getItem("playlists")).toBe(before);
+ });
+ it("rejects blank track IDs before touching storage or audio",async()=>{
+  const store=storage();let deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original," ",async()=>{deleted=true})).rejects.toThrow("Invalid track ID");
+  expect(deleted).toBe(false);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
+ });
+ it("updates playlists from current durable state, preserving edits from other tabs",()=>{
+  const store=storage();
+  const stale=original;
+  store.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab rename",trackIds:["keep","remove","new"]}]));
+  const result=updateStoredPlaylists(store,"playlists",current=>current.map(p=>({...p,trackIds:p.trackIds.filter(id=>id!=="remove")})));
+  expect(result).toEqual([{id:"mix",name:"Other tab rename",trackIds:["keep","new"]}]);
+  expect(stale[0].name).toBe("Mix");
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(result);
+ });
+ it("never deletes audio when playlist persistence fails",async()=>{
+  const store=storage();let deleted=false;
+  const failing={...store,setItem:()=>{throw new Error("QuotaExceededError")}};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{deleted=true})).rejects.toThrow("QuotaExceededError");
+  expect(deleted).toBe(false);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
+ });
+ it("rolls back references if IndexedDB deletion rejects",async()=>{
+  const store=storage();
+  await expect(deleteTrackWithPlaylistCleanup(store,"playlists",original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("IDB abort");
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(original);
+ });
+ it("reports rollback failure without pretending deletion succeeded",async()=>{
+  const store=storage();let writes=0;
+  const failing={...store,setItem:(key:string,value:string)=>{if(++writes===3)throw new Error("QuotaExceededError");store.setItem(key,value)}};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("rollback could not be saved");
+  expect(parseStoredPlaylists(store.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(store,new Set(["remove","keep"]))?.[0].trackIds).toEqual(["keep","remove"]);
+ });
+ it("retains deletion recovery when playlists change during rollback verification",()=>{
+  const store=storage();
+  store.setItem("mp3-shelf-delete-recovery",JSON.stringify({
+   version:1,key:"playlists",trackId:"remove",original
+  }));
+  store.setItem("playlists",JSON.stringify([{id:"mix",name:"Mix",trackIds:["keep"]}]));
+  let readsAfterWrite=0;
+  let rollbackWritten=false;
+  const racing={
+   ...store,
+   setItem:(key:string,value:string)=>{
+    store.setItem(key,value);
+    if(key==="playlists")rollbackWritten=true;
+   },
+   getItem:(key:string)=>{
+    if(key==="playlists"&&rollbackWritten&&++readsAfterWrite===2)
+     store.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","remove","new"]}]));
+    return store.getItem(key);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(racing,new Set(["keep","remove","new"])))
+   .toThrow("Playlists changed during deletion rollback verification");
+  expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(parseStoredPlaylists(store.getItem("playlists"))[0].name).toBe("Other tab");
+  expect(recoverFailedTrackDeletion(store,new Set(["keep","remove","new"]))?.[0].name).toBe("Other tab");
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("reconciles after restart without discarding intervening playlist edits",async()=>{
+  const store=storage();let writes=0;
+  const failing={...store,setItem:(key:string,value:string)=>{if(++writes===3)throw new Error("QuotaExceededError");store.setItem(key,value)}};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("rollback could not be saved");
+  store.setItem("playlists",JSON.stringify([{id:"mix",name:"Renamed",trackIds:["keep","new"]}]));
+  expect(recoverFailedTrackDeletion(store,new Set(["remove","keep","new"]))).toEqual([{id:"mix",name:"Renamed",trackIds:["keep","remove","new"]}]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("recovers a failed deletion using its journaled playlist key",async()=>{
+  const store=storage();
+  const alternate="custom-playlists";
+  store.setItem(alternate,JSON.stringify(original));
+  let writes=0;
+  const failing={...store,setItem:(key:string,value:string)=>{
+   if(key===alternate&&++writes===2)throw new Error("QuotaExceededError");
+   store.setItem(key,value);
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(failing,alternate,original,"remove",async()=>{throw new Error("IDB abort")})).rejects.toThrow("rollback could not be saved");
+  expect(recoverFailedTrackDeletion(store,new Set(["keep","remove"]))).toEqual(original);
+  expect(parseStoredPlaylists(store.getItem(alternate))).toEqual(original);
+ });
+ it("does not restore references if audio was already removed before restart",async()=>{
+  const store=storage();let writes=0;
+  const failing={...store,removeItem:()=>{throw new Error("crash")}};
+  await expect(deleteTrackWithPlaylistCleanup(failing,"playlists",original,"remove",async()=>{})).rejects.toThrow("crash");
+  expect(recoverFailedTrackDeletion(store,new Set(["keep"]))?.[0].trackIds).toEqual(["keep"]);
+ });
+});
+
+
+describe("conflicting recovery journals",()=>{
+ function store(){
+  const data=new Map<string,string>([["playlists",JSON.stringify([{id:"mix",name:"Safe",trackIds:["audio"]}])]]);
+  return {
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+ }
+ it("does not replay a restore while deletion recovery is pending",()=>{
+  const storage=store();
+  stagePlaylistRestore(storage,"playlists",[{id:"new"}],[{id:"new-list",name:"New",trackIds:["new"]}]);
+  const restore=storage.getItem("mp3-shelf-restore-pending");
+  storage.setItem("mp3-shelf-delete-recovery",JSON.stringify({
+   version:1,key:"playlists",trackId:"audio",
+   original:[{id:"mix",name:"Safe",trackIds:["audio"]}]
+  }));
+  const before=storage.getItem("playlists");
+  expect(()=>recoverPlaylistRestore(storage,new Set(["audio","new"]),"playlists"))
+   .toThrow("pending track deletion recovery");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(storage.getItem("mp3-shelf-restore-pending")).toBe(restore);
+  storage.removeItem("mp3-shelf-delete-recovery");
+  expect(recoverPlaylistRestore(storage,new Set(["audio","new"]),"playlists")).not.toBeNull();
+ });
+ it("does not replay a deletion while backup restoration is pending",()=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-delete-recovery",JSON.stringify({
+   version:1,key:"playlists",trackId:"audio",
+   original:[{id:"mix",name:"Safe",trackIds:["audio"]}]
+  }));
+  const deletion=storage.getItem("mp3-shelf-delete-recovery");
+  storage.setItem("mp3-shelf-restore-pending",JSON.stringify({
+   version:1,key:"playlists",trackIds:["new"],playlists:[]
+  }));
+  const before=storage.getItem("playlists");
+  expect(()=>recoverFailedTrackDeletion(storage,new Set(["audio"])))
+   .toThrow("pending backup restore");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBe(deletion);
+  storage.removeItem("mp3-shelf-restore-pending");
+  expect(recoverFailedTrackDeletion(storage,new Set(["audio"]))).not.toBeNull();
+ });
+ it.each([""," ","\t"])("rejects a blank deletion ID (%s) without altering playlists",trackId=>{
+  const storage=store();
+  storage.setItem("mp3-shelf-delete-recovery",JSON.stringify({
+   version:1,key:"playlists",trackId,
+   original:[{id:"mix",name:"Safe",trackIds:["audio"]}]
+  }));
+  const before=storage.getItem("playlists");
+  expect(()=>recoverFailedTrackDeletion(storage,new Set(["audio"]))).toThrow("Invalid track deletion recovery journal");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+ });
+});
+
+
+describe("cross-tab playlist UI mutations",()=>{
+ function store(initial:{id:string;name:string;trackIds:string[]}[]){
+  const data=new Map([["playlists",JSON.stringify(initial)]]);
+  return {getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)}};
+ }
+ it("creates a playlist without erasing a playlist added by another tab",()=>{
+  const storage=store([{id:"a",name:"A",trackIds:["one"]}]);
+  const staleSnapshot=parseStoredPlaylists(storage.getItem("playlists"));
+  storage.setItem("playlists",JSON.stringify([...staleSnapshot,{id:"remote",name:"Remote",trackIds:["two"]}]));
+  const result=updateStoredPlaylists(storage,"playlists",current=>[...current,{id:"local",name:"Local",trackIds:[]}]);
+  expect(result.map(item=>item.id)).toEqual(["a","remote","local"]);
+  expect(parseStoredPlaylists(storage.getItem("playlists"))).toEqual(result);
+ });
+ it("adds a track without reverting concurrent rename or added songs",()=>{
+  const storage=store([{id:"a",name:"Old",trackIds:["one"]}]);
+  storage.setItem("playlists",JSON.stringify([{id:"a",name:"Renamed",trackIds:["one","remote"]}]));
+  const result=updateStoredPlaylists(storage,"playlists",current=>current.map(item=>item.id==="a"?{...item,trackIds:[...item.trackIds,"local"]}:item));
+  expect(result).toEqual([{id:"a",name:"Renamed",trackIds:["one","remote","local"]}]);
+ });
+ it("deletes only the selected playlist, retaining concurrent additions",()=>{
+  const storage=store([{id:"a",name:"A",trackIds:[]},{id:"b",name:"B",trackIds:[]}]);
+  storage.setItem("playlists",JSON.stringify([...parseStoredPlaylists(storage.getItem("playlists")),{id:"remote",name:"Remote",trackIds:[]}]));
+  const result=updateStoredPlaylists(storage,"playlists",current=>current.filter(item=>item.id!=="a"));
+  expect(result.map(item=>item.id)).toEqual(["b","remote"]);
+ });
+ it("reorders against current persisted order instead of stale UI order",()=>{
+  const storage=store([{id:"a",name:"A",trackIds:[]},{id:"b",name:"B",trackIds:[]}]);
+  storage.setItem("playlists",JSON.stringify([{id:"remote",name:"Remote",trackIds:[]},...parseStoredPlaylists(storage.getItem("playlists"))]));
+  const result=updateStoredPlaylists(storage,"playlists",current=>{const next=[...current],i=next.findIndex(item=>item.id==="b");[next[i-1],next[i]]=[next[i],next[i-1]];return next});
+  expect(result.map(item=>item.id)).toEqual(["remote","b","a"]);
+ });
+ it("preserves the saved value when a write fails",()=>{
+  const storage=store([{id:"a",name:"A",trackIds:[]}]);
+  const before=storage.getItem("playlists");
+  const failing={getItem:storage.getItem,setItem:(_key:string,_value:string):void=>{throw new Error("QuotaExceededError")}};
+  expect(()=>updateStoredPlaylists(failing,"playlists",current=>[...current,{id:"b",name:"B",trackIds:[]}])).toThrow("QuotaExceededError");
+  expect(storage.getItem("playlists")).toBe(before);
+ });
+ it("rejects corrupt current storage without overwriting it",()=>{
+  const storage=store([]);
+  storage.setItem("playlists","{invalid");
+  expect(()=>updateStoredPlaylists(storage,"playlists",()=>[])).toThrow();
+  expect(storage.getItem("playlists")).toBe("{invalid");
+ });
+});
+
+
+describe("journal-aware ordinary playlist edits",()=>{
+ function store(){
+  const data=new Map<string,string>([["playlists",JSON.stringify([{id:"saved",name:"Keep",trackIds:["audio"]}])]]);
+  let writes=0;
+  return {data,get writes(){return writes},getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{writes++;data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}};
+ }
+ const edit=(items:readonly {id:string;name:string;trackIds:string[]}[])=>
+  [...items,{id:"new",name:"New",trackIds:[]}];
+ it.each(["mp3-shelf-delete-recovery","mp3-shelf-restore-pending"])(
+  "rejects edits while %s exists without invoking updater or changing playlists",journalKey=>{
+   const storage=store();
+   storage.data.set(journalKey,"pending");
+   const before=storage.getItem("playlists");
+   let invoked=false;
+   expect(()=>updateStoredPlaylists(storage,"playlists",current=>{invoked=true;return edit(current)})).toThrow(/pending|Finish/);
+   expect(invoked).toBe(false);
+   expect(storage.writes).toBe(0);
+   expect(storage.getItem("playlists")).toBe(before);
+   expect(storage.getItem(journalKey)).toBe("pending");
+  });
+ it("allows edits after recovery journals have been cleared",()=>{
+  const storage=store();
+  storage.data.set("mp3-shelf-delete-recovery","pending");
+  storage.removeItem("mp3-shelf-delete-recovery");
+  expect(updateStoredPlaylists(storage,"playlists",edit)).toEqual([
+   {id:"saved",name:"Keep",trackIds:["audio"]},{id:"new",name:"New",trackIds:[]}
+  ]);
+  expect(storage.writes).toBe(1);
+ });
+ it("refuses a journal staged during playlist hydration before committing",()=>{
+  const storage=store();
+  const before=storage.getItem("playlists");
+  const adapter={
+   getItem:(key:string)=>{
+    const value=storage.getItem(key);
+    if(key==="playlists")storage.data.set("mp3-shelf-restore-pending","staged");
+    return value;
+   },
+   setItem:storage.setItem
+  };
+  expect(()=>updateStoredPlaylists(adapter,"playlists",edit)).toThrow("started while editing");
+  expect(storage.getItem("playlists")).toBe(before);
+  expect(storage.writes).toBe(0);
+ });
+});
+
+describe("optimistic playlist edit conflict detection",()=>{
+ it("rejects an updater whose storage snapshot changes during evaluation",()=>{
+  const key="playlists";
+  const original=[{id:"a",name:"Original",trackIds:["one"]}];
+  const concurrent=[{id:"a",name:"Edited in another tab",trackIds:["one","two"]}];
+  const values=new Map([[key,JSON.stringify(original)]]);
+  let writes=0;
+  const adapter={
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{writes++;values.set(name,value)}
+  };
+  expect(()=>updateStoredPlaylists(adapter,key,current=>{
+   values.set(key,JSON.stringify(concurrent));
+   return current.map(p=>({...p,name:"Stale rename"}));
+  })).toThrow("Playlists changed while editing");
+  expect(writes).toBe(0);
+  expect(parseStoredPlaylists(values.get(key)!)).toEqual(concurrent);
+ });
+ it("accepts unchanged snapshots and preserves unrelated tracks",()=>{
+  const key="playlists";
+  const values=new Map([[key,JSON.stringify([{id:"a",name:"Keep",trackIds:["one"]}])]]);
+  const adapter={getItem:(name:string)=>values.get(name)??null,setItem:(name:string,value:string)=>{values.set(name,value)}};
+  const updated=updateStoredPlaylists(adapter,key,current=>current.map(p=>({...p,trackIds:[...p.trackIds,"two"]})));
+  expect(updated[0].trackIds).toEqual(["one","two"]);
+  expect(parseStoredPlaylists(values.get(key)!)).toEqual(updated);
+ });
+});
+
+describe("restore merge concurrent-write protection",()=>{
+ const key="playlists";
+ const local=[{id:"mix",name:"Local",trackIds:["one"]}];
+ const backup=[{id:"mix",name:"Backup",trackIds:["two"]}];
+ it("does not overwrite a newer playlist edit while merging backup",()=>{
+  const values=new Map<string,string>([[key,JSON.stringify(local)]]);
+  const concurrent=[{id:"mix",name:"Other tab",trackIds:["one","three"]}];
+  let reads=0,writes=0;
+  const adapter={
+   getItem:(name:string)=>{
+    if(name===key&&++reads===2)values.set(key,JSON.stringify(concurrent));
+    return values.get(name)??null;
+   },
+   setItem:(name:string,value:string)=>{writes++;values.set(name,value)}
+  };
+  expect(()=>persistRestoredPlaylists(adapter,key,backup)).toThrow("Playlists changed during backup restore");
+  expect(writes).toBe(0);
+  expect(parseStoredPlaylists(values.get(key)!)).toEqual(concurrent);
+ });
+ it("retains a pending restore journal on a concurrent playlist edit",()=>{
+  const values=new Map<string,string>([[key,JSON.stringify(local)]]);
+  const pendingKey="mp3-shelf-restore-pending";
+  const adapter={
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+  stagePlaylistRestore(adapter,key,[{id:"two"}],backup);
+  const pending=values.get(pendingKey);
+  let reads=0;
+  const concurrent=[{id:"mix",name:"Updated elsewhere",trackIds:["one","three"]}];
+  const racing={
+   ...adapter,
+   getItem:(name:string)=>{
+    if(name===key&&++reads===2)values.set(key,JSON.stringify(concurrent));
+    return adapter.getItem(name);
+   }
+  };
+  expect(()=>recoverPlaylistRestore(racing,new Set(["one","two","three"]),key))
+   .toThrow("Playlists changed during backup restore");
+  expect(values.get(pendingKey)).toBe(pending);
+  expect(parseStoredPlaylists(values.get(key)!)).toEqual(concurrent);
+  expect(recoverPlaylistRestore(adapter,new Set(["one","two","three"]),key))
+   .toEqual([{id:"mix",name:"Updated elsewhere",trackIds:["one","three","two"]}]);
+  expect(values.has(pendingKey)).toBe(false);
+ });
+ it("commits a nonconflicting merge preserving local playlist metadata",()=>{
+  const values=new Map<string,string>([[key,JSON.stringify(local)]]);
+  const adapter={getItem:(name:string)=>values.get(name)??null,setItem:(name:string,value:string)=>{values.set(name,value)}};
+  expect(persistRestoredPlaylists(adapter,key,backup))
+   .toEqual([{id:"mix",name:"Local",trackIds:["one","two"]}]);
+ });
+});
+
+
+describe("deletion snapshot byte-equivalence",()=>{
+ const initial=[{id:"mix",name:"Keep",trackIds:["song","other"]}];
+ function fixture(raw:string){
+  const data=new Map<string,string>([["playlists",raw]]);
+  return {getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}};
+ }
+ it("accepts valid pretty-printed playlist JSON without a false concurrent-write conflict",async()=>{
+  const storage=fixture(JSON.stringify(initial,null,2));
+  let calls=0;
+  const result=await deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{calls++});
+  expect(calls).toBe(1);
+  expect(result).toEqual([{id:"mix",name:"Keep",trackIds:["other"]}]);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("still aborts if persisted bytes change while staging deletion",async()=>{
+  const storage=fixture(JSON.stringify(initial,null,2));
+  let calls=0;
+  const racing={...storage,setItem:(key:string,value:string)=>{
+   storage.setItem(key,value);
+   if(key==="mp3-shelf-delete-recovery")
+    storage.setItem("playlists",JSON.stringify([{id:"mix",name:"Remote",trackIds:["song","other","new"]}]));
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(racing,"playlists",initial,"song",async()=>{calls++}))
+   .rejects.toThrow("Playlists changed while staging deletion");
+  expect(calls).toBe(0);
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0].name).toBe("Remote");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
+
+describe("deletion journal staging conflict regression",()=>{
+ const initial=[{id:"mix",name:"Original",trackIds:["song","other"]}];
+ function fixture(){
+  const data=new Map<string,string>([["playlists",JSON.stringify(initial)]]);
+  return {data,getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}};
+ }
+ it("preserves a concurrent playlist edit made during journal staging and never deletes audio",async()=>{
+  const store=fixture();
+  const concurrent=[{id:"mix",name:"Renamed elsewhere",trackIds:["song","other","new"]}];
+  let deleted=false;
+  const storage={...store,setItem:(key:string,value:string)=>{
+   store.setItem(key,value);
+   if(key==="mp3-shelf-delete-recovery")store.setItem("playlists",JSON.stringify(concurrent));
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{deleted=true}))
+   .rejects.toThrow("Playlists changed while staging deletion");
+  expect(deleted).toBe(false);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(concurrent);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("rejects a restore journal appearing while deletion intent is staged",async()=>{
+  const store=fixture();
+  let deleted=false;
+  const storage={...store,setItem:(key:string,value:string)=>{
+   store.setItem(key,value);
+   if(key==="mp3-shelf-delete-recovery")
+    store.setItem("mp3-shelf-restore-pending",JSON.stringify({version:1,key:"playlists",trackIds:[],playlists:[]}));
+  }};
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{deleted=true}))
+   .rejects.toThrow("backup restore started");
+  expect(deleted).toBe(false);
+  expect(parseStoredPlaylists(store.getItem("playlists"))).toEqual(initial);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+  expect(store.getItem("mp3-shelf-restore-pending")).not.toBeNull();
+ });
+});
+
+describe("deletion recovery concurrent-write protection",()=>{
+ function fixture(){
+  const data=new Map<string,string>([
+   ["playlists",JSON.stringify([{id:"mix",name:"Original",trackIds:["keep","deleted"]}])],
+   ["mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"deleted",original:[{id:"mix",name:"Original",trackIds:["keep","deleted"]}]})]
+  ]);
+  return {data,getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}};
+ }
+ it("preserves a concurrent edit while cleaning references to already deleted audio",()=>{
+  const storage=fixture();let reads=0;
+  const racing={...storage,getItem:(key:string)=>{
+   if(key==="playlists"&&++reads===2)
+    storage.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","deleted","new"]}]));
+   return storage.getItem(key);
+  }};
+  expect(()=>recoverFailedTrackDeletion(racing,new Set(["keep"]))).toThrow("Playlists changed during deletion recovery");
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0]).toEqual({id:"mix",name:"Other tab",trackIds:["keep","deleted","new"]});
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"]))).toEqual([{id:"mix",name:"Other tab",trackIds:["keep","new"]}]);
+ });
+ it("preserves a concurrent edit while rolling back failed audio deletion",()=>{
+  const storage=fixture();
+  storage.setItem("playlists",JSON.stringify([{id:"mix",name:"Original",trackIds:["keep"]}]));
+  let reads=0;
+  const racing={...storage,getItem:(key:string)=>{
+   if(key==="playlists"&&++reads===2)
+    storage.setItem("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","new"]}]));
+   return storage.getItem(key);
+  }};
+  expect(()=>recoverFailedTrackDeletion(racing,new Set(["keep","deleted"]))).toThrow("Playlists changed during deletion recovery");
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0].name).toBe("Other tab");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep","deleted"]))?.[0].trackIds).toContain("deleted");
+ });
+});
+
+
+describe("recovery journal ownership across tab interleavings",()=>{
+ const playlistKey="playlists";
+ const restoreKey="mp3-shelf-restore-pending";
+ const deletionKey="mp3-shelf-delete-recovery";
+ const saved=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
+ function storage(){
+  const data=new Map<string,string>([[playlistKey,JSON.stringify(saved)]]);
+  return {
+   data,
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+ }
+ it("preserves a newer restore journal when it changes during playlist commit",()=>{
+  const base=storage();
+  stagePlaylistRestore(base,playlistKey,[{id:"new"}],[{id:"new-list",name:"New",trackIds:["new"]}]);
+  const newer=JSON.stringify({version:1,key:playlistKey,trackIds:["later"],playlists:[{id:"later",name:"Later",trackIds:["later"]}]});
+  const adapter={
+   getItem:base.getItem,
+   removeItem:base.removeItem,
+   setItem:(key:string,value:string)=>{
+    base.setItem(key,value);
+    if(key===playlistKey)base.setItem(restoreKey,newer);
+   }
+  };
+  expect(()=>recoverPlaylistRestore(adapter,new Set(["keep","remove","new"]),playlistKey))
+   .toThrow("changed before journal cleanup");
+  expect(base.getItem(restoreKey)).toBe(newer);
+  expect(hasPendingPlaylistRestore(base)).toBe(true);
+ });
+ it("preserves a newer deletion journal when successful audio deletion is reconciled",()=>{
+  const base=storage();
+  const original=JSON.stringify({version:1,key:playlistKey,trackId:"remove",original:saved});
+  base.setItem(deletionKey,original);
+  const newer=JSON.stringify({version:1,key:playlistKey,trackId:"keep",original:saved});
+  const adapter={
+   getItem:base.getItem,
+   removeItem:base.removeItem,
+   setItem:(key:string,value:string)=>{
+    base.setItem(key,value);
+    if(key===playlistKey)base.setItem(deletionKey,newer);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(adapter,new Set(["keep"])))
+   .toThrow("changed before journal cleanup");
+  expect(base.getItem(deletionKey)).toBe(newer);
+ });
+ it("preserves a newer deletion journal when failed audio deletion is rolled back",()=>{
+  const base=storage();
+  const original=JSON.stringify({version:1,key:playlistKey,trackId:"remove",original:saved});
+  base.setItem(deletionKey,original);
+  base.setItem(playlistKey,JSON.stringify([{id:"mix",name:"Mix",trackIds:["keep"]}]));
+  const newer=JSON.stringify({version:1,key:playlistKey,trackId:"keep",original:saved});
+  const adapter={
+   getItem:base.getItem,
+   removeItem:base.removeItem,
+   setItem:(key:string,value:string)=>{
+    base.setItem(key,value);
+    if(key===playlistKey)base.setItem(deletionKey,newer);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(adapter,new Set(["keep","remove"])))
+   .toThrow("changed before journal cleanup");
+  expect(base.getItem(deletionKey)).toBe(newer);
+  expect(parseStoredPlaylists(base.getItem(playlistKey))[0].trackIds).toContain("remove");
+ });
+});
+
+describe("asynchronous deletion journal ownership",()=>{
+ const original=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
+ function store(){
+  const data=new Map<string,string>([["playlists",JSON.stringify(original)]]);
+  return {getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>{data.set(key,value)},removeItem:(key:string)=>{data.delete(key)}};
+ }
+ it("preserves a replacement journal when audio deletion succeeds",async()=>{
+  const storage=store();
+  const replacement=JSON.stringify({version:1,key:"playlists",trackId:"other",original});
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",original,"remove",async()=>{
+   storage.setItem("mp3-shelf-delete-recovery",replacement);
+  })).rejects.toThrow("journal changed");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBe(replacement);
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+ });
+ it("does not replay or erase a replacement journal after an audio failure",async()=>{
+  const storage=store();
+  const replacement=JSON.stringify({version:1,key:"playlists",trackId:"other",original});
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",original,"remove",async()=>{
+   storage.setItem("mp3-shelf-delete-recovery",replacement);
+   throw new Error("IDB abort");
+  })).rejects.toThrow("journal changed");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBe(replacement);
+  expect(parseStoredPlaylists(storage.getItem("playlists"))[0].trackIds).toEqual(["keep"]);
+ });
+ it("cleans up the owned journal after ordinary successful deletion",async()=>{
+  const storage=store();
+  await deleteTrackWithPlaylistCleanup(storage,"playlists",original,"remove",async()=>{});
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
+
+describe("restore cancellation journal ownership",()=>{
+ const key="playlists";
+ const tracks=[{id:"a"}];
+ const playlists=[{id:"list",name:"Keep",trackIds:["a"]}];
+ function fixture(){
+  const data=new Map<string,string>();
+  return {getItem:(k:string)=>data.get(k)??null,setItem:(k:string,v:string)=>{data.set(k,v)},removeItem:(k:string)=>{data.delete(k)}};
+ }
+ it("cancels the journal belonging to the failed import",()=>{
+  const store=fixture();
+  expect(stagePlaylistRestore(store,key,tracks,playlists)).toBe(true);
+  expect(cancelOwnedPlaylistRestore(store,key,tracks,playlists)).toBe(true);
+  expect(hasPendingPlaylistRestore(store)).toBe(false);
+ });
+ it("preserves a replacement journal written by another tab",()=>{
+  const store=fixture();
+  stagePlaylistRestore(store,key,tracks,playlists);
+  const replacement=JSON.stringify({version:1,key,trackIds:["other"],playlists:[]});
+  store.setItem("mp3-shelf-restore-pending",replacement);
+  expect(cancelOwnedPlaylistRestore(store,key,tracks,playlists)).toBe(false);
+  expect(store.getItem("mp3-shelf-restore-pending")).toBe(replacement);
+ });
+ it("does not cancel an older pending import on a failed retry",()=>{
+  const store=fixture();
+  stagePlaylistRestore(store,key,tracks,playlists);
+  const original=store.getItem("mp3-shelf-restore-pending");
+  expect(cancelOwnedPlaylistRestore(store,key,[{id:"different"}],playlists)).toBe(false);
+  expect(store.getItem("mp3-shelf-restore-pending")).toBe(original);
+ });
+});
+
+
+describe("deletion journal replacement during staging",()=>{
+ it("does not mutate playlists or delete audio when another tab replaces the journal",async()=>{
+  const initial=[{id:"mix",name:"Original",trackIds:["song","keep"]}];
+  const replacement=JSON.stringify({version:1,key:"playlists",trackId:"other",original:initial});
+  const data=new Map<string,string>([["playlists",JSON.stringify(initial)]]);
+  let audioDeletes=0;
+  const storage={
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{
+    data.set(key,value);
+    if(key==="mp3-shelf-delete-recovery")data.set(key,replacement);
+   },
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  const before=data.get("playlists");
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{audioDeletes++}))
+   .rejects.toThrow("journal changed during audio deletion");
+  expect(audioDeletes).toBe(0);
+  expect(data.get("playlists")).toBe(before);
+  expect(data.get("mp3-shelf-delete-recovery")).toBe(replacement);
+ });
+ it("allows normal deletion when journal ownership remains unchanged",async()=>{
+  const initial=[{id:"mix",name:"Original",trackIds:["song","keep"]}];
+  const data=new Map<string,string>([["playlists",JSON.stringify(initial)]]);
+  const storage={
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  let audioDeletes=0;
+  const result=await deleteTrackWithPlaylistCleanup(storage,"playlists",initial,"song",async()=>{audioDeletes++});
+  expect(audioDeletes).toBe(1);
+  expect(result[0].trackIds).toEqual(["keep"]);
+  expect(data.has("mp3-shelf-delete-recovery")).toBe(false);
+ });
+});
+
+
+describe("post-deletion reconciliation cross-tab races",()=>{
+ const key="playlists";
+ const original=[{id:"mix",name:"Original",trackIds:["gone","keep"]}];
+ function fixture(){
+  const values=new Map<string,string>([[key,JSON.stringify(original)]]);
+  return {
+   values,
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+ }
+ it("retains newer playlist bytes and the recovery journal if a tab edits during reconciliation",async()=>{
+  const store=fixture();
+  let afterDelete=false,reads=0;
+  const concurrent=[{id:"mix",name:"Other tab",trackIds:["gone","keep","new"]}];
+  const racing={
+   ...store,
+   getItem:(name:string)=>{
+    if(afterDelete&&name===key&&++reads===2)
+     store.setItem(key,JSON.stringify(concurrent));
+    return store.getItem(name);
+   }
+  };
+  await expect(deleteTrackWithPlaylistCleanup(racing,key,original,"gone",async()=>{
+   afterDelete=true;
+   store.setItem(key,JSON.stringify([{...original[0],trackIds:["gone","keep"]}]));
+  })).rejects.toThrow("Playlists changed during post-deletion reconciliation");
+  expect(parseStoredPlaylists(store.getItem(key))).toEqual(concurrent);
+  expect(store.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(store,new Set(["keep","new"])))
+   .toEqual([{id:"mix",name:"Other tab",trackIds:["keep","new"]}]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("reconciles reattached references when no other tab edits",async()=>{
+  const store=fixture();
+  const result=await deleteTrackWithPlaylistCleanup(store,key,original,"gone",async()=>{
+   store.setItem(key,JSON.stringify(original));
+  });
+  expect(result).toEqual([{id:"mix",name:"Original",trackIds:["keep"]}]);
+  expect(store.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
+
+describe("deletion recovery journal replacement before playlist writes",()=>{
+ const key="playlists",journalKey="mp3-shelf-delete-recovery";
+ const original=[{id:"mix",name:"Mix",trackIds:["keep","remove"]}];
+ for(const [label,audioExists] of [["deleted audio",false],["failed audio deletion",true]] as const){
+  it("does not reconcile a superseded intent for "+label,()=>{
+   const data=new Map<string,string>([
+    [key,JSON.stringify(audioExists?[{...original[0],trackIds:["keep"]}]:original)],
+    [journalKey,JSON.stringify({version:1,key,trackId:"remove",original})]
+   ]);
+   const replacement=JSON.stringify({version:1,key,trackId:"keep",original});
+   let journalReads=0;
+   const storage={
+    getItem:(name:string)=>{
+     if(name===journalKey&&++journalReads===2)data.set(journalKey,replacement);
+     return data.get(name)??null;
+    },
+    setItem:(name:string,value:string)=>{data.set(name,value)},
+    removeItem:(name:string)=>{data.delete(name)}
+   };
+   const before=data.get(key);
+   expect(()=>recoverFailedTrackDeletion(storage,new Set(audioExists?["keep","remove"]:["keep"])))
+    .toThrow("recovery changed before playlist");
+   expect(data.get(key)).toBe(before);
+   expect(data.get(journalKey)).toBe(replacement);
+  });
+ }
+});
+
+describe("restore journal replacement before playlist persistence",()=>{
+ it("preserves concurrent playlist state and the replacement restore intent",()=>{
+  const key="playlists", journalKey="mp3-shelf-restore-pending";
+  const original=[{id:"local",name:"Local",trackIds:["old"]}];
+  const imported=[{id:"new",name:"New",trackIds:["new"]}];
+  const values=new Map<string,string>([[key,JSON.stringify(original)]]);
+  const base={
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+  stagePlaylistRestore(base,key,[{id:"new"}],imported);
+  const initialJournal=values.get(journalKey);
+  const replacement=JSON.stringify({version:1,key,trackIds:["later"],playlists:[{id:"later",name:"Later",trackIds:["later"]}]});
+  let playlistReads=0,playlistWrites=0;
+  const racing={
+   ...base,
+   getItem:(name:string)=>{
+    if(name===key&&++playlistReads===2)values.set(journalKey,replacement);
+    return base.getItem(name);
+   },
+   setItem:(name:string,value:string)=>{
+    if(name===key)playlistWrites++;
+    base.setItem(name,value);
+   }
+  };
+  expect(initialJournal).not.toBe(replacement);
+  expect(()=>recoverPlaylistRestore(racing,new Set(["old","new"]),key))
+   .toThrow("Pending backup restore changed before playlist commit");
+  expect(playlistWrites).toBe(0);
+  expect(values.get(key)).toBe(JSON.stringify(original));
+  expect(values.get(journalKey)).toBe(replacement);
+ });
+ it("still commits a restore when its journal remains owned",()=>{
+  const key="playlists", values=new Map<string,string>();
+  const storage={
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+  const playlist={id:"new",name:"New",trackIds:["song"]};
+  stagePlaylistRestore(storage,key,[{id:"song"}],[playlist]);
+  expect(recoverPlaylistRestore(storage,new Set(["song"]),key)).toEqual([playlist]);
+  expect(values.get("mp3-shelf-restore-pending")).toBeUndefined();
+ });
+});
+
+describe("competing recovery intent during staging",()=>{
+ it("preserves a restore journal staged during destination validation",()=>{
+  const data=new Map<string,string>();
+  const competing=JSON.stringify({version:1,key:"playlists",trackIds:["other"],playlists:[]});
+  let reads=0;
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===1)data.set("mp3-shelf-restore-pending",competing);
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{data.set(key,value)}
+  };
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"new"}],[])).toThrow("Pending backup restore changed during staging");
+  expect(data.get("mp3-shelf-restore-pending")).toBe(competing);
+ });
+ it("preserves a deletion journal staged during backup validation",()=>{
+  const data=new Map<string,string>();
+  const competing=JSON.stringify({version:1,key:"playlists",trackId:"other",original:[]});
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists")data.set("mp3-shelf-delete-recovery",competing);
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{data.set(key,value)}
+  };
+  expect(()=>stagePlaylistRestore(storage,"playlists",[{id:"new"}],[])).toThrow("Track deletion started during backup staging");
+  expect(data.get("mp3-shelf-delete-recovery")).toBe(competing);
+  expect(data.has("mp3-shelf-restore-pending")).toBe(false);
+ });
+ it("does not replace a deletion journal staged while reading playlist state",async()=>{
+  const data=new Map<string,string>();
+  const competing=JSON.stringify({version:1,key:"playlists",trackId:"other",original:[]});
+  let playlistReads=0;
+  const storage={
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++playlistReads===1)data.set("mp3-shelf-delete-recovery",competing);
+    return data.get(key)??null;
+   },
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  let deleted=false;
+  await expect(deleteTrackWithPlaylistCleanup(storage,"playlists",[],"new",async()=>{deleted=true}))
+   .rejects.toThrow("competing recovery operation");
+  expect(deleted).toBe(false);
+  expect(data.get("mp3-shelf-delete-recovery")).toBe(competing);
+ });
+});
+
+
+describe("restore cancellation ownership during synchronous storage interference",()=>{
+ it("preserves a replacement journal injected between ownership reads",()=>{
+  const data=new Map<string,string>();
+  const base={
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  const tracks=[{id:"audio"}];
+  const playlists=[{id:"mix",name:"Mix",trackIds:["audio"]}];
+  expect(stagePlaylistRestore(base,"playlists",tracks,playlists)).toBe(true);
+  const original=base.getItem("mp3-shelf-restore-pending");
+  const replacement=JSON.stringify({version:1,key:"playlists",trackIds:["new-audio"],playlists:[]});
+  let journalReads=0;
+  const interfering={
+   getItem:(key:string)=>{
+    if(key==="mp3-shelf-restore-pending"&&++journalReads===2)
+     base.setItem(key,replacement);
+    return base.getItem(key);
+   },
+   removeItem:base.removeItem
+  };
+  expect(cancelOwnedPlaylistRestore(interfering,"playlists",tracks,playlists)).toBe(false);
+  expect(base.getItem("mp3-shelf-restore-pending")).toBe(replacement);
+  expect(base.getItem("mp3-shelf-restore-pending")).not.toBe(original);
+ });
+ it("cancels an unchanged owned journal without altering playlists",()=>{
+  const data=new Map<string,string>();
+  const base={
+   getItem:(key:string)=>data.get(key)??null,
+   setItem:(key:string,value:string)=>{data.set(key,value)},
+   removeItem:(key:string)=>{data.delete(key)}
+  };
+  const tracks=[{id:"audio"}];
+  const playlists=[{id:"mix",name:"Mix",trackIds:["audio"]}];
+  base.setItem("playlists",JSON.stringify([{id:"existing",name:"Keep",trackIds:["old"]}]));
+  const before=base.getItem("playlists");
+  expect(stagePlaylistRestore(base,"playlists",tracks,playlists)).toBe(true);
+  expect(cancelOwnedPlaylistRestore(base,"playlists",tracks,playlists)).toBe(true);
+  expect(base.getItem("mp3-shelf-restore-pending")).toBeNull();
+  expect(base.getItem("playlists")).toBe(before);
+ });
+});
+
+describe("missing-audio deletion recovery final reconciliation",()=>{
+ function fixture(){
+  const original=[{id:"mix",name:"Mix",trackIds:["keep","gone"]}];
+  const values=new Map<string,string>([
+   ["playlists",JSON.stringify([{id:"mix",name:"Mix",trackIds:["keep"]}])],
+   ["mp3-shelf-delete-recovery",JSON.stringify({version:1,key:"playlists",trackId:"gone",original})]
+  ]);
+  const storage={
+   getItem:(key:string)=>values.get(key)??null,
+   setItem:(key:string,value:string)=>{values.set(key,value)},
+   removeItem:(key:string)=>{values.delete(key)}
+  };
+  return {values,storage};
+ }
+ it("preserves recovery intent when another tab reattaches missing audio before cleanup",()=>{
+  const {values,storage}=fixture();
+  let playlistReads=0;
+  const interfering={
+   ...storage,
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++playlistReads===2)
+     values.set("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","gone"]}]));
+    return storage.getItem(key);
+   }
+  };
+  const journal=storage.getItem("mp3-shelf-delete-recovery");
+  expect(()=>recoverFailedTrackDeletion(interfering,new Set(["keep"])))
+   .toThrow("Missing-audio references changed during deletion recovery");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBe(journal);
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"])))
+   .toEqual([{id:"mix",name:"Other tab",trackIds:["keep"]}]);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("keeps recovery intent if a tab reattaches audio after the verified snapshot",()=>{
+  const {values,storage}=fixture();
+  let reads=0;
+  const interfering={
+   ...storage,
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===3)
+     values.set("playlists",JSON.stringify([{id:"mix",name:"Other tab",trackIds:["keep","gone"]}]));
+    return storage.getItem(key);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(interfering,new Set(["keep"])))
+   .toThrow("Playlists changed before deletion recovery cleanup");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"])))
+   .toEqual([{id:"mix",name:"Other tab",trackIds:["keep"]}]);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("keeps recovery intent if another tab renames the verified playlist",()=>{
+  const {values,storage}=fixture();
+  let reads=0;
+  const interfering={
+   ...storage,
+   getItem:(key:string)=>{
+    if(key==="playlists"&&++reads===3)
+     values.set("playlists",JSON.stringify([{id:"mix",name:"Renamed elsewhere",trackIds:["keep"]}]));
+    return storage.getItem(key);
+   }
+  };
+  expect(()=>recoverFailedTrackDeletion(interfering,new Set(["keep"])))
+   .toThrow("Playlists changed before deletion recovery cleanup");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).not.toBeNull();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"]))?.[0].name).toBe("Renamed elsewhere");
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+ it("retires a completed recovery journal when no missing-audio links remain",()=>{
+  const {storage}=fixture();
+  expect(recoverFailedTrackDeletion(storage,new Set(["keep"])))
+   .toEqual([{id:"mix",name:"Mix",trackIds:["keep"]}]);
+  expect(storage.getItem("mp3-shelf-delete-recovery")).toBeNull();
+ });
+});
+
+describe("deletion final journal retirement cross-tab safety",()=>{
+ const key="playlists", journalKey="mp3-shelf-delete-recovery";
+ const original=[{id:"mix",name:"Mix",trackIds:["gone","keep"]}];
+ function fixture(){
+  const values=new Map<string,string>([[key,JSON.stringify(original)]]);
+  return {
+   values,
+   getItem:(name:string)=>values.get(name)??null,
+   setItem:(name:string,value:string)=>{values.set(name,value)},
+   removeItem:(name:string)=>{values.delete(name)}
+  };
+ }
+ it("retains the journal if a tab reattaches missing audio at final verification",async()=>{
+  const base=fixture();
+  let reads=0;
+  const storage={
+   ...base,
+   getItem:(name:string)=>{
+    // 1: baseline, 2: staging, 3: pre-delete, 4: reconciliation, 5: final verification
+    if(name===key&&++reads===5)
+     base.setItem(key,JSON.stringify([{id:"mix",name:"Remote",trackIds:["keep","gone"]}]));
+    return base.getItem(name);
+   }
+  };
+  await expect(deleteTrackWithPlaylistCleanup(storage,key,original,"gone",async()=>{}))
+   .rejects.toThrow("Missing-audio references changed before deletion cleanup");
+  expect(parseStoredPlaylists(base.getItem(key))).toEqual([{id:"mix",name:"Remote",trackIds:["keep","gone"]}]);
+  expect(base.getItem(journalKey)).not.toBeNull();
+  expect(recoverFailedTrackDeletion(base,new Set(["keep"])))
+   .toEqual([{id:"mix",name:"Remote",trackIds:["keep"]}]);
+  expect(base.getItem(journalKey)).toBeNull();
+ });
+ it("retains the journal when another tab edits after the final snapshot",async()=>{
+  const base=fixture();
+  let reads=0;
+  const storage={
+   ...base,
+   getItem:(name:string)=>{
+    if(name===key&&++reads===6)
+     base.setItem(key,JSON.stringify([{id:"mix",name:"Concurrent rename",trackIds:["keep"]}]));
+    return base.getItem(name);
+   }
+  };
+  await expect(deleteTrackWithPlaylistCleanup(storage,key,original,"gone",async()=>{}))
+   .rejects.toThrow("Playlists changed before deletion cleanup");
+  expect(parseStoredPlaylists(base.getItem(key))[0].name).toBe("Concurrent rename");
+  expect(base.getItem(journalKey)).not.toBeNull();
+ });
+ it("retires the journal and returns durable playlists on ordinary deletion",async()=>{
+  const base=fixture();
+  expect(await deleteTrackWithPlaylistCleanup(base,key,original,"gone",async()=>{}))
+   .toEqual([{id:"mix",name:"Mix",trackIds:["keep"]}]);
+  expect(base.getItem(journalKey)).toBeNull();
+ });
+});
