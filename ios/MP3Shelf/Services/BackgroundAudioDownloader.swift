@@ -137,8 +137,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                           // Restored background tasks may expose only currentRequest.
                           // Never assume a missing originalRequest means that the
                           // user already authorized cellular access.
-                          (task.originalRequest ?? task.currentRequest)?.allowsCellularAccess == false
+                          // A restored daemon task may expose neither request.
+                          // Explicit consent permits a replacement even then;
+                          // never silently assume an uninspectable task is cellular-ready.
+                          Self.needsCellularUpgrade(
+                              original: task.originalRequest,
+                              current: task.currentRequest)
                     else { continue }
+                    // Consent can expire while getAllTasks is asynchronous.
+                    guard self.cellularAllowed(for: playlistID) else { break }
                     if BackgroundTransferRetryPolicy.linkExpiresByStart(
                         oldTicket.downloadURL, earliestBeginDate: oldTicket.nextRetryAt) {
                         self.setFailed(oldID, reason: AudioDownloadDiagnostics.expiredAudioLink,
@@ -165,6 +172,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 }
             }
         }
+    }
+
+    /// Unknown request metadata is not evidence that a restored task already
+    /// permits cellular. Replace only after explicit, unexpired user consent.
+    /// Inspect both requests: the original Wi-Fi restriction takes precedence.
+    nonisolated static func needsCellularUpgrade(
+        original: URLRequest?, current: URLRequest?) -> Bool {
+        if original?.allowsCellularAccess == false { return true }
+        if current?.allowsCellularAccess == false { return true }
+        return original == nil && current == nil
     }
 
     override private init() {
