@@ -577,11 +577,31 @@ struct MusicTrackRow: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var confirmDelete = false
+    @State private var missingRecordingAlert = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    // A library entry is not proof that the audio bytes still exist. Check the
+    // selected local file before starting playback, without network recovery.
+    private var hasLocalAudio: Bool {
+        let url = library.fileURL(for: track)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let kind = attributes[.type] as? FileAttributeType,
+              kind == .typeRegular,
+              let size = attributes[.size] as? NSNumber else { return false }
+        return size.int64Value > 0
+    }
+
+    private func playOrExplainMissingAudio() {
+        guard hasLocalAudio else {
+            missingRecordingAlert = true
+            return
+        }
+        playback.play(track, queue: context)
+    }
 
     var body: some View {
         HStack(spacing: 12) {
-            Button { playback.play(track, queue: context) } label: {
+            Button { playOrExplainMissingAudio() } label: {
                 HStack(spacing: 12) {
                     ArtworkTile(track: track)
                         .accessibilityHidden(true)
@@ -595,6 +615,11 @@ struct MusicTrackRow: View {
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                     }
                     Spacer(minLength: 0)
+                    if !hasLocalAudio {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(ShelfTheme.coral)
+                            .accessibilityHidden(true)
+                    }
                     if track.id == playback.currentTrackID {
                         Image(systemName: "waveform")
                             .font(.caption.bold())
@@ -608,11 +633,15 @@ struct MusicTrackRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(track.id == playback.currentTrackID
+            .accessibilityLabel(!hasLocalAudio
+                                ? "Audio missing: \(track.title) by \(track.artist)"
+                                : track.id == playback.currentTrackID
                                 ? "Now playing: \(track.title) by \(track.artist)"
                                 : "Play \(track.title) by \(track.artist)")
             .accessibilityValue(track.duration.shelfClock)
-            .accessibilityHint(track.id == playback.currentTrackID
+            .accessibilityHint(!hasLocalAudio
+                               ? "The local recording is unavailable. Double tap for recovery information."
+                               : track.id == playback.currentTrackID
                                ? "Restart the current song"
                                : "Start playback from this song")
             // The row's playback button is the primary VoiceOver element.
@@ -641,7 +670,7 @@ struct MusicTrackRow: View {
                     }
                 }
                 Button("Edit Details", systemImage: "pencil") { renaming = track }
-                if FileManager.default.fileExists(atPath: library.fileURL(for: track).path) {
+                if hasLocalAudio {
                     ShareLink(item: library.fileURL(for: track)) {
                         Label("Share Audio File", systemImage: "square.and.arrow.up")
                     }
@@ -677,6 +706,11 @@ struct MusicTrackRow: View {
         .overlay(RoundedRectangle(cornerRadius: 18)
             .strokeBorder(track.id == playback.currentTrackID
                           ? ShelfTheme.accent.opacity(0.34) : ShelfTheme.border, lineWidth: 1))
+        .alert("Recording unavailable", isPresented: $missingRecordingAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The audio file for \(track.title) is missing or empty on this iPhone. Your library entry and playlists are unchanged. Reimport the recording to listen offline.")
+        }
         .confirmationDialog("Delete downloaded song?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Song", role: .destructive) {
                 if playback.currentTrackID == track.id { playback.stop() }
