@@ -5,8 +5,9 @@ import Foundation
 import Combine
 
 private final class AudioCompletionRelay: NSObject, AVAudioPlayerDelegate {
-    var finished: (() -> Void)?
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finished?() }
+    var finished: ((AVAudioPlayer, Bool) -> Void)?
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finished?(player, flag) }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { finished?(player, false) }
 }
 
 @MainActor
@@ -14,10 +15,13 @@ final class PlaybackController: NSObject, ObservableObject {
     @Published private(set) var currentTrackID: UUID?
     @Published var playbackError: String?
     private var failedTrackID: UUID?
+    private var failedPlaybackOrder: PlaybackOrder?
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
-    @Published var isShuffled = false
+    @Published var isShuffled = false {
+        didSet { playbackOrder.setShuffle(isShuffled) }
+    }
     @Published var repeatMode: RepeatMode = .off
     @Published var crossfadeSeconds: Double = UserDefaults.standard.double(forKey: "mp3shelf.crossfadeSeconds") {
         didSet { UserDefaults.standard.set(crossfadeSeconds, forKey: "mp3shelf.crossfadeSeconds") }
@@ -28,15 +32,49 @@ final class PlaybackController: NSObject, ObservableObject {
     private var positionTimer: Timer?
     private var fadeTimer: Timer?
     private var outgoingPlayer: AVAudioPlayer?
-    private var queue: [UUID] = []
+    @Published private var playbackOrder = PlaybackOrder()
+
+    #if DEBUG
+    /// Read the real local player's clock without depending on UI timer cadence.
+    func localFilePlaybackProof() -> (url: URL?, currentTime: TimeInterval, isPlaying: Bool) {
+        (audioPlayer?.url, audioPlayer?.currentTime ?? 0, audioPlayer?.isPlaying ?? false)
+    }
+    #endif
+
+    private var loopMode: PlaybackLoopMode {
+        switch repeatMode {
+        case .off: return .off
+        case .all: return .all
+        case .one: return .one
+        }
+    }
 
     /// Read-only queue preview for the native Now Playing screen.
     /// Uses the active playback order and never mutates the playlist.
     var upcomingTracks: [MusicTrack] {
-        guard let library, let currentTrackID,
-              let index = queue.firstIndex(of: currentTrackID) else { return [] }
-        return queue.dropFirst(index + 1).prefix(3)
+        guard let library else { return [] }
+        return playbackOrder.upcomingIDs(limit: 3, loop: loopMode)
             .compactMap { library.song(with: $0) }
+    }
+
+    /// Bounded, distinct current-cycle queue for a responsive edit sheet.
+    /// This is playback-only state and never rewrites a saved playlist.
+    var queuedTracks: [MusicTrack] {
+        guard let library else { return [] }
+        return playbackOrder.editableUpcomingIDs()
+            .compactMap { library.song(with: $0) }
+    }
+
+    func moveQueuedTrack(_ id: UUID, earlier: Bool) {
+        _ = playbackOrder.moveUpcoming(id, earlier: earlier)
+    }
+
+    func playQueuedTrackNext(_ id: UUID) {
+        _ = playbackOrder.playNext(id)
+    }
+
+    func removeQueuedTrack(_ id: UUID) {
+        _ = playbackOrder.removeUpcoming(id)
     }
 
     private let relay = AudioCompletionRelay()
@@ -52,8 +90,18 @@ final class PlaybackController: NSObject, ObservableObject {
         self.library = library
         guard !remoteControlsConfigured else { return }
         remoteControlsConfigured = true
-        relay.finished = { [weak self] in
-            Task { @MainActor in self?.advance(automatically: true) }
+        relay.finished = { [weak self] player, succeeded in
+            Task { @MainActor [weak player] in
+                guard let self, let player, self.audioPlayer === player else { return }
+                if succeeded { self.advance(automatically: true) }
+                else {
+                    self.isPlaying = false
+                    self.playbackError = "Audio playback stopped unexpectedly. Choose another song or try playing again."
+                    self.failedTrackID = self.currentTrackID
+                    self.failedPlaybackOrder = self.playbackOrder
+                    self.updateNowPlaying()
+                }
+            }
         }
         configureRemoteControls()
         observeAudioSession()
@@ -67,16 +115,30 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func play(_ track: MusicTrack, queue songs: [MusicTrack]? = nil, transition: TimeInterval = 0) {
         guard let library else { return }
-        let previousQueue = queue
-        if let songs { queue = songs.map(\.id) }
-        if queue.isEmpty { queue = library.tracks.map(\.id) }
-        if !queue.contains(track.id) { queue.append(track.id) }
+        var nextOrder = playbackOrder
+        if let songs {
+            nextOrder.reset(queue: songs.map(\.id), current: track.id, shuffled: isShuffled)
+        } else if nextOrder.queueIDs.isEmpty || !nextOrder.queueIDs.contains(track.id) {
+            nextOrder.reset(queue: library.tracks.map(\.id), current: track.id, shuffled: isShuffled)
+        } else {
+            nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
+            nextOrder.select(track.id)
+        }
+        beginPlayback(track, using: nextOrder, transition: transition)
+    }
 
+    /// Playback order commits only after AVAudioPlayer successfully starts.
+    /// A corrupted or missing file cannot consume shuffle history.
+    private func beginPlayback(_ track: MusicTrack, using nextOrder: PlaybackOrder,
+                               transition: TimeInterval = 0) {
+        guard let library else { return }
         do {
             try activateAudio()
             let player = try AVAudioPlayer(contentsOf: library.fileURL(for: track))
             player.delegate = relay
-            player.prepareToPlay()
+            guard player.prepareToPlay(), player.duration.isFinite, player.duration > 0 else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
             if transition > 0, let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
                 guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
@@ -94,7 +156,9 @@ final class PlaybackController: NSObject, ObservableObject {
             }
             playbackError = nil
             failedTrackID = nil
+            failedPlaybackOrder = nil
             interruptionState.cancelResume()
+            playbackOrder = nextOrder
             currentTrackID = track.id
             duration = player.duration
             currentTime = 0
@@ -102,8 +166,8 @@ final class PlaybackController: NSObject, ObservableObject {
             startTimer()
             updateNowPlaying()
         } catch {
-            queue = previousQueue
             failedTrackID = track.id
+            failedPlaybackOrder = nextOrder
             playbackError = "Could not play \(track.title). Check that its audio file is still available, then retry or choose another song."
             isPlaying = audioPlayer?.isPlaying ?? false
             updateNowPlaying()
@@ -111,8 +175,16 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func retryFailedPlayback() {
-        guard let track = library?.song(with: failedTrackID) else { return }
-        play(track)
+        guard let library, let track = library.song(with: failedTrackID) else {
+            playbackError = "This song is no longer in your library. Choose another song."
+            return
+        }
+        if var order = failedPlaybackOrder {
+            order.retainAvailable(Set(library.tracks.map(\.id)))
+            order.setShuffle(isShuffled)
+            order.select(track.id)
+            beginPlayback(track, using: order)
+        } else { play(track) }
     }
 
     func togglePlayback() { isPlaying ? pause() : resume() }
@@ -122,6 +194,11 @@ final class PlaybackController: NSObject, ObservableObject {
         if outgoingPlayer != nil { cancelFade(); audioPlayer?.volume = 1 }
         audioPlayer?.pause()
         isPlaying = false
+        // A paused player needs no 200 ms polling. Keeping the timer alive
+        // wastes wakeups while the app is backgrounded or the phone is locked.
+        positionTimer?.invalidate()
+        positionTimer = nil
+        currentTime = audioPlayer?.currentTime ?? currentTime
         updateNowPlaying()
     }
 
@@ -130,17 +207,26 @@ final class PlaybackController: NSObject, ObservableObject {
         guard let audioPlayer else { return }
         do {
             try activateAudio()
-            isPlaying = audioPlayer.play()
-            if isPlaying { startTimer() }
+            guard audioPlayer.play() else { throw CocoaError(.fileReadCorruptFile) }
+            isPlaying = true
+            playbackError = nil
+            failedTrackID = nil
+            failedPlaybackOrder = nil
+            startTimer()
             updateNowPlaying()
         } catch {
-            print("MP3 Shelf could not resume audio: \(error)")
+            isPlaying = audioPlayer.isPlaying
+            failedTrackID = currentTrackID
+            failedPlaybackOrder = playbackOrder
+            playbackError = "Could not resume this song. Retry playback or choose another song."
+            updateNowPlaying()
         }
     }
 
     func stop() {
         playbackError = nil
         failedTrackID = nil
+        failedPlaybackOrder = nil
         interruptionState.cancelResume()
         audioPlayer?.stop()
         audioPlayer = nil
@@ -151,11 +237,14 @@ final class PlaybackController: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         isPlaying = false
+        playbackOrder = PlaybackOrder()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     func seek(to seconds: TimeInterval) {
         guard let audioPlayer, seconds.isFinite else { return }
+        cancelFade()
+        audioPlayer.volume = 1
         let position = max(0, min(seconds, audioPlayer.duration))
         audioPlayer.currentTime = position
         currentTime = position
@@ -166,30 +255,32 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func previous() {
         if currentTime > 3 { seek(to: 0); return }
-        guard let library, let id = currentTrackID else { return }
-        let playable = queue.filter { library.song(with: $0) != nil }
-        guard let index = playable.firstIndex(of: id), !playable.isEmpty else { return }
-        let previousIndex = index > 0 ? index - 1 : (repeatMode == .all ? playable.count - 1 : 0)
-        if let target = library.song(with: playable[previousIndex]) { play(target) }
+        guard let library else { return }
+        var nextOrder = playbackOrder
+        nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
+        guard let id = nextOrder.previous(loop: loopMode),
+              let target = library.song(with: id) else { return }
+        if id == currentTrackID { seek(to: 0); return }
+        beginPlayback(target, using: nextOrder)
     }
 
     private func advance(automatically: Bool, crossfading: Bool = false) {
-        guard let library, let id = currentTrackID else { return }
-        if automatically && repeatMode == .one { seek(to: 0); resume(); return }
-        let playable = queue.filter { library.song(with: $0) != nil }
-        guard let index = playable.firstIndex(of: id), !playable.isEmpty else { stop(); return }
-        let nextID: UUID?
-        if isShuffled, playable.count > 1 {
-            nextID = playable.filter { $0 != id }.randomElement()
-        } else if index + 1 < playable.count {
-            nextID = playable[index + 1]
-        } else if repeatMode == .all || !automatically {
-            nextID = playable.first
-        } else {
-            nextID = nil
+        guard let library else { return }
+        if automatically && repeatMode == .one {
+            seek(to: 0)
+            resume()
+            return
         }
-        if let nextID, let target = library.song(with: nextID) { play(target, transition: crossfading ? crossfadeSeconds : 0) }
-        else { stop() }
+        var nextOrder = playbackOrder
+        nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
+        guard let nextID = nextOrder.next(automatic: automatically, loop: loopMode),
+              let target = library.song(with: nextID) else {
+            stop()
+            return
+        }
+        if nextID == currentTrackID { seek(to: 0); resume(); return }
+        beginPlayback(target, using: nextOrder,
+                      transition: crossfading ? crossfadeSeconds : 0)
     }
 
     func cycleRepeat() {
@@ -201,10 +292,10 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     private func canCrossfade() -> Bool {
-        guard let library, let id = currentTrackID else { return false }
-        let playable = queue.filter { library.song(with: $0) != nil }
-        guard let index = playable.firstIndex(of: id) else { return false }
-        return (isShuffled && playable.count > 1) || index + 1 < playable.count || repeatMode == .all
+        guard let library else { return false }
+        var nextOrder = playbackOrder
+        nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
+        return nextOrder.canAdvanceAutomatically(loop: loopMode)
     }
 
     private func cancelFade() {
@@ -239,7 +330,9 @@ final class PlaybackController: NSObject, ObservableObject {
         positionTimer?.invalidate()
         positionTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let player = self.audioPlayer else { return }
+                // A previously queued timer callback can run after pause().
+                // Never restart crossfade or mutate playback state while paused.
+                guard let self, self.isPlaying, let player = self.audioPlayer else { return }
                 self.currentTime = player.currentTime
                 if self.isPlaying && self.playbackError == nil && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
                    self.outgoingPlayer == nil && self.canCrossfade() && player.duration > self.crossfadeSeconds + 1 &&

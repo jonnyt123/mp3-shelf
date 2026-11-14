@@ -7,9 +7,52 @@ func verify(_ condition: @autoclosure () -> Bool, _ description: String) {
 
 @main
 enum AudioSourceFinderTests {
-    static func main() {
+    static func main() throws {
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        let fallbackRequest = WebAudioSearch.searchRequest(
+            query: "The Artist The Song", apiKey: "test-token", allowsCellular: false)
+        verify(!fallbackRequest.allowsCellularAccess &&
+               !fallbackRequest.allowsExpensiveNetworkAccess &&
+               !fallbackRequest.allowsConstrainedNetworkAccess,
+               "automatic web requests cannot switch from Wi-Fi to cellular")
+        verify(fallbackRequest.url?.host == "api.search.brave.com" &&
+               fallbackRequest.value(forHTTPHeaderField: "X-Subscription-Token") == "test-token" &&
+               !(fallbackRequest.url?.absoluteString.contains("test-token") ?? true),
+               "Brave credential is sent as a header only to the search endpoint")
+        let exactWebFile = URL(string: "https://artist.example/The_Artist-The_Song.mp3")!
+        verify(AutomaticWebAudioFinder.fileMatches(exactWebFile, wish: wish),
+               "automatic fallback accepts an exact artist-title audio filename")
+        verify(!AutomaticWebAudioFinder.fileMatches(
+            URL(string: "https://artist.example/The_Song.mp3")!, wish: wish) &&
+               !AutomaticWebAudioFinder.fileMatches(
+            URL(string: "https://artist.example/The_Artist-The_Song_Live.mp3")!, wish: wish),
+               "title-only links and alternate performances cannot enter automatic fallback")
+        let structuredPage = #"<script type="application/ld+json">{"@type":"MusicRecording","name":"The Song","byArtist":{"@type":"MusicGroup","name":"The Artist"},"duration":"PT3M32S","audio":{"@type":"AudioObject","contentUrl":"/download?id=7"}}</script>"#
+        let pageURL = URL(string: "https://artist.example/song")!
+        let structuredMatches = AutomaticWebAudioFinder.matches(in: structuredPage,
+            pageURL: pageURL, wish: wish)
+        verify(structuredMatches.first?.downloadURL.absoluteString == "https://artist.example/download?id=7",
+               "exact structured recording metadata can identify an extensionless audio download")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(
+            of: "The Artist", with: "Other Artist"), pageURL: pageURL, wish: wish).isEmpty,
+               "page audio from another artist is not substituted")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(
+            of: "PT3M32S", with: "PT30S"), pageURL: pageURL, wish: wish).isEmpty,
+               "structured preview duration cannot replace a full song")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(
+            of: "/download?id=7", with: "https://localhost/song.mp3"),
+            pageURL: pageURL, wish: wish).isEmpty,
+               "structured audio links still reject local network targets")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(
+            of: #""@type":"AudioObject","contentUrl""#,
+            with: #""@type":"AudioObject","name":"Another Song","contentUrl""#),
+            pageURL: pageURL, wish: wish).isEmpty,
+               "contradictory child audio metadata cannot borrow the parent song identity")
+        let graphPage = ##"<script type="application/ld+json">{"@graph":[{"@type":"MusicRecording","name":"The Song","byArtist":{"@id":"#artist"},"audio":{"@id":"#file"}},{"@id":"#artist","@type":"MusicGroup","name":"The Artist"},{"@id":"#file","@type":"AudioObject","contentUrl":"/song.mp3"}]}</script>"##
+        verify(AutomaticWebAudioFinder.matches(in: graphPage, pageURL: pageURL, wish: wish)
+            .first?.downloadURL.absoluteString == "https://artist.example/song.mp3",
+               "structured artist and audio references resolve within the same page graph")
         let testURL = URL(string: "https://api.audius.co/v1/tracks/search")!
         let wifiCatalogRequest = AudioSourceFinder.catalogRequest(for: testURL)
         verify(wifiCatalogRequest.allowsCellularAccess == false,
@@ -40,14 +83,14 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.licensedURL("https://creativecommons.org.evil.example/licenses/by/4.0/") == nil,
                "spoofed license host rejected")
         verify(AudioSourceFinder.licensedURL("https://example.com/free-download.mp3") == nil,
-               "unlicensed file link rejected")
+               "audio links are not misrepresented as Creative Commons licenses")
         let archiveSearch = URLComponents(
             url: AudioSourceFinder.archiveSearchURL(for: wish, page: 2),
             resolvingAgainstBaseURL: false)!
         verify(archiveSearch.url?.host == "archive.org" &&
                archiveSearch.queryItems?.first(where: { $0.name == "page" })?.value == "2" &&
                archiveSearch.queryItems?.first(where: { $0.name == "rows" })?.value == "20",
-               "Internet Archive searches a bounded second batch of licensed recordings")
+               "Internet Archive searches a bounded second batch of public recordings")
         verify(URLComponents(url: AudioSourceFinder.archiveSearchURL(
             for: wish, page: 99), resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "page" })?.value == "2",
@@ -83,7 +126,7 @@ enum AudioSourceFinderTests {
             title: "Another Song", creator: "The Artist", for: wish) >
                AudioSourceFinder.archiveIndexRelevance(
             title: "Another Song", creator: "Another Artist", for: wish),
-               "artist attribution remains a ranking signal, never a license bypass")
+               "artist attribution remains a ranking signal")
         let archiveMatch = AudioCatalogMatch(
             downloadURL: URL(string: "https://archive.org/download/a/song.mp3")!,
             itemURL: URL(string: "https://archive.org/details/a")!,
@@ -95,6 +138,53 @@ enum AudioSourceFinderTests {
             licenseURL: URL(string: "https://creativecommons.org/licenses/by/4.0/")!,
             sourceName: "Wikimedia Commons")
         let discovered = [archiveMatch, commonsMatch]
+        let partial = try AudioSourceFinder.catalogReport(from: [
+            .init(rank: 0, provider: "Audius", candidate: nil, failure: "HTTP 429"),
+            .init(rank: 1, provider: "Internet Archive", candidate: nil, failure: nil)
+        ])
+        verify(partial.candidates.isEmpty && partial.warnings == ["Audius: HTTP 429"],
+               "one provider outage preserves a healthy no-match result and its diagnostic")
+        let surviving = try AudioSourceFinder.catalogReport(from: [
+            .init(rank: 0, provider: "Audius", candidate: nil, failure: "HTTP 403"),
+            .init(rank: 1, provider: "Internet Archive", candidate: archiveMatch, failure: nil)
+        ])
+        verify(surviving.candidates.first?.downloadURL == archiveMatch.downloadURL,
+               "a failed provider never discards another catalog's downloadable recording")
+        do {
+            _ = try AudioSourceFinder.catalogReport(from: [
+                .init(rank: 0, provider: "Audius", candidate: nil, failure: "HTTP 429"),
+                .init(rank: 1, provider: "Internet Archive", candidate: nil, failure: "HTTP 503")
+            ])
+            fatalError("FAIL: total catalog outage must remain retryable")
+        } catch {
+            verify(error.localizedDescription.contains("Audius") &&
+                   error.localizedDescription.contains("503"),
+                   "total outage reports the providers and specific failures")
+        }
+        let archiveJSON = #"{"metadata":{"title":"The Song","creator":"The Artist"},"files":[{"name":"song.mp3","source":"original","length":"212.43","size":"8419768"}]}"#
+        let archiveItem = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                                   from: Data(archiveJSON.utf8))
+        let publicMatch = AudioSourceFinder.archiveCandidate(archiveItem,
+            identifier: "public-recording", for: wish)
+        verify(publicMatch?.downloadURL.lastPathComponent == "song.mp3" &&
+               publicMatch?.licenseURL == nil,
+               "real Archive decimal duration and absent license do not reject matching MP3")
+        let oversizedJSON = archiveJSON.replacingOccurrences(of: "8419768", with: "104857601")
+        let oversizedItem = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                                     from: Data(oversizedJSON.utf8))
+        verify(AudioSourceFinder.archiveCandidate(oversizedItem,
+                   identifier: "public-recording", for: wish) == nil,
+               "Archive file.size still rejects media larger than 100 MiB")
+        let legacyMatch = try JSONDecoder().decode(AudioCatalogMatch.self,
+            from: JSONEncoder().encode(archiveMatch))
+        verify(legacyMatch.licenseURL == archiveMatch.licenseURL,
+               "saved sources with license metadata remain decodable")
+        if let publicMatch {
+            let restored = try JSONDecoder().decode(AudioCatalogMatch.self,
+                from: JSONEncoder().encode(publicMatch))
+            verify(restored.licenseURL == nil && restored.downloadURL == publicMatch.downloadURL,
+                   "public sources without license metadata survive persisted alternate-source roundtrip")
+        }
         verify(AudioSourceFinder.prioritize(
             discovered, successfulProviders: [], failedProviders: [])
                 .first?.sourceName == "Internet Archive",
@@ -148,8 +238,8 @@ enum AudioSourceFinderTests {
             of: "https://creativecommons.org/licenses/by/4.0/",
             with: "https://example.com/terms")
         verify(AudioSourceFinder.ccMixterCandidates(
-            in: Data(ccMixterWrongLicense.utf8), matching: wish)?.isEmpty == true,
-               "ccMixter download is rejected without explicit CC permission")
+            in: Data(ccMixterWrongLicense.utf8), matching: wish)?.count == 1,
+               "matching ccMixter file does not require a Creative Commons label")
         let ccMixterWrongVersion = ccMixterFeed.replacingOccurrences(
             of: "<title>The Song</title>", with: "<title>The Song (Live)</title>")
         verify(AudioSourceFinder.ccMixterCandidates(
@@ -206,7 +296,7 @@ enum AudioSourceFinderTests {
             page: 1, pageCount: 3, returned: 50, eligible: 0) &&
                AudioSourceFinder.shouldSearchNextOpenversePage(
                    page: 1, pageCount: nil, returned: 50, eligible: 0),
-               "a full unmatched catalog page searches for more authorized MP3s")
+               "a full unmatched catalog page searches for more matching MP3s")
         verify(!AudioSourceFinder.shouldSearchNextOpenversePage(
             page: 1, pageCount: 1, returned: 50, eligible: 0) &&
                !AudioSourceFinder.shouldSearchNextOpenversePage(
@@ -238,49 +328,49 @@ enum AudioSourceFinderTests {
             download: "https://upload.wikimedia.org/file.mp3",
             landing: "https://commons.wikimedia.org/wiki/File:test",
             license: nil, filetype: "mp3", duration: 212000,
-            source: "wikimedia", filesize: nil, wish: wish) == nil,
-            "missing license rejected")
+            source: "wikimedia", filesize: nil, wish: wish) != nil,
+            "matching public MP3 remains eligible without license metadata")
         for name in ["01 - The Song.mp3", "02. The Song.mp3", "003_The_Song.mp3"] {
             verify(AudioSourceFinder.archiveFileCandidate(
-                name: name, source: "original", lengthBytes: "5421879",
+                name: name, source: "original", sizeBytes: "5421879",
                 itemTitle: "The Album", itemCreator: wish.artist,
                 audioFileCount: 3, wish: wish),
                 "numbered album track matches: \(name)")
         }
         for name in ["01 - The Song (Live).mp3", "99 The Song.mp3", "01 - Other Song.mp3"] {
             verify(!AudioSourceFinder.archiveFileCandidate(
-                name: name, source: "original", lengthBytes: "5421879",
+                name: name, source: "original", sizeBytes: "5421879",
                 itemTitle: "The Album", itemCreator: wish.artist,
                 audioFileCount: 3, wish: wish),
                 "number stripping preserves recording identity: \(name)")
         }
         verify(AudioSourceFinder.archiveFileCandidate(
-            name: "The Song.mp3", source: "original", lengthBytes: "5421879",
+            name: "The Song.mp3", source: "original", sizeBytes: "5421879",
             itemTitle: "The Album", itemCreator: "The Artist",
             audioFileCount: 8, wish: wish),
-            "exact individual MP3 is eligible inside a licensed album")
+            "exact individual MP3 is eligible inside an album")
         verify(!AudioSourceFinder.archiveFileCandidate(
-            name: "The Song (Live).mp3", source: "original", lengthBytes: "5421879",
+            name: "The Song (Live).mp3", source: "original", sizeBytes: "5421879",
             itemTitle: "The Album", itemCreator: "The Artist",
             audioFileCount: 8, wish: wish),
             "do not substitute album live takes")
         verify(!AudioSourceFinder.archiveFileCandidate(
-            name: "The Song.mp3", source: "derivative", lengthBytes: "5421879",
+            name: "The Song.mp3", source: "derivative", sizeBytes: "5421879",
             itemTitle: "The Album", itemCreator: "The Artist",
             audioFileCount: 8, wish: wish),
             "generated derivatives never qualify in multiple-audio archives")
         verify(AudioSourceFinder.archiveFileCandidate(
-            name: "unrelated-file.mp3", source: "original", lengthBytes: "5421879",
+            name: "unrelated-file.mp3", source: "original", sizeBytes: "5421879",
             itemTitle: "The Song", itemCreator: "The Artist",
             audioFileCount: 1, wish: wish),
             "single-song item uses its exact title and creator metadata")
         verify(!AudioSourceFinder.archiveFileCandidate(
-            name: "The Song.mp3", source: "original", lengthBytes: "105000000",
+            name: "The Song.mp3", source: "original", sizeBytes: "105000000",
             itemTitle: "The Song", itemCreator: "The Artist",
             audioFileCount: 1, wish: wish),
-            "archive length interpreted as bytes and oversized media rejected")
+            "archive size interpreted as bytes and oversized media rejected")
         verify(!AudioSourceFinder.archiveFileCandidate(
-            name: "The Song.mp3", source: "original", lengthBytes: "5400000",
+            name: "The Song.mp3", source: "original", sizeBytes: "5400000",
             itemTitle: "The Album", itemCreator: "Wrong Artist",
             audioFileCount: 4, wish: wish),
             "album file with wrong credited artist never qualifies")
@@ -308,6 +398,13 @@ enum AudioSourceFinderTests {
             bytes: 4_000_000, wish: wish)
         verify(commons?.sourceName == "Wikimedia Commons",
                "direct Commons file with exact credit and license accepted")
+        let commonsWithoutLicense = AudioSourceFinder.commonsCandidate(
+            fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
+            download: "https://upload.wikimedia.org/file.mp3",
+            landing: "https://commons.wikimedia.org/wiki/File:test",
+            license: nil, bytes: 8_000_000, wish: wish)
+        verify(commonsWithoutLicense != nil && commonsWithoutLicense?.licenseURL == nil,
+               "Commons identity and direct-file checks do not require license metadata")
         verify(AudioSourceFinder.commonsCandidate(
             fileTitle: "File:The Song.mp3", artistCredit: "Different Performer",
             download: "https://upload.wikimedia.org/wikipedia/commons/1/12/The_Song.mp3",
@@ -732,6 +829,13 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.nextAlternative(
             to: secondSource.downloadURL, from: fallback?.remaining ?? []) == nil,
                "exhausted source alternatives cannot cause repeated download loops")
+        let expiredAAC = AudioCatalogMatch(
+            downloadURL: URL(string: "https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4&sig=fixture&expire=100")!,
+            itemURL: firstSource.itemURL, licenseURL: nil, sourceName: "Expired AAC")
+        let freshFallback = AudioSourceFinder.nextAlternative(
+            to: firstSource.downloadURL, from: [expiredAAC, secondSource], at: Date(timeIntervalSince1970: 100))
+        verify(freshFallback?.source == secondSource && freshFallback?.remaining.isEmpty == true,
+               "a signed backup that expires by the scheduled start is skipped")
         let serializedSources = try? JSONEncoder().encode(deduped)
         let restoredSources = serializedSources.flatMap {
             try? JSONDecoder().decode([AudioCatalogMatch].self, from: $0)
