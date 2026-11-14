@@ -346,6 +346,10 @@ extension AudioSourceFinder {
               let download, let downloadURL = URL(string: download),
               let landing, let landingURL = URL(string: landing),
               downloadURL.scheme == "https", landingURL.scheme == "https",
+              downloadURL.user == nil, downloadURL.password == nil,
+              downloadURL.port == nil, downloadURL.fragment == nil,
+              landingURL.user == nil, landingURL.password == nil,
+              landingURL.port == nil, landingURL.fragment == nil,
               let host = downloadURL.host?.lowercased(), landingURL.host != nil,
               // Only accept direct files on the named publisher's trusted hosts.
               (
@@ -480,10 +484,14 @@ extension AudioSourceFinder {
                 wish: wish),
               let download, let audioURL = URL(string: download),
               audioURL.scheme == "https", audioURL.host?.lowercased() == "upload.wikimedia.org",
+              audioURL.user == nil, audioURL.password == nil,
+              audioURL.port == nil, audioURL.fragment == nil,
               audioURL.pathExtension.lowercased() == "mp3",
               let landing, let landingURL = URL(string: landing),
               landingURL.scheme == "https",
               landingURL.host?.lowercased() == "commons.wikimedia.org",
+              landingURL.user == nil, landingURL.password == nil,
+              landingURL.port == nil, landingURL.fragment == nil,
               bytes == nil || (bytes! > 0 && bytes! <= 100 * 1024 * 1024)
         else { return nil }
         return AudioCatalogMatch(downloadURL: audioURL, itemURL: landingURL,
