@@ -1,5 +1,11 @@
 # MP3 Shelf
 
+The native iPhone project is in [`ios`](ios/README.md). The consolidated candidate
+includes an app-owned recording matcher, on-device audio extraction, background
+downloads and MP3 conversion. See the native README for setup and the remaining
+Mac/iPhone verification gates. The web app described below does not include this
+native extraction engine.
+
 An iPhone-first, installable web app that imports many MP3s in one Files picker and keeps them in a searchable offline library. It includes persistent playlists, shuffle, repeat-one/repeat-all, previous/next controls, and automatic next-track playback.
 
 MP3 Shelf reads ID3 title, artist, album, and embedded cover artwork locally during import. It also includes first-launch onboarding, track renaming, and playlist reordering.

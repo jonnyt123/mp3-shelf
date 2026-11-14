@@ -23,9 +23,9 @@ struct SpotifyConnectView: View {
                     }
                 }
                 .padding(.vertical, 6)
-                Text("Build an offline MP3 playlist from your Spotify song list. MP3 Shelf automatically finds and saves qualifying independent recordings to your iPhone. Songs without an authorized download remain unavailable.")
+                Text("Import your Spotify song list, then find and save matching public audio files to your iPhone. Songs without a matching downloadable file stay listed so you can retry or attach a file link.")
                     .font(.subheadline).foregroundStyle(ShelfTheme.subdued)
-                Label("Real MP3 files • No Spotify stream ripping", systemImage: "arrow.down.circle.fill")
+                Label("Save audio files for offline playback", systemImage: "arrow.down.circle.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(ShelfTheme.mint)
                 if !spotify.isConnected {
@@ -60,7 +60,7 @@ struct SpotifyConnectView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(resolvingLink || importingID != nil ||
                         SpotifyPlaylistLinks.playlistID(from: playlistLink) == nil)
-                    Text("Uses your Spotify permissions to read this playlist, then searches independent authorized download sources. Only playlists you own or collaborate on are readable in current Spotify Development Mode.")
+                    Text("Reads this playlist through Spotify, then searches public audio catalogs for matching files. Only playlists you own or collaborate on are readable in current Spotify Development Mode.")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }
                 .listRowBackground(ShelfTheme.surface)

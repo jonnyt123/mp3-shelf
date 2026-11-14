@@ -1,15 +1,17 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// A single cancellable SwiftUI task owns each refresh. Returning to the foreground
+// triggers a fresh scan even when the library's track identifiers are unchanged.
+private struct OfflineCountRefreshKey: Equatable {
+    let trackIDs: [UUID]
+    let scenePhase: ScenePhase
+    let manualRefresh: Int
+    // Reconcile existing track IDs after a file import replaces missing audio.
+    let isImporting: Bool
+}
+
 struct LibraryView: View {
-    private enum SortMode: String, CaseIterable, Identifiable {
-        case title = "Title"
-        case recent = "Recently added"
-        case artist = "Artist"
-
-        var id: String { rawValue }
-    }
-
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var showFilePicker = false
@@ -22,90 +24,196 @@ struct LibraryView: View {
         return ""
     }()
     @State private var favoritesOnly = false
-    @State private var sortMode: SortMode = .title
+    // Avoid rescanning large collections on every intermediate keystroke.
+    @State private var settledSearchText = ""
+    @State private var sortMode: LibraryTrackSort = .title
     @State private var message: String?
     @State private var renaming: MusicTrack?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var offlineRecordingCount: Int?
+    @State private var offlineCountRefreshRequest = 0
+
+    // Resolve file URLs on the library's actor, then check disk off the UI thread.
+    // A nil count is deliberately not presented as zero while scanning.
+    private func refreshOfflineRecordingCount() async {
+        let urls = library.tracks.map { library.fileURL(for: $0) }
+        if urls.isEmpty {
+            offlineRecordingCount = 0
+            return
+        }
+        let scan = Task.detached(priority: .utility) { () -> Int? in
+            var count = 0
+            for url in urls {
+                if Task.isCancelled { return nil }
+                if FileManager.default.fileExists(atPath: url.path) { count += 1 }
+            }
+            return count
+        }
+        // Cancelling the SwiftUI task also cancels the detached filesystem scan.
+        // This prevents a superseded scan from competing with the current one.
+        let count = await withTaskCancellationHandler {
+            await scan.value
+        } onCancel: {
+            scan.cancel()
+        }
+        guard !Task.isCancelled, let count else { return }
+        offlineRecordingCount = count
+    }
 
     private var recentlyAdded: [MusicTrack] {
-        Array(library.tracks.sorted { $0.addedAt > $1.addedAt }.prefix(8))
+        library.recentlyAddedTracks(limit: 8)
     }
 
     private var isSearching: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    // Do not run a stale query or construct a large result array while typing.
+    // The search task determines when the latest query is ready for display.
     private var displayed: [MusicTrack] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return library.tracks.filter { track in
-            (!favoritesOnly || track.isFavorite) && (query.isEmpty ||
-                [track.title, track.artist, track.album].contains(where: {
-                    $0.localizedCaseInsensitiveContains(query)
-                }))
-        }
-        .sorted { lhs, rhs in
-            switch sortMode {
-            case .title:
-                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-            case .recent:
-                return lhs.addedAt == rhs.addedAt
-                    ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-                    : lhs.addedAt > rhs.addedAt
-            case .artist:
-                let order = lhs.artist.localizedStandardCompare(rhs.artist)
-                return order == .orderedSame
-                    ? lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-                    : order == .orderedAscending
-            }
-        }
+        guard !isSearchUpdating else { return [] }
+        return library.browseTracks(query: settledSearchText, favoritesOnly: favoritesOnly,
+                                    order: sortMode)
+    }
+
+    private var isSearchUpdating: Bool {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            != settledSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var sortMenu: some View {
         Menu {
             Picker("Sort songs", selection: $sortMode) {
-                ForEach(SortMode.allCases) { mode in
+                ForEach(LibraryTrackSort.allCases) { mode in
                     Text(mode.rawValue).tag(mode)
                 }
             }
         } label: {
-            Label("Sort", systemImage: "arrow.up.arrow.down")
+            Label(sortMode.rawValue, systemImage: "arrow.up.arrow.down")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(ShelfTheme.accent)
         }
+        .frame(minHeight: 44)
         .accessibilityLabel("Sort songs by \(sortMode.rawValue)")
+        .accessibilityHint("Choose the order of songs in your library")
+    }
+
+    private var searchHeading: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            PremiumEyebrow(title: "SEARCH YOUR LIBRARY")
+            Text("Search results")
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            // Keep a recovery action in the scroll content even when the
+            // navigation search field is offscreen or the keyboard is hidden.
+            Button {
+                searchText = ""
+            } label: {
+                Label("Clear song search", systemImage: "xmark.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(ShelfTheme.accent)
+            .accessibilityHint("Show your complete music library")
+        }
+    }
+
+    private func searchSortSummary(matchingCount: Int) -> some View {
+        return VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 9) {
+            Text(isSearchUpdating ? "Updating search…" : "\(matchingCount) of \(library.tracks.count) songs found")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(ShelfTheme.subdued)
+                .accessibilityLabel(isSearchUpdating ? "Updating search results" : "\(matchingCount) matching songs out of \(library.tracks.count)")
+                .accessibilityAddTraits(.updatesFrequently)
+            sortMenu
+        }
+    }
+
+    private var filterControls: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 10) {
+                    filterChoices
+                }
+            } else {
+                HStack(spacing: 10) {
+                    filterChoices
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private var filterChoices: some View {
+        filterButton("All music", selected: !favoritesOnly) { favoritesOnly = false }
+        filterButton("Favorites", symbol: "heart.fill", selected: favoritesOnly) {
+            favoritesOnly = true
+        }
+    }
+
+    private func browsingPlaybackControls(hasResults: Bool) -> some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading) { browsingActions }
+            } else {
+                HStack { browsingActions }
+            }
+        }
+        .buttonStyle(.bordered)
+        .tint(ShelfTheme.accent)
+        .disabled(!hasResults || isSearchUpdating)
+    }
+
+    @ViewBuilder private var browsingActions: some View {
+        Button { playDisplayed(shuffled: false) } label: {
+            Label("Play results", systemImage: "play.fill").frame(minHeight: 44)
+        }
+        Button { playDisplayed(shuffled: true) } label: {
+            Label("Shuffle results", systemImage: "shuffle").frame(minHeight: 44)
+        }
+    }
+
+    private func playDisplayed(shuffled: Bool) {
+        guard !isSearchUpdating else { return }
+        let songs = displayed
+        guard let first = shuffled ? songs.randomElement() : songs.first else { return }
+        playback.isShuffled = shuffled
+        playback.play(first, queue: songs)
     }
 
     var body: some View {
-        ScrollView {
+        // Share one sorted, filtered snapshot across the count, rows and queue.
+        // Recomputing `displayed` per row repeatedly scans large libraries.
+        let visibleTracks = displayed
+        return ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 if isSearching {
                     VStack(alignment: .leading, spacing: 15) {
-                        HStack(alignment: .firstTextBaseline) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                PremiumEyebrow(title: "SEARCH YOUR LIBRARY")
-                                Text("Search results")
-                                    .font(.system(.title2, design: .rounded, weight: .bold))
-                                    .foregroundStyle(.white)
-                            }
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: 9) {
-                                Text("\(displayed.count) found")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(ShelfTheme.subdued)
-                                sortMenu
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    searchHeading
+                                    searchSortSummary(matchingCount: visibleTracks.count)
+                                }
+                            } else {
+                                HStack(alignment: .firstTextBaseline) {
+                                    searchHeading
+                                    Spacer(minLength: 8)
+                                    searchSortSummary(matchingCount: visibleTracks.count)
+                                }
                             }
                         }
-                        HStack(spacing: 10) {
-                            filterButton("All music", selected: !favoritesOnly) {
-                                favoritesOnly = false
-                            }
-                            filterButton("Favorites", symbol: "heart.fill",
-                                         selected: favoritesOnly) {
-                                favoritesOnly = true
-                            }
-                            Spacer()
-                        }
-                        if displayed.isEmpty {
+                        filterControls
+                        browsingPlaybackControls(hasResults: !visibleTracks.isEmpty)
+                        if isSearchUpdating {
+                            ProgressView("Searching songs…")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 20)
+                                .accessibilityLabel("Searching songs")
+                        } else if visibleTracks.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 PremiumIcon(symbol: "magnifyingglass", color: ShelfTheme.accent,
                                             size: 56)
@@ -113,18 +221,37 @@ struct LibraryView: View {
                                     .font(.system(.headline, design: .rounded, weight: .bold))
                                     .foregroundStyle(.white)
                                 Text(favoritesOnly
-                                     ? "Try All music or a different song, artist or album."
+                                     ? "No favorites match this search. Try All music or a different song, artist or album."
                                      : "Try a different song, artist or album.")
                                     .font(.subheadline)
                                     .foregroundStyle(ShelfTheme.subdued)
+                                if favoritesOnly {
+                                    Button {
+                                        favoritesOnly = false
+                                    } label: {
+                                        Label("Search all music", systemImage: "music.note.list")
+                                            .frame(minHeight: 44)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityHint("Keep the search and include songs that are not favorites")
+                                }
+                                Button {
+                                    searchText = ""
+                                    favoritesOnly = false
+                                } label: {
+                                    Label("Show complete library", systemImage: "arrow.uturn.backward")
+                                        .frame(minHeight: 44)
+                                }
+                                .buttonStyle(.bordered)
+                                .accessibilityHint("Clear the search and Favorites filter")
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(22)
                             .premiumCard()
                         } else {
                             LazyVStack(spacing: 9) {
-                                ForEach(displayed) { track in
-                                    MusicTrackRow(track: track, context: displayed,
+                                ForEach(visibleTracks) { track in
+                                    MusicTrackRow(track: track, context: visibleTracks,
                                                   renaming: $renaming)
                                 }
                             }
@@ -151,23 +278,40 @@ struct LibraryView: View {
                                 Circle()
                                     .fill(ShelfTheme.mint)
                                     .frame(width: 7, height: 7)
-                                Text("ALWAYS OFFLINE")
+                                Text("YOUR MUSIC LIBRARY")
                                     .font(.system(size: 10, weight: .heavy, design: .rounded))
                                     .tracking(1.6)
                                     .foregroundStyle(ShelfTheme.mint)
                             }
                             Text(library.tracks.isEmpty
                                  ? "Start your\nsoundtrack."
-                                 : "All yours.\nAlways playing.")
+                                 : "Your songs.\nOne place.")
                                 .font(.system(.title2, design: .rounded, weight: .bold))
                                 .foregroundStyle(.white)
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(library.tracks.isEmpty
                                  ? "Your favorite songs, right on your iPhone."
-                                 : "\(library.tracks.count) songs ready wherever life takes you.")
+                                 : "\(library.tracks.count) songs in your library. " +
+                                     (library.isImporting
+                                      ? "Importing recordings…"
+                                      : offlineRecordingCount.map { "\($0) recordings available offline." } ?? "Checking offline recordings…"))
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
+                            if !library.tracks.isEmpty {
+                                Button {
+                                    offlineRecordingCount = nil
+                                    offlineCountRefreshRequest &+= 1
+                                } label: {
+                                    Label("Refresh offline availability", systemImage: "arrow.clockwise")
+                                        .font(.caption.weight(.semibold))
+                                        .frame(minHeight: 44, alignment: .leading)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.white)
+                                .accessibilityHint("Recheck recordings stored on this iPhone without connecting to the internet")
+                                .disabled(library.isImporting || offlineRecordingCount == nil)
+                            }
                         }
                         Spacer(minLength: 0)
                         if !dynamicTypeSize.isAccessibilitySize {
@@ -207,15 +351,15 @@ struct LibraryView: View {
                 if library.tracks.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         PremiumSectionHeading(title: "More ways to listen")
-                        NavigationLink { SpotifyConnectView() } label: {
+                        NavigationLink { PlaylistSourcesView() } label: {
                             HStack(spacing: 14) {
                                 PremiumIcon(symbol: "square.stack.3d.up",
                                             color: ShelfTheme.coral, size: 46)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("Import a Spotify playlist")
+                                    Text("Import a music playlist")
                                         .font(.system(.subheadline, design: .rounded, weight: .bold))
                                         .foregroundStyle(.white)
-                                    Text("Find eligible MP3s for your song list")
+                                    Text("Apple Music, Spotify or a track-list file")
                                         .font(.caption)
                                         .foregroundStyle(ShelfTheme.subdued)
                                 }
@@ -252,13 +396,14 @@ struct LibraryView: View {
                                                                   design: .rounded,
                                                                   weight: .semibold))
                                                     .foregroundStyle(.white)
-                                                    .lineLimit(1)
+                                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                                 Text(track.artist)
                                                     .font(.caption)
                                                     .foregroundStyle(ShelfTheme.subdued)
-                                                    .lineLimit(1)
+                                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                                             }
-                                            .frame(width: 122, alignment: .leading)
+                                            .frame(width: dynamicTypeSize.isAccessibilitySize ? 190 : 122,
+                                                   alignment: .leading)
                                         }
                                         .buttonStyle(.plain)
                                         .accessibilityLabel("Play \(track.title) by \(track.artist)")
@@ -269,29 +414,46 @@ struct LibraryView: View {
                             .scrollIndicators(.hidden)
                         }
                     }
-                    HStack(spacing: 10) {
-                        filterButton("All music", selected: !favoritesOnly) { favoritesOnly = false }
-                        filterButton("Favorites", symbol: "heart.fill",
-                                     selected: favoritesOnly) { favoritesOnly = true }
-                        Spacer(minLength: 0)
-                    }
-                    .accessibilityElement(children: .contain)
+                    filterControls
 
                     VStack(alignment: .leading, spacing: 13) {
-                        HStack(spacing: 12) {
-                            PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
-                                                  detail: "\(displayed.count) songs")
-                            sortMenu
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
+                                                          detail: "\(visibleTracks.count) songs")
+                                    sortMenu
+                                }
+                            } else {
+                                HStack(spacing: 12) {
+                                    PremiumSectionHeading(title: favoritesOnly ? "Loved tracks" : "Your library",
+                                                          detail: "\(visibleTracks.count) songs")
+                                    Spacer(minLength: 8)
+                                    sortMenu
+                                }
+                            }
                         }
-                        if displayed.isEmpty {
-                            EmptyShelfView(
-                                title: "No favorites yet",
-                                subtitle: "Tap the heart on a song to collect it here.",
-                                symbol: "heart")
+                        browsingPlaybackControls(hasResults: !visibleTracks.isEmpty)
+                        if visibleTracks.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                EmptyShelfView(
+                                    title: "No favorites yet",
+                                    subtitle: "Tap the heart on a song to collect it here.",
+                                    symbol: "heart")
+                                Button {
+                                    favoritesOnly = false
+                                } label: {
+                                    Label("Show all music", systemImage: "music.note.list")
+                                        .frame(minHeight: 44)
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(ShelfTheme.accent)
+                                .accessibilityHint("Switch from Favorites to all saved songs")
+                            }
                         } else {
                             LazyVStack(spacing: 9) {
-                                ForEach(displayed) { track in
-                                    MusicTrackRow(track: track, context: displayed,
+                                ForEach(visibleTracks) { track in
+                                    MusicTrackRow(track: track, context: visibleTracks,
                                                   renaming: $renaming)
                                 }
                             }
@@ -304,10 +466,41 @@ struct LibraryView: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
+        .task(id: OfflineCountRefreshKey(
+            trackIDs: library.tracks.map(\.id),
+            scenePhase: scenePhase,
+            manualRefresh: offlineCountRefreshRequest,
+            isImporting: library.isImporting
+        )) {
+            guard scenePhase == .active else { return }
+            // A completed import can restore bytes for an existing track ID.
+            // Do not race the import's file writes or publish partial counts.
+            guard !library.isImporting else {
+                offlineRecordingCount = nil
+                return
+            }
+            offlineRecordingCount = nil
+            await refreshOfflineRecordingCount()
+        }
         .background(PremiumBackdrop())
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
+        .task(id: searchText) {
+            // Clearing or whitespace-only input restores the full library
+            // immediately; nonempty queries debounce until typing settles.
+            let requestedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !requestedQuery.isEmpty {
+                do {
+                    try await Task.sleep(for: .milliseconds(220))
+                } catch {
+                    return
+                }
+            }
+            guard !Task.isCancelled, searchText.trimmingCharacters(in: .whitespacesAndNewlines) == requestedQuery else { return }
+            settledSearchText = searchText
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showFilePicker = true } label: {
@@ -315,7 +508,10 @@ struct LibraryView: View {
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(ShelfTheme.accent)
                 }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .accessibilityLabel("Import audio files")
+                .accessibilityHint("Choose audio files stored on your iPhone")
                 .disabled(library.isImporting)
             }
         }
@@ -345,7 +541,7 @@ struct LibraryView: View {
             .font(.system(.subheadline, design: .rounded, weight: .semibold))
             .foregroundStyle(selected ? ShelfTheme.background : .white.opacity(0.82))
             .padding(.horizontal, 18)
-            .padding(.vertical, 11)
+            .frame(minHeight: 44)
             .background(selected ? ShelfTheme.accent : ShelfTheme.elevated,
                         in: Capsule())
             .overlay(Capsule().strokeBorder(
@@ -353,6 +549,7 @@ struct LibraryView: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(selected ? "Currently showing \(label.lowercased())" : "Show \(label.lowercased())")
     }
 }
 
@@ -363,15 +560,22 @@ struct MusicTrackRow: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var confirmDelete = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         HStack(spacing: 12) {
             Button { playback.play(track, queue: context) } label: {
                 HStack(spacing: 12) {
                     ArtworkTile(track: track)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(track.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                        Text(track.artist).font(.caption).foregroundStyle(ShelfTheme.subdued).lineLimit(1)
+                        Text(track.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                        Text(track.artist)
+                            .font(.caption)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                     }
                     Spacer(minLength: 0)
                     if track.id == playback.currentTrackID {
@@ -387,6 +591,25 @@ struct MusicTrackRow: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(track.id == playback.currentTrackID
+                                ? "Now playing: \(track.title) by \(track.artist)"
+                                : "Play \(track.title) by \(track.artist)")
+            .accessibilityValue(track.duration.shelfClock)
+            .accessibilityHint(track.id == playback.currentTrackID
+                               ? "Restart the current song"
+                               : "Start playback from this song")
+            // The row's playback button is the primary VoiceOver element.
+            // Expose its management actions without requiring navigation to
+            // the separate, visually small ellipsis menu.
+            .accessibilityAction(named: track.isFavorite ? "Remove from favorites" : "Add to favorites") {
+                library.toggleFavorite(track.id)
+            }
+            .accessibilityAction(named: "Edit song details") {
+                renaming = track
+            }
+            .accessibilityAction(named: "Delete download") {
+                confirmDelete = true
+            }
             Menu {
                 Button { library.toggleFavorite(track.id) } label: {
                     Label(track.isFavorite ? "Remove favorite" : "Favorite", systemImage: track.isFavorite ? "heart.slash" : "heart")
@@ -401,14 +624,18 @@ struct MusicTrackRow: View {
                     }
                 }
                 Button("Edit Details", systemImage: "pencil") { renaming = track }
-                ShareLink(item: library.fileURL(for: track)) { Label("Share Audio File", systemImage: "square.and.arrow.up") }
+                if FileManager.default.fileExists(atPath: library.fileURL(for: track).path) {
+                    ShareLink(item: library.fileURL(for: track)) {
+                        Label("Share Audio File", systemImage: "square.and.arrow.up")
+                    }
+                }
                 if let attribution = track.sourceAttribution {
                     if let sourceURL = URL(string: attribution.pageURL) {
                         Link(destination: sourceURL) {
                             Label("View Audio Source", systemImage: "link")
                         }
                     }
-                    if let licenseURL = URL(string: attribution.licenseURL) {
+                    if let licenseURL = URL(string: attribution.licenseURL), licenseURL.scheme == "https" {
                         Link(destination: licenseURL) {
                             Label("View Source License", systemImage: "doc.text")
                         }
@@ -419,9 +646,11 @@ struct MusicTrackRow: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .foregroundStyle(ShelfTheme.subdued)
-                    .frame(width: 36, height: 44)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
+            .accessibilityLabel("More options for \(track.title) by \(track.artist)")
+            .accessibilityHint("Favorite, add to playlist, edit, share or delete this download")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -470,105 +699,75 @@ struct RenameTrackView: View {
 
 struct PlaylistsView: View {
     @EnvironmentObject private var library: MusicLibrary
+    @State private var playlistQuery = ""
+    @State private var sortAlphabetically = false
+    @State private var pendingRename: MusicPlaylist?
+    @State private var renamedName = ""
     @State private var showCreate = false
     @State private var newName = ""
     @State private var pendingDelete: MusicPlaylist?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    // Accessibility text sizes get a full-width playlist card instead of
-    // squeezing large text into two narrow columns.
+    // Adapt to the available width: compact iPhones must not squeeze playlist
+    // names and status labels into two narrow cards. Accessibility sizes
+    // always retain a full-width card for readable multi-line content.
     private var columns: [GridItem] {
         dynamicTypeSize.isAccessibilitySize
             ? [GridItem(.flexible(), spacing: 13)]
-            : [GridItem(.flexible(), spacing: 13), GridItem(.flexible(), spacing: 13)]
+            : [GridItem(.adaptive(minimum: 170), spacing: 13)]
+    }
+
+    private var hasPlaylistQuery: Bool {
+        !playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var visiblePlaylists: [MusicPlaylist] {
+        let query = playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lists = library.playlists.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+        return sortAlphabetically ? lists.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } : lists
+    }
+
+    // Keep the result count readable and the recovery control reachable on
+    // compact phones and at accessibility text sizes.
+    @ViewBuilder private func playlistSearchSummary(matchingCount: Int) -> some View {
+        Text("\(matchingCount) of \(library.playlists.count) playlists")
+            .font(.subheadline.monospacedDigit())
+            .foregroundStyle(ShelfTheme.subdued)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("\(matchingCount) playlists match your search out of \(library.playlists.count)")
+        if !dynamicTypeSize.isAccessibilitySize {
+            Spacer(minLength: 0)
+        }
+        Button {
+            playlistQuery = ""
+        } label: {
+            Label("Clear search", systemImage: "xmark.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(ShelfTheme.accent)
+        .accessibilityHint("Remove the playlist search filter")
     }
 
     var body: some View {
-        ScrollView {
+        // Use the same filtered, alphabetized list for counts and the grid.
+        let playlists = visiblePlaylists
+        return ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 5) {
-                    PremiumEyebrow(title: "CURATED BY YOU", color: ShelfTheme.coral)
-                    Text("Made for every mood.")
-                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                        .foregroundStyle(.white)
-                    Text("Your music, exactly how you like it.")
-                        .font(.subheadline).foregroundStyle(ShelfTheme.subdued)
-                }
-                .padding(.top, 10)
+                playlistHeading
 
-                NavigationLink { SpotifyConnectView() } label: {
-                    HStack(spacing: 14) {
-                        PremiumIcon(symbol: "arrow.down.to.line.compact", color: ShelfTheme.mint, size: 50)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Bring your playlists")
-                                .font(.headline).foregroundStyle(.white)
-                            Text("Import track lists & match offline audio")
-                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "arrow.up.right")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(ShelfTheme.mint)
-                    }
-                    .padding(16)
-                    .premiumCard()
-                }
-                .buttonStyle(.plain)
+                playlistImportLink
 
-                VStack(alignment: .leading, spacing: 14) {
-                    PremiumSectionHeading(title: "Your playlists",
-                                          detail: "\(library.playlists.count) collections")
-                    if library.playlists.isEmpty {
-                        VStack(alignment: .leading, spacing: 13) {
-                            PremiumIcon(symbol: "square.stack.3d.up",
-                                        color: ShelfTheme.accent, size: 55)
-                            Text("Every great mix starts somewhere.")
-                                .font(.system(.title3, design: .rounded, weight: .bold))
-                                .foregroundStyle(.white)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("Create a playlist for the songs you'll never get tired of.")
-                                .font(.subheadline)
-                                .foregroundStyle(ShelfTheme.subdued)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button {
-                                showCreate = true
-                            } label: {
-                                Label("Create a playlist", systemImage: "plus")
-                                    .font(.system(.subheadline, design: .rounded, weight: .bold))
-                                    .frame(maxWidth: .infinity)
-                                    .frame(minHeight: 46)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(ShelfTheme.accent)
-                            .padding(.top, 5)
-                        }
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .premiumCard(radius: 24)
-                    } else {
-                        LazyVGrid(columns: columns, spacing: 13) {
-                            ForEach(library.playlists.indices, id: \.self) { index in
-                                let list = library.playlists[index]
-                                NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
-                                    playlistCard(list, index: index)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("\(list.name), \(list.trackIDs.count) songs offline, \(list.missingTracks.count) still to find")
-                                .contextMenu {
-                                    Button(role: .destructive) {
-                                        pendingDelete = list
-                                    } label: { Label("Delete Playlist", systemImage: "trash") }
-                                }
-                            }
-                        }
-                    }
-                }
+                playlistSection(playlists)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 28)
         }
         .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .background(PremiumBackdrop())
+        .searchable(text: $playlistQuery, prompt: "Find playlists")
         .navigationTitle("Playlists")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -577,14 +776,44 @@ struct PlaylistsView: View {
                     Image(systemName: "plus").foregroundStyle(ShelfTheme.accent)
                         .font(.system(size: 16, weight: .bold))
                 }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .accessibilityLabel("Create a playlist")
+                .accessibilityHint("Open the new playlist dialog")
             }
         }
         .alert("New Playlist", isPresented: $showCreate) {
             TextField("Playlist name", text: $newName)
-            Button("Create") { library.createPlaylist(newName); newName = "" }
+            Button("Create") {
+                let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                library.createPlaylist(name)
+                // Reveal the new collection even if the previous search excluded it.
+                playlistQuery = ""
+                newName = ""
+            }
+            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) { newName = "" }
         } message: { Text("Songs stay on your device.") }
+        .alert("Rename Playlist", isPresented: Binding(
+            get: { pendingRename != nil },
+            set: { if !$0 { pendingRename = nil } }
+        )) {
+            TextField("Playlist name", text: $renamedName)
+            Button("Save") {
+                let name = renamedName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                if let playlist = pendingRename {
+                    library.renamePlaylist(playlist.id, to: name)
+                    // The renamed collection may no longer match the old query.
+                    // Reveal it rather than leaving the user on an empty result.
+                    playlistQuery = ""
+                }
+                pendingRename = nil
+            }
+            .disabled(renamedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) { pendingRename = nil }
+        }
         .confirmationDialog(
             "Delete \(pendingDelete?.name ?? "playlist")?",
             isPresented: Binding(
@@ -603,6 +832,157 @@ struct PlaylistsView: View {
         }
     }
 
+    private var playlistHeading: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            PremiumEyebrow(title: "CURATED BY YOU", color: ShelfTheme.coral)
+            Text("Made for every mood.")
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+            Text("Your music, exactly how you like it.")
+                .font(.subheadline).foregroundStyle(ShelfTheme.subdued)
+        }
+        .padding(.top, 10)
+    }
+
+    private var playlistImportLink: some View {
+        NavigationLink { PlaylistSourcesView() } label: {
+            HStack(spacing: 14) {
+                PremiumIcon(symbol: "arrow.down.to.line.compact", color: ShelfTheme.mint, size: 50)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Bring your playlists")
+                        .font(.headline).foregroundStyle(.white)
+                    Text("Import track lists & match offline audio")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(ShelfTheme.mint)
+            }
+            .padding(16)
+            .premiumCard()
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var emptyPlaylistSearch: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("No playlists match your search.")
+                .foregroundStyle(ShelfTheme.subdued)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Try a different name, or clear the search to browse your collections.")
+                .font(.subheadline)
+                .foregroundStyle(ShelfTheme.subdued)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                playlistQuery = ""
+            } label: {
+                Label("Clear playlist search", systemImage: "xmark.circle")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityHint("Show all playlists again")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var emptyPlaylistLibrary: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            PremiumIcon(symbol: "square.stack.3d.up",
+                        color: ShelfTheme.accent, size: 55)
+            Text("Every great mix starts somewhere.")
+                .font(.system(.title3, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Create a playlist for the songs you'll never get tired of.")
+                .font(.subheadline)
+                .foregroundStyle(ShelfTheme.subdued)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                showCreate = true
+            } label: {
+                Label("Create a playlist", systemImage: "plus")
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 46)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ShelfTheme.accent)
+            .padding(.top, 5)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .premiumCard(radius: 24)
+    }
+
+    private func playlistGrid(_ playlists: [MusicPlaylist]) -> some View {
+        LazyVGrid(columns: columns, spacing: 13) {
+            ForEach(Array(playlists.enumerated()), id: \.element.id) { index, list in
+                NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
+                    playlistCard(list, index: index)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(list.name), \(list.trackIDs.count) saved songs, \(list.missingTracks.count) recordings still to find")
+                .accessibilityHint("Open playlist to see songs and download status")
+                // VoiceOver users should not need to discover a
+                // long press to manage a playlist.
+                .accessibilityAction(named: "Rename playlist") {
+                    renamedName = list.name
+                    pendingRename = list
+                }
+                .accessibilityAction(named: "Make local copy") {
+                    library.duplicatePlaylist(list.id)
+                }
+                .accessibilityAction(named: "Delete playlist") {
+                    pendingDelete = list
+                }
+                .contextMenu {
+                    Button {
+                        renamedName = list.name
+                        pendingRename = list
+                    } label: { Label("Rename Playlist", systemImage: "pencil") }
+                    Button { library.duplicatePlaylist(list.id) } label: {
+                        Label("Make local copy", systemImage: "doc.on.doc")
+                    }
+                    Button(role: .destructive) {
+                        pendingDelete = list
+                    } label: { Label("Delete Playlist", systemImage: "trash") }
+                }
+            }
+        }
+    }
+
+    private func playlistSection(_ playlists: [MusicPlaylist]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            PremiumSectionHeading(title: "Your playlists",
+                                  detail: "\(library.playlists.count) collections")
+            Toggle("Sort alphabetically", isOn: $sortAlphabetically)
+                .tint(ShelfTheme.accent)
+                .frame(minHeight: 44)
+            if hasPlaylistQuery {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 6) {
+                            playlistSearchSummary(matchingCount: playlists.count)
+                        }
+                    } else {
+                        HStack(alignment: .center, spacing: 12) {
+                            playlistSearchSummary(matchingCount: playlists.count)
+                        }
+                    }
+                }
+            }
+            if hasPlaylistQuery && playlists.isEmpty {
+                emptyPlaylistSearch
+            }
+            if library.playlists.isEmpty && !hasPlaylistQuery {
+                emptyPlaylistLibrary
+            } else if !playlists.isEmpty {
+                playlistGrid(playlists)
+            }
+        }
+    }
+
     private func playlistCard(_ list: MusicPlaylist, index: Int) -> some View {
         let palette = ShelfTheme.artworkColors(for: list.name)
         return VStack(alignment: .leading, spacing: 11) {
@@ -613,7 +993,9 @@ struct PlaylistsView: View {
                 Circle().strokeBorder(.white.opacity(0.2), lineWidth: 1)
                     .frame(width: 108, height: 108)
                     .offset(x: 57, y: -33)
-                if let cover = library.songs(in: list).first {
+                // Resolve just the cover instead of materializing every song in
+                // each visible playlist during grid updates and scrolling.
+                if let cover = list.trackIDs.lazy.compactMap({ library.song(with: $0) }).first {
                     ArtworkTile(track: cover, size: 112)
                         .rotationEffect(.degrees(-7))
                         .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
@@ -629,19 +1011,18 @@ struct PlaylistsView: View {
             Text(list.name)
                 .font(.system(.subheadline, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
-                .lineLimit(1)
-            HStack(spacing: 5) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(ShelfTheme.mint)
-                Text("\(list.trackIDs.count) offline")
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                Label("\(list.trackIDs.count) saved", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(ShelfTheme.subdued)
                 if !list.missingTracks.isEmpty {
-                    Text("· \(list.missingTracks.count) to find")
+                    Text("\(list.missingTracks.count) to find")
                         .foregroundStyle(ShelfTheme.coral)
                 }
             }
-            .font(.caption2.weight(.medium))
-            .lineLimit(1)
+            .font(.caption.weight(.medium))
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -657,6 +1038,9 @@ struct PlaylistDetailView: View {
     @State private var editing: MusicTrack?
     @State private var manuallyAdding: PlaylistWish?
     @State private var showWebDiscovery = false
+    @State private var reviewingRecording: PlaylistWish?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
 
@@ -665,38 +1049,34 @@ struct PlaylistDetailView: View {
         return job.isComplete && job.queued == 0 && job.unavailable > 0
     }
 
-    private var offlineSourceCount: Int {
-        guard let playlist else { return 0 }
-        return playlist.sourceOrder.filter {
-            MusicMatching.reusableOfflineTrack(for: $0, in: library.tracks) != nil
-        }.count
-    }
-
     /// Report the real, persisted outcome for each song in the imported
     /// Spotify playlist. Downloading is not the same as already saved offline.
-    private func mp3Status(for wish: PlaylistWish) -> (text: String, symbol: String) {
-        if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) != nil {
+    private func mp3Status(for wish: PlaylistWish, isSavedOffline: Bool,
+                           tickets: [BackgroundAudioTicket], job: SourceDiscoveryJob?, activeWishID: UUID?) -> (text: String, symbol: String) {
+        if isSavedOffline {
             return ("Saved offline as an audio file", "checkmark.circle.fill")
         }
-        if let ticket = transfers.ticketsForPlaylist(playlistID).first(where: {
-            $0.requested.id == wish.id
+        if let ticket = tickets.first(where: {
+            $0.requested.matchesSourceRequest(wish)
         }) {
             switch ticket.status {
             case .queued:
+                if transfers.isFinalizing(ticket.id) { return ("Checking and saving audio…", "gearshape") }
+                if transfers.hasStagedAudio(ticket.id) { return ("Downloaded — waiting to save", "tray.and.arrow.down") }
+                if ticket.nextRetryAt != nil { return ("Automatic retry scheduled", "arrow.clockwise") }
                 return (ticket.bytesReceived ?? 0) > 0
                     ? ("Downloading MP3…", "arrow.down.circle.fill")
                     : ("MP3 download queued", "clock.arrow.circlepath")
             case .imported:
-                return ("MP3 saved offline", "checkmark.circle.fill")
+                return ("No matching offline audio — recheck in Downloads", "exclamationmark.triangle")
             case .failed:
                 return ("MP3 download failed — retry in Downloads", "exclamationmark.triangle")
             case .cancelled:
                 return ("MP3 download cancelled", "xmark.circle")
             }
         }
-        if let job = library.discoveryJob(for: playlistID) {
-            if let index = job.wishes.firstIndex(where: { $0.id == wish.id }),
-               index == job.nextIndex && !job.isPaused && !job.isComplete {
+        if let job {
+            if activeWishID == wish.id && !job.isPaused && !job.isComplete {
                 return ("Searching for a downloadable MP3…", "magnifyingglass")
             }
             switch job.outcome(for: wish) {
@@ -709,7 +1089,7 @@ struct PlaylistDetailView: View {
             case .alreadyPresent:
                 return ("Matched an existing recording", "checkmark.circle")
             case .removed:
-                return ("Removed from the refreshed Spotify playlist", "minus.circle")
+                return ("Removed from the refreshed source playlist", "minus.circle")
             case .previous:
                 return ("Previously checked — try search again", "clock.arrow.circlepath")
             case nil:
@@ -719,11 +1099,55 @@ struct PlaylistDetailView: View {
         return ("Awaiting MP3 source search", "magnifyingglass")
     }
 
+    // Both actions start a new playlist queue. Explicitly set shuffle mode for
+    // each action so a previous shuffled session cannot silently affect Play.
+    private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
+        guard let first = shuffled ? tracks.randomElement() : tracks.first else { return }
+        playback.isShuffled = shuffled
+        playback.play(first, queue: tracks)
+    }
+
+    private func playlistPlayButton(_ tracks: [MusicTrack]) -> some View {
+        Button {
+            startPlaylist(tracks, shuffled: false)
+        } label: {
+            Label("Play", systemImage: "play.fill")
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(ShelfTheme.accent)
+        .disabled(tracks.isEmpty)
+        .accessibilityLabel("Play playlist in order")
+        .accessibilityHint(tracks.isEmpty
+                           ? "No saved recordings are available to play"
+                           : "Start at the first saved song and play in playlist order")
+    }
+
+    private func playlistShuffleButton(_ tracks: [MusicTrack]) -> some View {
+        Button {
+            startPlaylist(tracks, shuffled: true)
+        } label: {
+            Label("Shuffle", systemImage: "shuffle")
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .disabled(tracks.isEmpty)
+        .accessibilityLabel("Shuffle playlist")
+        .accessibilityHint(tracks.isEmpty
+                           ? "No saved recordings are available to shuffle"
+                           : "Start with a random saved song and shuffle the playlist")
+    }
+
     var body: some View {
         List {
             if let playlist {
+                // Single consistent offline snapshot for progress and per-song actions.
+                let savedWishIDs = Set(playlist.sourceOrder.compactMap { wish in
+                    library.hasOfflineRecording(matching: wish) ? wish.id : nil
+                })
                 Section {
-                    HStack(spacing: 16) {
+                    let availableTracks = library.songs(in: playlist)
+                    HStack(alignment: .top, spacing: dynamicTypeSize.isAccessibilitySize ? 10 : 16) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 20)
                                 .fill(LinearGradient(
@@ -733,35 +1157,37 @@ struct PlaylistDetailView: View {
                                 .font(.system(size: 34, weight: .light))
                                 .foregroundStyle(.white)
                         }
-                        .frame(width: 82, height: 82)
+                        .frame(width: dynamicTypeSize.isAccessibilitySize ? 56 : 82,
+                               height: dynamicTypeSize.isAccessibilitySize ? 56 : 82)
+                        .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 6) {
                             PremiumEyebrow(title: "YOUR PLAYLIST", color: ShelfTheme.coral)
                             Text(playlist.name)
                                 .font(.system(.title2, design: .rounded, weight: .bold))
                                 .foregroundStyle(.white)
-                                .lineLimit(2)
-                            Text("\(playlist.trackIDs.count) offline · \(playlist.missingTracks.count) missing")
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("\(playlist.trackIDs.count) saved songs · \(playlist.missingTracks.count) recordings to find")
                                 .font(.caption)
                                 .foregroundStyle(ShelfTheme.subdued)
                         }
                     }
                     .padding(.vertical, 12)
-                    HStack(spacing: 12) {
-                        Button { if let first = library.songs(in: playlist).first { playback.play(first, queue: library.songs(in: playlist)) } } label: {
-                            Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 10) {
+                            playlistPlayButton(availableTracks)
+                            playlistShuffleButton(availableTracks)
                         }
-                        .buttonStyle(.borderedProminent).tint(ShelfTheme.accent)
-                        Button {
-                            let all = library.songs(in: playlist)
-                            if let track = all.randomElement() {
-                                playback.isShuffled = true
-                                playback.play(track, queue: all)
-                            }
-                        } label: { Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity) }
-                            .buttonStyle(.bordered)
+                    } else {
+                        HStack(spacing: 12) {
+                            playlistPlayButton(availableTracks)
+                            playlistShuffleButton(availableTracks)
+                        }
                     }
-                    .disabled(playlist.trackIDs.isEmpty)
-                    if let source = playlist.sourceURL, let link = URL(string: source) {
+                    if playlist.appleMusicLibraryID != nil {
+                        Label("Imported from your Apple Music library", systemImage: "music.note.list")
+                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    } else if let source = playlist.sourceURL, let link = URL(string: source) {
                         Link(destination: link) {
                             Label("Original playlist on Spotify", systemImage: "arrow.up.right.square")
                                 .font(.caption)
@@ -773,16 +1199,17 @@ struct PlaylistDetailView: View {
                     library.automaticDownloadProgress?.playlistID == playlistID ||
                     BackgroundAudioDownloader.shared.pendingCount(for: playlistID) > 0 {
                     Section("FIND YOUR MUSIC") {
+                        let savedSourceCount = savedWishIDs.count
                         VStack(alignment: .leading, spacing: 9) {
                             PremiumEyebrow(title: "OFFLINE SOURCE MATCHING", color: ShelfTheme.mint)
-                            Text("\(offlineSourceCount) of \(playlist.sourceOrder.count) songs saved offline")
+                            Text("\(savedSourceCount) of \(playlist.sourceOrder.count) songs saved offline")
                                 .font(.headline.monospacedDigit())
                                 .foregroundStyle(.white)
-                            ProgressView(value: Double(offlineSourceCount),
+                            ProgressView(value: Double(savedSourceCount),
                                          total: Double(max(1, playlist.sourceOrder.count)))
                                 .tint(ShelfTheme.mint)
                                 .accessibilityLabel("Downloaded audio files")
-                                .accessibilityValue("\(offlineSourceCount) of \(playlist.sourceOrder.count) songs saved")
+                                .accessibilityValue("\(savedSourceCount) of \(playlist.sourceOrder.count) songs saved")
                             let active = transfers.pendingCount(for: playlistID)
                             if active > 0 {
                                 Label("\(active) file transfer\(active == 1 ? "" : "s") underway",
@@ -818,7 +1245,7 @@ struct PlaylistDetailView: View {
                                   systemImage: "wifi.slash")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
-                        Text("Automatic matching now checks Internet Archive, Openverse, Wikimedia Commons and artist-enabled Audius downloads. Other web pages require review; not every Spotify recording is independently downloadable.")
+                        Text("MP3 Shelf compares recording titles, artist credits, versions and lengths. Clear matches download automatically; use Review recording matches when several recordings are similar. Public audio catalogs provide additional sources.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         Button {
                             showWebDiscovery = true
@@ -826,9 +1253,19 @@ struct PlaylistDetailView: View {
                             Label("Search the wider web for missing songs", systemImage: "globe")
                         }
                         .buttonStyle(.bordered)
+                        Toggle("Use MP3 Shelf recording matching", isOn: $recordingMatchingEnabled)
+                        Text("Matching and audio extraction run on this iPhone. No search key is needed for recording matching. Transfers use Wi-Fi unless you allow cellular for this playlist.")
+                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        if let warnings = library.discoveryJob(for: playlistID)?.catalogWarnings,
+                           !warnings.isEmpty {
+                            Label("Search incomplete: " + warnings.joined(separator: " • ") +
+                                  " Retry unmatched songs to check these catalogs again.",
+                                  systemImage: "exclamationmark.circle")
+                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                        }
                         if let job = library.discoveryJob(for: playlistID), !job.isComplete {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Catalog search: \(job.nextIndex)/\(job.wishes.count) processed")
+                                Text("Recording search: \(job.nextIndex)/\(job.wishes.count) processed")
                                     .font(.caption.monospacedDigit())
                                 if job.failed > 0 {
                                     Label("\(job.failed) song lookup(s) failed after retrying. The remaining songs continue automatically.",
@@ -836,10 +1273,10 @@ struct PlaylistDetailView: View {
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 }
                                 if let issue = job.lastError {
-                                    Label("Source temporarily unavailable: \(issue)", systemImage: "wifi.exclamationmark")
+                                    Label(issue, systemImage: "exclamationmark.circle")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 }
-                                if let retryAt = job.nextRetryAt, !job.isPaused {
+                                if let retryAt = job.nextLookupAt, !job.isPaused {
                                     Text("Automatic retry: \(retryAt.formatted(date: .omitted, time: .shortened))")
                                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 }
@@ -847,15 +1284,19 @@ struct PlaylistDetailView: View {
                                     Button("Resume Source Discovery") {
                                         library.resumeSourceDiscovery(for: playlistID)
                                     }
+                                    .frame(minHeight: 44)
+                                    .accessibilityHint("Continue searching for missing songs")
                                 } else if (library.isOnWiFi ||
                                             (library.isOnCellular &&
                                              library.cellularApproved(for: playlistID))) &&
                                           (library.automaticDownloadProgress?.playlistID != playlistID ||
                                            library.automaticDownloadProgress?.isRunning != true) {
-                                    if job.nextRetryAt == nil {
+                                    if job.nextLookupAt == nil {
                                         Button("Resume Search") {
                                             library.resumeSourceDiscovery(for: playlistID)
                                         }
+                                        .frame(minHeight: 44)
+                                        .accessibilityHint("Search again for missing recordings")
                                     }
                                 }
                             }
@@ -867,19 +1308,28 @@ struct PlaylistDetailView: View {
                             if progress.isRunning {
                                 ProgressView(value: Double(progress.processed),
                                              total: Double(max(progress.total, 1)))
-                                Text(progress.currentSong)
-                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    .accessibilityLabel("Source discovery progress")
+                                    .accessibilityValue("\(progress.processed) of \(progress.total) songs checked")
+                                if !progress.currentSong.isEmpty {
+                                    Text(progress.currentSong)
+                                        .font(.caption)
+                                        .foregroundStyle(ShelfTheme.subdued)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .accessibilityLabel("Checking \(progress.currentSong)")
+                                }
                                 Button("Pause Source Discovery", role: .cancel) {
                                     library.pauseSourceDiscovery(for: playlistID)
                                 }
+                                .frame(minHeight: 44)
+                                .accessibilityHint("Stops searching for new audio sources without cancelling downloads already queued")
                             } else {
                                 Text(progress.wasCancelled ? "Source discovery stopped." :
-                                     library.discoveryJob(for: playlistID)?.nextRetryAt != nil
+                                     library.discoveryJob(for: playlistID)?.nextLookupAt != nil
                                      ? "Source lookup will retry automatically. No tap needed."
                                      : "Source lookup finished. Background downloads may still be running.")
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                 if jobHasNoMatches {
-                                    Label("No authorized matching MP3s found in the connected catalogs. You can attach a legally obtained file link to each missing song below.", systemImage: "info.circle")
+                                    Label("No matching audio files found in the connected catalogs. Retry the search or attach a direct audio-file link to a missing song below.", systemImage: "info.circle")
                                         .font(.caption)
                                         .foregroundStyle(ShelfTheme.subdued)
                                 }
@@ -887,6 +1337,8 @@ struct PlaylistDetailView: View {
                                     Button("Retry unmatched songs") {
                                         library.startAutomaticDownloads(for: playlistID)
                                     }
+                                    .frame(minHeight: 44)
+                                    .accessibilityHint("Search again for recordings not yet saved offline")
                                 }
                             }
                         } else {
@@ -905,17 +1357,23 @@ struct PlaylistDetailView: View {
                             Button("Cancel background transfers", role: .destructive) {
                                 library.stopBackgroundTransfers(for: playlistID)
                             }
+                            .frame(minHeight: 44)
+                            .accessibilityHint("Stops queued and active audio downloads for this playlist")
                             Text("Downloads can continue after you lock your iPhone. Source discovery resumes only when MP3 Shelf is open.")
                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         }
-                        Text("Every successful match downloads an actual .mp3 to this iPhone (Files → On My iPhone → MP3 Shelf → Music). If a recording has no qualifying source, it stays missing instead of being replaced with a different version. Source licenses are uploader-declared.")
+                        Text("Successful matches save an MP3 to this iPhone (Files → On My iPhone → MP3 Shelf → Music). Songs without a matching downloadable file stay listed for retry or a direct file link.")
                             .font(.caption2).foregroundStyle(ShelfTheme.subdued)
                     }
                     .listRowBackground(ShelfTheme.surface)
                 }
                 Section("AVAILABLE OFFLINE") {
-                    ForEach(library.songs(in: playlist)) { track in
-                        MusicTrackRow(track: track, context: library.songs(in: playlist), renaming: $editing)
+                    // Resolve the playlist once for this render. Calling songs(in:)
+                    // for every row repeatedly scans all playlist IDs and
+                    // creates a new queue for each track in large collections.
+                    let availableTracks = library.songs(in: playlist)
+                    ForEach(availableTracks) { track in
+                        MusicTrackRow(track: track, context: availableTracks, renaming: $editing)
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             .swipeActions {
@@ -928,30 +1386,47 @@ struct PlaylistDetailView: View {
                 }
                 if !playlist.sourceOrder.isEmpty {
                     Section("SONG-BY-SONG MP3 RESULTS") {
+                        // One transfer snapshot per section evaluation, not an O(n)
+                        // downloader lookup for every imported playlist entry.
+                        let tickets = transfers.ticketsForPlaylist(playlistID)
+                        let ticketsByWishID = Dictionary(grouping: tickets, by: { $0.requested.id })
+                        // Snapshot the discovery job once; avoid repeatedly scanning
+                        // the job list and its wish cursor for every SwiftUI row.
+                        let discoveryJob = library.discoveryJob(for: playlistID)
+                        let activeWishID = discoveryJob.flatMap { job in
+                            job.wishes.indices.contains(job.nextIndex) ? job.wishes[job.nextIndex].id : nil
+                        }
                         ForEach(playlist.sourceOrder) { wish in
                             VStack(alignment: .leading, spacing: 7) {
                                 Text(wish.title)
                                     .font(.subheadline.bold())
                                 Text(wish.artist)
                                     .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                let status = mp3Status(for: wish)
+                                let isSavedOffline = savedWishIDs.contains(wish.id)
+                                let status = mp3Status(for: wish, isSavedOffline: isSavedOffline,
+                                                       tickets: ticketsByWishID[wish.id] ?? [],
+                                                       job: discoveryJob, activeWishID: activeWishID)
                                 Label(status.text, systemImage: status.symbol)
                                     .font(.caption.weight(.medium))
                                     .foregroundStyle(status.text.contains("failed") ||
                                                      status.text.contains("No qualifying")
                                         ? ShelfTheme.coral : ShelfTheme.mint)
                                     .accessibilityLabel("\(wish.title): \(status.text)")
-                                if let ticket = transfers.ticketsForPlaylist(playlistID)
-                                    .first(where: { $0.requested.id == wish.id }) {
+                                if let ticket = ticketsByWishID[wish.id]?.first {
                                     if ticket.status == .queued, let total = ticket.totalBytes,
                                        total > 0, let received = ticket.bytesReceived {
                                         ProgressView(value: Double(received), total: Double(total))
                                             .tint(ShelfTheme.accent)
                                             .accessibilityLabel("Download progress for \(wish.title)")
+                                            .accessibilityValue("\(Int(min(100, max(0, Double(received) / Double(total) * 100)))) percent")
                                     }
                                     if ticket.status == .failed || ticket.status == .cancelled {
-                                        Button("Retry MP3 download") { transfers.retry(ticket.id) }
+                                        Button(transfers.isResolvingSource(ticket.id) ? "Refreshing audio source…" : "Retry MP3 download") { transfers.retry(ticket.id) }
                                             .font(.caption.weight(.semibold))
+                                            .frame(minHeight: 44)
+                                            .accessibilityLabel("Retry download for \(wish.title)")
+                                            .accessibilityHint("Try downloading this recording again")
+                                            .disabled(!transfers.canRetry(ticket.id))
                                     }
                                     if ticket.status == .queued || ticket.status == .imported {
                                         Text("Source: \(ticket.provider)")
@@ -959,17 +1434,37 @@ struct PlaylistDetailView: View {
                                             .foregroundStyle(ShelfTheme.subdued)
                                     }
                                 }
-                                if MusicMatching.reusableOfflineTrack(for: wish, in: library.tracks) == nil {
+                                if let details = discoveryJob?.lookupDetails?[wish.id.uuidString],
+                                   !details.isEmpty {
+                                    SongSourceDiagnosticsView(wish: wish, details: details)
+                                }
+                                if let choices = discoveryJob?.recordingCandidates?[wish.id.uuidString],
+                                   !choices.isEmpty, !isSavedOffline {
+                                    Button("Review recording matches") { reviewingRecording = wish }
+                                        .font(.caption.weight(.semibold))
+                                        .frame(minHeight: 44)
+                                        .accessibilityLabel("Review recording matches for \(wish.title)")
+                                }
+                                if !isSavedOffline {
                                     Button { manuallyAdding = wish } label: {
-                                        Label("I have an authorized audio link",
+                                        Label("Attach an audio-file link",
                                               systemImage: "link.badge.plus")
                                     }
                                     .font(.caption.weight(.semibold))
-                                    .accessibilityHint("Download a recording you have permission to save and attach it to this missing song.")
+                                    .frame(minHeight: 44)
+                                    .accessibilityLabel("Attach audio-file link for \(wish.title)")
+                                    .accessibilityHint("Download a matching audio file and attach it to this missing song.")
                                 }
                                 if let url = wish.spotifyURL, let link = URL(string: url) {
-                                    Link("View original on Spotify", destination: link)
-                                        .font(.caption)
+                                    Link(destination: link) {
+                                        Label("View original on Spotify", systemImage: "arrow.up.right.square")
+                                            .font(.caption.weight(.medium))
+                                            .frame(minHeight: 44, alignment: .leading)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .accessibilityLabel("View \(wish.title) by \(wish.artist) on Spotify")
+                                    .accessibilityHint("Opens the original song outside MP3 Shelf")
                                 }
                             }
                             .padding(.vertical, 5)
@@ -999,10 +1494,84 @@ struct PlaylistDetailView: View {
         .sheet(isPresented: $showWebDiscovery) {
             WebAudioDiscoveryView(wishes: playlist?.missingTracks ?? [])
         }
+        .sheet(item: $reviewingRecording) { wish in
+            RecordingMatchReviewView(wish: wish, playlistID: playlistID,
+                candidates: library.discoveryJob(for: playlistID)?.recordingCandidates?[wish.id.uuidString] ?? [])
+        }
     }
 }
 
-/// Recovery path when an independent catalog cannot locate a licensed recording.
+private struct RecordingMatchReviewView: View {
+    let wish: PlaylistWish
+    let playlistID: UUID
+    let candidates: [RecordingCandidate]
+    @EnvironmentObject private var library: MusicLibrary
+    @Environment(\.dismiss) private var dismiss
+    @State private var task: Task<Void, Never>?
+    @State private var working = false
+    @State private var issue: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("REQUESTED RECORDING") {
+                    Text(wish.title).font(.headline)
+                    Text(wish.artist)
+                    if let length = wish.durationSeconds { Text("Expected length: \(length.formatted(.number.precision(.fractionLength(0)))) seconds") }
+                    if working { ProgressView("Resolving and checking this recording…") }
+                    if let issue { Text(issue).foregroundStyle(.red) }
+                }
+                ForEach(RecordingMatcher.rank(candidates, for: wish).prefix(8), id: \.candidate.id) { match in
+                    Section {
+                        Text(match.candidate.title).font(.headline)
+                        Text(match.candidate.uploader).font(.subheadline)
+                        Text("Match score: \(match.score) • \(match.reason)").font(.caption)
+                        if let duration = match.candidate.durationSeconds { Text("\(duration.formatted(.number.precision(.fractionLength(0)))) seconds").font(.caption) }
+                        Link("Open recording source", destination: match.candidate.pageURL)
+                        Button("Download this recording") {
+                            working = true
+                            issue = nil
+                            task = Task { @MainActor in
+                                defer { working = false }
+                                do {
+                                    try await library.queueRecording(match.candidate, matching: wish, playlistID: playlistID)
+                                    dismiss()
+                                } catch is CancellationError { }
+                                catch { issue = error.localizedDescription }
+                            }
+                        }
+                        .disabled(working || match.decision == .rejected)
+                    }
+                }
+            }
+            .navigationTitle("Recording matches")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        }
+        .onDisappear { task?.cancel() }
+    }
+}
+
+private struct SongSourceDiagnosticsView: View {
+    let wish: PlaylistWish
+    let details: [String]
+
+    var body: some View {
+        DisclosureGroup("Source search details") {
+            ForEach(Array(details.enumerated()), id: \.offset) { entry in
+                Text(entry.element)
+                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ShareLink(item: "\(wish.artist) — \(wish.title)\n" + details.joined(separator: "\n")) {
+                Label("Share search diagnostics", systemImage: "square.and.arrow.up")
+            }
+            .font(.caption)
+        }
+        .font(.caption.weight(.semibold))
+    }
+}
+
+/// Recovery path when a catalog cannot locate a matching audio file.
 /// The supplied direct HTTPS audio URL must be provided by the user, not
 /// derived from Spotify streams or an unverified download search engine.
 struct AuthorizedPlaylistAudioView: View {
@@ -1030,7 +1599,7 @@ struct AuthorizedPlaylistAudioView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Text("Paste a direct HTTPS file URL only when the rights holder permits downloading. MP3 Shelf checks that the file can play and matches Spotify's duration when available. It will then link the saved recording to this playlist.")
+                    Text("Paste a direct HTTPS audio-file URL. MP3 Shelf checks that the file can play and matches the song's duration when available, then attaches it to this playlist.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
                         guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -1066,7 +1635,7 @@ struct AuthorizedPlaylistAudioView: View {
                     .disabled(isDownloading || link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Section {
-                    Text("A Spotify playlist link is not a direct MP3 file. Commercial music usually requires a separate legal purchase or download from the rightsholder.")
+                    Text("Imported playlists contain song details. Use a direct audio-file link here to save the recording.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -1101,12 +1670,12 @@ private struct WebAudioSelection: Identifiable {
 }
 
 /// Optional broad web search for download *pages* and direct audio links.
-/// Only a URL explicitly chosen by the user is submitted to the local
-/// audio importer; a search result is never silently treated as an MP3.
+/// Manual result browsing and setup for the bounded automatic playlist fallback.
 struct WebAudioDiscoveryView: View {
     let wishes: [PlaylistWish]
     @Environment(\.dismiss) private var dismiss
     @State private var apiKey = WebAudioSearch.loadKey() ?? ""
+    @AppStorage("MP3Shelf.automaticWebFallback") private var automaticWebFallback = true
     @State private var searchDepth: WebAudioSearch.SearchDepth = .quick
     @State private var inspectPagesDuringSearch = false
     @State private var inspectedDuringSearch = 0
@@ -1144,6 +1713,18 @@ struct WebAudioDiscoveryView: View {
                     Text("Brave offers a separate web-search API. Enter your own key once; it stays in this iPhone's Keychain and is sent only to Brave. Searches consume your account's API credits.")
                         .font(.caption).foregroundStyle(.secondary)
                     Link("Get an API key from Brave Search", destination: URL(string: "https://brave.com/search/api/")!)
+                    Toggle("Automatically search when catalogs find no match", isOn: $automaticWebFallback)
+                    Text("With a saved key, playlist downloads can search the web and save matching files automatically. Each playlist run uses at most 20 API searches, one per unmatched song. Automatic searches use Wi-Fi unless you allow cellular for that playlist. Search limits or a rejected key stop further automatic API calls for that run.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Save search key") {
+                        if !WebAudioSearch.saveKey(apiKey) {
+                            message = "Could not securely save the search key to Keychain."
+                        } else if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            message = "Search key removed. Automatic web fallback needs a saved API key."
+                        } else {
+                            message = "Search key saved. Return to your playlist and choose Retry unmatched songs to use automatic fallback."
+                        }
+                    }
                     Picker("Search coverage", selection: $searchDepth) {
                         ForEach(WebAudioSearch.SearchDepth.allCases) { depth in
                             Text(depth.label).tag(depth)
@@ -1250,7 +1831,7 @@ struct WebAudioDiscoveryView: View {
                             }
                         }
                     }
-                    Text("Web results may be unrelated, behind a purchase, or unauthorized. This feature does not extract Spotify streams, bypass DRM, or automatically download unverified search hits.")
+                    Text("Web search finds pages and possible audio links. Choose a matching file to download; a search result or player page alone is not an audio file.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(batch) { wish in
@@ -1324,8 +1905,9 @@ struct WebAudioDiscoveryView: View {
                                     .disabled(inspectingWishes.contains(wish.id))
                                     if inspectingWishes.contains(wish.id) {
                                         ProgressView(value: Double(inspectedCount[wish.id] ?? 0),
-                                                     total: Double(candidates.count))
-                                            .accessibilityLabel("Inspecting music webpages")
+                                                     total: Double(max(1, candidates.count)))
+                                            .accessibilityLabel("Inspecting music webpages for \(wish.title) by \(wish.artist)")
+                                            .accessibilityValue("\(inspectedCount[wish.id] ?? 0) of \(candidates.count) candidate pages inspected")
                                         Text("Only direct audio files advertised in page HTML are listed.")
                                             .font(.caption2).foregroundStyle(.secondary)
                                     }

@@ -1,0 +1,157 @@
+# Download-path evidence
+
+**Overall verdict: the full iPhone path is NOT PROVEN.** This executor is Linux,
+with no Swift, Xcode, iPhone Simulator, or connected iPhone. No native PASS is
+claimed from the host checks below.
+
+## Loopback AAC transfer and conversion
+
+`ios/Prove AAC Transfer.command` queues a generated 523 Hz AAC tone through the
+same background downloader and MP3 importer used for matched recordings. The
+proof requires an HTTP response from the run's loopback server, import of that
+ticket, full MP3 decode, and playback from the saved file after relaunch. The
+server exits before the restart, and the report and MP3 are in
+`ios/build/fixture-transfer-proof`. The fixture HTTP exception is limited to
+the isolated Debug Simulator build and the run's exact URL.
+
+The Linux check fetched the actual fixture from the bundled server and compared
+all 17,614 bytes with the source file. FFmpeg decoded the AAC for the production
+ShelfEncoder and bundled LAME. The resulting mono 44.1 kHz MP3 was 50,154 bytes
+and 2.08975 seconds long. Its full decode returned 92,160 frames with audible samples.
+
+| File | SHA-256 |
+| --- | --- |
+| Served AAC fixture | `a5ce5f6bc3887b52ec882b1cf34d750970d2d3841707c17ff4fd0c8ad12d8e68` |
+| Linux MP3 result | `723292137e2274138cf3ca6a31587d533863ff43baef1df31cdfc1a08548be8c` |
+
+The fixture test reached its macOS/Xcode preflight here. Native transfer,
+AVAudioFile conversion and restart playback still await a Simulator run.
+Live Spotify or Apple Music playlist matching still needs its own acceptance test.
+
+## AAC fallback and enqueue-capacity follow-up
+
+Code review identified two separate recovery gaps. The resolver chose the single
+highest-bitrate AAC format before checking that URL, so an invalid/expiring link
+or failed response could discard a usable format from the same recording.
+Recording review checked capacity before an awaited resolution, but enqueue had
+no capacity guard; another transfer could fill the final slot during that await.
+
+The production resolver now filters/ranks/deduplicates formats and probes at most
+three eligible URLs. It stops on the first accepted response or cancellation;
+when every probe fails, a temporary failure takes precedence for the existing
+bounded lookup retry. Signed URL expiry is rechecked before/after each probe.
+The existing byte/MIME admission gate and full import validation are unchanged.
+The MainActor queue now checks capacity immediately before insertion, without
+an await gap. The existing manual-retry reservation is released before enqueue.
+
+New native discovery cases cover format ranking, stale/oversized URLs, bounded
+fallback, success short-circuiting, temporary-error preservation and cancellation.
+These cases and the actual queue race are NOT RUN here: the native verifier exits
+2 because Swift is absent. Four changed Swift files pass syntax parsing and
+whitespace checks pass. The actual C matching/audio-admission suite passes.
+This is not a successful live-media transfer or Apple runtime verdict; the
+earlier HTML media response and full native download path remain unproven.
+
+## Q3: playback after restarting the app
+
+Code review found a persistence fault: addLocalAudio returned success after a
+nonthrowing save() logged a write failure. The downloaded ticket could therefore
+claim success while its track record was absent after relaunch. Imports now
+write the complete track metadata and matched playlist links before publishing
+success. Write failures retain the underlying storage error, do not trigger an
+alternate source download, and remove the failed import's audio/artwork.
+
+The v2 native proof requires a real process restart and production local-file
+playback before PASS. It checks restored IDs/metadata/playlist links, the MP3
+checksum, a real write-failure rejection and the underlying AVAudioPlayer clock.
+The separate Prove Offline Restart.command uses the existing short MP3 fixture,
+so this check can run independently of a failed live source. It cannot pass as a
+live-download proof. During restart playback foreground HTTP is refused and
+source discovery/background transfer attachment is disabled. Host networking is
+unchanged; physical-iPhone Airplane Mode remains untested.
+
+Twelve Python receipt/two-launch workflow tests pass using fake Apple commands
+and receipts; they do not run the app. The actual fixture fully decodes on this
+host (8820 PCM frames, non-silent). The eight changed Swift files pass syntax
+parsing, not Apple SDK type checking. New native persistence/error regressions
+and the real restart proof are **NOT RUN**: the native regression runner and
+offline launcher both exit 2 because Swift/macOS/Xcode are unavailable here.
+Offline restart behavior and the full iPhone download path remain **UNVERIFIED**.
+
+## Retry recovery follow-up
+
+Code review identified a separate failure in the automatic workflow: a recording
+search timeout, temporary HTTP failure, or interrupted media probe was caught and
+logged, then discarded when optional fallback catalogs completed with no match.
+The song was classified unavailable without entering the existing retry path.
+
+Temporary primary lookup failures are now retained until fallback selection ends.
+A usable fallback proceeds normally; otherwise the existing persisted backoff and
+five-attempt budget applies. A genuine no-match or permanent refusal does not gain
+automatic retries. Cancellation/network policy still prevents burning the budget
+while paused or disconnected, and the web-search credit ledger is preserved.
+
+Added regression cases in SourceDiscoveryJobTests for temporary URL failures,
+typed resolver classification, usable fallbacks, genuine misses, cancellation,
+persisted backoff, retry exhaustion and the existing web-search ledger. The four
+changed Swift files passed syntax parsing; whitespace checks passed. The native
+regression runner exited 2 with Swift compiler not found, so these new cases and
+the app integration are **NOT RUN** here. This patch is not evidence that the live
+HTML media response or the full iPhone download path has been repaired.
+
+## Live recording trace
+
+Reference: Carefree — Kevin MacLeod, 206 seconds; YouTube ID sMcWOaJFuw0.
+
+| Stage | Observed result |
+| --- | --- |
+| Search | HTTP 200, 20 recording renderers; matching official-artist results present. |
+| Player metadata | Both 0.4.8 clients and 0.4.9 visionOS/web clients returned HTTP 200 / OK. The visionOS response contained two direct AAC formats. |
+| Media transfer | The selected fresh signed AAC URL returned HTTP 200, text/html, 195 bytes: Site Unavailable. A matching user agent plus Range returned HTTP 206 with the same HTML. No audio was downloaded from that source. |
+| New response gate | The exact production C gate rejects that captured HTML both as text/html and when mislabeled application/octet-stream. It accepts a real MP4 audio prefix. |
+| Native queue/conversion/save/playback | NOT RUN here. Source transfer failed, and no Apple runtime exists in this executor. |
+
+This trace establishes a media-response failure, not an absent license label.
+It does not establish whether the response is produced by the destination or an
+intermediate network service. The test did not bypass that unavailable destination.
+
+## Independent real-file conversion check
+
+Downloaded https://samples.ffmpeg.org/A-codecs/AAC/ct_faac-adts.aac: HTTP 200,
+audio/aac, 299647 bytes. SHA-256:
+052f9c7c5359d642fbba887d57fc72fe5745fc75b34cddc7a7adc0a912f9cf9c.
+
+FFmpeg decoded it to 880640 stereo PCM frames at 44100 Hz (19.969161 seconds).
+The exact bundled ShelfMP3Encoder adapter and LAME sources encoded those frames
+into a 480861-byte MP3. ffprobe identified MP3/stereo/44100 Hz and 20.035875 seconds;
+ffmpeg decoded the entire output without error. MP3 SHA-256:
+b1c2feb9c4879578fa0af8499630cd5919d9855753fdd2d9adaf628db2cd7e12.
+
+This verifies a real HTTPS download and the bundled C encoder, using FFmpeg as
+the host decoder. It does **not** verify AVAudioFile, the app importer, background
+URLSession, playlist integration, or iPhone playback.
+
+## Corrections and native test
+
+- Updated the vendored extractor from 0.4.8 to official 0.4.9, pinned to
+  e5b7d0396ce12bf3444f0d209e8436c83373b7af. New clients and optional quality
+  decoding are included. Both versions still encountered the HTML media response
+  in this environment; the upgrade is not claimed to have repaired that response.
+- A bounded AAC response probe now runs before enqueueing a resolved video source.
+  HTTP success or a signed URL alone cannot mark a webpage as ready audio.
+- Prove MP3 Downloads.command builds a fresh, isolated Debug Simulator app locally.
+  The app uses production search/matching, queueRecording, background transfer,
+  MP3 conversion, library import and local-file playback. It confirms the MP3
+  codec, fully decodes the saved file, checks duration/non-silent PCM, and records
+  the file checksum. Playback is muted for the test.
+- Selection is recorded as automatic or reference-review. The latter exercises
+  the explicit recording-review flow and does not prove automatic selection.
+- The runner preserves per-run evidence, checks the saved file against its
+  receipt, refuses paths outside the test container, and cannot reuse a stale PASS.
+  It does not clear the normal app, sign an app, or use GitHub Actions.
+
+On a Mac with Xcode and an iPhone Simulator runtime, double-click the launcher
+inside ios. It opens ios/build/download-proof/QA_RECORD.md; the run directory
+contains native-result.json and, on success, the actual MP3. Failures remain FAIL.
+The native runner exited 2 here because macOS/Xcode is unavailable. The new native
+code, Apple compilation and physical-iPhone/background behavior remain unverified.

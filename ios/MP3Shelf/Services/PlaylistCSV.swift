@@ -99,11 +99,14 @@ enum PlaylistCSV {
 }
 
 
-/// Sync a previously imported Spotify playlist without changing the identity
+/// Sync an imported playlist without changing the identity
 /// of unchanged entries. An identical track can occur more than once; consume
 /// old occurrence IDs in sequence rather than collapsing duplicate entries.
 enum SpotifyPlaylistSync {
     static func identity(_ wish: PlaylistWish) -> String {
+        if let id = AppleMusicLibraryIdentity.canonical(wish.appleMusicItemID) {
+            return "apple-music:\(id)"
+        }
         if let raw = wish.spotifyURL,
            let url = URLComponents(string: raw),
            url.scheme?.lowercased() == "https",
@@ -185,6 +188,31 @@ enum MusicMatching {
     }
 }
 
+
+/// Single-pass title index for very large imported Spotify playlists.
+/// Matching delegates to the existing strict artist/duration policy, so
+/// same-name remixes and ambiguous tracks are never silently substituted.
+struct OfflineTrackIndex {
+    private let tracksByTitle: [String: [MusicTrack]]
+
+    init(tracks: [MusicTrack]) {
+        var lookup: [String: [MusicTrack]] = [:]
+        lookup.reserveCapacity(tracks.count)
+        for track in tracks {
+            let title = MusicMatching.key(track.title)
+            if !title.isEmpty { lookup[title, default: []].append(track) }
+        }
+        tracksByTitle = lookup
+    }
+
+    func reusableTrack(for wish: PlaylistWish,
+                       isAvailable: ((MusicTrack) -> Bool)? = nil) -> MusicTrack? {
+        let key = MusicMatching.key(wish.title)
+        guard !key.isEmpty, let candidates = tracksByTitle[key] else { return nil }
+        let usable = isAvailable.map { candidates.filter($0) } ?? candidates
+        return MusicMatching.reusableOfflineTrack(for: wish, in: usable)
+    }
+}
 
 /// Verify identity evidence inside imported audio before assigning playlist
 /// metadata. Missing tags are inconclusive; contradictory tags are a mismatch.

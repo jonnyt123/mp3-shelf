@@ -57,6 +57,13 @@ struct DownloadManagerView: View {
                     ? "0 MB"
                     : ByteCountFormatter.string(
                         fromByteCount: library.totalStorageBytes, countStyle: .file))
+                Button("Retry failed downloads") { transfers.retryFailedDownloads() }
+                    .disabled(!transfers.canRetryFailedDownloads)
+                Text("Retries fill available transfer slots. Cancelled downloads stay cancelled; source search stays paused if you paused it.")
+                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                Button("Recheck saved audio") { library.recheckSavedAudio() }
+                Text("Refresh playlist matches if audio files were moved or removed in Files.")
+                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 NavigationLink {
                     MusicStorageView()
                 } label: {
@@ -70,44 +77,64 @@ struct DownloadManagerView: View {
                     Text("A playlist link supplies song details. An MP3 transfer starts only after a downloadable recording is found; some songs have no matching source.")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                     ForEach(incompletePlaylists) { playlist in
-                        NavigationLink {
-                            PlaylistDetailView(playlistID: playlist.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(playlist.name).font(.headline)
-                                Text("\(playlist.missingTracks.count) songs not saved offline")
-                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                if let job = library.discoveryJob(for: playlist.id) {
-                                    Text(job.isComplete ? "Source search finished" :
-                                         job.isPaused ? "Source search paused" :
-                                         "Source search: \(job.nextIndex)/\(job.wishes.count) checked")
-                                        .font(.caption)
-                                    if job.unavailable > 0 {
-                                        Text("\(job.unavailable) songs had no qualifying MP3 source")
-                                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
-                                    }
-                                    if job.failed > 0 {
-                                        Text("\(job.failed) song lookups failed")
-                                            .font(.caption).foregroundStyle(ShelfTheme.coral)
-                                    }
-                                    if let reason = job.lastError {
-                                        Text(reason).font(.caption)
-                                            .foregroundStyle(ShelfTheme.coral)
-                                    }
-                                    if !job.isComplete {
-                                        if !job.isPaused, let retry = job.nextRetryAt {
-                                            Text("Search retry scheduled: \(retry.formatted(date: .omitted, time: .shortened))")
+                        VStack(alignment: .leading, spacing: 12) {
+                            NavigationLink {
+                                PlaylistDetailView(playlistID: playlist.id)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(playlist.name).font(.headline)
+                                    let total = playlist.sourceOrder.count
+                                    let saved = playlist.sourceOrder.filter { library.hasOfflineRecording(matching: $0) }.count
+                                    Text("\(saved) of \(total) playlist entries saved offline")
+                                        .font(.caption.monospacedDigit()).foregroundStyle(ShelfTheme.subdued)
+                                    ProgressView(value: Double(saved), total: Double(max(1, total)))
+                                        .tint(ShelfTheme.mint)
+                                        .accessibilityLabel("Offline playlist progress")
+                                        .accessibilityValue("\(saved) of \(total) saved")
+                                    let playlistTickets = transfers.ticketsForPlaylist(playlist.id)
+                                    let activeCount = playlistTickets.filter { $0.status == .queued }.count
+                                    let failedCount = playlistTickets.filter { $0.status == .failed }.count
+                                    let cancelledCount = playlistTickets.filter { $0.status == .cancelled }.count
+                                    Text("\(activeCount) active · \(failedCount) failed · \(cancelledCount) cancelled transfers")
+                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    if let job = library.discoveryJob(for: playlist.id) {
+                                        Text(job.isComplete ? "Source search finished" :
+                                             job.isPaused ? "Source search paused" :
+                                             "Source search: \(job.nextIndex)/\(job.wishes.count) checked")
+                                            .font(.caption)
+                                        if job.unavailable > 0 {
+                                            Text("\(job.unavailable) songs had no qualifying MP3 source")
                                                 .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                         }
+                                        if job.failed > 0 {
+                                            Text("\(job.failed) song lookups failed")
+                                                .font(.caption).foregroundStyle(ShelfTheme.coral)
+                                        }
+                                        if let reason = job.lastError {
+                                            Text(reason).font(.caption)
+                                                .foregroundStyle(ShelfTheme.coral)
+                                        }
+                                        if let warnings = job.catalogWarnings, !warnings.isEmpty {
+                                            Text("Search incomplete: " + warnings.joined(separator: " • ") +
+                                                 " Retry unmatched songs to check these catalogs again.")
+                                                .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                        }
+                                        if !job.isComplete {
+                                            if !job.isPaused, let retry = job.nextLookupAt {
+                                                Text("Search retry scheduled: \(retry.formatted(date: .omitted, time: .shortened))")
+                                                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                            }
+                                        }
+                                    } else {
+                                        Text("Source search has not started")
+                                            .font(.caption).foregroundStyle(ShelfTheme.subdued)
                                     }
-                                } else {
-                                    Text("Source search has not started")
-                                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                                    Text("View song status and download options")
+                                        .font(.caption).foregroundStyle(ShelfTheme.accent)
                                 }
-                                Text("View song status and download options")
-                                    .font(.caption).foregroundStyle(ShelfTheme.accent)
+                                .padding(.vertical, 6)
                             }
-                            .padding(.vertical, 6)
+                        PlaylistDownloadControls(playlist: playlist)
                         }
                     }
                 } header: { Text("PLAYLIST SOURCE SEARCHES") }
@@ -142,7 +169,7 @@ struct DownloadManagerView: View {
                             .font(.system(.headline, design: .rounded, weight: .bold))
                             .foregroundStyle(.white)
                         Text(selectedFilter == .all
-                             ? "Import a playlist to find independently licensed MP3 files."
+                             ? "Import a playlist to find matching public audio files."
                              : "Switch to All to review your other downloads.")
                             .font(.subheadline)
                             .foregroundStyle(ShelfTheme.subdued)
@@ -189,6 +216,8 @@ private struct DownloadTicketRow: View {
         switch ticket.status {
         case .queued:
             if transfers.isFinalizing(ticket.id) { return "Finalizing" }
+            if transfers.hasStagedAudio(ticket.id) { return "Ready to save" }
+            if ticket.nextRetryAt != nil { return "Retrying" }
             return (ticket.bytesReceived ?? 0) > 0 ? "Downloading" : "Queued"
         case .imported: return "Saved Offline"
         case .failed: return "Failed"
@@ -228,6 +257,9 @@ private struct DownloadTicketRow: View {
                     .background(statusColor.opacity(0.12), in: Capsule())
             }
             if ticket.status == .queued {
+                if let reason = ticket.failureReason {
+                    Text(reason).font(.caption).foregroundStyle(ShelfTheme.subdued)
+                }
                 if transfers.isFinalizing(ticket.id) {
                     Text("Checking audio format and saving to your library")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
@@ -237,8 +269,9 @@ private struct DownloadTicketRow: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(ShelfTheme.mint)
                 }
-                if let retry = ticket.nextRetryAt {
-                    Label("Temporary interruption · automatic retry \(ticket.automaticRetryCount ?? 0)/\(BackgroundTransferRetryPolicy.maxRetries)",
+                if !transfers.hasStagedAudio(ticket.id), let retry = ticket.nextRetryAt {
+                    let attempt = ticket.automaticRetryCount ?? 0
+                    Label(attempt > 0 ? "Automatic retry \(attempt)/\(BackgroundTransferRetryPolicy.maxRetries)" : "Transfer scheduled",
                           systemImage: "arrow.clockwise")
                         .font(.caption.weight(.medium)).foregroundStyle(ShelfTheme.mint)
                     Text("Scheduled no earlier than \(retry.formatted(date: .omitted, time: .shortened)) · Wi-Fi unless cellular was explicitly approved")
@@ -247,6 +280,10 @@ private struct DownloadTicketRow: View {
                 if transfers.isFinalizing(ticket.id) {
                     ProgressView().tint(ShelfTheme.mint)
                         .accessibilityLabel("Finalizing audio for \(ticket.requested.title)")
+                } else if transfers.hasStagedAudio(ticket.id) {
+                    Text("Audio is downloaded and waiting to be checked and saved.")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                    Button("Finish saving") { transfers.finishSavingStagedAudio() }
                 } else if let size = ticket.totalBytes, size > 0 {
                     ProgressView(value: Double(ticket.bytesReceived ?? 0), total: Double(size))
                         .tint(ShelfTheme.mint)
@@ -255,7 +292,9 @@ private struct DownloadTicketRow: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(ShelfTheme.subdued)
                 } else {
                     ProgressView().tint(ShelfTheme.mint)
-                    Text("Waiting for network or starting transfer")
+                    Text((ticket.bytesReceived ?? 0) > 0
+                         ? "\(ByteCountFormatter.string(fromByteCount: ticket.bytesReceived ?? 0, countStyle: .file)) received · total size unknown"
+                         : "Waiting for network or starting transfer")
                         .font(.caption).foregroundStyle(ShelfTheme.subdued)
                 }
                 Button("Cancel", role: .destructive) { transfers.cancelTransfer(ticket.id) }
@@ -267,16 +306,23 @@ private struct DownloadTicketRow: View {
                 Button {
                     transfers.retry(ticket.id)
                 } label: {
-                    Label("Retry MP3", systemImage: "arrow.clockwise")
+                    Label(transfers.isResolvingSource(ticket.id) ? "Refreshing audio source…" : "Retry MP3", systemImage: "arrow.clockwise")
                 }
                 .font(.subheadline)
+                .disabled(!transfers.canRetry(ticket.id))
+                if !transfers.canRetry(ticket.id) && !transfers.isResolvingSource(ticket.id) {
+                    Text("Retry becomes available when a slot opens, or in the playlist that still contains this download.")
+                        .font(.caption).foregroundStyle(ShelfTheme.subdued)
+                }
             }
             HStack(spacing: 16) {
                 Link(destination: ticket.sourcePage) {
                     Label("Source", systemImage: "arrow.up.right")
                 }
-                Link(destination: ticket.licensePage) {
-                    Label("License", systemImage: "doc.text")
+                if let licensePage = ticket.licensePage {
+                    Link(destination: licensePage) {
+                        Label("License", systemImage: "doc.text")
+                    }
                 }
             }
             .font(.caption.weight(.medium))
@@ -355,5 +401,43 @@ struct MusicStorageView: View {
             } message: {
                 Text("The MP3 copy will be deleted from this iPhone. Your imported playlist track list will be preserved.")
             }
+    }
+}
+
+private struct PlaylistDownloadControls: View {
+    let playlist: MusicPlaylist
+    @EnvironmentObject private var library: MusicLibrary
+    @ObservedObject private var transfers = BackgroundAudioDownloader.shared
+    @State private var confirmCancel = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let job = library.discoveryJob(for: playlist.id), !job.isComplete {
+                Button(job.isPaused ? "Resume search" : "Pause search") {
+                    if job.isPaused { library.resumeSourceDiscovery(for: playlist.id) }
+                    else { library.pauseSourceDiscovery(for: playlist.id) }
+                }
+                .frame(minHeight: 44)
+                Text("Pausing search lets already queued transfers continue.")
+                    .font(.caption).foregroundStyle(ShelfTheme.subdued)
+            } else {
+                Button(library.discoveryJob(for: playlist.id) == nil ? "Find missing songs" : "Search missing songs again") {
+                    library.startAutomaticDownloads(for: playlist.id)
+                }
+                .frame(minHeight: 44)
+            }
+            if transfers.pendingCount(for: playlist.id) > 0 {
+                Button("Cancel transfers", role: .destructive) { confirmCancel = true }
+                    .frame(minHeight: 44)
+            }
+        }
+        .buttonStyle(.bordered)
+        .confirmationDialog("Cancel transfers for \(playlist.name)?", isPresented: $confirmCancel) {
+            Button("Cancel transfers", role: .destructive) {
+                library.stopBackgroundTransfers(for: playlist.id)
+            }
+        } message: {
+            Text("This also pauses source search. Songs already saved offline stay in your library.")
+        }
     }
 }

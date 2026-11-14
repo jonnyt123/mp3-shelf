@@ -35,7 +35,7 @@ export function createLibraryBackup(tracks:Track[],playlists:BackupPlaylist[]):B
 }
 
 function isRecord(value:unknown):value is Record<string,unknown>{return typeof value==="object"&&value!==null}
-function requiredString(value:unknown,label:string):string{if(typeof value!=="string"||!value.trim())throw new Error(`Invalid ${label} in backup.`);return value}
+function requiredString(value:unknown,label:string,allowEmpty=false):string{if(typeof value!=="string"||(!allowEmpty&&!value.trim()))throw new Error(`Invalid ${label} in backup.`);return value}
 function optionalString(value:unknown):string|undefined{return typeof value==="string"?value:undefined}
 function requiredNumber(value:unknown,label:string):number{if(typeof value!=="number"||!Number.isFinite(value))throw new Error(`Invalid ${label} in backup.`);return value}
 
@@ -72,7 +72,7 @@ export async function parseLibraryBackup(file:Blob):Promise<LibraryBackup>{
    if(!isRecord(info))throw new Error("Invalid source attribution in backup.");
    attribution={
     sourceURL:requiredString(info.sourceURL,"source URL"),
-    licenseURL:requiredString(info.licenseURL,"license URL"),
+    licenseURL:requiredString(info.licenseURL,"license URL",true),
     creator:requiredString(info.creator,"source creator"),
     license:requiredString(info.license,"source license"),
     provider:requiredString(info.provider,"source provider")

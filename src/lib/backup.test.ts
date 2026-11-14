@@ -3,6 +3,13 @@ import{createLibraryBackup,parseLibraryBackup}from"./backup";
 import type{Track}from"./tracks";
 
 describe("MP3 Shelf backups",()=>{
+ it("retains native source attribution when no license URL was supplied",async()=>{
+  const attribution={sourceURL:"https://archive.org/details/recording",licenseURL:"",creator:"Artist",license:"Not supplied",provider:"Internet Archive"};
+  const track:Track={id:"public-file",name:"Song",artist:"Artist",size:3,type:"audio/mpeg",importedAt:123,blob:new Blob([new Uint8Array([1,2,3])]),attribution};
+  const restored=await parseLibraryBackup(createLibraryBackup([track],[]));
+  expect(restored.tracks[0].attribution).toEqual(attribution);
+  expect([...new Uint8Array(await restored.tracks[0].blob.arrayBuffer())]).toEqual([1,2,3]);
+ });
  it("round-trips track bytes, metadata, artwork, and playlists",async()=>{
   const track:Track={id:"song-1",name:"First song",originalName:"first.mp3",artist:"Artist",album:"Album",size:4,type:"audio/mpeg",importedAt:123,blob:new Blob([new Uint8Array([1,2,3,4])],{type:"audio/mpeg"}),artwork:new Blob([new Uint8Array([8,9])],{type:"image/png"})};
   const file=createLibraryBackup([track],[{id:"mix-1",name:"Favorites",trackIds:["song-1"]}]);

@@ -18,6 +18,8 @@
       <key>CFBundleURLSchemes</key><array><string>mp3shelf-auth</string></array>
     </dict></array>
     <key>LSRequiresIPhoneOS</key><true/>
+    <key>NSAppleMusicUsageDescription</key>
+    <string>MP3 Shelf reads song names, artists, durations and playlist order from your Music library to find matching recordings for offline playback.</string>
     <key>UTExportedTypeDeclarations</key>
     <array><dict>
       <key>UTTypeIdentifier</key><string>com.jonnyt.mp3shelf.backup</string>

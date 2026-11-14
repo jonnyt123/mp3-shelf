@@ -55,6 +55,13 @@ final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions:
                          [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        #if DEBUG
+        if DownloadProofOfflineNetwork.isRequested {
+            _ = DownloadProofOfflineNetwork.install()
+            return true
+        }
+        if DownloadPathProof.fixtureTransferRequested { return true }
+        #endif
         MP3ShelfBackgroundDiscovery.register()
         return true
     }
@@ -62,6 +69,12 @@ final class MP3ShelfAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
+        #if DEBUG
+        if DownloadProofOfflineNetwork.isRequested {
+            completionHandler()
+            return
+        }
+        #endif
         guard identifier == BackgroundAudioDownloader.identifier else {
             completionHandler()
             return
@@ -88,6 +101,7 @@ struct MP3ShelfApp: App {
     @StateObject private var spotify = SpotifyService()
     #if DEBUG
     @State private var didStartVisualFixture = false
+    @State private var didStartDownloadProof = false
     #endif
 
     var body: some Scene {
@@ -99,11 +113,34 @@ struct MP3ShelfApp: App {
                 .preferredColorScheme(.dark)
                 .onAppear {
                     playback.connect(to: library)
+                    #if DEBUG
+                    if DownloadProofOfflineNetwork.isRequested {
+                        library.setForegroundDiscoveryEnabled(false)
+                        if !didStartDownloadProof {
+                            didStartDownloadProof = true
+                            let installed = DownloadProofOfflineNetwork.install()
+                            if ProcessInfo.processInfo.arguments.contains("--mp3shelf-prove-local-restart") {
+                                Task { await DownloadPathProof.run(library: library, mode: .localRestart) }
+                            } else {
+                                Task { await DownloadPathProof.verifyAfterRestart(
+                                    library: library, playback: playback, networkGuardInstalled: installed) }
+                            }
+                        }
+                        return
+                    }
+                    let fixtureTransfer = DownloadPathProof.fixtureTransferRequested
+                    #else
+                    let fixtureTransfer = false
+                    #endif
                     MP3ShelfBackgroundDiscovery.foregroundLibrary = library
                     BackgroundAudioDownloader.shared.attach(to: library)
-                    library.setForegroundDiscoveryEnabled(scenePhase == .active)
+                    library.setForegroundDiscoveryEnabled(scenePhase == .active && !fixtureTransfer)
                     #if DEBUG
                     let snapshotArguments = ProcessInfo.processInfo.arguments
+                    if !didStartDownloadProof && (fixtureTransfer || snapshotArguments.contains("--mp3shelf-prove-download")) {
+                        didStartDownloadProof = true
+                        Task { await DownloadPathProof.run(library: library, mode: fixtureTransfer ? .fixtureTransfer : .liveDownload) }
+                    }
                     if !didStartVisualFixture &&
                         (snapshotArguments.contains("--mp3shelf-snapshot-player") ||
                          snapshotArguments.contains("--mp3shelf-snapshot-filled-library") ||
@@ -117,6 +154,12 @@ struct MP3ShelfApp: App {
                     #endif
                 }
                 .onChange(of: scenePhase) { _, phase in
+                    #if DEBUG
+                    if DownloadProofOfflineNetwork.isRequested || DownloadPathProof.fixtureTransferRequested {
+                        library.setForegroundDiscoveryEnabled(false)
+                        return
+                    }
+                    #endif
                     // Background URLSession callbacks can run with no visible UI.
                     // Only an active scene may start unrestricted source scans.
                     library.setForegroundDiscoveryEnabled(phase == .active)

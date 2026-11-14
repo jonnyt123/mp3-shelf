@@ -1,11 +1,101 @@
 # MP3 Shelf — iPhone Installation and Background Download QA
 
+## Offline playback after process restart
+
+Run **Prove Offline Restart.command** on the Mac. The fixture test must reach its
+storage-failure-rejected stage, terminate the isolated app, and launch it again
+before PASS. Check different process tokens, preserved track/playlist identity,
+the unchanged MP3 checksum and production local-file playback. Foreground HTTP
+is refused; source discovery and background transfer attachment are disabled.
+This does not switch the Simulator/Mac into Airplane Mode and does not prove a
+live song download. Reports are separate from the live download proof.
+
+On the physical iPhone, save real MP3s in a small playlist, force-quit the app,
+enable Airplane Mode with Wi-Fi off, then reopen and play/seek each song. Check
+the playlist order, metadata and Files copies remain. Repeat after a normal app
+update; do not uninstall the app. Simulate a local save failure and confirm it
+reports a retryable storage problem instead of another successful download.
+
+## Live native download proof
+
+Run Prove MP3 Downloads.command on the Mac before treating the downloader as
+working. Review the native-result.json stages and selection mode and play the
+saved MP3. The isolated test bundle must not modify or clear the normal app.
+A FAIL or missing result is not a successful download. Repeat on a physical
+iPhone with the reference song and a real Spotify/Apple Music playlist; verify
+Wi-Fi/cellular policy, suspended/locked transfers, cancellation and offline playback.
+Include an HTTP-200 HTML response and a binary-labeled HTML response: both must
+fail before queueing a resolved video source. A valid prefix still requires full
+transfer, codec, identity and duration validation before import.
+
+## Apple Music library acceptance
+
+1. Build on the Mac and run the existing native parser and portable-backup suites,
+   including their new Apple Music cases. Use a physical iPhone for MediaPlayer QA.
+2. In Music, add/sync a small playlist with cloud-only songs and a repeated song.
+   Open Add Music → Your Apple Music playlists. Access should be requested only
+   after Read my Apple Music playlists; granting it should load playlist choices.
+3. Choose Find & Save Offline MP3s. Verify source order, repeated occurrences,
+   artist/duration metadata and immediate navigation to the song results. Complete
+   a matched MP3 download and play it with networking disabled.
+4. Import again, then add/remove/reorder songs in Music and refresh/reimport.
+   The same MP3 Shelf playlist should update, preserving stable existing wishes,
+   manual additions and completed work. Removed-song transfers must stop.
+5. Deny permission, reopen Settings, grant it, then refresh. Revoke permission
+   during a read. Stale playlist choices must clear and cancelled reads must not
+   import or start downloads after leaving the screen.
+6. Check empty, missing/unavailable metadata and non-music playlists. Errors must
+   explain the problem; an incomplete read must not silently replace a full list.
+7. Export/restore a native backup and make a local copy. Verify matching metadata
+   and source order survive, copies do not sync with the source, and another
+   installation's device-local IDs cannot update the wrong imported playlist.
+8. Confirm Spotify/CSV imports and the existing Wi-Fi/cellular, recording review,
+   four-transfer limit and source-refresh behavior still work. Verify Music asset
+   and preview URLs never reach the audio downloader.
+
+## Custom recording engine acceptance
+
+1. Build this candidate with all local packages and run the nine native Swift
+   suites plus the portable C matching core. Confirm the extractor's bundled
+   JavaScript resources are present in the app.
+2. With no Brave key saved, import a small Spotify playlist on Wi-Fi. Confirm
+   **Source search details** names MP3 Shelf matching, then a resolved source.
+   A successful search alone does not count as a completed download.
+3. Verify an exact artist/title/duration match becomes a real, playable MP3 in
+   Files and attaches in the original playlist order. Test playback offline.
+4. Include a cover, remaster, short preview and two equally strong candidates.
+   Wrong versions must be rejected and ties must expose **Review recording
+   matches**. Choose a reviewable candidate and verify its resolved metadata
+   is checked before downloading; rejected candidates remain disabled.
+5. Let a signed audio URL expire, then retry. Confirm the stable video ID is
+   resolved again rather than repeatedly requesting the expired URL. Simulate
+   source refusal and confirm automatic recovery stops after three attempts.
+6. Start four transfers, then retry another recording. It must wait for a slot.
+   Also start a reviewed recording with three transfers active, fill the fourth
+   slot while that source resolves, and confirm it cannot create a fifth ticket.
+   Free one slot and retry; the reviewed recording should then queue normally.
+   Close the review sheet while resolving; delete a resolving song or playlist;
+   use Cancel All; clear finished history. No cancelled work may later enqueue.
+7. Test Wi-Fi loss, cellular without approval, explicit playlist cellular approval
+   and a background-only relaunch. Search/extraction must follow the same policy
+   as catalog discovery. No remote extraction helper should be contacted.
+8. Disable recording matching and confirm catalog/direct-link behavior still
+   works. Check existing local files, playlist order, pause state and paid-search
+   reservations survive relaunch and failed-source recovery.
+
+9. With a controlled source response, fail the highest-bitrate AAC probe while
+   leaving a lower-bitrate format usable. Confirm the same matched recording can
+   queue the lower format and become a real playable MP3. Reject stale/oversized
+   formats before probing, stop after at most three distinct formats, and stop
+   immediately on cancellation. If all formats fail, retain a temporary outage
+   for bounded retry; never treat a signed URL or HTML body as downloaded audio.
+
 This checklist is the **physical-iPhone acceptance gate**. GitHub's macOS
 simulator build is a separate, useful check and does not replace these tests.
 
 ## Preparation
 
-1. On a Mac with Xcode 16.4 or newer, check out the **candidate native iOS branch** (`fix/ios-download-finalization-and-conversion` for PR #28). The default `main` branch still contains the older web PWA; PR #4 is an earlier intermediate iOS branch. Run `bash ios/scripts/verify-local-release.sh` from the repository root to record local Swift regression and native build results without GitHub Actions minutes. Running the script does not replace on-device tests.
+1. On a Mac with Xcode 16.4 or newer, check out the **candidate native iOS branch** (`feat/ios-consolidated-candidate` for PR #29). The default `main` branch still contains the older web PWA; PR #4 is an earlier intermediate iOS branch. Run `bash ios/scripts/verify-local-release.sh` from the repository root to record local Swift regression and native build results without GitHub Actions minutes. Running the script does not replace on-device tests.
 2. Open `ios/MP3Shelf.xcodeproj`, choose the MP3Shelf app target,
    enable Automatically Manage Signing, and select your Apple development team.
 3. Connect an iPhone with iOS 17+, unlock/trust the Mac, enable Developer Mode
@@ -23,6 +113,70 @@ simulator build is a separate, useful check and does not replace these tests.
    background audio, shuffle and repeat.
 6. For network transfer tests, use an independent audio source whose creator
    explicitly authorized downloading. Do not use Spotify audio or unknown files.
+
+## Playback queue editor and automatic download cap acceptance
+
+1. Import a Spotify playlist with at least 15 qualifying, explicitly
+   authorized independent recordings. On Wi-Fi, start auto discovery and
+   verify at most **four** background transfer tickets remain queued at once.
+   As each ticket finishes, the next discovery lookup should resume without
+   losing the saved per-song cursor or creating duplicate downloads.
+2. Use **Cancel All** while four tickets are active. The playlist's source
+   discovery must stay paused, with no automatic replacement tasks until
+   explicitly resumed. Restart the app and confirm the pause is preserved.
+3. Interrupt Wi-Fi, restore connectivity, and verify existing bounded
+   retries, alternative verified sources and iOS background completion still
+   work. Explicit cellular permission must remain session-only.
+4. From Now Playing, open **Manage playing queue**. Move an upcoming track
+   earlier/later, choose Play next, play a selected item, then remove an
+   upcoming item. Confirm the next playback order matches the visible sheet.
+5. Reopen the saved playlist after editing the queue; its persisted order,
+   favorites, local file count and downloaded files must be unchanged.
+6. Test the queue sheet at large Dynamic Type sizes and with VoiceOver,
+   including accessible action menus and medium/large sheet presentation.
+
+## Large-library performance and data-integrity acceptance
+
+1. Import 3,000+ locally owned audio files and a large Spotify metadata list.
+   Measure Listen first load, search latency, sort switching, and playlist
+   scrolling on the actual iPhone before and after this change.
+2. Start local playback and leave Listen open for a full song; progress
+   updates must not repeatedly sort the complete library or cause visible
+   frame drops when navigating the library.
+3. Import a playlist containing multiple versions of the same song name.
+   Only the exact matching artist/duration recording should be linked;
+   ambiguous candidates must remain unmatched.
+4. Toggle favorites and edit title/artist. Search, title sort, artist sort,
+   saved playlist rows, Now Playing and Up Next must reflect the changes
+   immediately, not stale cached metadata.
+5. Import a portable archive with artwork, then replace its artwork. Verify
+   the image refreshes; remove a song and verify stale covers are not shown.
+6. Load a 5,000-track library, scroll rapidly and check memory pressure.
+   Verify that the artwork cache remains bounded and iOS does not terminate
+   the app. Check library save/restore after a force-quit and relaunch.
+
+## Shuffle and Up Next regression (PR: playback queue reliability)
+
+1. Import six distinct local audio tracks; turn on Shuffle and Repeat Off.
+   Play the first song, then press Next until the library finishes. Each track
+   must play only once; the player must stop after the sixth song.
+2. Enable Shuffle and Repeat All, then skip through another full cycle.
+   A fresh cycle should be prepared without an immediate duplicate when more
+   than one track is available.
+3. In shuffle mode, play A → B → C. Press Previous within the first three
+   seconds of C: the player should return to B, then to A. Press Next and
+   confirm B is next (Back/Next history must be reversible).
+4. Inspect the three Up Next entries before each skip. The next playable song
+   must match the first preview entry when there is a pending shuffled song.
+5. Toggle Shuffle while playback is active; verify the queue remains playable,
+   the Now Playing preview changes, and the stored playlist order is unmodified.
+6. Test Repeat One on a single song, crossfade near end of a two-song queue,
+   lock-screen Previous/Next, Bluetooth playback and remote seek controls.
+7. Delete a future queued song and skip forward. The player must ignore missing
+   files instead of crashing or repeatedly choosing an invalid queue entry.
+
+Foundation-only queue regression: `bash ios/scripts/test-playback-order.sh`.
+Passing this script does not replace listening and navigation tests on iPhone.
 
 ## Source-search recovery (Q2)
 
@@ -181,3 +335,41 @@ and provider/platform compliance checks have been performed.
 Native compilation, notification delivery order and physical audio behavior remain NOT VERIFIED until recorded on a Mac/iPhone.
 
 Playback failure checks: move a test song file out of the app Music directory, attempt to play it while another song is playing, and confirm the existing song/queue remain active and an error is visible. Restore the file and use Retry. Repeat from Now Playing and during crossfade; a failed crossfade must not retry every timer tick. Never delete your only copy of a recording for this test.
+
+Consolidation follow-up: fill the download slots during an in-flight catalog lookup and confirm the discovery cursor does not advance. Check that a retry changes from Retrying to Downloading when bytes arrive; unknown-size transfers must show received bytes. Interrupt finalization, relaunch, and use Finish saving if staging remains. Verify resume failure displays a retryable error.
+
+Playlist/player controls: from Downloads, pause a playlist search while transfers remain queued; confirm only search pauses. Resume, then confirm Cancel transfers pauses search and cancels only that playlist, preserving saved songs. Search again must target missing songs. While scrubbing Now Playing, change tracks with Lock Screen controls and confirm the scrubber draft resets. Test 15-second seek buttons near both song boundaries and during crossfade, plus VoiceOver and accessibility text sizes.
+
+Availability/browsing: move a test audio file out of Music, then choose Downloads > Recheck saved audio. Its Spotify wish must become missing and eligible for source search, while library metadata and manual playlist additions remain intact. Restore/reimport it and recheck. Verify album sorting, filtered Play results and Shuffle results, Favorites with no results, and large text layouts.
+
+Playlist organization/reliability: search and alphabetically sort playlists, rename one while filtered and confirm its identity, order and source link persist after relaunch. Delete a playlist with active transfers: its transfers and discovery must stop, other playlists must continue, and saved music must remain. Download permitted MP3, M4A/AAC, WAV/AIFF and FLAC responses and verify real decoding/conversion; HTML/JSON must remain rejected. MIME admission alone is not proof of playable codec or recording identity.
+
+Retry/playback review: with four transfers active, individual and batch retry must not add a fifth. Free one slot and retry a failed item: its replaced row must disappear. Batch retry must leave cancelled items untouched and respect paused source search. Deleted-playlist history must not restart transfers. Quickly switch tracks near completion and verify a late completion/decode-error callback from the old player cannot alter the new track. Decode failure must show the visible retry error.
+
+Status/polish checks: remove a test audio file while retaining library metadata and a historical imported ticket; the playlist count/status must not claim that recording is saved. Confirm queued, retrying, staged and finalizing labels agree between playlist detail and Downloads. Test library playback actions at accessibility text sizes, selected sort label, empty-search Show all music, and VoiceOver elapsed/remaining labels.
+
+Queue retry/progress checks: select a song in a small filtered playlist whose file is temporarily unavailable, restore it and tap Retry. Up Next must remain scoped to the attempted playlist rather than expanding to the full library. Repeat with shuffle enabled and with a deleted retry target. Confirm playlist saved/total progress checks real file availability, and historical failed/cancelled transfer totals are not mistaken for unique missing-song counts.
+
+Cancellation/copy follow-up: cancel an idle staged download, clear its history, then allow a delayed URLSession finish callback; no orphan file or imported song should remain for that ticket. Repeat during conversion and verify cancellation cleanup. Make a local copy of a Spotify playlist, including missing entries; change or delete the copy without modifying the original, and confirm Spotify refresh still targets the original. Native callback delivery and conversion cancellation remain device-only acceptance checks.
+
+Diagnostic/refresh checks: exercise 403, 404/410, rate limiting, HTML instead of audio, timeout and local disk-full/write failure. Error messages should identify the failure and recovery action; local storage failures must not begin alternate-source transfers. Import a playlist whose matching library metadata has a missing physical file and confirm that wish remains missing. Refresh pending title/duration metadata without adding IDs, relaunch, and confirm corrected metadata and the existing cursor/history persist.
+
+## Public-file source discovery regression gate
+
+- Run the source-discovery and checkpoint suites, including exact matches without license metadata and decimal Archive duration with a separate byte size. Verify oversized, mismatched and ambiguous files still fail admission.
+- Return 403/429 from one catalog while another responds: the playlist must advance, keep valid matches and show named partial-search warnings after relaunch. Return failures from every provider: bounded retry and specific failure details must remain.
+- Save a matching file without a license link, suspend/relaunch during its queued transfer, and verify playback, source attribution and no blank License action. Restore its native backup in the browser and back to iOS.
+- Rebuild and install this candidate before retrying the reported playlist. Record one failing song, provider and exact error if the recording remains unavailable; a catalog no-match is distinct from a network or file-import failure.
+
+## Automatic web fallback acceptance
+
+- Save a Brave key once from a playlist's wider-web search screen, leave automatic fallback enabled and retry unmatched songs. Verify an exact artist/title file or matching structured page enters the background queue without selecting a web hit. Disable the toggle and remove the key separately; the per-song trace must explain each skipped state.
+- Reject wrong artist, live/remix title, short preview, contradictory child audio metadata, private-network URLs, manifests, HTML and oversized responses. Check graph-based artist/audio references and extensionless audio endpoints.
+- Observe network traffic during a Wi-Fi-to-cellular handoff: automatic search, HTML reads, HEAD probes and final transfers must not move to cellular without that playlist's explicit consent.
+- Pause/kill/resume around request reservation and after a web result is saved. A saved match must be reusable after backpressure clears; no wish may spend twice in one run. After 20 calls, further wishes must show the budget reason. 401/403 key refusal or 429 must stop further automatic API calls for the run.
+- Retry a song with a prior source refusal: the same failed URL must not be selected again. A local storage failure must not initiate a paid web search. Check the persisted Source search details and user-initiated Share search diagnostics; neither may contain credentials.
+- Complete native suites, Xcode builds and an actual iPhone playlist download before treating this candidate as verified.
+
+## Signing failure reports
+
+For a direct Xcode CodeSign failure, select your Apple Team in this exact project and run **ios/Diagnose Signing.command**. Verify the report names the failed stage and includes the underlying error. Diagnostic mode must not install or launch. For the installer, confirm build, signature, install and launch failures each replace the latest report and preserve a separate run directory; a failed attempt must never leave an old PASS as its current result. Capture the real Mac signing error before considering a certificate/profile or metadata repair.
