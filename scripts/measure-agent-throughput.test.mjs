@@ -161,3 +161,45 @@ test('rejects GitHub commit-file truncation instead of publishing partial totals
   await assert.rejects(collectThroughput({ api, now, lanes: [{ name: 'release-tooling', pr: 34 }] }),
     /truncated file statistics/);
 });
+
+test('rejects an ancestry page whose final SHA differs from the advertised PR head', async () => {
+  const api = mock({
+    '/pulls/31': { head: { sha: two }, commits: 1 },
+    '/pulls/31/commits?per_page=100&page=1': [
+      { sha: one, commit: { committer: { date: recent } } }
+    ]
+  });
+  await assert.rejects(collectThroughput({ api, now, lanes: [{ name: 'downloads', pr: 31 }] }),
+    /commit ancestry does not match its head/);
+});
+
+test('rejects duplicate commit identities even when pagination has expected lengths', async () => {
+  const api = mock({
+    '/pulls/31': { head: { sha: one }, commits: 2 },
+    '/pulls/31/commits?per_page=100&page=1': [
+      { sha: one, commit: { committer: { date: recent } } },
+      { sha: one, commit: { committer: { date: recent } } }
+    ]
+  });
+  await assert.rejects(collectThroughput({ api, now, lanes: [{ name: 'downloads', pr: 31 }] }),
+    /repeats a commit/);
+});
+
+test('rejects PR movement after source file statistics have been read', async () => {
+  let reads = 0;
+  const api = async path => {
+    if (path === '/pulls/34') {
+      reads += 1;
+      return { head: { sha: reads <= 2 ? one : two }, commits: 1 };
+    }
+    if (path === '/pulls/34/commits?per_page=100&page=1') {
+      return [{ sha: one, commit: { committer: { date: recent } } }];
+    }
+    if (path === `/commits/${one}`) {
+      return { files: [{ filename: 'scripts/measure-agent-throughput.mjs', additions: 10, deletions: 2 }] };
+    }
+    throw Error('Unexpected API request ' + path);
+  };
+  await assert.rejects(collectThroughput({ api, now, lanes: [{ name: 'release-tooling', pr: 34 }] }),
+    /changed while reading commit details/);
+});
