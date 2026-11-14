@@ -38,6 +38,22 @@ struct DownloadManagerView: View {
 
     var body: some View {
         List {
+            if let warning = transfers.queueRecoveryWarning {
+                Section("DOWNLOAD RECOVERY NEEDS ATTENTION") {
+                    Label {
+                        Text(warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    .foregroundStyle(ShelfTheme.coral)
+                    .accessibilityAddTraits(.isStaticText)
+                    Text("New automatic downloads are paused until the saved queue is repaired. Existing offline songs remain available.")
+                        .font(.caption)
+                        .foregroundStyle(ShelfTheme.subdued)
+                }
+                .listRowBackground(ShelfTheme.surface)
+            }
             Section {
                 HStack(spacing: 17) {
                     PremiumIcon(symbol: "arrow.down.to.line.compact",
