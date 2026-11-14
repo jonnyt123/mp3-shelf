@@ -106,6 +106,25 @@ enum AudioSourceFinder {
     /// Shared bounded transport for JSON and RSS catalogs. Keeping ccMixter on
     /// the same retry path prevents a single 429/503 from silently dropping an
     /// otherwise eligible playlist recording while other providers recover.
+    /// Catalog payloads must remain on the original HTTPS origin. URLSession
+    /// follows redirects, so inspect the final response before decoding or
+    /// allowing a redirected page to influence automatic source selection.
+    /// Query changes on the same origin are allowed for provider pagination.
+    static func trustedCatalogResponse(requested: URL, final: URL?) -> Bool {
+        guard let final,
+              requested.scheme?.lowercased() == "https",
+              final.scheme?.lowercased() == "https",
+              let requestedHost = requested.host?.lowercased(),
+              !requestedHost.isEmpty,
+              requestedHost == final.host?.lowercased(),
+              requested.user == nil, requested.password == nil,
+              final.user == nil, final.password == nil,
+              requested.port == nil || requested.port == 443,
+              final.port == nil || final.port == 443,
+              final.fragment == nil else { return false }
+        return true
+    }
+
     private static func requestCatalogData(
         _ url: URL, allowsCellular: Bool = false, maximumBytes: Int
     ) async throws -> Data {
@@ -114,7 +133,10 @@ enum AudioSourceFinder {
             try Task.checkCancellation()
             let (data, response) = try await URLSession.shared.data(for: request)
             try Task.checkCancellation()
-            guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
+            guard let http = response as? HTTPURLResponse,
+                  trustedCatalogResponse(requested: url, final: http.url) else {
+                throw SourceError.invalidResponse
+            }
             if http.statusCode == 200 {
                 guard !data.isEmpty, data.count <= maximumBytes else {
                     throw SourceError.invalidResponse
