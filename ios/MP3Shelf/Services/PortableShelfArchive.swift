@@ -824,7 +824,7 @@ enum PortableShelfArchive {
         // occupies the destination, including a dangling symbolic link.
         let staging = destination.deletingLastPathComponent()
             .appendingPathComponent(".mp3shelf-sidecar-\(UUID().uuidString).tmp")
-        var published = false
+        var publishedIdentity: ArchiveSourceIdentity?
         defer { try? manager.removeItem(at: staging) }
         do {
             try bytes.write(to: staging, options: .atomic)
@@ -837,14 +837,26 @@ enum PortableShelfArchive {
                 throw error
             }
             try Task.checkCancellation()
+            // Keep an open descriptor for the exact inode we publish. A
+            // concurrent restore may replace the pathname during validation;
+            // rollback must never delete that other writer's recording.
+            let stagedHandle = try FileHandle(forReadingFrom: staging)
+            defer { try? stagedHandle.close() }
+            let identity = try archiveIdentity(of: stagedHandle, at: staging)
             try manager.linkItem(at: staging, to: destination)
-            published = true
+            publishedIdentity = identity
             try validate()
             try Task.checkCancellation()
         } catch {
-            // Only remove the destination after *our* no-replace link won.
-            // Never remove a pre-existing file or symlink on a failed link.
-            if published { try? manager.removeItem(at: destination) }
+            if let identity = publishedIdentity {
+                // Unlink only if the final pathname still names our inode.
+                // The staged hard link remains until the defer above, so
+                // failed validation cannot destroy any previously owned file.
+                var named = stat()
+                if lstat(destination.path, &named) == 0 && identity.matches(named) {
+                    try? manager.removeItem(at: destination)
+                }
+            }
             throw error
         }
     }
