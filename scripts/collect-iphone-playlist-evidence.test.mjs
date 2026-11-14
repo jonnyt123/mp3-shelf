@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { physicalIPhone, inspectPlaylistCatalog, installedApp, captureDevicePlaylist } from './collect-iphone-playlist-evidence.mjs';
+import { physicalIPhone, inspectPlaylistCatalog, installedApp, captureDevicePlaylist, verifyPhysicalDeviceTelemetry } from './collect-iphone-playlist-evidence.mjs';
 const id = '12345678-1234-1234-1234-123456789012';
 const playlistID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const playlist = 'https://open.spotify.com/playlist/' + 'A'.repeat(22);
@@ -108,4 +108,52 @@ test('mocked devicectl captures a complete local playlist without falsely passin
     else process.env.MP3SHELF_FAKE_ROOT = oldFixture;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+
+function observed() {
+  const proof = {
+    schema: 'mp3shelf-physical-offline-v1',
+    status: 'OFFLINE_PLAYBACK_PASS', deviceKind: 'physical-iPhone-debug',
+    networkProof: 'NWPATH_UNSATISFIED', playlistID,
+    processToken: '11111111-1111-1111-1111-111111111111',
+    armedProcessToken: '22222222-2222-2222-2222-222222222222',
+    playbackVerified: 1,
+    observations: [{ trackID: id, localFile: true, positionSeconds: 0.6 }]
+  };
+  const events = [
+    { event: 'qa-armed', processToken: proof.armedProcessToken },
+    { event: 'background-session-wake', processToken: proof.armedProcessToken },
+    { event: 'download-audio-staged', processToken: proof.armedProcessToken, ticketID: id },
+    { event: 'offline-verification-started', processToken: proof.processToken },
+    { event: 'offline-verification-finished', processToken: proof.processToken }
+  ];
+  return { proof, events, selected: [{ id }] };
+}
+test('real app playback clock and two-process event receipts can support qualified device evidence', () => {
+  const { proof, events, selected } = observed();
+  assert.deepEqual(verifyPhysicalDeviceTelemetry(proof, events, playlistID, selected), {
+    offlinePlaybackAfterRestart: 'APP_INSTRUMENTED_PHYSICAL_PASS',
+    backgroundTransfer: 'APP_RECORDED_STAGING_AND_BACKGROUND_WAKE'
+  });
+});
+test('device proof rejects recycled process, network-connected and phantom playback samples', () => {
+  for (const change of [
+    x => { x.proof.processToken = x.proof.armedProcessToken; },
+    x => { x.proof.networkProof = 'NWPATH_SATISFIED'; },
+    x => { x.proof.observations[0].positionSeconds = 0; },
+    x => { x.proof.observations[0].trackID = 'wrong'; },
+    x => { x.events.pop(); },
+    x => { x.proof.playbackVerified = 0; }
+  ]) {
+    const item = observed(); change(item);
+    assert.throws(() => verifyPhysicalDeviceTelemetry(item.proof, item.events, playlistID, item.selected));
+  }
+});
+test('a playback receipt alone cannot fabricate background URLSession completion', () => {
+  const { proof, events, selected } = observed();
+  const noCallback = events.filter(e => e.event !== 'download-audio-staged');
+  const result = verifyPhysicalDeviceTelemetry(proof, noCallback, playlistID, selected);
+  assert.equal(result.offlinePlaybackAfterRestart, 'APP_INSTRUMENTED_PHYSICAL_PASS');
+  assert.equal(result.backgroundTransfer, 'NOT_VERIFIED');
 });
