@@ -1043,8 +1043,9 @@ struct PlaybackQueueSheet: View {
                                     .frame(minHeight: 44)
                                     // Prevent repeated taps from starting overlapping attempts.
                                     // The retry becomes available again after a resolved outcome.
-                                    .disabled(retryTrackID == playback.currentTrackID &&
-                                              retryFeedback == "Retrying recording…")
+                                    .disabled(playback.playbackError == nil ||
+                                              (retryTrackID == playback.currentTrackID &&
+                                               retryFeedback == "Retrying recording…"))
                                     .accessibilityHint(retryFeedback == "Retrying recording…"
                                         ? "Waiting for the current retry to finish"
                                         : "Try playing this recording again")
