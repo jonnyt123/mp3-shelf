@@ -22,5 +22,18 @@ enum CommonsPaginationSafetyTests {
         expect(accepts(0, 10001, 1) == nil, "unbounded offset rejected")
         expect(accepts(20, 40, 2) == nil, "third page cannot silently authorize auto import")
         expect(accepts(20, nil, 2) == nil, "complete second page ends search")
+        func token(_ value: String?) -> String? {
+            try? AudioSourceFinder.commonsContinuationToken(value)
+        }
+        expect(token("gsroffset||") == "gsroffset||",
+               "MediaWiki generic continuation token is preserved verbatim")
+        expect(token(nil) == nil, "missing generic continuation token rejects partial search")
+        expect(token("") == nil, "empty continuation token rejected")
+        expect(token(String(repeating: "x", count: 257)) == nil,
+               "oversized continuation token rejected")
+        expect(token("gsroffset||\\n") == nil, "control characters rejected")
+        // MediaWiki requires both query parameters on the second request:
+        // continue=<token>&gsroffset=<offset>. Neither is optional.
+
     }
 }
