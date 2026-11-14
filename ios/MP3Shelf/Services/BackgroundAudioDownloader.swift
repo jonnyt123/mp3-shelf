@@ -1229,7 +1229,18 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 await self.recoverStagedDownloads()
             }
         } catch {
+            // Two completion delegates can both observe an absent destination
+            // before either moves its temporary file. If the other callback
+            // won that race, its staged bytes are authoritative; a losing
+            // move must not mark the shared ticket failed or replace the file.
+            // Never suppress a genuine staging error when no file exists.
+            let alreadyStaged = FileManager.default.fileExists(atPath: destination.path)
             Task { @MainActor in
+                guard self.tickets[id]?.status == .queued else { return }
+                if alreadyStaged || self.fm.fileExists(atPath: destination.path) {
+                    await self.recoverStagedDownloads()
+                    return
+                }
                 self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
                                allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
             }
