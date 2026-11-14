@@ -745,19 +745,28 @@ struct PlaylistsView: View {
     // A duplicate must be discoverable even when the source was found through
     // a search that excludes the generated copy's name. Keep audio untouched.
     private func copyPlaylist(_ playlist: MusicPlaylist) {
+        let existingIDs = Set(library.playlists.map(\.id))
         library.duplicatePlaylist(playlist.id)
-        revealPlaylists()
-        playlistActionFeedback = "Created a local copy of \(playlist.name)."
+        if let copy = library.playlists.first(where: { !existingIDs.contains($0.id) }) {
+            revealPlaylists()
+            playlistActionFeedback = "Created \(copy.name)."
+        } else {
+            playlistActionFeedback = library.libraryStorageError
+                ?? "Could not copy this playlist. Your existing playlists were preserved."
+        }
     }
 
     private func deleteConfirmedPlaylist() {
         guard let playlist = pendingDelete else { return }
         library.deletePlaylist(playlist.id)
         pendingDelete = nil
-        // If the last matching collection disappeared, return focus to a
-        // stable heading rather than an inaccessible deleted card.
-        playlistResultsFocused = true
-        playlistActionFeedback = "Deleted \(playlist.name). Your songs remain in your library."
+        if library.playlists.contains(where: { $0.id == playlist.id }) {
+            playlistActionFeedback = library.libraryStorageError
+                ?? "Could not delete this playlist. Your existing playlists were preserved."
+        } else {
+            playlistResultsFocused = true
+            playlistActionFeedback = "Deleted \(playlist.name). Your songs remain in your library."
+        }
     }
 
     private var hasPlaylistQuery: Bool {
@@ -855,10 +864,16 @@ struct PlaylistsView: View {
             Button("Create") {
                 let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return }
+                let existingIDs = Set(library.playlists.map(\.id))
                 library.createPlaylist(name)
-                // Reveal the new collection even if the previous search excluded it.
-                revealPlaylists()
-                newName = ""
+                if library.playlists.contains(where: { !existingIDs.contains($0.id) }) {
+                    revealPlaylists()
+                    newName = ""
+                    playlistActionFeedback = "Created \(name)."
+                } else {
+                    playlistActionFeedback = library.libraryStorageError
+                        ?? "Could not create this playlist. Your existing playlists were preserved."
+                }
             }
             .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) { newName = "" }
@@ -873,9 +888,13 @@ struct PlaylistsView: View {
                 guard !name.isEmpty else { return }
                 if let playlist = pendingRename {
                     library.renamePlaylist(playlist.id, to: name)
-                    // The renamed collection may no longer match the old query.
-                    // Reveal it rather than leaving the user on an empty result.
-                    revealPlaylists()
+                    if library.playlists.first(where: { $0.id == playlist.id })?.name == name {
+                        revealPlaylists()
+                        playlistActionFeedback = "Renamed playlist to \(name)."
+                    } else {
+                        playlistActionFeedback = library.libraryStorageError
+                            ?? "Could not rename this playlist. Its previous name was preserved."
+                    }
                 }
                 pendingRename = nil
             }
