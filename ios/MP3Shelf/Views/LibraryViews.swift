@@ -27,7 +27,6 @@ struct LibraryView: View {
     // Avoid rescanning large collections on every intermediate keystroke.
     @State private var settledSearchText = ""
     @AccessibilityFocusState private var searchResultsFocused: Bool
-    @State private var searchSubmission = 0
     @State private var sortMode: LibraryTrackSort = .title
     @State private var message: String?
     @State private var renaming: MusicTrack?
@@ -88,14 +87,12 @@ struct LibraryView: View {
     // results after a newer query or a clear action.
     private func submitSearch() {
         settledSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        searchSubmission &+= 1
         searchResultsFocused = true
     }
 
     private func clearSearch() {
         searchText = ""
         settledSearchText = ""
-        searchSubmission &+= 1
         searchResultsFocused = false
     }
 
