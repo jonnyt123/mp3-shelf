@@ -1136,6 +1136,18 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didFinishDownloadingTo location: URL) {
         guard let id = UUID(uuidString: downloadTask.taskDescription ?? "") else { return }
+        // Duplicate daemon completion callbacks can arrive after the first
+        // callback has already moved a validated response into staging. The
+        // staged file belongs to the import/recovery path; a later callback
+        // (even one with an error response) must not mark its ticket failed or
+        // replace the file while a decoder is reading it.
+        if FileManager.default.fileExists(atPath: Self.stagingURL(id).path) {
+            Task { @MainActor in
+                guard self.tickets[id]?.status == .queued else { return }
+                await self.recoverStagedDownloads()
+            }
+            return
+        }
         guard let http = downloadTask.response as? HTTPURLResponse,
               http.url.map({ Self.allowedDownloadURL($0) }) == true else {
             Task { @MainActor in self.setFailed(id, reason: "Invalid download response or destination") }
