@@ -715,6 +715,18 @@ struct PlaybackQueueSheet: View {
     @AccessibilityFocusState private var playbackFailureFocused: Bool
     @State private var retryFeedback: String?
     @State private var lastRetryError: String?
+    @State private var retryAttempt = 0
+    @State private var retryTrackID: UUID?
+
+    // A retry may complete asynchronously. Do not report success merely
+    // because the controller has not published a new error synchronously.
+    private func retryPlayback() {
+        retryTrackID = playback.currentTrackID
+        lastRetryError = playback.playbackError
+        retryFeedback = "Retrying recording…"
+        retryAttempt += 1
+        playback.retryFailedPlayback()
+    }
 
     // Context menus can outlive their row after automatic playback advancement.
     // Explain rejected actions instead of silently ignoring the tap, and give
@@ -1021,20 +1033,7 @@ struct PlaybackQueueSheet: View {
                                     : AnyLayout(HStackLayout(spacing: 12))
                                 actionLayout {
                                     Button("Retry playback") {
-                                        // A failed retry may publish the identical error
-                                        // string, which does not trigger onChange. Give
-                                        // explicit feedback without clearing the warning.
-                                        let previousError = playback.playbackError
-                                        retryFeedback = "Retrying recording…"
-                                        playback.retryFailedPlayback()
-                                        if let error = playback.playbackError, !error.isEmpty {
-                                            lastRetryError = error
-                                            retryFeedback = error == previousError
-                                                ? "Still unable to play. Choose another queued song or try again."
-                                                : "Retry failed. \(error)"
-                                        } else {
-                                            retryFeedback = nil
-                                        }
+                                        retryPlayback()
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .tint(ShelfTheme.accent)
@@ -1356,6 +1355,35 @@ struct PlaybackQueueSheet: View {
                 focusedQueueTrackID = queueSearchIsUpdating ? nil : surviving.first(where: { matchesSearch($0, query: query) })?.id
                 emptyQueueFocused = surviving.isEmpty
                 noMatchesFocused = !queueSearchIsUpdating && !surviving.isEmpty && focusedQueueTrackID == nil
+            }
+            .task(id: retryAttempt) {
+                guard retryAttempt > 0 else { return }
+                // Give an asynchronous playback attempt time to publish its
+                // outcome. A repeat of the same error string does not fire
+                // onChange, so a bounded check is necessary.
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+                guard !Task.isCancelled, retryTrackID == playback.currentTrackID else {
+                    retryFeedback = nil
+                    return
+                }
+                if playback.isPlaying && playback.playbackError == nil {
+                    retryFeedback = nil
+                } else if let error = playback.playbackError, !error.isEmpty {
+                    retryFeedback = error == lastRetryError
+                        ? "Still unable to play. Choose another queued song or try again."
+                        : "Retry failed. \\(error)"
+                } else {
+                    // Loading can continue after this check; avoid falsely
+                    // declaring failure or success without controller evidence.
+                    retryFeedback = "Playback has not resumed yet. You can try again or choose another song."
+                }
+            }
+            .onChange(of: playback.isPlaying) { _, playing in
+                if playing && playback.playbackError == nil {
+                    retryFeedback = nil
+                    lastRetryError = nil
+                }
             }
             .onChange(of: playback.playbackError) { _, error in
                 // A failed direct-play action must be discoverable to VoiceOver
