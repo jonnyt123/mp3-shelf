@@ -2226,6 +2226,47 @@ struct PublisherPageInspectorView: View {
     @State private var candidates: [URL] = []
     @State private var error: String?
     @State private var chosenAudio: WebAudioSelection?
+    @State private var inspectionTask: Task<Void, Never>?
+    @State private var inspectionID = UUID()
+
+    // Editing the URL or leaving this sheet invalidates the in-flight response.
+    // A cancelled network request may still complete; only its matching ID
+    // may publish results into the current source-page review.
+    private func invalidateInspection() {
+        inspectionTask?.cancel()
+        inspectionTask = nil
+        inspectionID = UUID()
+        isInspecting = false
+        candidates = []
+        error = nil
+    }
+
+    private func inspectPage() {
+        let input = pageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let pageURL = WebAudioSearch.sanitizedResultURL(input) else {
+            invalidateInspection()
+            error = "Enter a public HTTPS webpage URL."
+            return
+        }
+        invalidateInspection()
+        let requestID = inspectionID
+        isInspecting = true
+        inspectionTask = Task {
+            do {
+                let found = try await AudioLandingPageInspector.inspect(pageURL)
+                guard !Task.isCancelled, inspectionID == requestID else { return }
+                candidates = found
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, inspectionID == requestID else { return }
+                self.error = error.localizedDescription
+            }
+            guard inspectionID == requestID else { return }
+            isInspecting = false
+            inspectionTask = nil
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -2240,22 +2281,7 @@ struct PublisherPageInspectorView: View {
                     Text("Paste a music publisher's public HTTPS page URL. MP3 Shelf will look for explicitly linked MP3, M4A, AAC, WAV or AIFF files in the page's HTML and audio metadata.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
-                        guard let pageURL = WebAudioSearch.sanitizedResultURL(
-                            pageText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                            error = "Enter a public HTTPS webpage URL."
-                            return
-                        }
-                        isInspecting = true
-                        candidates = []
-                        error = nil
-                        Task {
-                            defer { isInspecting = false }
-                            do {
-                                candidates = try await AudioLandingPageInspector.inspect(pageURL)
-                            } catch {
-                                self.error = error.localizedDescription
-                            }
-                        }
+                        inspectPage()
                     } label: {
                         Label(isInspecting ? "Reading source page…" : "Find downloadable audio on this page",
                               systemImage: "doc.text.magnifyingglass")
@@ -2304,6 +2330,8 @@ struct PublisherPageInspectorView: View {
             .sheet(item: $chosenAudio) { selected in
                 AuthorizedPlaylistAudioView(wish: selected.wish, initialURL: selected.url)
             }
+            .onChange(of: pageText) { _, _ in invalidateInspection() }
+            .onDisappear { invalidateInspection() }
         }
     }
 }
