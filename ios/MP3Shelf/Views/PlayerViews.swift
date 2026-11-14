@@ -1372,7 +1372,7 @@ struct PlaybackQueueSheet: View {
                 } else if let error = playback.playbackError, !error.isEmpty {
                     retryFeedback = error == lastRetryError
                         ? "Still unable to play. Choose another queued song or try again."
-                        : "Retry failed. \\(error)"
+                        : "Retry failed. \(error)"
                 } else {
                     // Loading can continue after this check; avoid falsely
                     // declaring failure or success without controller evidence.
