@@ -257,6 +257,18 @@ enum AudioSourceFinder {
 
     static let maxArchiveSearchPages = 2
 
+    /// An index with contradictory totals must not authorize an automatic
+    /// recording choice. Archive pages are 1-based with 20 entries per page.
+    static func archivePageIsConsistent(returned: Int, total: Int?, page: Int) -> Bool {
+        guard page >= 1, page <= maxArchiveSearchPages,
+              returned >= 0, returned <= 20 else { return false }
+        guard let total else { return true }
+        guard total >= 0, total >= (page - 1) * 20 + returned else { return false }
+        // A non-final short page contradicts an advertised later result.
+        if returned < 20 && total > (page - 1) * 20 + returned { return false }
+        return true
+    }
+
     static func archiveIndexRelevance(title: String, creator: String,
                                       for wish: PlaylistWish) -> Int {
         let titleScore = MusicMatching.key(title) == MusicMatching.key(wish.title) ? 2 : 0
@@ -305,6 +317,14 @@ enum AudioSourceFinder {
             let search: SearchResponse = try await requestJSON(
                 archiveSearchURL(for: wish, page: page),
                 allowsCellular: allowsCellular)
+            // Reject inconsistent catalog totals before inspecting candidates. A
+            // truncated or contradictory index response cannot establish that
+            // a matching recording is unique across the remaining pages.
+            guard archivePageIsConsistent(
+                returned: search.response.docs.count,
+                total: search.response.numFound,
+                page: page
+            ) else { throw SourceError.invalidResponse }
             let ranked = search.response.docs.prefix(20).enumerated().sorted { left, right in
                 let l = archiveIndexRelevance(
                     title: left.element.title?.value ?? "",
