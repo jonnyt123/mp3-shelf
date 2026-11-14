@@ -124,6 +124,31 @@ async function hashFile(path) {
   return createHash('sha256').update(file).digest('hex');
 }
 
+/** Recover only an orphaned verifier lock older than two full run windows. */
+function acquireLock(path) {
+  function claim() {
+    mkdirSync(path, { mode: 0o700 });
+    writeFileSync(join(path, 'owner.json'),
+      JSON.stringify({ pid: process.pid, started: Date.now() }) + '\n',
+      { flag: 'wx', mode: 0o600 });
+  }
+  try { claim(); return; }
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+  const age = Date.now() - statSync(path).mtimeMs;
+  if (age < 2 * MAX_NATIVE_SECONDS * 1000) throw Error('Another Mac native verification owns the active lock.');
+  let pid = null;
+  try { pid = JSON.parse(readFileSync(join(path, 'owner.json'), 'utf8')).pid; }
+  catch { /* Unfinished lock creation; use the longer age threshold. */ }
+  if (Number.isSafeInteger(pid) && pid > 0) {
+    try { process.kill(pid, 0); throw Error('Existing native verifier is still running; refusing overlapping build.'); }
+    catch (error) { if (error.code !== 'ESRCH') throw error; }
+  }
+  rmSync(path, { recursive: true, force: true });
+  claim();
+}
+
 export async function executeNativePreflight({ repo, promote = false, evidenceRoot } = {}) {
   if (process.platform !== 'darwin') throw Error('MAC_XCODE_REQUIRED: this host is not macOS.');
   const project = resolve(repo ?? join(dirname(fileURLToPath(import.meta.url)), '..'));
@@ -149,14 +174,16 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
 
   // A single lock avoids overlapping local Xcode sessions on the same Mac.
   const lock = join(tmpdir(), 'mp3shelf-exact-native-preflight.lock');
-  mkdirSync(lock, { mode: 0o700 });
-  const workspace = mkdtempSync(join(tmpdir(), 'mp3shelf-xcode-preflight-'));
-  const worktree = join(workspace, 'candidate');
-  const logs = resolve(evidenceRoot ?? join(homedir(), 'Library', 'Logs', 'MP3Shelf', 'NativePreflight'));
-  const output = join(logs, proposed, new Date().toISOString().replace(/[:.]/g, '-'));
-  mkdirSync(output, { recursive: true, mode: 0o700 });
-  let installedWorktree = false;
+  let acquiredLock = false, workspace = null, installedWorktree = false;
+  let worktree, output;
   try {
+    acquireLock(lock);
+    acquiredLock = true;
+    workspace = mkdtempSync(join(tmpdir(), 'mp3shelf-xcode-preflight-'));
+    worktree = join(workspace, 'candidate');
+    const logs = resolve(evidenceRoot ?? join(homedir(), 'Library', 'Logs', 'MP3Shelf', 'NativePreflight'));
+    output = join(logs, proposed, new Date().toISOString().replace(/[:.]/g, '-'));
+    mkdirSync(output, { recursive: true, mode: 0o700 });
     git(project, 'worktree', 'add', '--detach', worktree, proposed);
     installedWorktree = true;
     assertWorktreeClean(worktree, proposed);
@@ -205,8 +232,8 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
       try { git(project, 'worktree', 'remove', '--force', worktree); }
       catch { /* leave evidence intact; report cleanup separately */ }
     }
-    rmSync(workspace, { recursive: true, force: true });
-    rmSync(lock, { recursive: true, force: true });
+    if (workspace) rmSync(workspace, { recursive: true, force: true });
+    if (acquiredLock) rmSync(lock, { recursive: true, force: true });
   }
 }
 
