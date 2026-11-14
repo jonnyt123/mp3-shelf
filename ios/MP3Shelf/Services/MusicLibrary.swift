@@ -1011,7 +1011,12 @@ final class MusicLibrary: ObservableObject {
                 // A cancellable restore must not interpret that false result
                 // as permission to import a duplicate recording.
                 if cancellationAware { try Task.checkCancellation() }
-                let existingURL = fileURL(for: track)
+                // Legacy catalogs are untrusted input. A relative filename can
+                // otherwise escape Music and make an unrelated external file
+                // appear to be an already-imported recording. Reuse only a
+                // verified, app-owned regular audio file (never a symlink).
+                guard let existingURL = LocalLibraryFileSafety.regularFile(
+                    named: track.fileName, in: musicDirectory) else { continue }
                 guard ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) == fileSize else {
                     continue
                 }
