@@ -86,15 +86,43 @@ enum AudioSourceFinder {
         return request
     }
 
+    /// Retry only transient catalog throttling/outages, with a strict per-request
+    /// delay budget. Never retry authentication failures or malformed payloads.
+    /// A large Retry-After must be surfaced to the durable discovery scheduler,
+    /// not slept through inside a single background processing window.
+    static func catalogRetryDelay(status: Int, retryAfter: String?, attempt: Int) -> TimeInterval? {
+        guard attempt == 0, status == 429 || status == 503 else { return nil }
+        let fallback: TimeInterval = 1.5
+        guard let raw = retryAfter?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return fallback }
+        if let seconds = Double(raw) {
+            return seconds.isFinite && seconds >= 0 && seconds <= 3 ? seconds : nil
+        }
+        // HTTP-date Retry-After values are not bounded by this helper's clock.
+        // Defer those responses instead of accidentally ignoring a long cooldown.
+        return nil
+    }
+
     private static func requestJSON<T: Decodable>(
         _ url: URL, allowsCellular: Bool = false
     ) async throws -> T {
         let request = catalogRequest(for: url, allowsCellular: allowsCellular)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
-        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
-        guard data.count < 2_000_000 else { throw SourceError.invalidResponse }
-        return try JSONDecoder().decode(T.self, from: data)
+        for attempt in 0...1 {
+            try Task.checkCancellation()
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
+            if http.statusCode == 200 {
+                guard data.count < 2_000_000 else { throw SourceError.invalidResponse }
+                return try JSONDecoder().decode(T.self, from: data)
+            }
+            guard let delay = catalogRetryDelay(
+                status: http.statusCode,
+                retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
+                attempt: attempt
+            ) else { throw SourceError.http(http.statusCode) }
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+        throw SourceError.invalidResponse
     }
 
     enum SourceError: LocalizedError {
