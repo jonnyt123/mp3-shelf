@@ -125,13 +125,38 @@ enum AudioSourceFinder {
         return true
     }
 
+    // Reject an unsafe redirect *before* URLSession contacts its target.
+    // Checking HTTPURLResponse.url alone is too late: a malicious catalog
+    // redirect may already have reached a different origin or private host.
+    private final class CatalogRedirectGuard: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            guard let original = task.originalRequest?.url,
+                  let target = request.url,
+                  AudioSourceFinder.trustedCatalogResponse(requested: original, final: target)
+            else {
+                completionHandler(nil)
+                return
+            }
+            completionHandler(request)
+        }
+    }
+
+    private static let catalogSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: config, delegate: CatalogRedirectGuard(), delegateQueue: nil)
+    }()
+
     private static func requestCatalogData(
         _ url: URL, allowsCellular: Bool = false, maximumBytes: Int
     ) async throws -> Data {
         let request = catalogRequest(for: url, allowsCellular: allowsCellular)
         for attempt in 0...1 {
             try Task.checkCancellation()
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await catalogSession.data(for: request)
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse,
                   trustedCatalogResponse(requested: url, final: http.url) else {
