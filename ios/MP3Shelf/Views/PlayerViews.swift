@@ -1041,6 +1041,13 @@ struct PlaybackQueueSheet: View {
                                     .buttonStyle(.borderedProminent)
                                     .tint(ShelfTheme.accent)
                                     .frame(minHeight: 44)
+                                    // Prevent repeated taps from starting overlapping attempts.
+                                    // The retry becomes available again after a resolved outcome.
+                                    .disabled(retryTrackID == playback.currentTrackID &&
+                                              retryFeedback == "Retrying recording…")
+                                    .accessibilityHint(retryFeedback == "Retrying recording…"
+                                        ? "Waiting for the current retry to finish"
+                                        : "Try playing this recording again")
                                     Button("Dismiss warning") {
                                         // Cancel the pending status check before dismissal.
                                         retryAttempt += 1
@@ -1370,19 +1377,20 @@ struct PlaybackQueueSheet: View {
                 do { try await Task.sleep(for: .seconds(5)) }
                 catch { return }
                 guard !Task.isCancelled, retryTrackID == playback.currentTrackID,
-                      retryTrackID != nil, playback.playbackError != nil else {
-                    retryFeedback = nil
-                    return
-                }
+                      retryTrackID != nil else { return }
+                // The playback controller may clear its error before audio
+                // actually begins. A cleared error alone is not success.
                 if playback.isPlaying && playback.playbackError == nil {
                     retryFeedback = nil
+                    lastRetryError = nil
+                    retryTrackID = nil
                 } else if let error = playback.playbackError, !error.isEmpty {
                     retryFeedback = error == lastRetryError
                         ? "Still unable to play. Choose another queued song or try again."
                         : "Retry failed. \(error)"
                 } else {
-                    // Loading can continue after this check; avoid falsely
-                    // declaring failure or success without controller evidence.
+                    // No error and no playback: still pending, not a failure.
+                    // Let the user retry or choose another recording.
                     retryFeedback = "Playback has not resumed yet. You can try again or choose another song."
                 }
             }
@@ -1406,14 +1414,23 @@ struct PlaybackQueueSheet: View {
                 // A failed direct-play action must be discoverable to VoiceOver
                 // even when focus was previously on the selected queue row.
                 if let error, !error.isEmpty {
-                    if error != lastRetryError { retryFeedback = nil }
+                    // During a retry, retain the pending message until the
+                    // bounded check classifies an identical or changed error.
+                    if retryTrackID == nil && error != lastRetryError {
+                        retryFeedback = nil
+                    }
                     focusedQueueTrackID = nil
                     playbackFailureFocused = true
                 } else {
-                    if retryTrackID != nil { retryAttempt += 1 }
-                    retryTrackID = nil
-                    retryFeedback = nil
-                    lastRetryError = nil
+                    // A cleared error is not necessarily audible playback.
+                    // Keep retry state until playback starts, the user
+                    // dismisses it, or the bounded status check completes.
+                    if retryTrackID == nil || playback.isPlaying {
+                        if retryTrackID != nil { retryAttempt += 1 }
+                        retryTrackID = nil
+                        retryFeedback = nil
+                        lastRetryError = nil
+                    }
                     playbackFailureFocused = false
                 }
             }
