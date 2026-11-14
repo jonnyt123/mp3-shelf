@@ -1081,6 +1081,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return true
     }
 
+    /// A duplicate callback may reuse already staged *audio*; a directory,
+    /// empty placeholder or symlink is not a completed media transfer.
+    nonisolated static func stagedFileSurvivesMoveFailure(at url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [
+            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey
+        ]), values.isRegularFile == true, values.isSymbolicLink != true,
+            let bytes = values.fileSize, bytes > 0,
+            Int64(bytes) <= BackgroundTransferProgressPolicy.maxBytes else {
+            return false
+        }
+        return true
+    }
+
     nonisolated static func safeRedirectRequest(_ redirected: URLRequest,
                                                  original: URLRequest?) -> URLRequest? {
         guard let destination = redirected.url, allowedDownloadURL(destination) else { return nil }
@@ -1114,7 +1127,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         guard let id = UUID(uuidString: downloadTask.taskDescription ?? "") else { return }
         // A second daemon completion must not fail or replace audio already
         // staged by an earlier callback, even if its HTTP response is invalid.
-        if FileManager.default.fileExists(atPath: Self.stagingURL(id).path) {
+        if Self.stagedFileSurvivesMoveFailure(at: Self.stagingURL(id)) {
             Task { @MainActor in
                 guard self.tickets[id]?.status == .queued else { return }
                 await self.recoverStagedDownloads()
