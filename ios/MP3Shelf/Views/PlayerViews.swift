@@ -717,6 +717,7 @@ struct PlaybackQueueSheet: View {
     @State private var lastRetryError: String?
     @State private var retryAttempt = 0
     @State private var retryTrackID: UUID?
+    @State private var retryInFlight = false
 
     // A retry may complete asynchronously. Do not report success merely
     // because the controller has not published a new error synchronously.
@@ -726,7 +727,8 @@ struct PlaybackQueueSheet: View {
         // disabled SwiftUI controls are not the only caller of this method.
         guard let trackID = playback.currentTrackID,
               let error = playback.playbackError, !error.isEmpty,
-              !(retryTrackID == trackID && retryFeedback == "Retrying recording…") else { return }
+              !retryInFlight else { return }
+        retryInFlight = true
         retryTrackID = trackID
         lastRetryError = error
         retryFeedback = "Retrying recording…"
@@ -1047,9 +1049,8 @@ struct PlaybackQueueSheet: View {
                                     // Prevent repeated taps from starting overlapping attempts.
                                     // The retry becomes available again after a resolved outcome.
                                     .disabled(playback.playbackError == nil ||
-                                              (retryTrackID == playback.currentTrackID &&
-                                               retryFeedback == "Retrying recording…"))
-                                    .accessibilityHint(retryFeedback == "Retrying recording…"
+                                              retryInFlight)
+                                    .accessibilityHint(retryInFlight
                                         ? "Waiting for the current retry to finish"
                                         : playback.playbackError == nil
                                             ? "Retry is unavailable until playback reports an error. Choose another queued song."
@@ -1058,6 +1059,7 @@ struct PlaybackQueueSheet: View {
                                         // Cancel the pending status check before dismissal.
                                         retryAttempt += 1
                                         retryTrackID = nil
+                                        retryInFlight = false
                                         retryFeedback = nil
                                         lastRetryError = nil
                                         playback.playbackError = nil
@@ -1386,6 +1388,7 @@ struct PlaybackQueueSheet: View {
                       retryTrackID != nil else { return }
                 // The playback controller may clear its error before audio
                 // actually begins. A cleared error alone is not success.
+                retryInFlight = false
                 if playback.isPlaying && playback.playbackError == nil {
                     retryAttempt += 1
                     retryFeedback = nil
@@ -1417,6 +1420,7 @@ struct PlaybackQueueSheet: View {
                 if retryTrackID != nil && retryTrackID != newID {
                     retryAttempt += 1
                     retryTrackID = nil
+                    retryInFlight = false
                     retryFeedback = nil
                     lastRetryError = nil
                 }
@@ -1439,6 +1443,7 @@ struct PlaybackQueueSheet: View {
                     if retryTrackID == nil || playback.isPlaying {
                         if retryTrackID != nil { retryAttempt += 1 }
                         retryTrackID = nil
+                        retryInFlight = false
                         retryFeedback = nil
                         lastRetryError = nil
                     }
