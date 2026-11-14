@@ -6,9 +6,11 @@ import { resolve } from 'node:path';
 
 const SHA = /^[0-9a-f]{40}$/;
 const CHECKS = [
-  'playback-order', 'playback-interruptions', 'playlist-parser',
+  'playback-order', 'playback-interruptions', 'downloaded-audio-signature',
+  'downloaded-audio-format', 'playlist-parser', 'lyrics-parser',
   'authorized-audio-sources', 'discovery-resume', 'portable-backup',
-  'recording-matcher', 'simulator-debug', 'simulator-release', 'iphoneos-release'
+  'recording-matching-core', 'recording-matcher',
+  'simulator-debug', 'simulator-release', 'iphoneos-arm64-release'
 ];
 
 export function nativeStageErrors({ proposed, current, receipt, qaRecord }) {
@@ -30,9 +32,13 @@ export function nativeStageErrors({ proposed, current, receipt, qaRecord }) {
       field('Uncommitted changes') !== 'no' || field('Mode') !== 'all' ||
       field('Overall execution') !== 'PASS' || field('Exit status') !== '0')
     errors.push('Native QA record is not a successful full-suite execution at the proposed clean SHA.');
-  const observed = new Set((field('Completed checks') ?? '').split(/\s+/));
-  for (const required of CHECKS) if (!observed.has(required))
-    errors.push('Missing native compile/build step: ' + required);
+  const observed = (field('Completed checks') ?? '').split(/\s+/).filter(Boolean);
+  if (observed.length !== CHECKS.length ||
+      observed.some((name, index) => name !== CHECKS[index])) {
+    errors.push('Native compile/build checklist differs from the full runner sequence.');
+    for (const required of CHECKS) if (!observed.includes(required))
+      errors.push('Missing native compile/build step: ' + required);
+  }
   return errors;
 }
 
