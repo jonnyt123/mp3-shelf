@@ -175,7 +175,7 @@ for (name, foreignBytes) in [
     do { try restore(archive, failAfterCopy: false) }
     catch RestoreFault.malformed { rejected = true }
     try check(rejected, "pre-existing collision accepted: \(name)")
-    try check(Data(contentsOf: manifestURL) == recoveredManifestBytes,
+    try check(Data(contentsOf: manifestURL) == baselineBeforeCollision,
               "collision modified manifest: \(name)")
     try check(Data(contentsOf: copiedPath) == foreignBytes,
               "collision erased forensic bytes: \(name)")
