@@ -62,6 +62,39 @@ try check(JSONDecoder().decode([RetryTicket].self, from: Data(contentsOf: journa
 try check(Data(contentsOf: stage) == audio && Data(contentsOf: unrelated) == otherAudio,
           "successful retry prematurely removed audio")
 print("PASS: 32 failed retry publications, atomic retirement/replacement, staged audio isolation")
+// A corrupted durable queue must never be treated as an empty queue during a retry.
+// Preserve the exact corrupt bytes for diagnosis and allow a later valid recovery.
+let validJournal = try Data(contentsOf: journal)
+let corruptCases: [Data] = [
+    Data("{".utf8),
+    Data("null".utf8),
+    Data("[{\"id\":\"not-a-uuid\",\"status\":\"queued\"}]".utf8),
+    try JSONEncoder().encode([old, old])
+]
+for (index, corrupt) in corruptCases.enumerated() {
+    try corrupt.write(to: journal, options: .atomic)
+    let scheduledBefore = scheduled
+    let liveBefore = live
+    do {
+        try commitAndSchedule(next, fail: false)
+        try check(false, "corrupt journal accepted on case \\(index)")
+    } catch RetryFailure.corrupt {
+        // Duplicate identifiers are structurally valid JSON but unsafe for recovery.
+    } catch is DecodingError {
+        // Malformed JSON and invalid ticket identifiers must fail closed.
+    }
+    try check(Data(contentsOf: journal) == corrupt, "corrupt evidence overwritten on case \\(index)")
+    try check(scheduled == scheduledBefore, "corrupt journal scheduled a transfer on case \\(index)")
+    try check(live == liveBefore, "corrupt journal changed live tickets on case \\(index)")
+    try check(Data(contentsOf: stage) == audio && Data(contentsOf: unrelated) == otherAudio,
+              "corrupt journal destroyed audio on case \\(index)")
+}
+try validJournal.write(to: journal, options: .atomic)
+try check(JSONDecoder().decode([RetryTicket].self, from: Data(contentsOf: journal)) == next,
+          "valid recovery journal not restorable after corruption")
+try check(scheduled == [replacement.id], "restored journal caused duplicate transfer scheduling")
+print("PASS: four corrupt journal cases blocked, exact evidence and audio preserved, valid recovery restored")
+
 
 if !CommandLine.arguments.contains("--fixture-only") {
     let sourcePath = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
