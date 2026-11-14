@@ -578,24 +578,48 @@ struct MusicTrackRow: View {
     @EnvironmentObject private var playback: PlaybackController
     @State private var confirmDelete = false
     @State private var missingRecordingAlert = false
+    @State private var audioAvailability: Bool?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
 
-    // A library entry is not proof that the audio bytes still exist. Check the
-    // selected local file before starting playback, without network recovery.
-    private var hasLocalAudio: Bool {
+    // File metadata is checked off the main actor. A nil snapshot means the
+    // row has not been scanned, not that the recording is missing.
+    private static func isUsableRecording(at url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let size = values.fileSize else { return false }
+        return size > 0
+    }
+
+    private var availabilityRefreshKey: String {
+        "\(library.fileURL(for: track).path)|\(scenePhase)"
+    }
+
+    private func refreshAudioAvailability() async {
+        audioAvailability = nil
         let url = library.fileURL(for: track)
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let kind = attributes[.type] as? FileAttributeType,
-              kind == .typeRegular,
-              let size = attributes[.size] as? NSNumber else { return false }
-        return size.int64Value > 0
+        let scan = Task.detached(priority: .utility) {
+            Self.isUsableRecording(at: url)
+        }
+        let available = await withTaskCancellationHandler {
+            await scan.value
+        } onCancel: {
+            scan.cancel()
+        }
+        guard !Task.isCancelled else { return }
+        audioAvailability = available
     }
 
     private func playOrExplainMissingAudio() {
-        guard hasLocalAudio else {
+        // Always revalidate at the moment of selection: the file may have
+        // disappeared since the asynchronous row scan completed.
+        let url = library.fileURL(for: track)
+        guard Self.isUsableRecording(at: url) else {
+            audioAvailability = false
             missingRecordingAlert = true
             return
         }
+        audioAvailability = true
         playback.play(track, queue: context)
     }
 
@@ -615,7 +639,7 @@ struct MusicTrackRow: View {
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                     }
                     Spacer(minLength: 0)
-                    if !hasLocalAudio {
+                    if audioAvailability == false {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(ShelfTheme.coral)
                             .accessibilityHidden(true)
@@ -633,13 +657,13 @@ struct MusicTrackRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(!hasLocalAudio
+            .accessibilityLabel(audioAvailability == false
                                 ? "Audio missing: \(track.title) by \(track.artist)"
                                 : track.id == playback.currentTrackID
                                 ? "Now playing: \(track.title) by \(track.artist)"
                                 : "Play \(track.title) by \(track.artist)")
             .accessibilityValue(track.duration.shelfClock)
-            .accessibilityHint(!hasLocalAudio
+            .accessibilityHint(audioAvailability == false
                                ? "The local recording is unavailable. Double tap for recovery information."
                                : track.id == playback.currentTrackID
                                ? "Restart the current song"
@@ -670,7 +694,7 @@ struct MusicTrackRow: View {
                     }
                 }
                 Button("Edit Details", systemImage: "pencil") { renaming = track }
-                if hasLocalAudio {
+                if audioAvailability == true {
                     ShareLink(item: library.fileURL(for: track)) {
                         Label("Share Audio File", systemImage: "square.and.arrow.up")
                     }
@@ -706,6 +730,9 @@ struct MusicTrackRow: View {
         .overlay(RoundedRectangle(cornerRadius: 18)
             .strokeBorder(track.id == playback.currentTrackID
                           ? ShelfTheme.accent.opacity(0.34) : ShelfTheme.border, lineWidth: 1))
+        .task(id: availabilityRefreshKey) {
+            await refreshAudioAvailability()
+        }
         .alert("Recording unavailable", isPresented: $missingRecordingAlert) {
             Button("OK", role: .cancel) {}
         } message: {
