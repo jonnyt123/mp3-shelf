@@ -50,6 +50,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private var tickets: [UUID: BackgroundAudioTicket] = [:]
     // Corrupt queue journals are recovery evidence, not an empty queue.
     private var manifestLoadError: String?
+    // Exposed to Downloads so a damaged queue cannot masquerade as an empty history.
+    var queueRecoveryWarning: String? {
+        manifestLoadError.map { "Download recovery is paused because the saved queue cannot be read (\($0)). Existing audio and recovery files have been preserved. Do not reinstall the app; keep this data for recovery." }
+    }
     private var processing: Set<UUID> = []
     private var sourceResolutionTasks: [UUID: Task<Void, Never>] = [:]
     private var conversions: [UUID: Progress] = [:]
@@ -591,7 +595,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         revision += 1
         // A queued download has imported, failed, or been cancelled. If a
         // transfer slot opened, let the persisted discovery cursor advance.
-        library?.resumePendingDiscovery()
+        // Discovery must not enqueue new tickets into an unreadable journal.
+        // Otherwise the UI appears to search forever while every write fails.
+        if manifestLoadError == nil { library?.resumePendingDiscovery() }
     }
 
     /// Reconcile queue tickets against the authoritative on-device library.
