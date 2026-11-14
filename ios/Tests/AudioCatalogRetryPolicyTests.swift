@@ -9,7 +9,9 @@ enum AudioCatalogRetryPolicyTests {
             guard value else { fatalError("FAIL: \(label)") }
             print("PASS: \(label)")
         }
-        let policy = AudioSourceFinder.catalogRetryDelay
+        func policy(status: Int, retryAfter: String?, attempt: Int) -> TimeInterval? {
+            AudioSourceFinder.catalogRetryDelay(status: status, retryAfter: retryAfter, attempt: attempt)
+        }
         expect(policy(status: 429, retryAfter: nil, attempt: 0) == 1.5,
                "429 without Retry-After gets one short retry")
         expect(policy(status: 503, retryAfter: "2", attempt: 0) == 2,
