@@ -162,13 +162,13 @@ for (name, foreignBytes) in [
     var rejected = false
     do { try restore(archive, failAfterCopy: false) }
     catch RestoreFault.malformed { rejected = true }
-    try check(rejected, "pre-existing collision accepted: \\(name)")
+    try check(rejected, "pre-existing collision accepted: \(name)")
     try check(Data(contentsOf: manifestURL) == recoveredManifestBytes,
-              "collision modified manifest: \\(name)")
+              "collision modified manifest: \(name)")
     try check(Data(contentsOf: copiedPath) == foreignBytes,
-              "collision erased forensic bytes: \\(name)")
+              "collision erased forensic bytes: \(name)")
     try check(Data(contentsOf: original) == oldBytes,
-              "collision damaged existing recording: \\(name)")
+              "collision damaged existing recording: \(name)")
 }
 try newBytes.write(to: copiedPath, options: .atomic)
 try restore(archive, failAfterCopy: false)
