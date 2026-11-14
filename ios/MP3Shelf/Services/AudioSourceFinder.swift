@@ -584,6 +584,13 @@ extension AudioSourceFinder {
         }
         return proposed
     }
+    /// A missing query object is a malformed response, not an empty search.
+    /// In particular, never authorize a first-page match after a broken
+    /// second-page response. Empty pages dictionaries are valid zero hits.
+    static func commonsPageIsReadable(hasQuery: Bool, hasContinuation: Bool,
+                                      hasOffset: Bool, hasToken: Bool) -> Bool {
+        hasQuery && (!hasContinuation || (hasOffset && hasToken))
+    }
     private struct CommonsQuery: Decodable { let pages: [String: CommonsPage] }
     private struct CommonsPage: Decodable {
         let title: String
@@ -654,7 +661,15 @@ extension AudioSourceFinder {
             }
             let result: CommonsResponse = try await requestJSON(
                 pageComponents.url!, allowsCellular: allowsCellular)
-            for page in result.query?.pages.values ?? Dictionary<String, CommonsPage>().values {
+            guard commonsPageIsReadable(
+                hasQuery: result.query != nil,
+                hasContinuation: result.continuation != nil,
+                hasOffset: result.continuation?.gsroffset != nil,
+                hasToken: result.continuation?.token != nil
+            ), let pages = result.query?.pages else {
+                throw SourceError.invalidResponse
+            }
+            for page in pages.values {
                 for info in page.imageinfo ?? [] {
                     if let candidate = commonsCandidate(
                         fileTitle: page.title,
