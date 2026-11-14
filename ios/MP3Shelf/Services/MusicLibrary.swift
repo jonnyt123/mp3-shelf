@@ -540,10 +540,17 @@ final class MusicLibrary: ObservableObject {
                         let identical = PortableShelfArchive.audioFilesIdentical(
                             file, owned)
                         try Task.checkCancellation()
-                        if identical {
+                        guard identical else { continue }
+                        // A concurrent import may have published the same bytes
+                        // after the size index was built. Prefer the archive's
+                        // established identity rather than assigning its playlist
+                        // entries to an unrelated same-byte recording.
+                        if candidate.portableBackupID == archived.id ||
+                            candidate.id.uuidString == archived.id {
                             duplicateIndex = index
                             break
                         }
+                        if duplicateIndex == nil { duplicateIndex = index }
                     }
                     if let index = duplicateIndex {
                         if !tracks.contains(where: {
