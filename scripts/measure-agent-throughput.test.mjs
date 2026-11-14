@@ -82,7 +82,7 @@ test('bounded pagination and missing file statistics fail closed', async () => {
 test('counts recent commits even when an older commit appears later in ancestry', async () => {
   const third = 'c'.repeat(40);
   const api = mock({
-    '/pulls/31': { head: third, commits: 3 },
+    '/pulls/31': { head: { sha: third }, commits: 3 },
     '/pulls/31/commits?per_page=100&page=1': [
       { sha: one, commit: { committer: { date: recent } } },
       { sha: two, commit: { committer: { date: old } } },
@@ -103,12 +103,12 @@ test('counts recent commits even when an older commit appears later in ancestry'
 
 test('refuses incomplete history and missing commit pages rather than reporting partial metrics', async () => {
   await assert.rejects(collectThroughput({
-    api: mock({ '/pulls/31': { head: one, commits: 501 } }),
+    api: mock({ '/pulls/31': { head: { sha: one }, commits: 501 } }),
     now, lanes: [{ name: 'downloads', pr: 31 }]
   }), /exceeded bounded history/);
   await assert.rejects(collectThroughput({
     api: mock({
-      '/pulls/31': { head: one, commits: 1 },
+      '/pulls/31': { head: { sha: one }, commits: 1 },
       '/pulls/31/commits?per_page=100&page=1': []
     }),
     now, lanes: [{ name: 'downloads', pr: 31 }]
@@ -117,9 +117,47 @@ test('refuses incomplete history and missing commit pages rather than reporting 
 
 test('empty PR history reports zero without requesting nonexistent pages', async () => {
   const r = await collectThroughput({
-    api: mock({ '/pulls/34': { head: one, commits: 0 } }),
+    api: mock({ '/pulls/34': { head: { sha: one }, commits: 0 } }),
     now, lanes: [{ name: 'release-tooling', pr: 34 }]
   });
   assert.equal(r.results[0].commitsObserved, 0);
   assert.equal(r.results[0].codeCommits, 0);
+});
+
+
+test('rejects truncated last page rather than undercounting recent commits', async () => {
+  const api = mock({
+    '/pulls/31': { head: { sha: two }, commits: 2 },
+    '/pulls/31/commits?per_page=100&page=1': [
+      { sha: one, commit: { committer: { date: recent } } }
+    ]
+  });
+  await assert.rejects(collectThroughput({ api, now, lanes: [{ name: 'downloads', pr: 31 }] }),
+    /commit list incomplete/);
+});
+
+test('rejects branch movement between paginated reads and final snapshot', async () => {
+  let calls = 0;
+  const api = async path => {
+    if (path === '/pulls/31') return { head: { sha: ++calls === 1 ? one : two }, commits: 1 };
+    if (path === '/pulls/31/commits?per_page=100&page=1')
+      return [{ sha: one, commit: { committer: { date: old } } }];
+    throw Error('Unexpected API request ' + path);
+  };
+  await assert.rejects(collectThroughput({ api, now, lanes: [{ name: 'downloads', pr: 31 }] }),
+    /changed during measurement/);
+});
+
+test('rejects GitHub commit-file truncation instead of publishing partial totals', async () => {
+  const api = mock({
+    '/pulls/34': { head: { sha: one }, commits: 1 },
+    '/pulls/34/commits?per_page=100&page=1': [
+      { sha: one, commit: { committer: { date: recent } } }
+    ],
+    [`/commits/${one}`]: { files: Array.from({ length: 300 }, (_, i) => ({
+      filename: `scripts/fixture-${i}.mjs`, additions: 1, deletions: 0
+    })) }
+  });
+  await assert.rejects(collectThroughput({ api, now, lanes: [{ name: 'release-tooling', pr: 34 }] }),
+    /truncated file statistics/);
 });
