@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Independent downloadable recordings remain individual, recognizable files
 /// in Files → On My iPhone → MP3 Shelf → Music, without filename collisions.
@@ -91,10 +96,33 @@ struct LocalAudioRecoveryRecord: Codable {
         return record
     }
 
+    /// A failed catalog write may also fail to roll back its published audio.
+    /// In that case the journal owns the freshly extracted artwork until the
+    /// recording can be recovered. Do not erase the only artwork copy while
+    /// retaining a track whose catalog still references it.
+    static func retainsArtwork(_ name: String, for trackID: UUID,
+                               in musicDirectory: URL) -> Bool {
+        guard LocalLibraryFileSafety.validName(name) else { return false }
+        let journal = journalURL(for: trackID, in: musicDirectory)
+        guard let record = try? read(journal, in: musicDirectory) else { return false }
+        return record.track.id == trackID && record.track.artworkFileName == name
+    }
+
     /// Reattach only a validated, ordinary on-disk recording. Never overwrite
     /// a destination (including a symlink) or delete unidentified bytes.
     /// The verifier is AVFoundation in production and deterministic fixture
     /// bytes in the portable regression suite.
+    /// Never discard an interrupted import's journal solely because the
+    /// library entry exists. A protected/missing recording may still need
+    /// its staged bytes; preserve existing catalog metadata on recovery.
+    func restoreExistingTrack(_ existing: MusicTrack, in directory: URL,
+                              verify: (URL) -> Bool) throws -> Bool {
+        guard existing.id == track.id && existing.fileName == track.fileName else {
+            return false
+        }
+        return try restorePublication(in: directory, verify: verify) != nil
+    }
+
     func restorePublication(in directory: URL,
                             verify: (URL) -> Bool) throws -> URL? {
         guard LocalLibraryFileSafety.validName(track.fileName),
@@ -127,12 +155,23 @@ enum LocalAudioImportTransaction {
     static func perform(from source: URL, to destination: URL,
                         validate: (URL) throws -> Void,
                         recoveryTrack: (() throws -> MusicTrack)? = nil,
+                        rollbackPublished: (URL) throws -> Void = {
+                            try FileManager.default.removeItem(at: $0)
+                        },
                         persist: () throws -> Void) throws {
         let manager = FileManager.default
         let directory = destination.deletingLastPathComponent()
         let staging = directory.appendingPathComponent(
             ".mp3shelf-import-\(UUID().uuidString).\(destination.pathExtension)")
-        defer { try? manager.removeItem(at: staging) }
+        // If rollback cannot unlink a published recording, retain BOTH the
+        // staged bytes and the recovery journal. A later process can inspect
+        // and repair the interrupted transaction without touching user audio.
+        var preserveStagingForRecovery = false
+        defer {
+            if !preserveStagingForRecovery {
+                try? manager.removeItem(at: staging)
+            }
+        }
         try manager.copyItem(at: source, to: staging)
         try validate(staging)
         var journal: URL?
@@ -182,9 +221,10 @@ enum LocalAudioImportTransaction {
             // leaves the journal for recovery; ordinary failures roll back.
             // A failed unlink must NOT erase the only recovery intent.
             do {
-                try manager.removeItem(at: destination)
+                try rollbackPublished(destination)
             } catch {
                 mayRemoveJournal = false
+                preserveStagingForRecovery = journal != nil
             }
             throw error
         }
@@ -494,13 +534,37 @@ struct PersistedLibrary: Codable {
 
     /// Only a truly absent catalog means first launch. An existing but unreadable
     /// or malformed library must throw instead of masquerading as an empty one.
+    /// Distinguish a genuinely absent catalog from a dangling symbolic link,
+    /// directory or other non-regular entry. Treating those as first launch
+    /// can overwrite a recoverable library on the next save.
+    private static func catalogEntry(at url: URL) throws -> Bool {
+        var info = stat()
+        if lstat(url.path, &info) != 0 {
+            if errno == ENOENT { return false }
+            throw NSError(domain: writeFailureDomain, code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "The music library cannot be inspected safely."
+            ])
+        }
+        guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              info.st_nlink == 1 else {
+            throw NSError(domain: writeFailureDomain, code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "The music library path is not a private regular file."
+            ])
+        }
+        return true
+    }
+
     static func readIfPresent(from url: URL) throws -> Self? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard try catalogEntry(at: url) else { return nil }
         return try JSONDecoder().decode(Self.self, from: Data(contentsOf: url))
     }
 
     func write(to url: URL) throws {
         do {
+            // An existing symlink, hard-linked catalog or directory is never
+            // an acceptable replacement target. Preserve its bytes and fail
+            // rather than silently publishing a fresh library over it.
+            _ = try Self.catalogEntry(at: url)
             try JSONEncoder().encode(self).write(to: url, options: .atomic)
         } catch {
             throw NSError(domain: Self.writeFailureDomain, code: 1, userInfo: [

@@ -43,6 +43,172 @@ struct PortableShelfArchiveTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
+        // A dangling catalog symlink must not be mistaken for first launch.
+        // Neither loading nor saving may replace user-owned linked bytes.
+        let catalog = folder.appendingPathComponent("catalog.json")
+        let protectedTarget = folder.appendingPathComponent("protected-library.json")
+        let protectedBytes = Data("preserve-user-library".utf8)
+        try protectedBytes.write(to: protectedTarget)
+        let sampleLibrary = PersistedLibrary(tracks: [], playlists: [])
+        try FileManager.default.createSymbolicLink(
+            at: catalog, withDestinationURL: protectedTarget)
+        do {
+            _ = try PersistedLibrary.readIfPresent(from: catalog)
+            fatalError("Accepted a linked music catalog")
+        } catch { }
+        do {
+            try sampleLibrary.write(to: catalog)
+            fatalError("Overwrote a linked music catalog")
+        } catch { }
+        try assertThrowing(try Data(contentsOf: protectedTarget) == protectedBytes)
+        assert((try catalog.resourceValues(forKeys: [.isSymbolicLinkKey]))
+            .isSymbolicLink == true)
+        try FileManager.default.removeItem(at: catalog)
+        let danglingTarget = folder.appendingPathComponent("missing-catalog.json")
+        try FileManager.default.createSymbolicLink(
+            at: catalog, withDestinationURL: danglingTarget)
+        do {
+            _ = try PersistedLibrary.readIfPresent(from: catalog)
+            fatalError("Accepted a dangling catalog link as first launch")
+        } catch { }
+        do {
+            try sampleLibrary.write(to: catalog)
+            fatalError("Replaced a dangling catalog link")
+        } catch { }
+        assert(!FileManager.default.fileExists(atPath: danglingTarget.path))
+        try FileManager.default.removeItem(at: catalog)
+        // A hard-linked catalog must not be replaced behind another owner.
+        try protectedBytes.write(to: catalog)
+        let alias = folder.appendingPathComponent("catalog-hardlink.json")
+        try FileManager.default.linkItem(at: catalog, to: alias)
+        do {
+            try sampleLibrary.write(to: catalog)
+            fatalError("Replaced a shared hard-linked catalog")
+        } catch { }
+        try assertThrowing(try Data(contentsOf: alias) == protectedBytes)
+        try FileManager.default.removeItem(at: alias)
+        try FileManager.default.removeItem(at: catalog)
+        // Ordinary fresh catalog writes and reads remain compatible.
+        try sampleLibrary.write(to: catalog)
+        let roundTrip = try PersistedLibrary.readIfPresent(from: catalog)
+        assert(roundTrip?.tracks.isEmpty == true && roundTrip?.playlists.isEmpty == true)
+        try FileManager.default.removeItem(at: catalog)
+        let missingCatalog = try PersistedLibrary.readIfPresent(from: catalog)
+        assert(missingCatalog == nil)
+        print("PASS: catalog symlink, dangling link and hardlink protection")
+
+        // Archive sidecar publication is a pre-catalog operation: a failed
+        // post-write check must remove only the new file, while existing
+        // user-owned bytes and filenames are never replaced.
+        let sidecarURL = folder.appendingPathComponent("archive-sidecar.img")
+        let sidecarBytes = Data(repeating: 0xAC, count: 4096)
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL) {
+                throw ImportTransactionFailure.catalogWrite
+            }
+            fatalError("Accepted a rejected sidecar publication")
+        } catch ImportTransactionFailure.catalogWrite { }
+        assert(!FileManager.default.fileExists(atPath: sidecarURL.path))
+        let previousSidecar = Data([0x12, 0x34, 0x56])
+        try previousSidecar.write(to: sidecarURL)
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
+            fatalError("Overwrote a pre-existing user sidecar")
+        } catch { }
+        try assertThrowing(try Data(contentsOf: sidecarURL) == previousSidecar)
+        try FileManager.default.removeItem(at: sidecarURL)
+        try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
+        try assertThrowing(try Data(contentsOf: sidecarURL) == sidecarBytes)
+        // A dangling symlink is an existing directory entry even though
+        // fileExists(atPath:) returns false. Publication must never replace it
+        // or follow it to write outside the artwork/lyrics directory.
+        try FileManager.default.removeItem(at: sidecarURL)
+        let external = folder.appendingPathComponent("external-original.bin")
+        let externalBytes = Data([0xD1, 0xE2, 0xF3])
+        try externalBytes.write(to: external)
+        try FileManager.default.createSymbolicLink(
+            at: sidecarURL, withDestinationURL: external)
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
+            fatalError("Replaced a symbolic-link destination")
+        } catch { }
+        let linkValues = try sidecarURL.resourceValues(forKeys: [.isSymbolicLinkKey])
+        assert(linkValues.isSymbolicLink == true)
+        try assertThrowing(try Data(contentsOf: external) == externalBytes)
+        try FileManager.default.removeItem(at: sidecarURL)
+        let missingTarget = folder.appendingPathComponent("never-created.bin")
+        try FileManager.default.createSymbolicLink(
+            at: sidecarURL, withDestinationURL: missingTarget)
+        assert(!FileManager.default.fileExists(atPath: sidecarURL.path))
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL)
+            fatalError("Replaced a dangling symbolic-link destination")
+        } catch { }
+        assert((try sidecarURL.resourceValues(forKeys: [.isSymbolicLinkKey]))
+            .isSymbolicLink == true)
+        assert(!FileManager.default.fileExists(atPath: missingTarget.path))
+        try FileManager.default.removeItem(at: sidecarURL)
+        // A post-publication validation failure must not leave the private
+        // staging link or the newly published destination behind.
+        let beforeEntries = Set(try FileManager.default.contentsOfDirectory(
+            atPath: folder.path))
+        do {
+            try PortableShelfArchive.writeRestoredSidecar(sidecarBytes, to: sidecarURL) {
+                throw ImportTransactionFailure.catalogWrite
+            }
+            fatalError("Accepted post-publication failure")
+        } catch ImportTransactionFailure.catalogWrite { }
+        let afterEntries = Set(try FileManager.default.contentsOfDirectory(
+            atPath: folder.path))
+        assert(beforeEntries == afterEntries)
+        print("PASS: archive sidecar no-replace symlink and staging cleanup")
+
+        // Manual lyrics imports use the same publication primitive. Exercise
+        // a real persisted catalog failure boundary: the old lyrics and
+        // library identity must remain intact, and the new destination must
+        // be removable without touching a pre-existing file.
+        let lyricsCatalog = folder.appendingPathComponent("manual-lyrics-library.json")
+        let lyricsTrack = MusicTrack(
+            id: UUID(), title: "Manual lyrics", artist: "Local",
+            album: "Fixtures", fileName: "manual-lyrics.mp3",
+            originalFileName: "manual-lyrics.mp3", duration: 12)
+        let originalLyrics = folder.appendingPathComponent("manual-lyrics-original.lrc")
+        let oldLyricsBytes = Data("[00:01.00]original".utf8)
+        try oldLyricsBytes.write(to: originalLyrics)
+        var savedLyricsTrack = lyricsTrack
+        savedLyricsTrack.lyricsFileName = originalLyrics.lastPathComponent
+        try PersistedLibrary(tracks: [savedLyricsTrack], playlists: []).write(to: lyricsCatalog)
+        let originalCatalogBytes = try Data(contentsOf: lyricsCatalog)
+        let newLyricsURL = folder.appendingPathComponent("manual-lyrics-new.lrc")
+        let newLyricsBytes = Data("[00:02.00]replacement".utf8)
+        try PortableShelfArchive.writeRestoredSidecar(newLyricsBytes, to: newLyricsURL)
+        do {
+            // Inject the same failure a full disk or protected catalog causes
+            // after publication but before the updated catalog is committed.
+            throw ImportTransactionFailure.catalogWrite
+        } catch ImportTransactionFailure.catalogWrite {
+            try FileManager.default.removeItem(at: newLyricsURL)
+        }
+        assert(!FileManager.default.fileExists(atPath: newLyricsURL.path))
+        try assertThrowing(try Data(contentsOf: originalLyrics) == oldLyricsBytes)
+        try assertThrowing(try Data(contentsOf: lyricsCatalog) == originalCatalogBytes)
+        let unchangedLyrics = try PersistedLibrary.readIfPresent(from: lyricsCatalog)
+        assert(unchangedLyrics?.tracks.first?.id == savedLyricsTrack.id)
+        assert(unchangedLyrics?.tracks.first?.lyricsFileName == originalLyrics.lastPathComponent)
+        // A subsequent retry can publish a fresh sidecar and update the
+        // catalog without changing the recording's UUID or original audio.
+        try PortableShelfArchive.writeRestoredSidecar(newLyricsBytes, to: newLyricsURL)
+        savedLyricsTrack.lyricsFileName = newLyricsURL.lastPathComponent
+        try PersistedLibrary(tracks: [savedLyricsTrack], playlists: []).write(to: lyricsCatalog)
+        let retriedLyrics = try PersistedLibrary.readIfPresent(from: lyricsCatalog)
+        assert(retriedLyrics?.tracks.first?.id == lyricsTrack.id)
+        assert(retriedLyrics?.tracks.first?.lyricsFileName == newLyricsURL.lastPathComponent)
+        try assertThrowing(try Data(contentsOf: newLyricsURL) == newLyricsBytes)
+        try assertThrowing(try Data(contentsOf: originalLyrics) == oldLyricsBytes)
+        print("PASS: manual lyrics publication rollback and retry preserve catalog IDs and old bytes")
+
+        print("PASS: failed archive sidecar publication cleans new files without replacing existing bytes")
+
         // A valid recovery journal is durable metadata, not permission to
         // delete or overwrite unknown audio. A process may die after writing
         // the intent, before publishing or committing the catalog.
@@ -125,6 +291,32 @@ struct PortableShelfArchiveTests {
         let missingStage = try reopenedRecovery.restorePublication(in: folder) { _ in true }
         assert(missingStage == nil)
         assert(FileManager.default.fileExists(atPath: recoveryJournal.path))
+        // A previously saved library entry does not justify discarding its
+        // recovery intent while its audio is missing or file-protected.
+        let unrelatedSaved = MusicTrack(
+            id: UUID(), title: recoveryTrack.title, artist: recoveryTrack.artist,
+            album: recoveryTrack.album, fileName: recoveryTrack.fileName,
+            originalFileName: recoveryTrack.originalFileName,
+            duration: recoveryTrack.duration)
+        let unrelatedResult = try reopenedRecovery.restoreExistingTrack(
+            unrelatedSaved, in: folder, verify: { _ in true })
+        assert(!unrelatedResult)
+        let missingSaved = try reopenedRecovery.restoreExistingTrack(
+            recoveryTrack, in: folder, verify: { _ in true })
+        assert(!missingSaved)
+        assert(FileManager.default.fileExists(atPath: recoveryJournal.path))
+        // A later foreground retry can safely reattach staged bytes without
+        // replacing the catalog's UUID, title or other user-owned metadata.
+        try recoveryBytes.write(to: recoveryStageURL)
+        let restoredSaved = try reopenedRecovery.restoreExistingTrack(
+            recoveryTrack, in: folder, verify: {
+                (try? Data(contentsOf: $0)) == recoveryBytes
+            })
+        assert(restoredSaved)
+        try assertThrowing(try Data(contentsOf: recoveryPublished) == recoveryBytes)
+        try FileManager.default.removeItem(at: recoveryPublished)
+        try FileManager.default.removeItem(at: recoveryStageURL)
+        print("PASS: cataloged recovery retains intent until audio is readable")
         print("PASS: recovery publication is byte-preserving, idempotent and no-replace")
         try FileManager.default.removeItem(at: recoveryJournal)
         print("PASS: recovery journals round-trip, reject aliasing and preserve original files")
@@ -187,7 +379,8 @@ struct PortableShelfArchiveTests {
         let journaledTrack = MusicTrack(
             id: UUID(), title: "Journaled recording", artist: "Local",
             album: "Recovery", fileName: "journaled-recording.mp3",
-            originalFileName: "journaled-recording.mp3", duration: 13)
+            originalFileName: "journaled-recording.mp3",
+            artworkFileName: "journaled-cover.img", duration: 13)
         let journaledDestination = folder.appendingPathComponent(journaledTrack.fileName)
         let journaledIntent = LocalAudioRecoveryRecord.journalURL(
             for: journaledTrack.id, in: folder)
@@ -211,6 +404,62 @@ struct PortableShelfArchiveTests {
         } catch ImportTransactionFailure.catalogWrite { }
         assert(!FileManager.default.fileExists(atPath: journaledDestination.path))
         assert(!FileManager.default.fileExists(atPath: journaledIntent.path))
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            "journaled-cover.img", for: journaledTrack.id, in: folder))
+        // Simulate an OS/filesystem refusal to unlink a published file after
+        // catalog persistence fails. Preserve the original source, published
+        // audio, staging bytes and durable journal for a subsequent retry.
+        var injectedRollbackCalls = 0
+        do {
+            try LocalAudioImportTransaction.perform(
+                from: importSource, to: journaledDestination,
+                validate: { _ in },
+                recoveryTrack: { journaledTrack },
+                rollbackPublished: { published in
+                    assert(published == journaledDestination)
+                    injectedRollbackCalls += 1
+                    throw ImportTransactionFailure.catalogWrite
+                },
+                persist: { throw ImportTransactionFailure.catalogWrite })
+            fatalError("Injected rollback failure unexpectedly committed")
+        } catch ImportTransactionFailure.catalogWrite { }
+        assert(injectedRollbackCalls == 1)
+        let retainedIntent = try LocalAudioRecoveryRecord.read(
+            journaledIntent, in: folder)
+        let retainedStage = folder.appendingPathComponent(retainedIntent.stagingName)
+        let cover = folder.appendingPathComponent("journaled-cover.img")
+        let coverBytes = Data(repeating: 0xA3, count: 2048)
+        try coverBytes.write(to: cover)
+        assert(LocalAudioRecoveryRecord.retainsArtwork(
+            cover.lastPathComponent, for: journaledTrack.id, in: folder))
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            cover.lastPathComponent, for: UUID(), in: folder))
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            "../journaled-cover.img", for: journaledTrack.id, in: folder))
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            "other-cover.img", for: journaledTrack.id, in: folder))
+        assert(FileManager.default.fileExists(atPath: retainedStage.path))
+        try assertThrowing(try Data(contentsOf: retainedStage) == incomingBytes)
+        try assertThrowing(try Data(contentsOf: journaledDestination) == incomingBytes)
+        try assertThrowing(try Data(contentsOf: importSource) == incomingBytes)
+        let retryPublished = try retainedIntent.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == incomingBytes
+        }
+        assert(retryPublished == journaledDestination)
+        try FileManager.default.removeItem(at: journaledDestination)
+        let repairedAfterLoss = try retainedIntent.restorePublication(in: folder) {
+            (try? Data(contentsOf: $0)) == incomingBytes
+        }
+        assert(repairedAfterLoss == journaledDestination)
+        try assertThrowing(try Data(contentsOf: journaledDestination) == incomingBytes)
+        try FileManager.default.removeItem(at: journaledDestination)
+        try FileManager.default.removeItem(at: retainedStage)
+        try FileManager.default.removeItem(at: journaledIntent)
+        assert(!LocalAudioRecoveryRecord.retainsArtwork(
+            cover.lastPathComponent, for: journaledTrack.id, in: folder))
+        try assertThrowing(try Data(contentsOf: cover) == coverBytes)
+        try FileManager.default.removeItem(at: cover)
+        print("PASS: failed rollback retains staged bytes, artwork and journal for retry")
         try LocalAudioImportTransaction.perform(
             from: importSource, to: journaledDestination,
             validate: { _ in },
@@ -393,6 +642,23 @@ struct PortableShelfArchiveTests {
         let unaffectedOwnedBytes = try Data(contentsOf: ownedAudio)
         assert(unaffectedOutsideBytes == originalBytes && unaffectedOwnedBytes == originalBytes)
         print("PASS: malformed and linked catalog paths cannot escape owned music storage")
+        // Offline duplicate detection must use the same owned-file validation
+        // as backup and deletion. Equal bytes outside Music (including via a
+        // symlink) must never suppress an otherwise valid new local import.
+        let incomingAudio = folder.appendingPathComponent("incoming.mp3")
+        try originalBytes.write(to: incomingAudio)
+        for unsafe in ["../outside.mp3", "linked.mp3", "internal.mp3", "folder.mp3"] {
+            let candidate = LocalLibraryFileSafety.regularFile(named: unsafe, in: ownedFolder)
+            assert(candidate == nil, "Unsafe duplicate candidate was accepted: \(unsafe)")
+        }
+        let verifiedCandidate = LocalLibraryFileSafety.regularFile(
+            named: "owned.mp3", in: ownedFolder)
+        assert(verifiedCandidate != nil)
+        assert(PortableShelfArchive.audioFilesIdentical(incomingAudio, verifiedCandidate!))
+        try assertThrowing(Data(contentsOf: outsideAudio) == originalBytes)
+        try assertThrowing(Data(contentsOf: ownedAudio) == originalBytes)
+        print("PASS: offline duplicate candidates cannot escape Music or follow links")
+
 
         let song = MusicTrack(
             id: UUID(), title: "Test song", artist: "Local artist",

@@ -209,8 +209,18 @@ final class MusicLibrary: ObservableObject {
                 // The old catalog may already contain this recording: a crash
                 // after its atomic write must not duplicate it on relaunch.
                 if let existing = tracks.first(where: { $0.id == candidate.id }) {
-                    guard existing.fileName == candidate.fileName else { continue }
-                    try? manager.removeItem(at: journal)
+                    // A committed catalog entry is not proof its audio is
+                    // readable. Protected/missing files must retain recovery
+                    // intent until staged bytes can be safely reattached.
+                    let repaired = try record.restoreExistingTrack(
+                        existing, in: musicDirectory) { file in
+                        guard let probe = try? AVAudioPlayer(contentsOf: file) else {
+                            return false
+                        }
+                        return probe.duration.isFinite && probe.duration > 0 &&
+                            abs(probe.duration - existing.duration) <= 4
+                    }
+                    if repaired { try? manager.removeItem(at: journal) }
                     continue
                 }
                 guard !LocalLibraryFileSafety.isReferenced(
@@ -349,7 +359,8 @@ final class MusicLibrary: ObservableObject {
         var recordingsBySize: [Int64: [MusicTrack]] = [:]
         for track in tracks {
             try Task.checkCancellation()
-            if let size = try? fileURL(for: track).resourceValues(forKeys: [.fileSizeKey]).fileSize {
+            if let owned = LocalLibraryFileSafety.regularFile(named: track.fileName, in: musicDirectory),
+               let size = try? owned.resourceValues(forKeys: [.fileSizeKey]).fileSize {
                 recordingsBySize[Int64(size), default: []].append(track)
             }
         }
@@ -399,7 +410,7 @@ final class MusicLibrary: ObservableObject {
                     }
                     let name = existingID.uuidString + "-" + UUID().uuidString + ".img"
                     let destination = artworkDirectory.appendingPathComponent(name)
-                    try bytes.write(to: destination, options: .atomic)
+                    try PortableShelfArchive.writeRestoredSidecar(bytes, to: destination)
                     created.append(destination)
                     restored.artworkFileName = name
                 } catch {
@@ -412,7 +423,7 @@ final class MusicLibrary: ObservableObject {
                     try Task.checkCancellation()
                     let name = existingID.uuidString + "-" + UUID().uuidString + ".lrc"
                     let destination = lyricsDirectory.appendingPathComponent(name)
-                    try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                    try PortableShelfArchive.writeRestoredSidecar(Data(lyrics.utf8), to: destination)
                     created.append(destination)
                     restored.lyricsFileName = name
                 } catch {
@@ -462,15 +473,25 @@ final class MusicLibrary: ObservableObject {
                 // before accepting a match so cancellation never becomes a miss.
                 var identicalRecording: MusicTrack?
                 if extractedSize >= 0 {
+                    // Multiple library entries may legitimately reference identical
+                    // audio bytes while carrying different user metadata. Prefer
+                    // the recording already bound to this archive's portable ID;
+                    // otherwise choose the first verified match deterministically.
+                    // Do not let a same-byte sibling steal playlist membership.
                     for candidate in recordingsBySize[Int64(extractedSize)] ?? [] {
                         try Task.checkCancellation()
+                        guard let owned = LocalLibraryFileSafety.regularFile(
+                            named: candidate.fileName, in: musicDirectory) else { continue }
                         let identical = PortableShelfArchive.audioFilesIdentical(
-                            file, fileURL(for: candidate))
+                            file, owned)
                         try Task.checkCancellation()
-                        if identical {
+                        guard identical else { continue }
+                        if candidate.portableBackupID == archived.id ||
+                            candidate.id.uuidString == archived.id {
                             identicalRecording = candidate
                             break
                         }
+                        if identicalRecording == nil { identicalRecording = candidate }
                     }
                 }
                 if let existing = identicalRecording {
@@ -514,13 +535,22 @@ final class MusicLibrary: ObservableObject {
                         guard candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame else {
                             continue
                         }
+                        guard let owned = LocalLibraryFileSafety.regularFile(
+                            named: candidate.fileName, in: musicDirectory) else { continue }
                         let identical = PortableShelfArchive.audioFilesIdentical(
-                            file, fileURL(for: candidate))
+                            file, owned)
                         try Task.checkCancellation()
-                        if identical {
+                        guard identical else { continue }
+                        // A concurrent import may have published the same bytes
+                        // after the size index was built. Prefer the archive's
+                        // established identity rather than assigning its playlist
+                        // entries to an unrelated same-byte recording.
+                        if candidate.portableBackupID == archived.id ||
+                            candidate.id.uuidString == archived.id {
                             duplicateIndex = index
                             break
                         }
+                        if duplicateIndex == nil { duplicateIndex = index }
                     }
                     if let index = duplicateIndex {
                         if !tracks.contains(where: {
@@ -592,7 +622,7 @@ final class MusicLibrary: ObservableObject {
                         if UIImage(data: bytes) != nil {
                             let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".img"
                             let destination = artworkDirectory.appendingPathComponent(filename)
-                            try bytes.write(to: destination, options: .atomic)
+                            try PortableShelfArchive.writeRestoredSidecar(bytes, to: destination)
                             createdSidecars.append(destination)
                             try Task.checkCancellation()
                             restoredTrack.artworkFileName = filename
@@ -609,7 +639,7 @@ final class MusicLibrary: ObservableObject {
                         try Task.checkCancellation()
                         let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".lrc"
                         let destination = lyricsDirectory.appendingPathComponent(filename)
-                        try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                        try PortableShelfArchive.writeRestoredSidecar(Data(lyrics.utf8), to: destination)
                         createdSidecars.append(destination)
                         try Task.checkCancellation()
                         restoredTrack.lyricsFileName = filename
@@ -779,8 +809,15 @@ final class MusicLibrary: ObservableObject {
         let previousLyrics = tracks[index].lyricsFileName
         let filename = trackID.uuidString + "-" + UUID().uuidString + ".lrc"
         let destination = lyricsDirectory.appendingPathComponent(filename)
-        try data.write(to: destination, options: .atomic)
+        // Manual lyrics imports must use the same no-replace publication as
+        // archive restoration. An atomic rename can overwrite a symlink or
+        // another writer's file even when our generated name was initially free.
+        // Stage and publish first; only commit its catalog reference after the
+        // sidecar exists. No cancellation checkpoint may follow the durable
+        // catalog write, or cleanup could delete a now-referenced sidecar.
+        try PortableShelfArchive.writeRestoredSidecar(data, to: destination)
         do {
+            try Task.checkCancellation()
             var updatedTracks = tracks
             updatedTracks[index].lyricsFileName = filename
             try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
@@ -936,6 +973,14 @@ final class MusicLibrary: ObservableObject {
         defer { isImporting = false }
         var report = ImportReport()
         for source in urls {
+            // Cancellation is a batch boundary: completed tracks stay durably
+            // imported, but no subsequent Files provider is opened or copied.
+            // The transactional importer also checks cancellation before its
+            // catalog commit, so a cancelled in-flight track is not published.
+            if Task.isCancelled {
+                report.errors.append("Import cancelled. Previously imported recordings were preserved.")
+                break
+            }
             // A defer in this loop's enclosing function would retain every
             // security-scoped Files grant until the entire batch finished.
             // Release each grant before starting the next recording, including
@@ -944,13 +989,18 @@ final class MusicLibrary: ObservableObject {
             let result: Result<Bool, Error> = {
                 defer { if accessing { source.stopAccessingSecurityScopedResource() } }
                 return Result {
-                    try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent)
+                    try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent,
+                                      cancellationAware: true)
                 }
             }()
             switch result {
             case .success(true): report.imported += 1
             case .success(false): report.skipped += 1
             case .failure(let error):
+                if error is CancellationError || Task.isCancelled {
+                    report.errors.append("Import cancelled. Previously imported recordings were preserved.")
+                    return report
+                }
                 report.errors.append(source.lastPathComponent + ": " + error.localizedDescription)
             }
         }
@@ -989,7 +1039,12 @@ final class MusicLibrary: ObservableObject {
                 // A cancellable restore must not interpret that false result
                 // as permission to import a duplicate recording.
                 if cancellationAware { try Task.checkCancellation() }
-                let existingURL = fileURL(for: track)
+                // Legacy catalogs are untrusted input. A relative filename can
+                // otherwise escape Music and make an unrelated external file
+                // appear to be an already-imported recording. Reuse only a
+                // verified, app-owned regular audio file (never a symlink).
+                guard let existingURL = LocalLibraryFileSafety.regularFile(
+                    named: track.fileName, in: musicDirectory) else { continue }
                 guard ((try? existingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) == fileSize else {
                     continue
                 }
@@ -1028,10 +1083,15 @@ final class MusicLibrary: ObservableObject {
                         ?? URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
                     let artist = metadataString(.commonKeyArtist).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Artist"
                     let album = metadataString(.commonKeyAlbumName).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Album"
+                    // Embedded artwork is untrusted metadata. Bound decoding and
+                    // never replace a pre-existing sidecar (including symlinks)
+                    // if a second import races this UUID-derived destination.
                     if let imageData = AVMetadataItem.metadataItems(from: metadata, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue,
+                       !imageData.isEmpty, imageData.count <= 20 * 1024 * 1024,
                        UIImage(data: imageData) != nil {
                         let proposedName = id.uuidString + ".img"
-                        if (try? imageData.write(to: artworkDirectory.appendingPathComponent(proposedName), options: .atomic)) != nil {
+                        let artworkDestination = artworkDirectory.appendingPathComponent(proposedName)
+                        if (try? PortableShelfArchive.writeRestoredSidecar(imageData, to: artworkDestination)) != nil {
                             artworkName = proposedName
                         }
                     }
@@ -1073,7 +1133,12 @@ final class MusicLibrary: ObservableObject {
         } catch {
             // The transaction cleans only its own staging/published file.
             // A colliding destination existed before us and is never removed.
-            if let artworkName {
+            if let artworkName,
+               !LocalAudioRecoveryRecord.retainsArtwork(
+                   artworkName, for: id, in: musicDirectory) {
+                // Ordinary validation/persistence failures remove their new
+                // sidecar. A failed rollback retains a durable recovery intent
+                // that still references it, so keep the sidecar for relaunch.
                 try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artworkName))
             }
             throw error
