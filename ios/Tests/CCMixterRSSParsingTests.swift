@@ -9,7 +9,7 @@ enum CCMixterRSSParsingTests {
             guard condition() else { fatalError("FAIL: \(message)") }
             print("PASS: \(message)")
         }
-        let wish = PlaylistWish(title: "Example Song", artist: "Example Artist")
+        let wish = PlaylistWish(title: "Example Song", artist: "Example Artist", album: "")
         func feed(_ items: String) -> Data {
             Data(("<rss><channel>" + items + "</channel></rss>").utf8)
         }
