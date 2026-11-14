@@ -93,6 +93,10 @@ final class PlaybackController: NSObject, ObservableObject {
         relay.finished = { [weak self] player, succeeded in
             Task { @MainActor [weak player] in
                 guard let self, let player, self.audioPlayer === player else { return }
+                // Delegate completion can be queued before a user pause or an
+                // audio-session interruption. Never start the next recording
+                // or overwrite a deliberately paused player's retry state.
+                guard self.isPlaying else { return }
                 if succeeded { self.advance(automatically: true) }
                 else {
                     // A decode failure can arrive while an outgoing player is
