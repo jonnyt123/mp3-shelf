@@ -810,57 +810,36 @@ enum PortableShelfArchive {
         }
     }
 
-    /// Publish an optional archive sidecar without leaving orphaned files when
-    /// cancellation or a post-write verification fails. The caller must choose
-    /// a fresh UUID-based filename and only persist its reference after return.
-    /// The preflight refuses existing paths rather than replacing user data.
+    /// Publish an optional archive sidecar without overwriting an existing file.
+    /// The caller uses a fresh UUID filename and commits its catalog reference
+    /// only after this method succeeds. A failed post-publication validation
+    /// intentionally leaves an unreferenced sidecar: deleting by pathname after
+    /// validation can race another writer's replacement and destroy their data.
+    /// A recoverable orphan is preferable to losing user-owned bytes.
     static func writeRestoredSidecar(_ bytes: Data, to destination: URL,
                                      validate: () throws -> Void = {}) throws {
         try Task.checkCancellation()
         let manager = FileManager.default
-        // Data.write(.atomic) may replace a destination created after an
-        // existence check. Stage privately in the same directory and publish
-        // with a hard link: link(2) fails atomically if any entry already
-        // occupies the destination, including a dangling symbolic link.
         let staging = destination.deletingLastPathComponent()
             .appendingPathComponent(".mp3shelf-sidecar-\(UUID().uuidString).tmp")
-        var publishedIdentity: ArchiveSourceIdentity?
         defer { try? manager.removeItem(at: staging) }
+        try bytes.write(to: staging, options: .atomic)
+        let handle = try FileHandle(forWritingTo: staging)
         do {
-            try bytes.write(to: staging, options: .atomic)
-            let handle = try FileHandle(forWritingTo: staging)
-            do {
-                try handle.synchronize()
-                try handle.close()
-            } catch {
-                try? handle.close()
-                throw error
-            }
-            try Task.checkCancellation()
-            // Keep an open descriptor for the exact inode we publish. A
-            // concurrent restore may replace the pathname during validation;
-            // rollback must never delete that other writer's recording.
-            let stagedHandle = try FileHandle(forReadingFrom: staging)
-            defer { try? stagedHandle.close() }
-            _ = try archiveIdentity(of: stagedHandle, at: staging)
-            try manager.linkItem(at: staging, to: destination)
-            // link(2) updates inode ctime; capture the post-publication
-            // identity so normal rollback can recognize its own sidecar.
-            publishedIdentity = try archiveIdentity(of: stagedHandle, at: destination)
-            try validate()
-            try Task.checkCancellation()
+            try handle.synchronize()
+            try handle.close()
         } catch {
-            if let identity = publishedIdentity {
-                // Unlink only if the final pathname still names our inode.
-                // The staged hard link remains until the defer above, so
-                // failed validation cannot destroy any previously owned file.
-                var named = stat()
-                if lstat(destination.path, &named) == 0 && identity.matches(named) {
-                    try? manager.removeItem(at: destination)
-                }
-            }
+            try? handle.close()
             throw error
         }
+        try Task.checkCancellation()
+        // link(2) publishes without replacement, including dangling symlinks.
+        // The staging name remains ours to remove, but after publication the
+        // destination name can change owners at any time. Never unlink it on
+        // cancellation, validation failure, or a racing catalog write.
+        try manager.linkItem(at: staging, to: destination)
+        try validate()
+        try Task.checkCancellation()
     }
 
     static func readBytes(_ part: Part, from archive: Opened) throws -> Data {
