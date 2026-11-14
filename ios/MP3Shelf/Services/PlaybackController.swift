@@ -304,9 +304,18 @@ final class PlaybackController: NSObject, ObservableObject {
         }
         var nextOrder = playbackOrder
         nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
-        guard let nextID = nextOrder.next(automatic: automatically, loop: loopMode),
-              let target = library.song(with: nextID) else {
-            stop()
+        guard let nextID = nextOrder.next(automatic: automatically, loop: loopMode) else {
+            // A manual Next at the end of a finite queue is a no-op. Do not
+            // discard the current paused position, retry state, or queue.
+            // Natural completion still ends playback when repeat is off.
+            if automatically && !crossfading { stop() }
+            return
+        }
+        guard let target = library.song(with: nextID) else {
+            // A track can disappear from the library after the queue snapshot.
+            // A speculative crossfade must never silence its playable source.
+            // Likewise a manual Next must not erase the listener's position.
+            if automatically && !crossfading { stop() }
             return
         }
         if nextID == currentTrackID { seek(to: 0); resume(); return }
