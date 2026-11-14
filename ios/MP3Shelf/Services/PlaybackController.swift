@@ -335,11 +335,16 @@ final class PlaybackController: NSObject, ObservableObject {
 
     private func startTimer() {
         positionTimer?.invalidate()
-        positionTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+        // A timer tick can already be queued on the main actor when a track
+        // changes. Tie each callback to its timer and original player so it
+        // cannot seek the UI clock or trigger a fade for a replacement track.
+        let observedPlayer = audioPlayer
+        positionTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self, weak observedPlayer] timer in
             Task { @MainActor in
-                // A previously queued timer callback can run after pause().
-                // Never restart crossfade or mutate playback state while paused.
-                guard let self, self.isPlaying, let player = self.audioPlayer else { return }
+                guard let self, let observedPlayer, timer.isValid,
+                      self.positionTimer === timer,
+                      self.isPlaying, self.audioPlayer === observedPlayer else { return }
+                let player = observedPlayer
                 self.currentTime = player.currentTime
                 if self.isPlaying && self.playbackError == nil && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
                    self.outgoingPlayer == nil && self.canCrossfade() && player.duration > self.crossfadeSeconds + 1 &&
