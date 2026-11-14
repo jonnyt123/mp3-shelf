@@ -10,7 +10,9 @@ enum CatalogResponseOriginTests {
             print("PASS: \(label)")
         }
         let original = URL(string: "https://api.openverse.org/v1/audio/?page=1")!
-        let trusted = AudioSourceFinder.trustedCatalogResponse
+        func trusted(requested: URL, final: URL?) -> Bool {
+            AudioSourceFinder.trustedCatalogResponse(requested: requested, final: final)
+        }
         expect(trusted(requested: original, final: original),
                "unchanged HTTPS catalog origin is accepted")
         expect(trusted(requested: original,
