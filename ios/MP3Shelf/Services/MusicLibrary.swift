@@ -358,7 +358,16 @@ final class MusicLibrary: ObservableObject {
               width > 0, height > 0,
               width <= 8192, height <= 8192,
               width <= 32_000_000 / height else { return false }
-        return UIImage(data: bytes) != nil
+        // Decode only a bounded thumbnail for validation: a full-resolution
+        // UIImage can allocate hundreds of MiB even for a small compressed file.
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1024,
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceShouldCacheImmediately: false
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) != nil
     }
 
     func importPortableBackup(from url: URL) async throws -> ImportReport {
