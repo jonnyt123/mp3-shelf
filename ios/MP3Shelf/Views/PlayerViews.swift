@@ -760,7 +760,11 @@ struct PlaybackQueueSheet: View {
         pendingEmptyQueueFocus = false
         focusedQueueTrackID = nil
         noMatchesFocused = false
-        playback.play(next)
+        // Advance through the controller's queue state machine rather than
+        // selecting the recording directly. In shuffle mode this consumes the
+        // next shuffle entry exactly once and keeps Back/Next history coherent.
+        // The controller commits the advance only after audio actually starts.
+        playback.next()
         // A failed replacement remains visible through playbackError, while
         // a successful one clears the warning via the controller.
     }
@@ -1102,7 +1106,7 @@ struct PlaybackQueueSheet: View {
                                         }
                                         .buttonStyle(.bordered)
                                         .frame(minHeight: 44)
-                                        .accessibilityLabel("Skip failed recording and play \\(next.title)")
+                                        .accessibilityLabel("Skip failed recording and play \(next.title)")
                                         .accessibilityHint("Try the first upcoming recording without changing saved playlists or downloaded music")
                                     }
                                     Button("Dismiss warning") {
