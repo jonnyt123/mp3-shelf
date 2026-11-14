@@ -79,6 +79,20 @@ final class MusicLibrary: ObservableObject {
     }()
     @Published private(set) var playlists: [MusicPlaylist] = []
     @Published var isImporting = false
+    // Multiple Files-picker and URL imports may overlap while awaiting I/O.
+    // Keep the progress flag true until the last import finishes or cancels.
+    private var activeImportOperations = 0
+
+    private func beginImportOperation() {
+        activeImportOperations += 1
+        isImporting = true
+    }
+
+    private func endImportOperation() {
+        precondition(activeImportOperations > 0, "Unbalanced audio import operation")
+        activeImportOperations -= 1
+        isImporting = activeImportOperations > 0
+    }
     // Fail closed if the saved catalog exists but cannot be read (for example,
     // while iOS file protection is active). Never replace it with an empty one.
     @Published private(set) var libraryStorageError: String?
@@ -961,8 +975,8 @@ final class MusicLibrary: ObservableObject {
     }
 
     func importAudio(urls: [URL]) async -> ImportReport {
-        isImporting = true
-        defer { isImporting = false }
+        beginImportOperation()
+        defer { endImportOperation() }
         var report = ImportReport()
         for source in urls {
             // Cancellation stops the batch before opening another Files provider.
@@ -1659,8 +1673,8 @@ final class MusicLibrary: ObservableObject {
         guard ManualAudioURLPolicy.permits(remoteURL) else {
             throw MusicLibraryError.invalidDownloadURL
         }
-        isImporting = true
-        defer { isImporting = false }
+        beginImportOperation()
+        defer { endImportOperation() }
         // A dedicated session prevents URLSession from following an insecure
         // redirect before the final-response validation can reject its bytes.
         let session = URLSession(configuration: .ephemeral,
