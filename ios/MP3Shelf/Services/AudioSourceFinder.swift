@@ -485,7 +485,28 @@ extension AudioSourceFinder {
     // Wikimedia Commons' MediaWiki file API is a separate upstream catalog:
     // Commons recordings may be absent from Openverse's index. Only explicit
     // machine-readable artist metadata and actual MP3 file URLs qualify.
-    private struct CommonsResponse: Decodable { let query: CommonsQuery? }
+    private struct CommonsResponse: Decodable {
+        let query: CommonsQuery?
+        let continuation: CommonsContinuation?
+
+        enum CodingKeys: String, CodingKey {
+            case query
+            case continuation = "continue"
+        }
+    }
+    private struct CommonsContinuation: Decodable {
+        let gsroffset: Int?
+    }
+
+    /// A single MediaWiki page cannot prove uniqueness if the search has more
+    /// results. Never auto-select an early file when another edition may follow.
+    static func commonsNextOffset(current: Int, proposed: Int?, page: Int) throws -> Int? {
+        guard let proposed else { return nil }
+        guard page < 2, proposed > current, proposed <= 10_000 else {
+            throw SourceError.unavailable
+        }
+        return proposed
+    }
     private struct CommonsQuery: Decodable { let pages: [String: CommonsPage] }
     private struct CommonsPage: Decodable {
         let title: String
@@ -541,19 +562,38 @@ extension AudioSourceFinder {
             URLQueryItem(name: "iiextmetadatafilter", value: "Artist|LicenseUrl"),
             URLQueryItem(name: "format", value: "json")
         ]
-        let result: CommonsResponse = try await requestJSON(components.url!, allowsCellular: allowsCellular)
-        let matches = (result.query?.pages.values ?? Dictionary<String, CommonsPage>().values)
-            .flatMap { page in
-                (page.imageinfo ?? []).compactMap { info in
-                    commonsCandidate(fileTitle: page.title,
-                                     artistCredit: info.extmetadata?["Artist"]?.value,
-                                     download: info.url, landing: info.descriptionurl,
-                                     license: info.extmetadata?["LicenseUrl"]?.value,
-                                     bytes: info.size, wish: wish)
+        var offset = 0
+        var unique: [String: AudioCatalogMatch] = [:]
+        for pageNumber in 1...2 {
+            try Task.checkCancellation()
+            var pageComponents = components
+            if pageNumber > 1 {
+                pageComponents.queryItems?.append(
+                    URLQueryItem(name: "gsroffset", value: String(offset)))
+            }
+            let result: CommonsResponse = try await requestJSON(
+                pageComponents.url!, allowsCellular: allowsCellular)
+            for page in result.query?.pages.values ?? Dictionary<String, CommonsPage>().values {
+                for info in page.imageinfo ?? [] {
+                    if let candidate = commonsCandidate(
+                        fileTitle: page.title,
+                        artistCredit: info.extmetadata?["Artist"]?.value,
+                        download: info.url, landing: info.descriptionurl,
+                        license: info.extmetadata?["LicenseUrl"]?.value,
+                        bytes: info.size, wish: wish
+                    ) {
+                        unique[candidate.downloadURL.absoluteString] = candidate
+                        if unique.count > 1 { return nil }
+                    }
                 }
             }
-        let unique = Dictionary(grouping: matches, by: { $0.downloadURL.absoluteString })
-        return unique.count == 1 ? unique.values.first?.first : nil
+            guard let next = try commonsNextOffset(
+                current: offset, proposed: result.continuation?.gsroffset,
+                page: pageNumber
+            ) else { break }
+            offset = next
+        }
+        return unique.count == 1 ? unique.values.first : nil
     }
 
     /// Search independent catalogs concurrently while the app is
