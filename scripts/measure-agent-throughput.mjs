@@ -42,7 +42,8 @@ async function readCommitSummaries(api, pr, since, now) {
   if (!SHA.test(meta?.head?.sha ?? '') || !Number.isSafeInteger(meta?.commits) || meta.commits < 0) {
     throw Error(`PR #${pr} has invalid head/commit metadata`);
   }
-  let page = Math.max(1, Math.ceil(meta.commits / 100));
+  if (meta.commits === 0) return { head: meta.head.sha, commits: [] };
+  let page = Math.ceil(meta.commits / 100);
   const selected = [];
   // GitHub orders PR commits by ancestry, not committer timestamp. A newer
   // timestamp may appear before an older one on the same or an earlier page.
