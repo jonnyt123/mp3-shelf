@@ -721,9 +721,12 @@ struct PlaybackQueueSheet: View {
     // A retry may complete asynchronously. Do not report success merely
     // because the controller has not published a new error synchronously.
     private func retryPlayback() {
-        // A retry belongs to one recording and one visible error.
+        // A retry belongs to one recording and one visible error. Reject
+        // repeated accessibility/menu activations as well as button taps:
+        // disabled SwiftUI controls are not the only caller of this method.
         guard let trackID = playback.currentTrackID,
-              let error = playback.playbackError, !error.isEmpty else { return }
+              let error = playback.playbackError, !error.isEmpty,
+              !(retryTrackID == trackID && retryFeedback == "Retrying recording…") else { return }
         retryTrackID = trackID
         lastRetryError = error
         retryFeedback = "Retrying recording…"
@@ -1048,7 +1051,9 @@ struct PlaybackQueueSheet: View {
                                                retryFeedback == "Retrying recording…"))
                                     .accessibilityHint(retryFeedback == "Retrying recording…"
                                         ? "Waiting for the current retry to finish"
-                                        : "Try playing this recording again")
+                                        : playback.playbackError == nil
+                                            ? "Retry is unavailable until playback reports an error. Choose another queued song."
+                                            : "Try playing this recording again")
                                     Button("Dismiss warning") {
                                         // Cancel the pending status check before dismissal.
                                         retryAttempt += 1
@@ -1393,7 +1398,10 @@ struct PlaybackQueueSheet: View {
                 } else {
                     // No error and no playback: still pending, not a failure.
                     // Let the user retry or choose another recording.
-                    retryFeedback = "Playback has not resumed yet. You can try again or choose another song."
+                    // The controller has cleared its error, so Retry is not
+                    // currently available. Give an actionable next step that
+                    // matches the enabled controls instead of promising retry.
+                    retryFeedback = "Playback has not resumed. Choose another queued song or dismiss this warning."
                 }
             }
             .onChange(of: playback.isPlaying) { _, playing in
