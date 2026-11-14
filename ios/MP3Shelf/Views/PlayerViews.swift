@@ -747,6 +747,24 @@ struct PlaybackQueueSheet: View {
         playback.retryFailedPlayback()
     }
 
+    // Recovery is possible without retrying a broken recording. Resolve the
+    // first available upcoming song at activation time, not from a stale view
+    // snapshot, and leave saved playlists and downloaded files untouched.
+    private func continueWithNextQueuedSong() {
+        guard let next = playback.queuedTracks.first else {
+            reportStaleQueueAction()
+            return
+        }
+        finishRetry()
+        pendingQueueFocusID = nil
+        pendingEmptyQueueFocus = false
+        focusedQueueTrackID = nil
+        noMatchesFocused = false
+        playback.play(next)
+        // A failed replacement remains visible through playbackError, while
+        // a successful one clears the warning via the controller.
+    }
+
     // Context menus can outlive their row after automatic playback advancement.
     // Explain rejected actions instead of silently ignoring the tap, and give
     // VoiceOver a surviving focus target in the refreshed queue.
@@ -1075,6 +1093,18 @@ struct PlaybackQueueSheet: View {
                                         : playback.playbackError == nil
                                             ? "Retry is unavailable until playback reports an error. Choose another queued song."
                                             : "Try playing this recording again")
+                                    if let next = upcoming.first {
+                                        Button {
+                                            continueWithNextQueuedSong()
+                                        } label: {
+                                            Label("Play next queued song", systemImage: "forward.end.fill")
+                                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .frame(minHeight: 44)
+                                        .accessibilityLabel("Skip failed recording and play \\(next.title)")
+                                        .accessibilityHint("Try the first upcoming recording without changing saved playlists or downloaded music")
+                                    }
                                     Button("Dismiss warning") {
                                         // Cancel the pending status check before dismissal.
                                         finishRetry()
