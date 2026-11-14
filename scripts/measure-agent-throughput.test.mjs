@@ -114,3 +114,12 @@ test('refuses incomplete history and missing commit pages rather than reporting 
     now, lanes: [{ name: 'downloads', pr: 31 }]
   }), /commit list incomplete/);
 });
+
+test('empty PR history reports zero without requesting nonexistent pages', async () => {
+  const r = await collectThroughput({
+    api: mock({ '/pulls/34': { head: one, commits: 0 } }),
+    now, lanes: [{ name: 'release-tooling', pr: 34 }]
+  });
+  assert.equal(r.results[0].commitsObserved, 0);
+  assert.equal(r.results[0].codeCommits, 0);
+});
