@@ -116,6 +116,9 @@ export async function captureDevicePlaylist({ deviceID, bundleID, playlistID, ex
       bundleID, playlistID, source: 'Spotify metadata only', requested: catalog.requested,
       unavailable: catalog.unavailable, copiedTracks: proofs.length, files: proofs,
       fileByteIntegrity: 'HOST_HASHED_FROM_PHYSICAL_IPHONE',
+      // A clean Mac checkout and installed bundle ID do not cryptographically
+      // prove that the installed binary was built from that exact source SHA.
+      installedBinaryCommit: 'NOT_VERIFIED',
       liveSourceSearch: 'NOT_VERIFIED', automaticMatching: 'NOT_VERIFIED',
       backgroundTransfer: 'NOT_VERIFIED', cellularConsent: 'NOT_VERIFIED',
       offlinePlaybackAfterRestart: 'NOT_VERIFIED', physicalAcceptance: 'INCOMPLETE' };
