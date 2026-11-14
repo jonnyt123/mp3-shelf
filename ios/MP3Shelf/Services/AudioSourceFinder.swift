@@ -1761,20 +1761,34 @@ extension AudioSourceFinder {
     private final class CCMixterRSSReader: NSObject, XMLParserDelegate {
         var tracks: [CCMixterFeedTrack] = []
         private var current: CCMixterFeedTrack?
-        private var activeField = ""
+        private var elementDepth = 0
+        private var capturedField: String?
+        private var capturedDepth = 0
         private var characters = ""
+        private var enclosureURLs: Set<String> = []
+        private var invalidEnclosures = false
 
         func parser(_ parser: XMLParser, didStartElement elementName: String,
                     namespaceURI: String?, qualifiedName qName: String?,
                     attributes attributeDict: [String: String] = [:]) {
+            elementDepth += 1
             let field = String(elementName.split(separator: ":").last ?? "").lowercased()
             if field == "item" {
                 current = CCMixterFeedTrack()
+                enclosureURLs = []
+                invalidEnclosures = false
+                capturedField = nil
+                characters = ""
             } else if field == "enclosure", current != nil {
                 let type = (attributeDict["type"] ?? "").lowercased()
                 let raw = attributeDict["url"] ?? ""
                 if type == "audio/mpeg" || URL(string: raw)?.pathExtension.lowercased() == "mp3" {
-                    current?.downloadURL = raw
+                    guard let url = URL(string: raw), url.scheme?.lowercased() == "https",
+                          url.pathExtension.lowercased() == "mp3" else {
+                        invalidEnclosures = true
+                        return
+                    }
+                    enclosureURLs.insert(url.absoluteString)
                 }
             } else if field == "license", current != nil {
                 if let url = attributeDict["rdf:resource"] ?? attributeDict["resource"] ??
@@ -1782,37 +1796,55 @@ extension AudioSourceFinder {
                     current?.licenseURL = url
                 }
             }
-            activeField = current == nil ? "" : field
-            characters = ""
+            // XMLParser may split text into multiple callbacks or wrap it in
+            // nested tags. Do not reset a parent field when a child opens.
+            if current != nil && capturedField == nil &&
+                ["title", "creator", "author", "link", "license"].contains(field) {
+                capturedField = field
+                capturedDepth = elementDepth
+                characters = ""
+            }
         }
 
         func parser(_ parser: XMLParser, foundCharacters string: String) {
-            if ["title", "creator", "author", "link", "license"].contains(activeField) {
-                characters += string
-            }
+            if capturedField != nil { characters += string }
         }
 
         func parser(_ parser: XMLParser, didEndElement elementName: String,
                     namespaceURI: String?, qualifiedName qName: String?) {
             let field = String(elementName.split(separator: ":").last ?? "").lowercased()
-            let content = characters.trimmingCharacters(in: .whitespacesAndNewlines)
-            if current != nil {
-                switch field {
-                case "title": current?.title = content
-                case "creator": current?.creator = content
-                case "author":
-                    if current?.creator.isEmpty == true { current?.creator = content }
-                case "link": current?.landingURL = content
-                case "license":
-                    if !content.isEmpty { current?.licenseURL = content }
-                case "item":
-                    if let entry = current { tracks.append(entry) }
-                    current = nil
-                default: break
+            if let capturedField, elementDepth == capturedDepth {
+                let content = characters.trimmingCharacters(in: .whitespacesAndNewlines)
+                if current != nil {
+                    switch capturedField {
+                    case "title": current?.title = content
+                    case "creator": current?.creator = content
+                    case "author":
+                        if current?.creator.isEmpty == true { current?.creator = content }
+                    case "link": current?.landingURL = content
+                    case "license":
+                        if !content.isEmpty { current?.licenseURL = content }
+                    default: break
+                    }
                 }
+                self.capturedField = nil
+                characters = ""
             }
-            activeField = ""
-            characters = ""
+            if field == "item" {
+                // Two distinct MP3 enclosures are not evidence of one exact
+                // recording. Reject the entire item instead of taking the last.
+                if !invalidEnclosures, enclosureURLs.count == 1,
+                   var entry = current, let only = enclosureURLs.first {
+                    entry.downloadURL = only
+                    tracks.append(entry)
+                }
+                current = nil
+                enclosureURLs = []
+                invalidEnclosures = false
+                capturedField = nil
+                characters = ""
+            }
+            elementDepth -= 1
         }
 
         func read(_ data: Data) -> [CCMixterFeedTrack]? {
