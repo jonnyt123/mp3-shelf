@@ -32,6 +32,19 @@ enum CommonsPaginationSafetyTests {
         expect(token(String(repeating: "x", count: 257)) == nil,
                "oversized continuation token rejected")
         expect(token("gsroffset||\\n") == nil, "control characters rejected")
+        let readable = AudioSourceFinder.commonsPageIsReadable
+        expect(readable(true, false, false, false),
+               "completed page with an empty pages dictionary is readable")
+        expect(readable(true, true, true, true),
+               "continuation with both cursor fields is readable")
+        expect(!readable(false, false, false, false),
+               "missing query cannot masquerade as completed search")
+        expect(!readable(false, true, true, true),
+               "malformed second-page response cannot authorize first-page candidate")
+        expect(!readable(true, true, false, true),
+               "continuation without generator offset is incomplete")
+        expect(!readable(true, true, true, false),
+               "continuation without generic token is incomplete")
         // MediaWiki requires both query parameters on the second request:
         // continue=<token>&gsroffset=<offset>. Neither is optional.
 
