@@ -45,6 +45,8 @@ async function readCommitSummaries(api, pr, since, now) {
   if (meta.commits === 0) return { head: meta.head.sha, commits: [] };
   let page = Math.ceil(meta.commits / 100);
   const selected = [];
+  let terminalCommitSHA = null;
+  const seen = new Set();
   // GitHub orders PR commits by ancestry, not committer timestamp. A newer
   // timestamp may appear before an older one on the same or an earlier page.
   // Never stop at the first old commit: doing so silently undercounts work.
@@ -61,9 +63,19 @@ async function readCommitSummaries(api, pr, since, now) {
       if (timestamp === null || !SHA.test(commit?.sha ?? '')) {
         throw Error(`PR #${pr} contains malformed commit metadata`);
       }
+      if (seen.has(commit.sha)) throw Error(`PR #${pr} repeats a commit across pages`);
+      seen.add(commit.sha);
+      if (page === Math.ceil(meta.commits / 100) && commit === commits[commits.length - 1]) {
+        terminalCommitSHA = commit.sha;
+      }
       if (timestamp >= since && timestamp <= now) selected.push(commit.sha);
     }
     page -= 1;
+  }
+  // The last commit in the PR's ancestry must be the reported head. A
+  // mismatched page can otherwise pass length checks and corrupt attribution.
+  if (terminalCommitSHA !== meta.head.sha || seen.size !== meta.commits) {
+    throw Error(`PR #${pr} commit ancestry does not match its head`);
   }
   // The PR may advance while its pages are being read. Reject a mixed snapshot.
   const latest = await api(`/pulls/${pr}`);
@@ -110,6 +122,12 @@ export async function collectThroughput({ api, now = Date.now(), hours = 1, lane
       if (sourceTouched) codeCommits += 1;
       if (testsTouched) testCommits += 1;
       if (!sourceTouched && !testsTouched) commitsWithoutCode += 1;
+    }
+    // A lane can move after its commit pages were verified but before its
+    // per-commit file details finish loading. Never publish a mixed snapshot.
+    const finalMeta = await api(`/pulls/${lane.pr}`);
+    if (finalMeta?.head?.sha !== commits.head) {
+      throw Error(`PR #${lane.pr} changed while reading commit details`);
     }
     results.push({ lane: lane.name, pr: lane.pr, head: commits.head,
       commitsObserved: commits.commits.length, codeCommits, testCommits,
