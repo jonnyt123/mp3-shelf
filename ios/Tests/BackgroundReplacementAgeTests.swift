@@ -42,3 +42,23 @@ precondition(replacement.nextRetryAt == futureRetry)
 let alternateTicket = scheduleReplacement(now: now, retryAt: nil)
 precondition(!isStale(alternateTicket, at: now.addingTimeInterval(10), minimumAge: 300))
 print("PASS: retries and alternate sources have fresh orphan age and retain scheduling")
+
+// A delayed retry is not an orphan before its earliest permitted start,
+// regardless of its age. Check both inventories because state may change
+// while the reconciliation task is suspended between scans.
+let orphanStart = source.range(of: "private func recoverAbandonedBackgroundTasks() async")!
+let orphanEnd = source.range(of: "private func finishBackgroundEvents() async")!
+let orphan = String(source[orphanStart.lowerBound..<orphanEnd.lowerBound])
+precondition(orphan.contains("ticket.nextRetryAt.map { $0 <= firstCheck } ?? true"))
+precondition(orphan.contains("current.nextRetryAt.map { $0 <= Date() } ?? true"))
+func mayRecoverOrphan(_ ticket: Replacement, checkedAt: Date, minimumAge: TimeInterval) -> Bool {
+    guard ticket.nextRetryAt.map({ $0 <= checkedAt }) ?? true else { return false }
+    return isStale(ticket, at: checkedAt, minimumAge: minimumAge)
+}
+let overdue = scheduleReplacement(now: oldStart, retryAt: futureRetry)
+precondition(!mayRecoverOrphan(overdue, checkedAt: now, minimumAge: 300))
+precondition(!mayRecoverOrphan(overdue, checkedAt: futureRetry.addingTimeInterval(-1), minimumAge: 300))
+precondition(mayRecoverOrphan(overdue, checkedAt: futureRetry, minimumAge: 300))
+precondition(mayRecoverOrphan(scheduleReplacement(now: oldStart, retryAt: nil), checkedAt: now, minimumAge: 300))
+precondition(!mayRecoverOrphan(replacement, checkedAt: now, minimumAge: 300))
+print("PASS: orphan recovery respects persisted future retry windows across both scans")
