@@ -175,10 +175,23 @@ final class PlaybackController: NSObject, ObservableObject {
             startTimer()
             updateNowPlaying()
         } catch {
+            // Keep an already-playing recording audible when a manually selected
+            // replacement cannot open. If automatic advance failed after the
+            // outgoing recording finished, however, no audio remains: retire
+            // polling and any overlapping fade rather than leaving an idle
+            // 200 ms timer alive indefinitely.
+            let previousIsAudible = audioPlayer?.isPlaying == true
+            if !previousIsAudible {
+                positionTimer?.invalidate()
+                positionTimer = nil
+                cancelFade()
+                audioPlayer?.stop()
+            }
             failedTrackID = track.id
             failedPlaybackOrder = nextOrder
             playbackError = "Could not play \(track.title). Check that its audio file is still available, then retry or choose another song."
-            isPlaying = audioPlayer?.isPlaying ?? false
+            isPlaying = previousIsAudible
+            interruptionState.cancelResume()
             updateNowPlaying()
         }
     }
