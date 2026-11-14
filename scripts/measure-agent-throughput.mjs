@@ -52,8 +52,8 @@ async function readCommitSummaries(api, pr, since, now) {
   if (page > 5) throw Error(`PR #${pr} exceeded bounded history; metrics incomplete`);
   while (page > 0) {
     const commits = await api(`/pulls/${pr}/commits?per_page=100&page=${page}`);
-    if (!Array.isArray(commits) || commits.length === 0 ||
-        (page < Math.ceil(meta.commits / 100) && commits.length !== 100)) {
+    const expected = page === Math.ceil(meta.commits / 100) ? ((meta.commits - 1) % 100) + 1 : 100;
+    if (!Array.isArray(commits) || commits.length !== expected) {
       throw Error(`PR #${pr} commit list incomplete`);
     }
     for (const commit of commits) {
@@ -64,6 +64,11 @@ async function readCommitSummaries(api, pr, since, now) {
       if (timestamp >= since && timestamp <= now) selected.push(commit.sha);
     }
     page -= 1;
+  }
+  // The PR may advance while its pages are being read. Reject a mixed snapshot.
+  const latest = await api(`/pulls/${pr}`);
+  if (latest?.head?.sha !== meta.head.sha || latest?.commits !== meta.commits) {
+    throw Error(`PR #${pr} changed during measurement`);
   }
   return { head: meta.head.sha, commits: selected };
 }
@@ -80,6 +85,9 @@ export async function collectThroughput({ api, now = Date.now(), hours = 1, lane
     for (const sha of [...new Set(commits.commits)]) {
       const info = await api(`/commits/${sha}`);
       if (!Array.isArray(info?.files)) throw Error(`Commit ${sha} lacks file statistics`);
+      // GitHub's commit API exposes at most 300 changed files. Never silently
+      // report incomplete source/test totals for a larger integration commit.
+      if (info.files.length >= 300) throw Error(`Commit ${sha} may have truncated file statistics`);
       let sourceTouched = false, testsTouched = false;
       for (const file of info.files) {
         if (!Number.isSafeInteger(file.additions) || file.additions < 0 ||
