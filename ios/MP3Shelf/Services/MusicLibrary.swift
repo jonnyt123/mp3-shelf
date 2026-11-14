@@ -1063,10 +1063,15 @@ final class MusicLibrary: ObservableObject {
                         ?? URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
                     let artist = metadataString(.commonKeyArtist).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Artist"
                     let album = metadataString(.commonKeyAlbumName).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown Album"
+                    // Embedded artwork is untrusted metadata. Bound decoding and
+                    // never replace a pre-existing sidecar (including symlinks)
+                    // if a second import races this UUID-derived destination.
                     if let imageData = AVMetadataItem.metadataItems(from: metadata, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue,
+                       !imageData.isEmpty, imageData.count <= 20 * 1024 * 1024,
                        UIImage(data: imageData) != nil {
                         let proposedName = id.uuidString + ".img"
-                        if (try? imageData.write(to: artworkDirectory.appendingPathComponent(proposedName), options: .atomic)) != nil {
+                        let artworkDestination = artworkDirectory.appendingPathComponent(proposedName)
+                        if (try? PortableShelfArchive.writeRestoredSidecar(imageData, to: artworkDestination)) != nil {
                             artworkName = proposedName
                         }
                     }
