@@ -32,7 +32,14 @@ enum CommonsPaginationSafetyTests {
         expect(token(String(repeating: "x", count: 257)) == nil,
                "oversized continuation token rejected")
         expect(token("gsroffset||\\n") == nil, "control characters rejected")
-        let readable = AudioSourceFinder.commonsPageIsReadable
+        func readable(_ hasQuery: Bool, _ hasContinuation: Bool,
+                      _ hasOffset: Bool, _ hasToken: Bool,
+                      hasAPIError: Bool = false) -> Bool {
+            AudioSourceFinder.commonsPageIsReadable(
+                hasQuery: hasQuery, hasContinuation: hasContinuation,
+                hasOffset: hasOffset, hasToken: hasToken,
+                hasAPIError: hasAPIError)
+        }
         expect(readable(true, false, false, false),
                "completed page with an empty pages dictionary is readable")
         expect(readable(true, true, true, true),
