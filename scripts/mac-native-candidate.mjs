@@ -22,6 +22,7 @@ const OWNED_PATHS = new Set([
   'ios/MP3Shelf/Services/BackgroundAudioDownloader.swift',
   'ios/MP3Shelf/Services/DownloadPathProof.swift',
   'ios/MP3Shelf/MP3ShelfApp.swift',
+  'ios/scripts/verify-local-release.sh',
   'ios/Tests/AudioCatalogRetryPolicyTests.swift',
   'ios/Tests/BackgroundRedirectNetworkPolicyTests.swift',
   'ios/Tests/CatalogResponseOriginTests.swift',
