@@ -107,6 +107,22 @@ class ManualDownloadCancellationContract(unittest.TestCase):
         self.assertIn('host == $0 || host.hasSuffix("." + $0)', policy)
         self.assertIn('url.scheme?.lowercased() == "https"', policy)
 
+    def test_overlapping_manual_and_files_imports_share_progress_counter(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        self.assertIn("private var activeImportOperations = 0", source)
+        begin = source[source.index("    private func beginImportOperation()"):source.index("    private func endImportOperation()")]
+        end = source[source.index("    private func endImportOperation()"):source.index("    // Fail closed if the saved catalog", source.index("    private func endImportOperation()"))]
+        self.assertIn("activeImportOperations += 1", begin)
+        self.assertIn("isImporting = true", begin)
+        self.assertIn("activeImportOperations -= 1", end)
+        self.assertIn("isImporting = activeImportOperations > 0", end)
+        self.assertIn("precondition(activeImportOperations > 0", end)
+        for signature in ("func importAudio(urls: [URL])", "func downloadAudio(from remoteURL:"):
+            method = source[source.index(signature):]
+            self.assertIn("beginImportOperation()", method[:450])
+            self.assertIn("defer { endImportOperation() }", method[:450])
+        self.assertEqual(source.count("defer { isImporting = false }"), 0)
+
     def test_no_cancellation_check_is_swallowed(self):
         body = method_body()
         self.assertNotRegex(body, r"try\?\s*Task\.checkCancellation\(\)")
