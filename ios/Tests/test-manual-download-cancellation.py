@@ -57,6 +57,35 @@ class ManualDownloadCancellationContract(unittest.TestCase):
                         body.index("manager.moveItem(at: temporary, to: staging)"))
         self.assertIn("throw MusicLibraryError.invalidDownloadURL", body)
 
+    def test_redirect_delegate_rejects_insecure_follow_up_before_transfer(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        start = source.index("private final class ManualHTTPSRedirectDelegate:")
+        end = source.index("\nstruct AutomaticDownloadProgress", start)
+        delegate = source[start:end]
+        self.assertIn("willPerformHTTPRedirection", delegate)
+        self.assertIn('url.scheme?.lowercased() == "https"', delegate)
+        self.assertIn("completionHandler(nil)", delegate)
+        self.assertIn("completionHandler(request)", delegate)
+        self.assertLess(delegate.index('url.scheme?.lowercased() == "https"'),
+                        delegate.index("completionHandler(request)"))
+
+    def test_manual_transfer_uses_dedicated_redirect_policy_session(self):
+        body = method_body()
+        self.assertIn("delegate: ManualHTTPSRedirectDelegate()", body)
+        self.assertIn("session.download(from: remoteURL)", body)
+        self.assertIn("defer { session.invalidateAndCancel() }", body)
+        self.assertNotIn("URLSession.shared.download(from: remoteURL)", body)
+        self.assertLess(body.index("session.download(from: remoteURL)"),
+                        body.index("try Task.checkCancellation()"))
+
+    def test_redirect_delegate_rejects_provider_restricted_hosts(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        delegate = source[source.index("private final class ManualHTTPSRedirectDelegate:"):
+                          source.index("\nstruct AutomaticDownloadProgress")]
+        for domain in ("spotify.com", "spotifycdn.com", "scdn.co"):
+            self.assertIn(domain, delegate)
+        self.assertIn('host.hasSuffix("." + $0)', delegate)
+
     def test_no_cancellation_check_is_swallowed(self):
         body = method_body()
         self.assertNotRegex(body, r"try\?\s*Task\.checkCancellation\(\)")
