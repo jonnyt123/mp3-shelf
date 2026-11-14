@@ -2,6 +2,7 @@
 import Foundation
 import AVFoundation
 import CryptoKit
+import Network
 
 /// Applies only to the isolated proof's second launch. Background transfers
 /// are not attached on that launch; ordinary foreground HTTP(S) is refused.
@@ -540,4 +541,191 @@ enum DownloadPathProof {
         }
     }
 }
+
+
+/// Explicit DEBUG-only physical-device diagnostics. Never enabled by the normal
+/// player, never writes to the music catalog, and never records URLs or secrets.
+enum PhysicalDeviceAudit {
+    private static let enabledKey = "MP3Shelf.DebugPhysicalQAEnabled"
+    private static let armProcessKey = "MP3Shelf.DebugPhysicalQAArmProcess"
+    private static let processToken = UUID().uuidString
+    private final class LockedLog: @unchecked Sendable { let lock = NSLock() }
+    private static let log = LockedLog()
+
+    nonisolated static var isOfflineRequested: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return Bundle.main.bundleIdentifier == "com.jonnyt.mp3shelf" &&
+            ProcessInfo.processInfo.arguments.contains("--mp3shelf-qa-offline")
+        #endif
+    }
+
+    private nonisolated static var documents: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+    private nonisolated static var eventsURL: URL {
+        documents.appendingPathComponent("MP3ShelfPhysicalQAEvents.jsonl")
+    }
+
+    /// Arm in one process while the user prepares the download and airplane-mode
+    /// transition. The opt-in survives OS-initiated background URLSession wakes.
+    nonisolated static func configureLaunch() {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--mp3shelf-qa-stop") {
+            UserDefaults.standard.set(false, forKey: enabledKey)
+            return
+        }
+        if args.contains("--mp3shelf-qa-arm"),
+           Bundle.main.bundleIdentifier == "com.jonnyt.mp3shelf" {
+            UserDefaults.standard.set(true, forKey: enabledKey)
+            UserDefaults.standard.set(processToken, forKey: armProcessKey)
+            // New explicitly armed session must not inherit callbacks from prior QA.
+            try? Data().write(to: eventsURL, options: .atomic)
+            recordEvent("qa-armed")
+        }
+        recordEvent("process-launched")
+    }
+
+    /// Called only at genuine URLSession/AppDelegate event boundaries.
+    /// Loss of DEBUG evidence must never affect an audio transfer.
+    nonisolated static func recordEvent(_ name: String, ticketID: UUID? = nil) {
+        guard UserDefaults.standard.bool(forKey: enabledKey) else { return }
+        log.lock.lock()
+        defer { log.lock.unlock() }
+        do {
+            let path = eventsURL
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: path.path) {
+                guard fm.createFile(atPath: path.path, contents: nil) else { return }
+            }
+            let size = try fm.attributesOfItem(atPath: path.path)[.size] as? NSNumber
+            guard (size?.intValue ?? 131_073) < 128 * 1024 else { return }
+            var event = ["event": name, "timeUTC": ISO8601DateFormatter().string(from: .now),
+                         "processToken": processToken]
+            if let ticketID { event["ticketID"] = ticketID.uuidString }
+            var bytes = try JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])
+            bytes.append(0x0A)
+            let handle = try FileHandle(forWritingTo: path)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: bytes)
+        } catch {
+            // File protection may reject a locked-background write. Never crash.
+        }
+    }
+
+    /// Invoked only with --mp3shelf-qa-offline LOCAL_PLAYLIST_UUID on a real
+    /// iPhone after a separately armed process and after disabling all radios.
+    /// Tests the REAL PlaybackController, not a synthetic AVAudioPlayer.
+    @MainActor static func verifyOffline(library: MusicLibrary,
+                                          playback: PlaybackController) async {
+        guard isOfflineRequested else { return }
+        let output = documents.appendingPathComponent("MP3ShelfPhysicalOfflineQA.json")
+        var report: [String: Any] = [
+            "schema": "mp3shelf-physical-offline-v1",
+            "status": "FAIL", "processToken": processToken,
+            "deviceKind": "physical-iPhone-debug",
+            "playbackVerified": 0, "networkProof": "NOT_VERIFIED",
+            "backgroundTransfer": "NOT_VERIFIED",
+            "completePlaylistAcceptance": "INCOMPLETE"
+        ]
+        func persist() {
+            if let bytes = try? JSONSerialization.data(withJSONObject: report,
+                                                       options: [.prettyPrinted, .sortedKeys]) {
+                try? bytes.write(to: output, options: .atomic)
+            }
+        }
+        persist()
+        recordEvent("offline-verification-started")
+        let monitor = NWPathMonitor()
+        monitor.start(queue: DispatchQueue(label: "MP3Shelf.PhysicalQANetwork"))
+        defer {
+            monitor.cancel()
+            playback.stop()
+            persist()
+        }
+        do {
+            let args = ProcessInfo.processInfo.arguments
+            guard let index = args.firstIndex(of: "--mp3shelf-qa-offline"),
+                  index + 1 < args.count, let playlistID = UUID(uuidString: args[index + 1]),
+                  let armToken = UserDefaults.standard.string(forKey: armProcessKey),
+                  UUID(uuidString: armToken) != nil, armToken != processToken else {
+                throw NSError(domain: "MP3Shelf.DeviceQA", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Arm in a different app process and provide a valid playlist UUID"])
+            }
+            report["armedProcessToken"] = armToken
+            report["playlistID"] = playlistID.uuidString
+            guard let playlist = library.playlists.first(where: { $0.id == playlistID }),
+                  playlist.sourceURL.flatMap({ SpotifyPlaylistLinks.playlistID(from: $0) }) != nil,
+                  !playlist.trackIDs.isEmpty, !playlist.sourceOrder.isEmpty,
+                  Set(playlist.trackIDs).count == playlist.trackIDs.count else {
+                throw NSError(domain: "MP3Shelf.DeviceQA", code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "Existing Spotify playlist with distinct downloaded tracks required"])
+            }
+            // Wait for the independent NWPathMonitor to observe the actual
+            // network state. No fake URLProtocol or simulated offline flag.
+            for _ in 0..<30 where monitor.currentPath.status != .unsatisfied {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard monitor.currentPath.status == .unsatisfied else {
+                throw NSError(domain: "MP3Shelf.DeviceQA", code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "Disable Wi-Fi and cellular before offline verification"])
+            }
+            report["networkProof"] = "NWPATH_UNSATISFIED"
+            report["totalSourceEntries"] = playlist.sourceOrder.count
+            report["missingSourceEntries"] = playlist.missingTracks.count
+            report["downloadedTrackCount"] = playlist.trackIDs.count
+            var observations: [[String: Any]] = []
+            for id in playlist.trackIDs {
+                try Task.checkCancellation()
+                guard monitor.currentPath.status == .unsatisfied,
+                      let track = library.song(with: id),
+                      let file = Optional(library.fileURL(for: track)),
+                      file.isFileURL,
+                      try DownloadedAudioFormat.isMP3(file) else {
+                    throw NSError(domain: "MP3Shelf.DeviceQA", code: 4,
+                        userInfo: [NSLocalizedDescriptionKey: "Missing/corrupt MP3 or connectivity restored during QA"])
+                }
+                playback.play(track, queue: [track])
+                let deadline = Date().addingTimeInterval(4)
+                var current = playback.localFilePlaybackProof()
+                while current.currentTime <= 0.20 && Date() < deadline {
+                    try Task.checkCancellation()
+                    try await Task.sleep(nanoseconds: 40_000_000)
+                    current = playback.localFilePlaybackProof()
+                }
+                guard current.isPlaying, current.url?.standardizedFileURL == file.standardizedFileURL,
+                      playback.currentTrackID == id, current.currentTime > 0.20,
+                      playback.playbackError == nil, monitor.currentPath.status == .unsatisfied else {
+                    throw NSError(domain: "MP3Shelf.DeviceQA", code: 5,
+                        userInfo: [NSLocalizedDescriptionKey: "Local audio player failed to advance while offline"])
+                }
+                observations.append(["trackID": id.uuidString,
+                                     "localFile": true,
+                                     "positionSeconds": current.currentTime])
+                report["playbackVerified"] = observations.count
+                recordEvent("offline-local-playback-advanced", ticketID: id)
+                playback.stop()
+            }
+            report["observations"] = observations
+            // Prior recorded callback is evidence of a genuine URLSession
+            // delegate invocation, NOT proof of successful source matching.
+            if let data = try? Data(contentsOf: eventsURL),
+               data.count <= 128 * 1024, let log = String(data: data, encoding: .utf8) {
+                report["backgroundCallbackEvents"] =
+                    log.components(separatedBy: "\"event\":\"download-audio-staged\"").count - 1
+                report["backgroundSessionWakeEvents"] =
+                    log.components(separatedBy: "\"event\":\"background-session-wake\"").count - 1
+            }
+            report["backgroundTransfer"] = "CALLBACK_LOG_ONLY_NOT_FULL_ACCEPTANCE"
+            report["status"] = "OFFLINE_PLAYBACK_PASS"
+            recordEvent("offline-verification-finished")
+        } catch {
+            report["error"] = error.localizedDescription
+            recordEvent("offline-verification-failed")
+        }
+    }
+}
+
 #endif
