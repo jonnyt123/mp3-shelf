@@ -353,9 +353,9 @@ final class MusicLibrary: ObservableObject {
               let source = CGImageSourceCreateWithData(bytes as CFData,
                   [kCGImageSourceShouldCache: false] as CFDictionary),
               CGImageSourceGetCount(source) == 1,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? NSDictionary,
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
               width > 0, height > 0,
               width <= 8192, height <= 8192,
               width <= 32_000_000 / height else { return false }
