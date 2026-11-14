@@ -64,11 +64,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     private func restoreCellularConsent(now: Date = .now) {
         let stored = UserDefaults.standard.dictionary(forKey: Self.cellularConsentKey) as? [String: Date] ?? [:]
-        cellularConsentExpirations = Dictionary(uniqueKeysWithValues: stored.compactMap { raw, expiry in
+        cellularConsentExpirations = stored.reduce(into: [UUID: Date]()) { result, entry in
+            let (raw, expiry) = entry
             guard let id = UUID(uuidString: raw), expiry > now,
-                  expiry.timeIntervalSince(now) <= Self.cellularConsentLifetime else { return nil }
-            return (id, expiry)
-        })
+                  expiry.timeIntervalSince(now) <= Self.cellularConsentLifetime else { return }
+            // UserDefaults may contain differently-cased spellings of one UUID.
+            // Preserve the earliest expiry so malformed state cannot extend consent.
+            result[id] = min(result[id] ?? expiry, expiry)
+        }
         cellularApprovedPlaylists = Set(cellularConsentExpirations.keys)
         persistCellularConsent()
     }
