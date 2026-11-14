@@ -1125,6 +1125,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didFinishDownloadingTo location: URL) {
         guard let id = UUID(uuidString: downloadTask.taskDescription ?? "") else { return }
+        #if DEBUG
+        PhysicalDeviceAudit.recordEvent("download-completion-callback", ticketID: id)
+        #endif
         // A second daemon completion must not fail or replace audio already
         // staged by an earlier callback, even if its HTTP response is invalid.
         if Self.stagedFileSurvivesMoveFailure(at: Self.stagingURL(id)) {
@@ -1180,6 +1183,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // Retain the first complete staged file and let recovery validate it.
             if !FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.moveItem(at: location, to: destination)
+                #if DEBUG
+                PhysicalDeviceAudit.recordEvent("download-audio-staged", ticketID: id)
+                #endif
             }
             Task { @MainActor in
                 // History may have been cleared after cancellation while this
@@ -1225,6 +1231,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask,
                                 didCompleteWithError error: Error?) {
         guard let error, let id = UUID(uuidString: task.taskDescription ?? "") else { return }
+        #if DEBUG
+        PhysicalDeviceAudit.recordEvent("download-error-callback", ticketID: id)
+        #endif
         let systemError = error as NSError
         let shouldRetry = systemError.domain == NSURLErrorDomain &&
             BackgroundTransferRetryPolicy.isTemporaryURLFailure(systemError.code)
@@ -1251,6 +1260,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        #if DEBUG
+        PhysicalDeviceAudit.recordEvent("urlsession-background-events-delivered")
+        #endif
         Task { @MainActor in await self.finishBackgroundEvents() }
     }
 }
