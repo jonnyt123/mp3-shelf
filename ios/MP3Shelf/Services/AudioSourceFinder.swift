@@ -376,7 +376,14 @@ enum AudioSourceFinder {
     static func archiveCandidate(_ item: ArchiveItem, identifier: String,
                                  for wish: PlaylistWish) -> AudioCatalogMatch? {
         guard safeIdentifier(identifier), let metadata = item.metadata else { return nil }
-        let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
+        // Archive can list transcoded derivatives alongside originals. When
+        // metadata omits originals, do not silently promote a derivative to
+        // the requested recording: its edition, speed or mastering may differ.
+        // Older Archive entries may omit source entirely; retain those only
+        // when no explicitly original recording is available.
+        let audioFiles = (item.files ?? []).filter {
+            safeMP3File($0.name) && ($0.source == nil || $0.source == "original")
+        }
         let originals = audioFiles.filter { $0.source == "original" }
         let eligible = originals.isEmpty ? audioFiles : originals
         let matches = eligible.filter { file in
