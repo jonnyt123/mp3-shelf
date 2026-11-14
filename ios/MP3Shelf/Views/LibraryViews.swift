@@ -814,16 +814,27 @@ struct PlaylistsView: View {
         .navigationTitle("Playlists")
         .overlay(alignment: .bottom) {
             if let playlistActionFeedback {
-                Text(playlistActionFeedback)
-                    .font(.subheadline)
-                    .foregroundStyle(.white)
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(ShelfTheme.background, in: RoundedRectangle(cornerRadius: 14))
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 12)
-                    .accessibilityAddTraits(.updatesFrequently)
-                    .accessibilityIdentifier("playlist-action-feedback")
+                HStack(spacing: 12) {
+                    Text(playlistActionFeedback)
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.updatesFrequently)
+                    Spacer(minLength: 0)
+                    Button {
+                        self.playlistActionFeedback = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Dismiss playlist confirmation")
+                }
+                .padding(.leading, 14)
+                .padding(.trailing, 4)
+                .background(ShelfTheme.background, in: RoundedRectangle(cornerRadius: 14))
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+                .accessibilityIdentifier("playlist-action-feedback")
             }
         }
         .navigationBarTitleDisplayMode(.inline)
