@@ -717,6 +717,7 @@ struct RenameTrackView: View {
 struct PlaylistsView: View {
     @EnvironmentObject private var library: MusicLibrary
     @State private var playlistQuery = ""
+    @AccessibilityFocusState private var playlistResultsFocused: Bool
     @State private var sortAlphabetically = false
     @State private var pendingRename: MusicPlaylist?
     @State private var renamedName = ""
@@ -732,6 +733,12 @@ struct PlaylistsView: View {
         dynamicTypeSize.isAccessibilitySize
             ? [GridItem(.flexible(), spacing: 13)]
             : [GridItem(.adaptive(minimum: 170), spacing: 13)]
+    }
+
+    // Clearing or completing a playlist edit must leave a reachable result target.
+    private func revealPlaylists() {
+        playlistQuery = ""
+        playlistResultsFocused = true
     }
 
     private var hasPlaylistQuery: Bool {
@@ -756,7 +763,7 @@ struct PlaylistsView: View {
             Spacer(minLength: 0)
         }
         Button {
-            playlistQuery = ""
+            revealPlaylists()
         } label: {
             Label("Clear search", systemImage: "xmark.circle.fill")
                 .font(.subheadline.weight(.semibold))
@@ -806,7 +813,7 @@ struct PlaylistsView: View {
                 guard !name.isEmpty else { return }
                 library.createPlaylist(name)
                 // Reveal the new collection even if the previous search excluded it.
-                playlistQuery = ""
+                revealPlaylists()
                 newName = ""
             }
             .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -824,7 +831,7 @@ struct PlaylistsView: View {
                     library.renamePlaylist(playlist.id, to: name)
                     // The renamed collection may no longer match the old query.
                     // Reveal it rather than leaving the user on an empty result.
-                    playlistQuery = ""
+                    revealPlaylists()
                 }
                 pendingRename = nil
             }
@@ -853,6 +860,8 @@ struct PlaylistsView: View {
         VStack(alignment: .leading, spacing: 5) {
             PremiumEyebrow(title: "CURATED BY YOU", color: ShelfTheme.coral)
             Text("Made for every mood.")
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused($playlistResultsFocused)
                 .font(.system(.largeTitle, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
             Text("Your music, exactly how you like it.")
@@ -885,6 +894,8 @@ struct PlaylistsView: View {
     private var emptyPlaylistSearch: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("No playlists match your search.")
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused($playlistResultsFocused)
                 .foregroundStyle(ShelfTheme.subdued)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Try a different name, or clear the search to browse your collections.")
@@ -892,7 +903,7 @@ struct PlaylistsView: View {
                 .foregroundStyle(ShelfTheme.subdued)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
-                playlistQuery = ""
+                revealPlaylists()
             } label: {
                 Label("Clear playlist search", systemImage: "xmark.circle")
                     .frame(minHeight: 44)
