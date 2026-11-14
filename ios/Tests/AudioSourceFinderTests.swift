@@ -272,6 +272,31 @@ enum AudioSourceFinderTests {
             filetype: "mp3", duration: 212000,
             source: "wikimedia", filesize: 5_000_000, wish: wish)
         verify(openverse != nil, "Openverse Wikimedia MP3 exact match accepted")
+
+        // Catalog metadata is untrusted even when the hostname is allowlisted.
+        // Never enqueue embedded credentials, alternate ports or fragment-bearing
+        // URLs as an automatically selected recording.
+        for invalidDownload in [
+            "https://user:password@upload.wikimedia.org/file.mp3",
+            "https://upload.wikimedia.org:8443/file.mp3",
+            "https://upload.wikimedia.org/file.mp3#other-recording"
+        ] {
+            verify(AudioSourceFinder.openverseCandidate(
+                title: "The Song", creator: "The Artist",
+                download: invalidDownload,
+                landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
+                license: nil, filetype: "mp3", duration: 212000,
+                source: "wikimedia", filesize: 5_000_000, wish: wish) == nil,
+                "Openverse rejects noncanonical audio URL: \(invalidDownload)")
+        }
+        verify(AudioSourceFinder.openverseCandidate(
+            title: "The Song", creator: "The Artist",
+            download: "https://upload.wikimedia.org/file.mp3",
+            landing: "https://user:secret@commons.wikimedia.org/wiki/File:test",
+            license: nil, filetype: "mp3", duration: 212000,
+            source: "wikimedia", filesize: nil, wish: wish) == nil,
+            "Openverse rejects credentials embedded in a landing URL")
+
         let focusedOpenverse = URLComponents(
             url: AudioSourceFinder.openverseSearchURL(
                 for: wish, fieldSearch: true, page: 2),
@@ -398,6 +423,26 @@ enum AudioSourceFinderTests {
             bytes: 4_000_000, wish: wish)
         verify(commons?.sourceName == "Wikimedia Commons",
                "direct Commons file with exact credit and license accepted")
+
+        for invalidDownload in [
+            "https://user:secret@upload.wikimedia.org/file.mp3",
+            "https://upload.wikimedia.org:8443/file.mp3",
+            "https://upload.wikimedia.org/file.mp3#spoof"
+        ] {
+            verify(AudioSourceFinder.commonsCandidate(
+                fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
+                download: invalidDownload,
+                landing: "https://commons.wikimedia.org/wiki/File:test",
+                license: nil, bytes: 4_000_000, wish: wish) == nil,
+                "Commons rejects noncanonical audio URL: \(invalidDownload)")
+        }
+        verify(AudioSourceFinder.commonsCandidate(
+            fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
+            download: "https://upload.wikimedia.org/file.mp3",
+            landing: "https://commons.wikimedia.org:8443/wiki/File:test",
+            license: nil, bytes: 4_000_000, wish: wish) == nil,
+            "Commons rejects nonstandard landing URL ports")
+
         let commonsWithoutLicense = AudioSourceFinder.commonsCandidate(
             fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
             download: "https://upload.wikimedia.org/file.mp3",
