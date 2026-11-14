@@ -48,6 +48,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     private let fm = FileManager.default
     private let manifestURL: URL
     private var tickets: [UUID: BackgroundAudioTicket] = [:]
+    // Corrupt queue journals are recovery evidence, not an empty queue.
+    private var manifestLoadError: String?
     private var processing: Set<UUID> = []
     private var sourceResolutionTasks: [UUID: Task<Void, Never>] = [:]
     private var conversions: [UUID: Progress] = [:]
@@ -163,10 +165,18 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             .appendingPathComponent("MP3Shelf", isDirectory: true)
         try? fm.createDirectory(at: root, withIntermediateDirectories: true)
         manifestURL = root.appendingPathComponent("background-audio-tickets.json")
-        if let data = try? Data(contentsOf: manifestURL),
-           let saved = try? JSONDecoder().decode([BackgroundAudioTicket].self, from: data) {
-            tickets = BackgroundTicketManifestPolicy.distinctByIdentifier(
-                saved, id: { $0.id }, startedAt: { $0.startedAt })
+        if fm.fileExists(atPath: manifestURL.path) {
+            do {
+                let data = try Data(contentsOf: manifestURL)
+                let saved = try JSONDecoder().decode([BackgroundAudioTicket].self, from: data)
+                guard Set(saved.map(\.id)).count == saved.count else {
+                    throw NSError(domain: "MP3Shelf.BackgroundManifest", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "Duplicate ticket identifiers in saved download queue"])
+                }
+                tickets = Dictionary(uniqueKeysWithValues: saved.map { ($0.id, $0) })
+            } catch {
+                manifestLoadError = error.localizedDescription
+            }
         }
         super.init()
         restoreCellularConsent()
@@ -316,7 +326,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             var updated = tickets
             updated[id] = fulfilled
             do {
-                try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+                try writeManifest(Array(updated.values), to: manifestURL)
             } catch {
                 noteQueueWriteFailure(error, for: id)
                 return
@@ -357,7 +367,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // replacement queue is durably recorded.
         let remaining = tickets.filter { $0.value.status == .queued }
         do {
-            try BackgroundTicketManifestPolicy.write(Array(remaining.values), to: manifestURL)
+            try writeManifest(Array(remaining.values), to: manifestURL)
         } catch {
             // Keep history visible so the user can retry clearing it when
             // storage becomes writable; do not discard recovery evidence.
@@ -392,7 +402,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         var updated = tickets
         updated[id] = ticket
         do {
-            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            try writeManifest(Array(updated.values), to: manifestURL)
         } catch {
             noteQueueWriteFailure(error, for: id)
             return
@@ -519,7 +529,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         updated[ticket.id] = ticket
         // Save both ticket changes together before the daemon can transfer
         // bytes. A failed save leaves the previous task and manifest intact.
-        try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        try writeManifest(Array(updated.values), to: manifestURL)
         tickets = updated
 
         let task = session.downloadTask(
@@ -558,8 +568,22 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         revision += 1
     }
 
+    private func writeManifest(_ values: [BackgroundAudioTicket]) throws {
+        if let reason = manifestLoadError {
+            throw NSError(domain: BackgroundTicketManifestPolicy.writeFailureDomain, code: 3,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "Download queue journal cannot be overwritten: " + reason])
+        }
+        try BackgroundTicketManifestPolicy.write(values, to: manifestURL)
+    }
+
     private func persist() {
-        try? BackgroundTicketManifestPolicy.write(Array(tickets.values), to: manifestURL)
+        do {
+            try writeManifest(Array(tickets.values))
+        } catch {
+            // Retain original queue and staged bytes for recovery.
+            revision += 1
+        }
     }
 
     private func updatePending() {
@@ -593,7 +617,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
         guard !fulfilled.isEmpty else { return }
         do {
-            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            try writeManifest(Array(updated.values), to: manifestURL)
         } catch {
             // Never cancel a background task when its terminal state was not
             // durably recorded. A later reconciliation can safely retry.
@@ -727,7 +751,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         var updated = tickets
         updated[id] = ticket
         do {
-            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            try writeManifest(Array(updated.values), to: manifestURL)
         } catch {
             noteQueueWriteFailure(error, for: id)
             return false
@@ -761,7 +785,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             var updated = tickets
             updated[id] = ticket
             do {
-                try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+                try writeManifest(Array(updated.values), to: manifestURL)
             } catch {
                 noteQueueWriteFailure(error, for: id)
                 return
@@ -867,7 +891,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                         var updated = tickets
                         updated[ticket.id] = current
                         do {
-                            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+                            try writeManifest(Array(updated.values), to: manifestURL)
                         } catch {
                             noteQueueWriteFailure(error, for: ticket.id)
                             continue
@@ -988,7 +1012,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 var updated = tickets
                 updated[id] = finished
                 do {
-                    try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+                    try writeManifest(Array(updated.values), to: manifestURL)
                 } catch {
                     // Preserve the queued ticket for a later reconciliation.
                     // Never acknowledge completion that cannot survive restart.
