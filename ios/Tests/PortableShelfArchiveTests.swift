@@ -642,6 +642,23 @@ struct PortableShelfArchiveTests {
         let unaffectedOwnedBytes = try Data(contentsOf: ownedAudio)
         assert(unaffectedOutsideBytes == originalBytes && unaffectedOwnedBytes == originalBytes)
         print("PASS: malformed and linked catalog paths cannot escape owned music storage")
+        // Offline duplicate detection must use the same owned-file validation
+        // as backup and deletion. Equal bytes outside Music (including via a
+        // symlink) must never suppress an otherwise valid new local import.
+        let incomingAudio = folder.appendingPathComponent("incoming.mp3")
+        try originalBytes.write(to: incomingAudio)
+        for unsafe in ["../outside.mp3", "linked.mp3", "internal.mp3", "folder.mp3"] {
+            let candidate = LocalLibraryFileSafety.regularFile(named: unsafe, in: ownedFolder)
+            assert(candidate == nil, "Unsafe duplicate candidate was accepted: \\(unsafe)")
+        }
+        let verifiedCandidate = LocalLibraryFileSafety.regularFile(
+            named: "owned.mp3", in: ownedFolder)
+        assert(verifiedCandidate != nil)
+        assert(PortableShelfArchive.audioFilesIdentical(incomingAudio, verifiedCandidate!))
+        assert(try Data(contentsOf: outsideAudio) == originalBytes)
+        assert(try Data(contentsOf: ownedAudio) == originalBytes)
+        print("PASS: offline duplicate candidates cannot escape Music or follow links")
+
 
         let song = MusicTrack(
             id: UUID(), title: "Test song", artist: "Local artist",
