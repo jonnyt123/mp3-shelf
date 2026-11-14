@@ -94,7 +94,7 @@ let validImported = try Data(contentsOf: imported)
 let invalidJournals: [Data] = [
     Data("{".utf8),
     Data("null".utf8),
-    Data("{\\"tickets\\":[],\\"receipts\\":\\"invalid\\"}".utf8)
+    Data("{\"tickets\":[],\"receipts\":\"invalid\"}".utf8)
 ]
 for (index, invalid) in invalidJournals.enumerated() {
     try invalid.write(to: journal, options: .atomic)
@@ -104,14 +104,14 @@ for (index, invalid) in invalidJournals.enumerated() {
     } catch is DecodingError {
         rejected = true
     }
-    try ensure(rejected, "corrupt receipt journal accepted in case \\(index)")
+    try ensure(rejected, "corrupt receipt journal accepted in case \(index)")
     try ensure(Data(contentsOf: journal) == invalid,
-               "corrupt receipt evidence overwritten in case \\(index)")
+               "corrupt receipt evidence overwritten in case \(index)")
     try ensure(Data(contentsOf: imported) == validImported,
-               "corrupt receipt recovery damaged imported audio in case \\(index)")
+               "corrupt receipt recovery damaged imported audio in case \(index)")
     try ensure(Data(contentsOf: staged) == bytes &&
                Data(contentsOf: unrelated) == otherBytes,
-               "corrupt receipt recovery damaged staged audio in case \\(index)")
+               "corrupt receipt recovery damaged staged audio in case \(index)")
 }
 try validJournal.write(to: journal, options: .atomic)
 try complete(primary)
