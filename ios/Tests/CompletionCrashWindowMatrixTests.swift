@@ -86,6 +86,38 @@ for point in [CrashPoint.afterCopy, .beforeReceipt, .afterReceipt] {
     try ensure(Data(contentsOf: staged) == bytes &&
                Data(contentsOf: unrelated) == otherBytes, "user audio damaged")
 }
+// A corrupt persisted receipt journal is not an empty queue. Completion must
+// fail closed, preserve the exact corrupt evidence, and leave audio untouched.
+// Test actual decoder failures rather than inventing a successful recovery.
+let validJournal = try Data(contentsOf: journal)
+let validImported = try Data(contentsOf: imported)
+let invalidJournals: [Data] = [
+    Data("{".utf8),
+    Data("null".utf8),
+    Data("{\\"tickets\\":[],\\"receipts\\":\\"invalid\\"}".utf8)
+]
+for (index, invalid) in invalidJournals.enumerated() {
+    try invalid.write(to: journal, options: .atomic)
+    var rejected = false
+    do {
+        try complete(primary)
+    } catch is DecodingError {
+        rejected = true
+    }
+    try ensure(rejected, "corrupt receipt journal accepted in case \\(index)")
+    try ensure(Data(contentsOf: journal) == invalid,
+               "corrupt receipt evidence overwritten in case \\(index)")
+    try ensure(Data(contentsOf: imported) == validImported,
+               "corrupt receipt recovery damaged imported audio in case \\(index)")
+    try ensure(Data(contentsOf: staged) == bytes &&
+               Data(contentsOf: unrelated) == otherBytes,
+               "corrupt receipt recovery damaged staged audio in case \\(index)")
+}
+try validJournal.write(to: journal, options: .atomic)
+try complete(primary)
+try ensure((try recover()).receipts == Set([primary]),
+           "valid receipt journal not recoverable after corruption")
+
 print("PASS: 3 crash windows, 384 callback replays, byte-exact 256 KiB staged audio")
 if !CommandLine.arguments.contains("--fixture-only") {
     let path = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
