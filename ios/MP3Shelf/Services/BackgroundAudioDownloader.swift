@@ -979,7 +979,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let first = await backgroundTaskInventory()
         let firstCheck = Date()
         let possible = tickets.values.filter { ticket in
+            // URLSession may legitimately have no visible task while a delayed
+            // retry is waiting for its earliestBeginDate. Do not replace that
+            // persisted retry before its scheduled window even if the original
+            // transfer has aged past the orphan threshold.
             ticket.status == .queued &&
+            (ticket.nextRetryAt.map { $0 <= firstCheck } ?? true) &&
             BackgroundTransferRecoveryPolicy.shouldRecover(
                 startedAt: ticket.startedAt, checkedAt: firstCheck,
                 firstScanHasTask: first.ids.contains(ticket.id),
@@ -999,6 +1004,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         guard !second.hasUnknownTasks else { return }
         for id in possible {
             guard let current = tickets[id], current.status == .queued,
+                  // Recheck after suspension: a new delayed retry can replace
+                  // this ticket while the second daemon inventory is pending.
+                  (current.nextRetryAt.map { $0 <= Date() } ?? true),
                   let library, library.hasCurrentSourceRequest(current.requested, for: current.playlistID),
                   BackgroundTransferRecoveryPolicy.shouldRecover(
                       startedAt: current.startedAt, checkedAt: Date(),
