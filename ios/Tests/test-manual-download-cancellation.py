@@ -23,7 +23,7 @@ class ManualDownloadCancellationContract(unittest.TestCase):
         body = method_body()
         self.assertRegex(
             body,
-            r"URLSession\.shared\.download\(from: remoteURL\)"
+            r"session\.download\(from: remoteURL\)"
             r"[\s\S]*?defer \{ try\? manager\.removeItem\(at: temporary\) \}"
             r"\s*//[^\n]*\n\s*//[^\n]*\n\s*try Task\.checkCancellation\(\)",
         )
@@ -52,8 +52,8 @@ class ManualDownloadCancellationContract(unittest.TestCase):
 
     def test_redirected_response_must_remain_https(self):
         body = method_body()
-        self.assertIn('http.url?.scheme?.lowercased() == "https"', body)
-        self.assertLess(body.index('http.url?.scheme?.lowercased() == "https"'),
+        self.assertIn('ManualAudioURLPolicy.permits(http.url)', body)
+        self.assertLess(body.index('ManualAudioURLPolicy.permits(http.url)'),
                         body.index("manager.moveItem(at: temporary, to: staging)"))
         self.assertIn("throw MusicLibraryError.invalidDownloadURL", body)
 
@@ -63,10 +63,10 @@ class ManualDownloadCancellationContract(unittest.TestCase):
         end = source.index("\nstruct AutomaticDownloadProgress", start)
         delegate = source[start:end]
         self.assertIn("willPerformHTTPRedirection", delegate)
-        self.assertIn('url.scheme?.lowercased() == "https"', delegate)
+        self.assertIn('ManualAudioURLPolicy.permits(request.url)', delegate)
         self.assertIn("completionHandler(nil)", delegate)
         self.assertIn("completionHandler(request)", delegate)
-        self.assertLess(delegate.index('url.scheme?.lowercased() == "https"'),
+        self.assertLess(delegate.index('ManualAudioURLPolicy.permits(request.url)'),
                         delegate.index("completionHandler(request)"))
 
     def test_manual_transfer_uses_dedicated_redirect_policy_session(self):
@@ -82,9 +82,30 @@ class ManualDownloadCancellationContract(unittest.TestCase):
         source = SOURCE.read_text(encoding="utf-8")
         delegate = source[source.index("private final class ManualHTTPSRedirectDelegate:"):
                           source.index("\nstruct AutomaticDownloadProgress")]
+        policy = source[source.index("private enum ManualAudioURLPolicy"):source.index("/// Reject insecure")]
         for domain in ("spotify.com", "spotifycdn.com", "scdn.co"):
-            self.assertIn(domain, delegate)
-        self.assertIn('host.hasSuffix("." + $0)', delegate)
+            self.assertIn(domain, policy)
+        self.assertIn('host.hasSuffix("." + $0)', policy)
+        self.assertIn("ManualAudioURLPolicy.permits(request.url)", delegate)
+
+    def test_initial_redirect_and_final_urls_share_one_policy(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        body = method_body()
+        delegate = source[source.index("private final class ManualHTTPSRedirectDelegate:"):
+                          source.index("\nstruct AutomaticDownloadProgress")]
+        self.assertIn("ManualAudioURLPolicy.permits(remoteURL)", body)
+        self.assertIn("ManualAudioURLPolicy.permits(http.url)", body)
+        self.assertIn("ManualAudioURLPolicy.permits(request.url)", delegate)
+        self.assertNotIn('host.hasSuffix("spotify.com")', body)
+
+    def test_canonical_domain_policy_matches_complete_dns_labels(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        policy = source[source.index("private enum ManualAudioURLPolicy"):
+                        source.index("/// Reject insecure")]
+        self.assertIn('rawHost.drop(while: { $0 == "." })', policy)
+        self.assertIn('CharacterSet(charactersIn: ".")', policy)
+        self.assertIn('host == $0 || host.hasSuffix("." + $0)', policy)
+        self.assertIn('url.scheme?.lowercased() == "https"', policy)
 
     def test_no_cancellation_check_is_swallowed(self):
         body = method_body()
