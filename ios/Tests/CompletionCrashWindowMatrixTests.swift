@@ -1,0 +1,102 @@
+import Foundation
+
+// swift ios/Tests/CompletionCrashWindowMatrixTests.swift --fixture-only
+// Reference-model crash injection; does not execute production URLSession or importer.
+struct CrashTicket: Codable, Equatable {
+    enum State: String, Codable { case queued, importing, imported, cancelled }
+    let id: UUID
+    var state: State
+}
+struct CrashJournal: Codable {
+    var tickets: [CrashTicket]
+    var receipts: Set<UUID>
+}
+enum CrashPoint: Error { case afterCopy, beforeReceipt, afterReceipt }
+func ensure(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+    if try !condition() { fatalError("FAIL: \(message)") }
+}
+let fm = FileManager.default
+let root = fm.temporaryDirectory.appendingPathComponent("mp3-crash-matrix-\(UUID().uuidString)")
+try fm.createDirectory(at: root, withIntermediateDirectories: true)
+defer { try? fm.removeItem(at: root) }
+let staged = root.appendingPathComponent("staged.mp3")
+let unrelated = root.appendingPathComponent("unrelated.mp3")
+let imported = root.appendingPathComponent("library.mp3")
+let journal = root.appendingPathComponent("tickets.json")
+let bytes = Data((0..<131072).map { UInt8(($0 * 17 + 31) % 251) })
+let otherBytes = Data((0..<131072).map { UInt8(($0 * 11 + 7) % 251) })
+try bytes.write(to: staged)
+try otherBytes.write(to: unrelated)
+let primary = UUID(), retired = UUID(), other = UUID()
+let initial = CrashJournal(tickets: [
+    CrashTicket(id: primary, state: .queued),
+    CrashTicket(id: retired, state: .cancelled),
+    CrashTicket(id: other, state: .queued)
+], receipts: [])
+func publish(_ value: CrashJournal) throws {
+    try JSONEncoder().encode(value).write(to: journal, options: .atomic)
+}
+func recover() throws -> CrashJournal {
+    try JSONDecoder().decode(CrashJournal.self, from: Data(contentsOf: journal))
+}
+var acknowledged = 0
+func complete(_ id: UUID, crash: CrashPoint? = nil) throws {
+    var state = try recover()
+    guard id == primary,
+          let index = state.tickets.firstIndex(where: { $0.id == id }),
+          state.tickets[index].state != .imported,
+          state.tickets[index].state != .cancelled,
+          !state.receipts.contains(id) else { return }
+    if state.tickets[index].state == .queued {
+        state.tickets[index].state = .importing
+        try publish(state)
+    }
+    try ensure(Data(contentsOf: staged) == bytes, "staged source modified")
+    try bytes.write(to: imported, options: .atomic)
+    if crash == .afterCopy { throw CrashPoint.afterCopy }
+    state = try recover()
+    try ensure(state.tickets[index].state == .importing, "replay lost importing state")
+    if crash == .beforeReceipt { throw CrashPoint.beforeReceipt }
+    state.tickets[index].state = .imported
+    state.receipts.insert(id)
+    try publish(state)
+    if crash == .afterReceipt { throw CrashPoint.afterReceipt }
+    acknowledged += 1
+}
+for point in [CrashPoint.afterCopy, .beforeReceipt, .afterReceipt] {
+    try publish(initial)
+    if fm.fileExists(atPath: imported.path) { try fm.removeItem(at: imported) }
+    acknowledged = 0
+    do {
+        try complete(primary, crash: point)
+        fatalError("injected crash not reached")
+    } catch let actual as CrashPoint {
+        try ensure(actual == point, "wrong injected crash")
+    }
+    let interrupted = try recover()
+    try ensure(interrupted.tickets[1].state == .cancelled &&
+               interrupted.tickets[2].state == .queued, "other tickets modified")
+    for _ in 0..<64 { try complete(retired) }
+    for _ in 0..<64 { try complete(primary) }
+    let restored = try recover()
+    try ensure(restored.receipts == Set([primary]), "receipt duplicated or lost")
+    try ensure(restored.tickets[0].state == .imported, "terminal state not durable")
+    try ensure(acknowledged <= 1, "completion acknowledged more than once")
+    try ensure(Data(contentsOf: imported) == bytes, "library bytes damaged")
+    try ensure(Data(contentsOf: staged) == bytes &&
+               Data(contentsOf: unrelated) == otherBytes, "user audio damaged")
+}
+print("PASS: 3 crash windows, 384 callback replays, byte-exact 256 KiB staged audio")
+if !CommandLine.arguments.contains("--fixture-only") {
+    let path = "ios/MP3Shelf/Services/BackgroundAudioDownloader.swift"
+    guard fm.fileExists(atPath: path) else {
+        fputs("UNVERIFIED: native downloader source missing\n", stderr)
+        exit(2)
+    }
+    let source = try String(contentsOfFile: path, encoding: .utf8)
+    guard source.contains("didFinishDownloadingTo") else {
+        fputs("FAIL: downloader completion entry point absent\n", stderr)
+        exit(1)
+    }
+    print("SOURCE INSPECTION ONLY: production crash recovery UNVERIFIED")
+}
