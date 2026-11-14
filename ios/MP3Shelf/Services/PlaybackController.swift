@@ -300,6 +300,12 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func seek(to seconds: TimeInterval) {
         guard let audioPlayer, seconds.isFinite else { return }
+        // AVAudioPlayer can enqueue a completion before a seek, particularly
+        // when scrubbing backwards at the end of a recording. That completion
+        // belongs to the old playback position, not the newly sought position.
+        // Invalidate it before changing the player's clock so it cannot
+        // advance the queue or report a spurious decode failure after scrubbing.
+        relay.invalidatePendingCompletions()
         cancelFade()
         audioPlayer.volume = 1
         let position = max(0, min(seconds, audioPlayer.duration))
