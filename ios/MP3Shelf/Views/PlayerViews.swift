@@ -719,6 +719,17 @@ struct PlaybackQueueSheet: View {
     @State private var retryTrackID: UUID?
     @State private var retryInFlight = false
 
+    // All completion paths must release the in-flight latch. Otherwise a
+    // successful retry can leave later failures permanently non-retryable.
+    // Incrementing the token also cancels the pending delayed classification.
+    private func finishRetry() {
+        if retryTrackID != nil { retryAttempt += 1 }
+        retryTrackID = nil
+        retryInFlight = false
+        retryFeedback = nil
+        lastRetryError = nil
+    }
+
     // A retry may complete asynchronously. Do not report success merely
     // because the controller has not published a new error synchronously.
     private func retryPlayback() {
@@ -1057,11 +1068,7 @@ struct PlaybackQueueSheet: View {
                                             : "Try playing this recording again")
                                     Button("Dismiss warning") {
                                         // Cancel the pending status check before dismissal.
-                                        retryAttempt += 1
-                                        retryTrackID = nil
-                                        retryInFlight = false
-                                        retryFeedback = nil
-                                        lastRetryError = nil
+                                        finishRetry()
                                         playback.playbackError = nil
                                     }
                                     .buttonStyle(.bordered)
@@ -1390,10 +1397,7 @@ struct PlaybackQueueSheet: View {
                 // actually begins. A cleared error alone is not success.
                 retryInFlight = false
                 if playback.isPlaying && playback.playbackError == nil {
-                    retryAttempt += 1
-                    retryFeedback = nil
-                    lastRetryError = nil
-                    retryTrackID = nil
+                    finishRetry()
                 } else if let error = playback.playbackError, !error.isEmpty {
                     retryFeedback = error == lastRetryError
                         ? "Still unable to play. Choose another queued song or try again."
@@ -1409,20 +1413,13 @@ struct PlaybackQueueSheet: View {
             }
             .onChange(of: playback.isPlaying) { _, playing in
                 if playing && playback.playbackError == nil && retryTrackID == playback.currentTrackID {
-                    retryAttempt += 1
-                    retryFeedback = nil
-                    lastRetryError = nil
-                    retryTrackID = nil
+                    finishRetry()
                 }
             }
             .onChange(of: playback.currentTrackID) { _, newID in
                 // Never show the previous recording's retry outcome after a skip.
                 if retryTrackID != nil && retryTrackID != newID {
-                    retryAttempt += 1
-                    retryTrackID = nil
-                    retryInFlight = false
-                    retryFeedback = nil
-                    lastRetryError = nil
+                    finishRetry()
                 }
             }
             .onChange(of: playback.playbackError) { _, error in
@@ -1441,11 +1438,7 @@ struct PlaybackQueueSheet: View {
                     // Keep retry state until playback starts, the user
                     // dismisses it, or the bounded status check completes.
                     if retryTrackID == nil || playback.isPlaying {
-                        if retryTrackID != nil { retryAttempt += 1 }
-                        retryTrackID = nil
-                        retryInFlight = false
-                        retryFeedback = nil
-                        lastRetryError = nil
+                        finishRetry()
                     }
                     playbackFailureFocused = false
                 }
