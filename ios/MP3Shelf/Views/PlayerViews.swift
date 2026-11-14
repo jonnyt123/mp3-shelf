@@ -761,6 +761,17 @@ struct PlaybackQueueSheet: View {
         queueChangedAlert = true
     }
 
+    // A stale search action owns an alert until dismissal. Clearing focus
+    // behind that alert prevents VoiceOver from jumping to a hidden row.
+    private func reportSearchChangedAction() {
+        pendingQueueFocusID = nil
+        pendingEmptyQueueFocus = false
+        focusedQueueTrackID = nil
+        emptyQueueFocused = false
+        noMatchesFocused = false
+        searchChangedAlert = true
+    }
+
     // Reject commands from context menus captured before the search changed.
     // A hidden result must not remain actionable after filtering updates.
     private func actionIsVisible(_ trackID: UUID) -> Bool {
@@ -768,10 +779,7 @@ struct PlaybackQueueSheet: View {
         guard !queueSearchIsUpdating,
               let track = playback.queuedTracks.first(where: { $0.id == trackID }),
               matchesSearch(track, query: query) else {
-            pendingQueueFocusID = nil
-            pendingEmptyQueueFocus = false
-            focusedQueueTrackID = nil
-            searchChangedAlert = true
+            reportSearchChangedAction()
             return false
         }
         return true
@@ -813,8 +821,9 @@ struct PlaybackQueueSheet: View {
         // search begins. Do not silently move hidden neighbors in that case.
         guard !queueSearchIsUpdating,
               queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            pendingQueueFocusID = nil
-            pendingEmptyQueueFocus = false
+            // A menu opened before searching must not silently fail or move
+            // a recording whose neighbors are now hidden by the filter.
+            reportSearchChangedAction()
             return
         }
         // A queued row can outlive the snapshot it rendered from. Always
@@ -1365,6 +1374,26 @@ struct PlaybackQueueSheet: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("The queue search changed before the action completed. Review the current results and try again.")
+            }
+            .onChange(of: searchChangedAlert) { _, presented in
+                guard !presented else { return }
+                // Resolve focus from the live, settled filter only after the
+                // system dismisses the alert. Never focus a hidden queue row.
+                pendingQueueFocusID = nil
+                pendingEmptyQueueFocus = false
+                focusedQueueTrackID = nil
+                emptyQueueFocused = false
+                noMatchesFocused = false
+                guard !queueSearchIsUpdating else { return }
+                let current = playback.queuedTracks
+                let query = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if current.isEmpty {
+                    emptyQueueFocused = true
+                } else if let first = current.first(where: { matchesSearch($0, query: query) }) {
+                    focusedQueueTrackID = first.id
+                } else {
+                    noMatchesFocused = true
+                }
             }
             .alert("Queue changed", isPresented: $queueChangedAlert) {
                 Button("OK", role: .cancel) {}
