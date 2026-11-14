@@ -310,7 +310,14 @@ final class PlaybackController: NSObject, ObservableObject {
         fadeTimer?.invalidate()
         fadeTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self, weak outgoing, weak incoming] timer in
             Task { @MainActor in
-                guard let self, let outgoing, let incoming, self.audioPlayer === incoming else {
+                // Timer callbacks hop to the main actor asynchronously. A queued
+                // callback from a cancelled fade must not lower the volume of
+                // a newly resumed track or a replacement crossfade.
+                guard let self, let outgoing, let incoming,
+                      timer.isValid, self.fadeTimer === timer,
+                      self.outgoingPlayer === outgoing,
+                      self.audioPlayer === incoming,
+                      self.isPlaying else {
                     timer.invalidate()
                     return
                 }
