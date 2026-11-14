@@ -45,6 +45,14 @@ enum CommonsPaginationSafetyTests {
                "continuation without generator offset is incomplete")
         expect(!readable(true, true, true, false),
                "continuation without generic token is incomplete")
+        expect(readable(true, false, false, false, hasAPIError: false),
+               "valid empty query is not a provider failure")
+        expect(!readable(true, false, false, false, hasAPIError: true),
+               "API error alongside query cannot authorize a candidate")
+        expect(!readable(true, true, true, true, hasAPIError: true),
+               "API error on later page invalidates earlier candidate")
+        expect(!readable(false, false, false, false, hasAPIError: true),
+               "error-only response cannot masquerade as no results")
         // MediaWiki requires both query parameters on the second request:
         // continue=<token>&gsroffset=<offset>. Neither is optional.
 
