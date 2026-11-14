@@ -655,8 +655,8 @@ struct PortableShelfArchiveTests {
             named: "owned.mp3", in: ownedFolder)
         assert(verifiedCandidate != nil)
         assert(PortableShelfArchive.audioFilesIdentical(incomingAudio, verifiedCandidate!))
-        assert(try Data(contentsOf: outsideAudio) == originalBytes)
-        assert(try Data(contentsOf: ownedAudio) == originalBytes)
+        try assertThrowing(Data(contentsOf: outsideAudio) == originalBytes)
+        try assertThrowing(Data(contentsOf: ownedAudio) == originalBytes)
         print("PASS: offline duplicate candidates cannot escape Music or follow links")
 
 
