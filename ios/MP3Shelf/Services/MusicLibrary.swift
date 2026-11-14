@@ -936,6 +936,12 @@ final class MusicLibrary: ObservableObject {
         defer { isImporting = false }
         var report = ImportReport()
         for source in urls {
+            // Cancellation stops the batch before opening another Files provider.
+            // Previously committed recordings remain intact.
+            if Task.isCancelled {
+                report.errors.append("Import cancelled. Previously imported recordings were preserved.")
+                break
+            }
             // A defer in this loop's enclosing function would retain every
             // security-scoped Files grant until the entire batch finished.
             // Release each grant before starting the next recording, including
@@ -944,13 +950,18 @@ final class MusicLibrary: ObservableObject {
             let result: Result<Bool, Error> = {
                 defer { if accessing { source.stopAccessingSecurityScopedResource() } }
                 return Result {
-                    try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent)
+                    try addLocalAudio(sourceURL: source, originalName: source.lastPathComponent,
+                                      cancellationAware: true)
                 }
             }()
             switch result {
             case .success(true): report.imported += 1
             case .success(false): report.skipped += 1
             case .failure(let error):
+                if error is CancellationError || Task.isCancelled {
+                    report.errors.append("Import cancelled. Previously imported recordings were preserved.")
+                    return report
+                }
                 report.errors.append(source.lastPathComponent + ": " + error.localizedDescription)
             }
         }
