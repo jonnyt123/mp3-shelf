@@ -557,6 +557,22 @@ extension AudioSourceFinder {
     }
     private struct CommonsContinuation: Decodable {
         let gsroffset: Int?
+        let token: String?
+
+        enum CodingKeys: String, CodingKey {
+            case gsroffset
+            case token = "continue"
+        }
+    }
+
+    /// MediaWiki continuation requires BOTH the generic token and generator
+    /// offset. Supplying only gsroffset produces badcontinue on real searches.
+    /// Never turn malformed or incomplete pagination into an automatic match.
+    static func commonsContinuationToken(_ value: String?) throws -> String {
+        guard let value, !value.isEmpty, value.utf8.count <= 256,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else { throw SourceError.unavailable }
+        return value
     }
 
     /// A single MediaWiki page cannot prove uniqueness if the search has more
@@ -624,13 +640,17 @@ extension AudioSourceFinder {
             URLQueryItem(name: "format", value: "json")
         ]
         var offset = 0
+        var continuationToken: String?
         var unique: [String: AudioCatalogMatch] = [:]
         for pageNumber in 1...2 {
             try Task.checkCancellation()
             var pageComponents = components
             if pageNumber > 1 {
-                pageComponents.queryItems?.append(
-                    URLQueryItem(name: "gsroffset", value: String(offset)))
+                guard let continuationToken else { throw SourceError.unavailable }
+                pageComponents.queryItems?.append(contentsOf: [
+                    URLQueryItem(name: "continue", value: continuationToken),
+                    URLQueryItem(name: "gsroffset", value: String(offset))
+                ])
             }
             let result: CommonsResponse = try await requestJSON(
                 pageComponents.url!, allowsCellular: allowsCellular)
@@ -651,7 +671,13 @@ extension AudioSourceFinder {
             guard let next = try commonsNextOffset(
                 current: offset, proposed: result.continuation?.gsroffset,
                 page: pageNumber
-            ) else { break }
+            ) else {
+                // A continuation without a usable generator offset is not a
+                // completed search; it cannot establish a unique recording.
+                if result.continuation != nil { throw SourceError.unavailable }
+                break
+            }
+            continuationToken = try commonsContinuationToken(result.continuation?.token)
             offset = next
         }
         return unique.count == 1 ? unique.values.first : nil
