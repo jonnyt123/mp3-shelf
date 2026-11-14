@@ -5,18 +5,28 @@ import Combine
 import UIKit
 import Network
 
+/// A single host policy for the initial request, redirects and final response.
+/// Canonicalize DNS trailing dots and match complete labels, not arbitrary suffixes.
+private enum ManualAudioURLPolicy {
+    private static let blockedDomains = ["spotify.com", "spotifycdn.com", "scdn.co"]
+
+    static func permits(_ url: URL?) -> Bool {
+        guard let url, url.scheme?.lowercased() == "https",
+              let rawHost = url.host?.lowercased() else { return false }
+        let host = String(rawHost.drop(while: { $0 == "." }))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !host.isEmpty else { return false }
+        return !blockedDomains.contains { host == $0 || host.hasSuffix("." + $0) }
+    }
+}
+
 /// Reject insecure and provider-restricted redirects before URLSession sends a follow-up request.
 private final class ManualHTTPSRedirectDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
-        guard let url = request.url,
-              url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased(),
-              !["spotify.com", "spotifycdn.com", "scdn.co"].contains(where: {
-                  host == $0 || host.hasSuffix("." + $0)
-              }) else {
+        guard ManualAudioURLPolicy.permits(request.url) else {
             completionHandler(nil)
             return
         }
@@ -1646,9 +1656,9 @@ final class MusicLibrary: ObservableObject {
 
     func downloadAudio(from remoteURL: URL, matching wish: PlaylistWish? = nil,
                        attribution: AudioSourceAttribution? = nil) async throws -> ImportReport {
-        guard remoteURL.scheme?.lowercased() == "https", let host = remoteURL.host?.lowercased(),
-              !host.hasSuffix("spotify.com"), !host.hasSuffix("spotifycdn.com"),
-              !host.hasSuffix("scdn.co") else { throw MusicLibraryError.invalidDownloadURL }
+        guard ManualAudioURLPolicy.permits(remoteURL) else {
+            throw MusicLibraryError.invalidDownloadURL
+        }
         isImporting = true
         defer { isImporting = false }
         // A dedicated session prevents URLSession from following an insecure
@@ -1665,11 +1675,7 @@ final class MusicLibrary: ObservableObject {
             throw MusicLibraryError.downloadFailed
         }
         // URLSession follows redirects; reject an HTTPS-to-HTTP downgrade before importing bytes.
-        guard http.url?.scheme?.lowercased() == "https" else {
-            throw MusicLibraryError.invalidDownloadURL
-        }
-        if let finalHost = http.url?.host?.lowercased(),
-           ["spotify.com", "spotifycdn.com", "scdn.co"].contains(where: { finalHost == $0 || finalHost.hasSuffix("." + $0) }) {
+        guard ManualAudioURLPolicy.permits(http.url) else {
             throw MusicLibraryError.invalidDownloadURL
         }
         let attributes = try manager.attributesOfItem(atPath: temporary.path)
