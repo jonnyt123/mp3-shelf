@@ -5,6 +5,25 @@ import Combine
 import UIKit
 import Network
 
+/// Reject insecure and provider-restricted redirects before URLSession sends a follow-up request.
+private final class ManualHTTPSRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        guard let url = request.url,
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(),
+              !["spotify.com", "spotifycdn.com", "scdn.co"].contains(where: {
+                  host == $0 || host.hasSuffix("." + $0)
+              }) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+}
+
 struct AutomaticDownloadProgress {
     let playlistID: UUID
     let total: Int
@@ -1632,7 +1651,12 @@ final class MusicLibrary: ObservableObject {
               !host.hasSuffix("scdn.co") else { throw MusicLibraryError.invalidDownloadURL }
         isImporting = true
         defer { isImporting = false }
-        let (temporary, response) = try await URLSession.shared.download(from: remoteURL)
+        // A dedicated session prevents URLSession from following an insecure
+        // redirect before the final-response validation can reject its bytes.
+        let session = URLSession(configuration: .ephemeral,
+                                 delegate: ManualHTTPSRedirectDelegate(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (temporary, response) = try await session.download(from: remoteURL)
         defer { try? manager.removeItem(at: temporary) }
         // A cancellation racing a completed URLSession download must not
         // publish a recording after the caller has dismissed the import.
