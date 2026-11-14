@@ -51,13 +51,23 @@ func load() throws -> ArchiveManifest {
 }
 func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
     let ids = archive.tracks.map(\.id)
-    guard Set(ids).count == ids.count,\n          archive.tracks.allSatisfy({ safeAudioFilename($0.filename) }),\n          Set(archive.tracks.map { $0.filename.lowercased() }).count == archive.tracks.count,
+    guard Set(ids).count == ids.count,
+          archive.tracks.allSatisfy({ safeAudioFilename($0.filename) }),
+          Set(archive.tracks.map { $0.filename.lowercased() }).count == archive.tracks.count,
           Set(archive.playlists.map(\.id)).count == archive.playlists.count,
           archive.playlists.allSatisfy({ $0.trackIDs.allSatisfy(Set(ids).contains) }) else {
         throw RestoreFault.malformed
     }
     let existing = try load()
-    let byID = Dictionary(uniqueKeysWithValues: existing.tracks.map { ($0.id, $0) })\n    let existingFilenames = Dictionary(uniqueKeysWithValues: existing.tracks.map { ($0.filename.lowercased(), $0.id) })\n    guard archive.tracks.allSatisfy({ item in\n        existingFilenames[item.filename.lowercased()].map { $0 == item.id } ?? true\n    }) else { throw RestoreFault.malformed }\n    for playlist in archive.playlists {\n        if let old = existing.playlists.first(where: { $0.id == playlist.id }), old != playlist {\n            throw RestoreFault.malformed\n        }\n    }
+    let byID = Dictionary(uniqueKeysWithValues: existing.tracks.map { ($0.id, $0) })
+    let existingFilenames = Dictionary(uniqueKeysWithValues: existing.tracks.map { ($0.filename.lowercased(), $0.id) })
+    guard archive.tracks.allSatisfy({ item in
+        existingFilenames[item.filename.lowercased()].map { $0 == item.id } ?? true
+    }) else { throw RestoreFault.malformed }
+    for playlist in archive.playlists {
+        if let old = existing.playlists.first(where: { $0.id == playlist.id }), old != playlist {\n            throw RestoreFault.malformed
+        }
+    }
     for item in archive.tracks where byID[item.id] != nil {
         guard byID[item.id] == item else { throw RestoreFault.malformed }
     }
@@ -105,11 +115,11 @@ for invalid in [
 // must never overwrite a different recording or alter existing playlists.
 let unsafeNames = ["../escape.mp3", "/tmp/escape.mp3", "subdir/song.mp3",
                    "subdir\\\\song.mp3", "..", ".hidden.mp3", "C:evil.mp3",
-                   "bad\\u{0000}name.mp3", "bad\\u{000A}name.mp3"]
+                   "bad\u{0000}name.mp3", "bad\u{000A}name.mp3"]
 for (index, filename) in unsafeNames.enumerated() {
     let before = try Data(contentsOf: manifestURL)
     let invalid = ArchiveManifest(tracks: [
-        oldTrack, ArchiveTrack(id: "unsafe-\\(index)", filename: filename, digest: "new")
+        oldTrack, ArchiveTrack(id: "unsafe-\(index)", filename: filename, digest: "new")
     ], playlists: [])
     do { try restore(invalid, failAfterCopy: false); throw NSError(domain: "QA", code: 3) }
     catch RestoreFault.malformed { }
@@ -126,7 +136,7 @@ for (index, invalid) in conflictCases.enumerated() {
     let before = try Data(contentsOf: manifestURL)
     do { try restore(invalid, failAfterCopy: false); throw NSError(domain: "QA", code: 4) }
     catch RestoreFault.malformed { }
-    try check(Data(contentsOf: manifestURL) == before, "collision case \\(index) published")
+    try check(Data(contentsOf: manifestURL) == before, "collision case \(index) published")
     try check(Data(contentsOf: original) == oldBytes, "collision case damaged existing audio")
 }
 print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; byte preservation")
