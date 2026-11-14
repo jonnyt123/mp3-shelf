@@ -57,6 +57,53 @@ export function inspectPlaylistCatalog(library, playlistID) {
   return { playlistID, requested: playlist.sourceOrder.length, unavailable: playlist.missingTracks.length,
     catalogTracks: selected.length, selected };
 }
+/**
+ * Cross-check actual DEBUG on-device measurements against the saved playlist.
+ * A host hash proves bytes; this checks a different app process, unsatisfied
+ * network path, and the production AVAudioPlayer clock advancing for each file.
+ * Device logs are evidence of callback invocation, not completed HTTP identity.
+ */
+export function verifyPhysicalDeviceTelemetry(proof, events, playlistID, selected) {
+  if (!proof || proof.schema !== 'mp3shelf-physical-offline-v1' ||
+      proof.status !== 'OFFLINE_PLAYBACK_PASS' ||
+      proof.deviceKind !== 'physical-iPhone-debug' ||
+      proof.networkProof !== 'NWPATH_UNSATISFIED' ||
+      proof.playlistID !== playlistID ||
+      typeof proof.processToken !== 'string' ||
+      typeof proof.armedProcessToken !== 'string' ||
+      proof.processToken === proof.armedProcessToken ||
+      !Array.isArray(proof.observations) ||
+      !Array.isArray(events) || !Array.isArray(selected) ||
+      proof.observations.length === 0 ||
+      proof.observations.length !== selected.length ||
+      proof.playbackVerified !== selected.length)
+    throw Error('Native offline playback receipt is absent, incomplete or inconsistent');
+  const ids = new Set(selected.map(item => item.id));
+  const played = new Set();
+  for (const row of proof.observations) {
+    if (!row || !ids.has(row.trackID) || played.has(row.trackID) ||
+        row.localFile !== true || !Number.isFinite(row.positionSeconds) ||
+        row.positionSeconds <= 0.2)
+      throw Error('Native playback sample does not prove every local recording advanced');
+    played.add(row.trackID);
+  }
+  const has = (name, process) => events.some(row =>
+    row?.event === name && row?.processToken === process);
+  if (!has('qa-armed', proof.armedProcessToken) ||
+      !has('offline-verification-started', proof.processToken) ||
+      !has('offline-verification-finished', proof.processToken))
+    throw Error('Device QA log does not corroborate distinct armed and offline processes');
+  const staged = events.some(row => row?.event === 'download-audio-staged' &&
+    typeof row.ticketID === 'string');
+  const woke = events.some(row => row?.event === 'background-session-wake');
+  return {
+    offlinePlaybackAfterRestart: 'APP_INSTRUMENTED_PHYSICAL_PASS',
+    backgroundTransfer: staged && woke
+      ? 'APP_RECORDED_STAGING_AND_BACKGROUND_WAKE'
+      : 'NOT_VERIFIED'
+  };
+}
+
 export function installedApp(inventory, bundleID) {
   const apps = inventory?.result?.apps;
   if (!Array.isArray(apps) || !apps.some(a => a?.bundleIdentifier === bundleID))
@@ -110,6 +157,25 @@ export async function captureDevicePlaylist({ deviceID, bundleID, playlistID, ex
       proofs.push({ trackID: track.id, ...await hashFile(destination) });
       rmSync(destination, { force: true });
     }
+    // Evidence remains optional: an ordinary install may not have the
+    // explicitly armed DEBUG QA report. Invalid/missing logs never grant PASS.
+    let physicalTelemetry = null, physicalTelemetryError = null;
+    try {
+      const offlineFile = join(temp, 'physical-offline.json');
+      const eventsFile = join(temp, 'physical-events.jsonl');
+      copy('Documents/MP3ShelfPhysicalOfflineQA.json', offlineFile);
+      copy('Documents/MP3ShelfPhysicalQAEvents.jsonl', eventsFile);
+      if (statSync(offlineFile).size > 256 * 1024 ||
+          statSync(eventsFile).size > 128 * 1024)
+        throw Error('Physical QA diagnostics exceed bounded file sizes');
+      const proof = JSON.parse(readFileSync(offlineFile, 'utf8'));
+      const events = readFileSync(eventsFile, 'utf8').trim().split('\n')
+        .filter(Boolean).map(line => JSON.parse(line));
+      physicalTelemetry = verifyPhysicalDeviceTelemetry(
+        proof, events, playlistID, catalog.selected);
+    } catch (error) {
+      physicalTelemetryError = error.message;
+    }
     const report = { schema: 'mp3shelf-physical-inventory-v1', capturedAt: new Date().toISOString(),
       candidateSha: expectedSha, device: { productType: device.productType, osVersion: device.osVersion,
         identifierSha256: createHash('sha256').update(device.identifier).digest('hex') },
@@ -120,8 +186,11 @@ export async function captureDevicePlaylist({ deviceID, bundleID, playlistID, ex
       // prove that the installed binary was built from that exact source SHA.
       installedBinaryCommit: 'NOT_VERIFIED',
       liveSourceSearch: 'NOT_VERIFIED', automaticMatching: 'NOT_VERIFIED',
-      backgroundTransfer: 'NOT_VERIFIED', cellularConsent: 'NOT_VERIFIED',
-      offlinePlaybackAfterRestart: 'NOT_VERIFIED', physicalAcceptance: 'INCOMPLETE' };
+      backgroundTransfer: physicalTelemetry?.backgroundTransfer ?? 'NOT_VERIFIED',
+      cellularConsent: 'NOT_VERIFIED',
+      offlinePlaybackAfterRestart: physicalTelemetry?.offlinePlaybackAfterRestart ?? 'NOT_VERIFIED',
+      deviceTelemetryError: physicalTelemetryError,
+      physicalAcceptance: 'INCOMPLETE' };
     writeFileSync(output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     return report;
   } finally { rmSync(temp, { recursive: true, force: true }); }
