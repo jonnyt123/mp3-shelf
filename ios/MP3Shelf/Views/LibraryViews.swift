@@ -1530,10 +1530,8 @@ struct PlaylistDetailView: View {
             playlistPlaybackPending = false
             playlistPlaybackTask = nil
             guard playlistScenePhase == .active,
-                  library.playlists.contains(where: { $0.id == requestedPlaylistID }) else { return }
-            let currentTracks = library.songs(in: library.playlists.first {
-                $0.id == requestedPlaylistID
-            }!)
+                  let currentPlaylist = library.playlists.first(where: { $0.id == requestedPlaylistID }) else { return }
+            let currentTracks = library.songs(in: currentPlaylist)
             let originalURLs = Dictionary(uniqueKeysWithValues: snapshots)
             let queue = currentTracks.filter { track in
                 validIDs.contains(track.id) && originalURLs[track.id] == library.fileURL(for: track)
