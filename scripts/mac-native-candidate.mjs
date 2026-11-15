@@ -122,21 +122,46 @@ function assertWorktreeClean(repo, sha) {
       git(repo, 'status', '--porcelain', '--untracked-files=all') !== '')
     throw Error('Candidate worktree is not clean at the expected SHA.');
 }
-function runLogged(command, args, cwd, logPath) {
+export function runLogged(command, args, cwd, logPath) {
   return new Promise((resolvePromise, reject) => {
+    let settled = false;
+    let child;
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolvePromise();
+    };
     const output = createWriteStream(logPath, { flags: 'wx', mode: 0o600 });
-    output.on('error', reject);
-    const proc = spawn(command, args, {
-      cwd, stdio: ['ignore', 'pipe', 'pipe'], timeout: MAX_NATIVE_SECONDS * 1000,
-      env: { ...process.env, LC_ALL: 'C' }
+    // A full disk, permission error or broken log stream must never turn a
+    // successful xcodebuild exit into an unrecorded PASS.
+    output.on('error', error => {
+      child?.kill('SIGTERM');
+      finish(Error('Native verification log could not be written: ' + error.message));
     });
-    proc.on('error', reject);
-    proc.stdout.pipe(output, { end: false });
-    proc.stderr.pipe(output, { end: false });
-    proc.on('close', code => {
-      output.end(() => {
-        if (code === 0) resolvePromise();
-        else reject(Error('Native runner failed (exit ' + code + '); see ' + logPath));
+    try {
+      child = spawn(command, args, {
+        cwd, stdio: ['ignore', 'pipe', 'pipe'], timeout: MAX_NATIVE_SECONDS * 1000,
+        env: { ...process.env, LC_ALL: 'C' }
+      });
+    } catch (error) {
+      output.destroy();
+      finish(error);
+      return;
+    }
+    child.on('error', error => {
+      output.destroy();
+      finish(Error('Native verification process failed to start: ' + error.message));
+    });
+    child.stdout.pipe(output, { end: false });
+    child.stderr.pipe(output, { end: false });
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      output.end();
+      output.once('finish', () => {
+        if (code === 0 && signal === null) finish();
+        else finish(Error('Native runner failed (exit ' + code +
+          ', signal ' + (signal ?? 'none') + '); see ' + logPath));
       });
     });
   });
