@@ -1045,6 +1045,53 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(exhausted.lastError == "Catalog request failed" &&
                         exhausted.nextRetryAt == nil && exhausted.failed == 1,
                         "exhausted search retains the error without scheduling another retry")
+        // A Spotify playlist can replace a recording's edition while an old
+        // download ticket is waiting for source recovery. Old retry budgets
+        // and deadlines must not suppress the new recording request.
+        let original = PlaylistWish(title: "Song (Live)", artist: "Artist",
+                                    album: "Concert", spotifyURL: nil)
+        let corrected = PlaylistWish(title: "Song (Studio)", artist: "Artist",
+                                     album: "Album", spotifyURL: nil)
+        var correctedJob = SourceDiscoveryJob(playlistID: UUID(), wishes: [original])
+        correctedJob.record(.queued)
+        let oldID = original.id.uuidString
+        correctedJob.sourceRecoveryAttempts = [oldID: 3]
+        correctedJob.sourceRecoveryNotBefore = [oldID: Date.distantFuture]
+        correctedJob.lookupDetails = [oldID: ["Old recording"]]
+        // Preserve the original wish ID when Spotify updates its metadata.
+        var revised = corrected
+        revised.id = original.id
+        verifyDiscovery(correctedJob.refreshMissingWishes([revised]) == 1 &&
+                        correctedJob.nextIndex == 0 &&
+                        correctedJob.currentWish?.title == revised.title &&
+                        correctedJob.sourceRecoveryAttempts?[oldID] == nil &&
+                        correctedJob.sourceRecoveryNotBefore?[oldID] == nil &&
+                        correctedJob.lookupDetails?[oldID] == nil,
+                        "corrected processed recording reopens with no stale recovery budget")
+        verifyDiscovery(correctedJob.canAttemptLookup(at: .now) &&
+                        correctedJob.prepareLookup(at: .now),
+                        "corrected recording can search immediately")
+
+        var pendingCorrection = SourceDiscoveryJob(playlistID: UUID(), wishes: [original])
+        pendingCorrection.sourceRecoveryAttempts = [oldID: 3]
+        pendingCorrection.sourceRecoveryNotBefore = [oldID: Date.distantFuture]
+        pendingCorrection.recordTransientFailure("Old provider outage")
+        verifyDiscovery(pendingCorrection.refreshMissingWishes([revised]) == 0 &&
+                        pendingCorrection.nextIndex == 0 &&
+                        pendingCorrection.transientFailureCount == nil &&
+                        pendingCorrection.nextRetryAt == nil &&
+                        pendingCorrection.lastError == nil &&
+                        pendingCorrection.sourceRecoveryAttempts?[oldID] == nil &&
+                        pendingCorrection.sourceRecoveryNotBefore?[oldID] == nil &&
+                        pendingCorrection.canAttemptLookup(at: .now),
+                        "pending corrected recording drops stale provider and source retry delays")
+        var unchangedCorrection = SourceDiscoveryJob(playlistID: UUID(), wishes: [original])
+        unchangedCorrection.recordTransientFailure("Provider unavailable")
+        let originalRetry = unchangedCorrection.nextRetryAt
+        verifyDiscovery(unchangedCorrection.refreshMissingWishes([original]) == 0 &&
+                        unchangedCorrection.nextRetryAt == originalRetry &&
+                        unchangedCorrection.transientFailureCount == 1,
+                        "unchanged metadata retains bounded backoff")
         print("Persistent discovery checkpoint tests passed")
     }
 }
