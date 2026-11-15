@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { nativeStageErrors } from './verify-native-stage.mjs';
+import { nativeStageErrors, readNativeQaRecord } from './verify-native-stage.mjs';
+import { mkdtempSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const proposed = 'b'.repeat(40), current = 'a'.repeat(40);
 const completed = [
   'playback-order', 'playback-interruptions', 'downloaded-audio-signature',
@@ -83,4 +86,34 @@ test('partial, duplicated and reordered native suites are blocked', () => {
   const duplicate = valid();
   duplicate.qaRecord = duplicate.qaRecord.replace('portable-backup', 'portable-backup portable-backup');
   assert(nativeStageErrors(duplicate).length > 0);
+});
+
+test('duplicate native QA fields cannot override a failed or stale run', () => {
+  const x = valid();
+  x.qaRecord += '- Overall execution: FAIL\n';
+  assert(nativeStageErrors(x).some(e => e.includes('Duplicate native QA field')));
+  const y = valid();
+  y.qaRecord = '- Checked commit: ' + current + '\n' + y.qaRecord;
+  assert(nativeStageErrors(y).some(e => e.includes('Duplicate native QA field')));
+});
+
+test('native QA evidence reader rejects symlinks, empty and oversized records', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-native-qa-'));
+  try {
+    const record = join(dir, 'qa.md'), link = join(dir, 'linked.md');
+    writeFileSync(record, valid().qaRecord);
+    assert.equal(readNativeQaRecord(record), valid().qaRecord);
+    symlinkSync(record, link);
+    assert.throws(() => readNativeQaRecord(link), /bounded regular file/);
+    writeFileSync(record, '');
+    assert.throws(() => readNativeQaRecord(record), /bounded regular file/);
+    writeFileSync(record, 'x'.repeat(256 * 1024 + 1));
+    assert.throws(() => readNativeQaRecord(record), /bounded regular file/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('missing native QA fields fail closed', () => {
+  const x = valid();
+  x.qaRecord = x.qaRecord.replace(/^- Exit status: 0\n/m, '');
+  assert(nativeStageErrors(x).some(e => e.includes('Missing native QA field: Exit status')));
 });
