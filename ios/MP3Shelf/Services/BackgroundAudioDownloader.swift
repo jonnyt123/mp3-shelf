@@ -64,11 +64,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     private func restoreCellularConsent(now: Date = .now) {
         let stored = UserDefaults.standard.dictionary(forKey: Self.cellularConsentKey) as? [String: Date] ?? [:]
-        cellularConsentExpirations = Dictionary(uniqueKeysWithValues: stored.compactMap { raw, expiry in
-            guard let id = UUID(uuidString: raw), expiry > now,
-                  expiry.timeIntervalSince(now) <= Self.cellularConsentLifetime else { return nil }
-            return (id, expiry)
-        })
+        cellularConsentExpirations = BackgroundCellularConsentPolicy.validExpirations(stored, now: now)
         cellularApprovedPlaylists = Set(cellularConsentExpirations.keys)
         persistCellularConsent()
     }
@@ -120,7 +116,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         persistCellularConsent()
         session.getAllTasks { [weak self] tasks in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self,
+                      BackgroundCellularConsentPolicy.mayUpgradeQueuedTransfer(
+                        approvedUntil: self.cellularConsentExpirations[playlistID], now: .now)
+                else { return }
                 for task in tasks {
                     guard let raw = task.taskDescription,
                           let oldID = UUID(uuidString: raw),
