@@ -41,6 +41,31 @@ enum AudioSourceFinder {
         let source: String?
         let size: String?
         let length: String?
+
+        private enum CodingKeys: String, CodingKey { case name, source, size, length }
+
+        // Archive metadata can encode numeric file attributes as JSON numbers or
+        // strings. A single numeric value must not make the whole item undecodable.
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            name = try fields.decode(String.self, forKey: .name)
+            source = try fields.decodeIfPresent(String.self, forKey: .source)
+            size = Self.scalar(fields, key: .size)
+            length = Self.scalar(fields, key: .length)
+        }
+
+        private static func scalar(_ fields: KeyedDecodingContainer<CodingKeys>,
+                                   key: CodingKeys) -> String? {
+            if let text = try? fields.decode(String.self, forKey: key) { return text }
+            if let integer = try? fields.decode(Int64.self, forKey: key) {
+                return String(integer)
+            }
+            if let number = try? fields.decode(Double.self, forKey: key),
+               number.isFinite {
+                return String(number)
+            }
+            return nil
+        }
     }
 
     static func exactMetadataMatch(title: String, creator: String, wish: PlaylistWish) -> Bool {
