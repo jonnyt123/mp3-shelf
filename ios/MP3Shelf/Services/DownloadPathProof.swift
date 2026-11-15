@@ -644,6 +644,9 @@ enum PhysicalDeviceAudit {
             monitor.cancel()
             playback.stop()
             persist()
+            // Diagnostic logging is an explicit one-shot session. Even a
+            // failing offline attempt must not leave background probes armed.
+            UserDefaults.standard.set(false, forKey: enabledKey)
         }
         do {
             let args = ProcessInfo.processInfo.arguments
