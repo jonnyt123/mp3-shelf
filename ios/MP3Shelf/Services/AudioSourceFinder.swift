@@ -40,6 +40,10 @@ enum AudioSourceFinder {
         let name: String
         let source: String?
         let size: String?
+        // Internet Archive reports audio duration in seconds, often as a
+        // decimal string. It is not the byte size and must not be inferred
+        // from a filename or the item's total runtime.
+        let length: String?
     }
 
     static func exactMetadataMatch(title: String, creator: String, wish: PlaylistWish) -> Bool {
@@ -322,6 +326,17 @@ enum AudioSourceFinder {
                                  audioFileCount: eligible.count, wish: wish)
         }
         guard matches.count == 1, let file = matches.first else { return nil }
+        // An exact title/creator can still describe a preview, radio edit or
+        // alternate master. When Spotify provides runtime evidence, Archive
+        // must independently identify the chosen file's duration before it
+        // becomes eligible for unattended download. Missing/invalid lengths
+        // remain available for manual review, not automatic selection.
+        if let expected = wish.durationSeconds {
+            guard expected.isFinite, expected > 0,
+                  let rawLength = file.length?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let measured = Double(rawLength), measured.isFinite, measured > 0,
+                  abs(measured - expected) <= 4.0 else { return nil }
+        }
         return AudioCatalogMatch(
             downloadURL: URL(string: "https://archive.org/download/")!
                 .appendingPathComponent(identifier).appendingPathComponent(file.name),
