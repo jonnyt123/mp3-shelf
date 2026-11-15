@@ -94,7 +94,7 @@ struct LibraryView: View {
                     $0.id == song.id && library.fileURL(for: $0) == originalURL
                 }
             }
-            guard let selected = queue.first(where: { $0.id == track.id }) else {
+            guard let selected = queue.first(where: { $0.id == track.id && library.fileURL(for: $0) == library.fileURL(for: track) }) else {
                 missingRecentRecording = true
                 return
             }
