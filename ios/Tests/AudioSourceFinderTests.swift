@@ -10,6 +10,15 @@ enum AudioSourceFinderTests {
     static func main() throws {
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        verify(AudioSourceFinder.archiveDurationIsCompatible(lengthSeconds: "212.5", expectedSeconds: 212),
+               "archive duration accepts matching fractional seconds")
+        verify(!AudioSourceFinder.archiveDurationIsCompatible(lengthSeconds: nil, expectedSeconds: 212) &&
+               !AudioSourceFinder.archiveDurationIsCompatible(lengthSeconds: "30", expectedSeconds: 212) &&
+               !AudioSourceFinder.archiveDurationIsCompatible(lengthSeconds: "nan", expectedSeconds: 212) &&
+               !AudioSourceFinder.archiveDurationIsCompatible(lengthSeconds: "0", expectedSeconds: 212),
+               "archive duration rejects missing, preview, nonfinite and zero timing")
+        verify(AudioSourceFinder.archiveDurationIsCompatible(lengthSeconds: nil, expectedSeconds: nil),
+               "archive retains metadata-only discovery when playlist duration is unavailable")
         let fallbackRequest = WebAudioSearch.searchRequest(
             query: "The Artist The Song", apiKey: "test-token", allowsCellular: false)
         verify(!fallbackRequest.allowsCellularAccess &&
