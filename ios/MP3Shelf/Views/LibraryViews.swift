@@ -871,8 +871,11 @@ struct MusicTrackRow: View {
             }
             // The selected occurrence must itself be usable. Another row
             // sharing the same ID is not evidence that this file exists.
-            guard Self.isUsableRecording(at: selectedURL),
-                  queue.contains(where: { $0.id == track.id }) else {
+            guard queueSnapshot.indices.contains(where: { index in
+                queueSnapshot[index].0 == track.id &&
+                queueSnapshot[index].1 == selectedURL &&
+                playable[index]
+            }) else {
                 audioAvailability = false
                 recoveryReason = "This recording is missing or empty. Restore its audio file and retry."
                 missingRecordingAlert = true
