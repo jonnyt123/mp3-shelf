@@ -11,6 +11,13 @@ private struct OfflineCountRefreshKey: Equatable {
     let isImporting: Bool
 }
 
+// A recording ID alone is not a stable identity during restore/import:
+// duplicate IDs can refer to different on-disk recordings.
+private struct RecordingLocationKey: Hashable {
+    let id: UUID
+    let url: URL
+}
+
 struct LibraryView: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
@@ -93,15 +100,16 @@ struct LibraryView: View {
             }
             // Never resolve duplicates through an ID-only dictionary. Match the
             // original URL as well so import/recovery cannot substitute a file.
+            // Index the current library once: repeated linear searches made
+            // playback preparation quadratic for large imported collections.
+            // Include the URL so duplicate IDs cannot substitute recordings.
+            let currentByLocation = recordingIndex()
             let queue: [MusicTrack] = recent.enumerated().compactMap { index, song in
                 guard availability[index] else { return nil }
-                let originalURL = locations[index].1
-                return library.tracks.first {
-                    $0.id == song.id && library.fileURL(for: $0) == originalURL
-                }
+                return currentByLocation[RecordingLocationKey(id: song.id, url: locations[index].1)]
             }
             guard availability[selectedIndex],
-                  let selected = library.tracks.first(where: { $0.id == track.id && library.fileURL(for: $0) == selectedURL }) else {
+                  let selected = currentByLocation[RecordingLocationKey(id: track.id, url: selectedURL)] else {
                 missingRecentRecording = true
                 return
             }
@@ -111,6 +119,19 @@ struct LibraryView: View {
                 recentPlaybackNotice = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
             }
         }
+    }
+
+    // Build once per completed availability scan, on the library's actor.
+    // Preserve the first occurrence for a duplicate (ID, URL) pair, matching
+    // the prior first(where:) behavior without O(results × library) lookups.
+    private func recordingIndex() -> [RecordingLocationKey: MusicTrack] {
+        var index: [RecordingLocationKey: MusicTrack] = [:]
+        index.reserveCapacity(library.tracks.count)
+        for track in library.tracks {
+            let key = RecordingLocationKey(id: track.id, url: library.fileURL(for: track))
+            if index[key] == nil { index[key] = track }
+        }
+        return index
     }
 
     private func retryRecentRecording() {
@@ -339,14 +360,12 @@ struct LibraryView: View {
             // Resolve the exact original file location, not just its ID.
             // A changed or removed recording invalidates this request; a file
             // that was already missing at scan time is simply skipped.
-            let current = library.tracks
+            let currentByLocation = recordingIndex()
             var queue: [MusicTrack] = []
             queue.reserveCapacity(songs.count)
             for (index, song) in songs.enumerated() {
                 let originalURL = locations[index].1
-                guard let match = current.first(where: {
-                    $0.id == song.id && library.fileURL(for: $0) == originalURL
-                }) else {
+                guard let match = currentByLocation[RecordingLocationKey(id: song.id, url: originalURL)] else {
                     message = "Some recordings changed while preparing playback. Tap Play or Shuffle again to use the current library."
                     return
                 }
