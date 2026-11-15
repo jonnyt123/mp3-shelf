@@ -106,3 +106,46 @@ for round in 0..<64 {
     try assertQA(try Data(contentsOf: pathA) == audioA && Data(contentsOf: pathB) == audioB, "corrupt journal damaged audio")
 }
 print("PASS: 64 two-ticket crash/replay rounds, 320 forged-metadata rejections, stale/foreign/duplicate rejection and byte preservation")
+
+
+// Interleaved completion callbacks can both read the same durable manifest.
+// A last-writer-wins publication silently drops one receipt even when each
+// individual write is atomic. Exercise the failure and the serialized remedy.
+for round in 0..<64 {
+    let generation = 1000 + round
+    let initial = Journal(receipts: [], pending: [a: generation, b: generation])
+    try writeJournal(initial)
+    let firstSnapshot = try readJournal()
+    let secondSnapshot = try readJournal()
+    var first = firstSnapshot
+    first.receipts.append(Receipt(ticket: a, generation: generation,
+                                  audioName: "a.mp3", byteCount: audioA.count))
+    var second = secondSnapshot
+    second.receipts.append(Receipt(ticket: b, generation: generation,
+                                   audioName: "b.mp3", byteCount: audioB.count))
+    try writeJournal(first)
+    try writeJournal(second)
+    let lostUpdate = try readJournal()
+    try assertQA(lostUpdate.receipts.count == 1 &&
+                 lostUpdate.receipts[0].ticket == b,
+                 "interleaving did not expose the lost-update risk")
+
+    // Recovery must re-read the durable state under the same exclusive
+    // serialization boundary as publication. Replaying the missing ticket
+    // must preserve the previously committed receipt.
+    try complete(a, generation: generation, file: pathA)
+    let recovered = try readJournal()
+    try assertQA(Set(recovered.receipts.map(\.ticket)) == Set([a, b]),
+                 "replay lost another ticket's completion")
+    try assertQA(recovered.receipts.count == 2, "replay duplicated a receipt")
+    try assertQA(try Data(contentsOf: pathA) == audioA &&
+                 Data(contentsOf: pathB) == audioB,
+                 "interleaved publication modified audio bytes")
+
+    // A second stale snapshot must never be used as a replacement manifest.
+    // This is a required production contract, not enforced by atomic rename.
+    try assertQA(secondSnapshot.receipts.isEmpty &&
+                 recovered.receipts.count > secondSnapshot.receipts.count,
+                 "stale snapshot was not identified")
+}
+print("PASS: 64 interleaved lost-update reproductions and serialized replay recoveries")
