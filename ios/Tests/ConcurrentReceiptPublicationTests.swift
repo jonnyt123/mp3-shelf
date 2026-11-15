@@ -12,6 +12,21 @@ struct DurableManifest: Codable {
 }
 enum PublicationError: Error { case duplicate, invalid }
 
+// Swift 6 forbids mutable array captures in concurrent closures.
+// A locked Sendable box makes the error collection race-free.
+final class ConcurrentFailures: @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String] = []
+    func record(_ message: String) {
+        lock.lock(); defer { lock.unlock() }
+        messages.append(message)
+    }
+    func snapshot() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return messages
+    }
+}
+
 let fm = FileManager.default
 let root = fm.temporaryDirectory.appendingPathComponent("mp3shelf-concurrent-receipts-\(UUID().uuidString)")
 try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -40,19 +55,16 @@ func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 for round in 0..<32 {
     try JSONEncoder().encode(DurableManifest(receipts: [])).write(to: manifest, options: .atomic)
-    let failures = NSLock()
-    var unexpected: [String] = []
+    let failures = ConcurrentFailures()
     DispatchQueue.concurrentPerform(iterations: fileCount * 2) { index in
         let id = (index * 7 + round) % fileCount
         do { try publish(id, generation: round + 1) }
         catch PublicationError.duplicate { }
         catch {
-            failures.lock()
-            unexpected.append("round \(round), callback \(index): \(error)")
-            failures.unlock()
+            failures.record("round \(round), callback \(index): \(error)")
         }
     }
-    check(unexpected.isEmpty, "unexpected publication failures: \(unexpected)")
+    check(failures.snapshot().isEmpty, "unexpected publication failures: \(failures.snapshot())")
     let state = try read()
     check(state.receipts.count == fileCount, "lost or duplicated receipts")
     check(Set(state.receipts.map(\.id)) == Set(0..<fileCount), "missing ticket")
@@ -102,8 +114,7 @@ for round in 0..<48 {
     let journal = GenerationJournal(pending: Dictionary(uniqueKeysWithValues:
         (0..<fileCount).map { ($0, currentGeneration) }), completed: [])
     try JSONEncoder().encode(journal).write(to: generationManifest, options: .atomic)
-    let failures = NSLock()
-    var unexpected: [String] = []
+    let failures = ConcurrentFailures()
     DispatchQueue.concurrentPerform(iterations: fileCount * 3) { callback in
         let id = (callback * 11 + round) % fileCount
         let generation = callback % 3 == 0 ? currentGeneration - 1 : currentGeneration
@@ -111,12 +122,10 @@ for round in 0..<48 {
         catch GenerationError.stale { }
         catch GenerationError.duplicate { }
         catch {
-            failures.lock()
-            unexpected.append("round \(round), callback \(callback): \(error)")
-            failures.unlock()
+            failures.record("round \(round), callback \(callback): \(error)")
         }
     }
-    check(unexpected.isEmpty, "generation callback failed unexpectedly: \(unexpected)")
+    check(failures.snapshot().isEmpty, "generation callback failed unexpectedly: \(failures.snapshot())")
     let recovered = try JSONDecoder().decode(GenerationJournal.self, from: Data(contentsOf: generationManifest))
     // Each ticket receives two valid-generation callbacks in every round.
     check(recovered.completed.count == fileCount, "lost generation completion")
