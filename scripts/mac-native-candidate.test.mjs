@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { strict as assert } from 'node:assert';
@@ -123,4 +123,24 @@ test('native runner rejects unwritable log target instead of reporting PASS', as
     await assert.rejects(runLogged(process.execPath, ['-e', "process.stdout.write('ok')"],
       dir, dir), /log could not be written|EISDIR|Native verification/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('log write failure terminates the native subprocess before cleanup', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-native-child-cleanup-'));
+  try {
+    const marker = join(dir, 'should-not-exist');
+    const script = `const fs = require('node:fs');
+      process.stdout.write('start\\n');
+      setTimeout(() => fs.writeFileSync(process.argv[1], 'orphan'), 500);
+      setInterval(() => process.stdout.write('still running\\n'), 20);`;
+    await assert.rejects(
+      runLogged(process.execPath, ['-e', script, marker], dir, dir),
+      /log could not be written|Native verification/
+    );
+    await new Promise(resolve => setTimeout(resolve, 650));
+    assert.equal(existsSync(marker), false,
+      'A failed verifier must not leave a subprocess writing after worktree cleanup');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
