@@ -35,7 +35,11 @@ func readJournal() throws -> Journal {
     guard Set(value.receipts.map(\.ticket)).count == value.receipts.count,
           value.receipts.allSatisfy({ $0.generation >= 0 && $0.byteCount > 0 &&
               ($0.audioName == "a.mp3" || $0.audioName == "b.mp3") &&
-              value.pending[$0.ticket] == $0.generation }) else { throw Fault.corrupt }
+              value.pending[$0.ticket] == $0.generation &&
+              (($0.ticket == a && $0.audioName == "a.mp3" && $0.byteCount == audioA.count) ||
+               ($0.ticket == b && $0.audioName == "b.mp3" && $0.byteCount == audioB.count)) }) &&
+          Set(value.receipts.map(\.audioName)).count == value.receipts.count &&
+          Set(value.pending.keys).isSubset(of: Set([a, b])) else { throw Fault.corrupt }
     return value
 }
 func writeJournal(_ value: Journal, interrupt: Bool = false) throws {
@@ -75,10 +79,30 @@ for round in 0..<64 {
     try assertQA(Set(recovered.receipts.map(\.ticket)) == Set([a, b]), "cross-ticket receipt lost")
     try assertQA(recovered.receipts.count == 2, "duplicate receipt persisted")
     try assertQA(try Data(contentsOf: pathA) == audioA && Data(contentsOf: pathB) == audioB, "audio bytes mutated")
+    // Persisted metadata can be syntactically valid but belong to another ticket.
+    // Reject a swapped receipt before treating a recovered file as imported.
+    let validBytes = try Data(contentsOf: journalURL)
+    let forged = [
+        Journal(receipts: [Receipt(ticket: a, generation: generation, audioName: "b.mp3", byteCount: audioB.count)], pending: baseline.pending),
+        Journal(receipts: [Receipt(ticket: b, generation: generation, audioName: "a.mp3", byteCount: audioA.count)], pending: baseline.pending),
+        Journal(receipts: [Receipt(ticket: a, generation: generation, audioName: "a.mp3", byteCount: audioA.count),
+                           Receipt(ticket: b, generation: generation, audioName: "a.mp3", byteCount: audioA.count)], pending: baseline.pending),
+        Journal(receipts: recovered.receipts, pending: baseline.pending.merging([UUID(): generation]) { old, _ in old }),
+        Journal(receipts: [Receipt(ticket: a, generation: generation, audioName: "a.mp3", byteCount: audioA.count - 1)], pending: baseline.pending)
+    ]
+    for invalid in forged {
+        try JSONEncoder().encode(invalid).write(to: journalURL, options: .atomic)
+        do { _ = try readJournal(); try assertQA(false, "cross-ticket or forged metadata accepted") }
+        catch Fault.corrupt {}
+        try assertQA(try Data(contentsOf: pathA) == audioA && Data(contentsOf: pathB) == audioB,
+                     "forged receipt modified preserved audio")
+    }
+    try validBytes.write(to: journalURL, options: .atomic)
+    try assertQA(try readJournal() == recovered, "valid journal not recoverable after forged metadata")
     // Corrupt publication cannot be interpreted as a valid completion after restart.
     try Data("{\"receipts\":[{}]}".utf8).write(to: journalURL, options: .atomic)
     do { _ = try readJournal(); try assertQA(false, "corrupt journal accepted") }
     catch Fault.corrupt {}
     try assertQA(try Data(contentsOf: pathA) == audioA && Data(contentsOf: pathB) == audioB, "corrupt journal damaged audio")
 }
-print("PASS: 64 two-ticket crash/replay rounds, stale/foreign/duplicate rejection, corruption isolation and 64-KiB byte preservation")
+print("PASS: 64 two-ticket crash/replay rounds, 320 forged-metadata rejections, stale/foreign/duplicate rejection and byte preservation")
