@@ -807,44 +807,64 @@ struct MusicTrackRow: View {
     }
 
     private func playOrExplainMissingAudio() {
-        // File metadata queries can block on coordinated/iCloud-backed URLs.
-        // Revalidate off the main actor before starting playback, even when
-        // the visible availability badge was previously green.
-        guard !isCheckingPlayback else { return }
+        // Validate the selected recording and every queued neighbor off the UI
+        // actor. An unavailable neighbor must never become the next song.
+        guard !isCheckingPlayback, scenePhase == .active else { return }
         isCheckingPlayback = true
-        let url = library.fileURL(for: track)
+        let selectedURL = library.fileURL(for: track)
+        let queueSnapshot = context.map { ($0.id, library.fileURL(for: $0)) }
+        let snapshotIDs = context.map(\.id)
         playbackCheckTask = Task {
-            let scan = Task.detached(priority: .userInitiated) {
-                Self.isUsableRecording(at: url)
+            let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
+                var playable = Set<UUID>()
+                for (id, url) in queueSnapshot {
+                    if Task.isCancelled { break }
+                    if Self.isUsableRecording(at: url) { playable.insert(id) }
+                }
+                return playable
             }
-            let available = await withTaskCancellationHandler {
+            let playableIDs = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled else {
-                isCheckingPlayback = false
-                playbackCheckTask = nil
-                return
-            }
+            guard !Task.isCancelled, scenePhase == .active else { return }
             isCheckingPlayback = false
             playbackCheckTask = nil
-            // A restore, deletion or reimport may replace the track while the
-            // filesystem check is suspended. Never play a stale URL or queue.
-            guard let currentTrack = library.tracks.first(where: { $0.id == track.id }),
-                  library.fileURL(for: currentTrack) == url else {
+            // A restore, deletion, or playlist edit can invalidate a queue
+            // while its filesystem scan is suspended.
+            guard context.map(\.id) == snapshotIDs,
+                  let currentTrack = library.tracks.first(where: { $0.id == track.id }),
+                  library.fileURL(for: currentTrack) == selectedURL else {
                 audioAvailability = false
                 missingRecordingAlert = true
                 return
             }
-            audioAvailability = available
-            guard available else {
+            var currentByID: [UUID: MusicTrack] = [:]
+            for current in library.tracks where currentByID[current.id] == nil {
+                currentByID[current.id] = current
+            }
+            var originalURLs: [UUID: URL] = [:]
+            for (id, url) in queueSnapshot where originalURLs[id] == nil {
+                originalURLs[id] = url
+            }
+            let queue = context.compactMap { entry -> MusicTrack? in
+                guard playableIDs.contains(entry.id),
+                      let current = currentByID[entry.id],
+                      let original = originalURLs[entry.id],
+                      library.fileURL(for: current) == original else { return nil }
+                return current
+            }
+            // A changed file location requires a new scan, not a partial
+            // queue assembled from stale metadata.
+            guard queue.count == context.filter({ playableIDs.contains($0.id) }).count,
+                  playableIDs.contains(track.id) else {
+                audioAvailability = false
                 missingRecordingAlert = true
                 return
             }
-            let currentIDs = Set(library.tracks.map(\.id))
-            let currentQueue = context.filter { currentIDs.contains($0.id) }
-            playback.play(currentTrack, queue: currentQueue)
+            audioAvailability = true
+            playback.play(currentTrack, queue: queue)
         }
     }
 
