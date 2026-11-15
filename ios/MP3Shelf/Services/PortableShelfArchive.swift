@@ -1035,6 +1035,55 @@ enum PortableShelfArchive {
         try Task.checkCancellation()
     }
 
+    /// Revalidate the actual staged audio bytes against the manifest-authorized
+    /// archive slice immediately before the import transaction publishes them.
+    /// This closes the gap between extraction-time verification and import.
+    /// Both sources are streamed; no recording is loaded into memory.
+    static func verifyStagedAudio(_ stagedURL: URL, part: Part, from archive: Opened) throws {
+        guard containsAudioPart(part, in: archive),
+              part.offset >= 0, part.length > 0, part.length <= maxTrackBytes,
+              UInt64(part.offset) <= UInt64.max - archive.payloadOffset else {
+            throw ArchiveError.invalidRange
+        }
+        let source = try FileHandle(forReadingFrom: archive.url)
+        defer { try? source.close() }
+        let staged = try FileHandle(forReadingFrom: stagedURL)
+        defer { try? staged.close() }
+        let archiveSize = try verifyArchive(source, from: archive)
+        let start = archive.payloadOffset + UInt64(part.offset)
+        guard start <= archiveSize, UInt64(part.length) <= archiveSize - start else {
+            throw ArchiveError.invalidRange
+        }
+        let before = try archiveIdentity(of: staged, at: stagedURL)
+        guard before.size == off_t(part.length) else { throw ArchiveError.invalidRange }
+        try source.seek(toOffset: start)
+        var remaining = part.length
+        while remaining > 0 {
+            try Task.checkCancellation()
+            let count = Int(min(remaining, 64 * 1024))
+            let original = try readExactly(count, from: source)
+            let copied = try readExactly(count, from: staged)
+            guard original.count == count, copied.count == count, original == copied else {
+                throw ArchiveError.invalidRange
+            }
+            remaining -= Int64(count)
+        }
+        guard (try staged.read(upToCount: 1) ?? Data()).isEmpty else {
+            throw ArchiveError.invalidRange
+        }
+        try verifyArchive(source, from: archive)
+        let after = try archiveIdentity(of: staged, at: stagedURL)
+        guard before.device == after.device, before.inode == after.inode,
+              before.size == after.size,
+              before.modifiedSeconds == after.modifiedSeconds,
+              before.modifiedNanoseconds == after.modifiedNanoseconds,
+              before.changedSeconds == after.changedSeconds,
+              before.changedNanoseconds == after.changedNanoseconds else {
+            throw ArchiveError.invalidRange
+        }
+        try Task.checkCancellation()
+    }
+
     static func readBytes(_ part: Part, from archive: Opened) throws -> Data {
         guard containsArtworkPart(part, in: archive) else { throw ArchiveError.invalidRange }
         // Only small artwork/metadata slices belong in memory. A malformed
