@@ -153,16 +153,25 @@ export function runLogged(command, args, cwd, logPath) {
       output.destroy();
       finish(Error('Native verification process failed to start: ' + error.message));
     });
-    child.stdout.pipe(output, { end: false });
-    child.stderr.pipe(output, { end: false });
+    // A readable stream failure is not equivalent to a successful native run:
+    // otherwise a truncated Xcode log could be hashed as complete evidence.
+    for (const stream of [child.stdout, child.stderr]) {
+      stream.on('error', error => {
+        child.kill('SIGTERM');
+        output.destroy();
+        finish(Error('Native verification output stream failed: ' + error.message));
+      });
+      stream.pipe(output, { end: false });
+    }
     child.on('close', (code, signal) => {
       if (settled) return;
-      output.end();
+      // Register before end(): small buffered logs may finish synchronously.
       output.once('finish', () => {
         if (code === 0 && signal === null) finish();
         else finish(Error('Native runner failed (exit ' + code +
           ', signal ' + (signal ?? 'none') + '); see ' + logPath));
       });
+      output.end();
     });
   });
 }
