@@ -37,6 +37,7 @@ struct LibraryView: View {
     @State private var recentPlaybackCheck: UUID?
     @State private var recentPlaybackTask: Task<Void, Never>?
     @State private var missingRecentRecording = false
+    @State private var bulkPlaybackPending = false
 
     // Recently added artwork must observe the same missing-file safety rule
     // as a normal library row. Never perform coordinated file I/O on the UI actor.
@@ -226,7 +227,7 @@ struct LibraryView: View {
         }
         .buttonStyle(.bordered)
         .tint(ShelfTheme.accent)
-        .disabled(!hasResults || isSearchUpdating)
+        .disabled(!hasResults || isSearchUpdating || bulkPlaybackPending)
     }
 
     @ViewBuilder private var browsingActions: some View {
@@ -238,12 +239,51 @@ struct LibraryView: View {
         }
     }
 
+    // Validate the whole playback queue off the main actor. A missing local
+    // recording must not be selected by Play results or Shuffle results.
     private func playDisplayed(shuffled: Bool) {
-        guard !isSearchUpdating else { return }
+        guard !isSearchUpdating, !bulkPlaybackPending else { return }
         let songs = displayed
-        guard let first = shuffled ? songs.randomElement() : songs.first else { return }
-        playback.isShuffled = shuffled
-        playback.play(first, queue: songs)
+        guard !songs.isEmpty else { return }
+        let locations = songs.map { ($0.id, library.fileURL(for: $0)) }
+        bulkPlaybackPending = true
+        Task {
+            let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
+                var playable = Set<UUID>()
+                for (id, url) in locations {
+                    if Task.isCancelled { break }
+                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                          values.isRegularFile == true, let size = values.fileSize,
+                          size > 0 else { continue }
+                    playable.insert(id)
+                }
+                return playable
+            }
+            let validIDs = await withTaskCancellationHandler {
+                await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            bulkPlaybackPending = false
+            guard !Task.isCancelled, scenePhase == .active else { return }
+            // Reconcile the current library and its URLs after the asynchronous
+            // scan; a deleted or replaced recording cannot enter the queue.
+            let currentTracks = Dictionary(uniqueKeysWithValues: library.tracks.map { ($0.id, $0) })
+            let scannedURLs = Dictionary(uniqueKeysWithValues: locations)
+            let queue = songs.compactMap { song -> MusicTrack? in
+                guard validIDs.contains(song.id),
+                      let current = currentTracks[song.id],
+                      let scannedURL = scannedURLs[song.id],
+                      library.fileURL(for: current) == scannedURL else { return nil }
+                return current
+            }
+            guard let first = shuffled ? queue.randomElement() : queue.first else {
+                message = "No playable offline recordings were found in these results."
+                return
+            }
+            playback.isShuffled = shuffled
+            playback.play(first, queue: queue)
+        }
     }
 
     var body: some View {
