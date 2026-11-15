@@ -140,8 +140,26 @@ enum AudioSourceFinder {
                 completionHandler(nil)
                 return
             }
-            completionHandler(request)
+            // URLSession can construct a fresh redirect request. Carry forward
+            // the original transfer's restrictive network policy so a Wi-Fi
+            // lookup cannot silently resume on cellular after a redirect.
+            completionHandler(AudioSourceFinder.redirectRequestPreservingNetworkPolicy(
+                request, original: task.originalRequest))
         }
+    }
+
+    static func redirectRequestPreservingNetworkPolicy(
+        _ proposed: URLRequest, original: URLRequest?
+    ) -> URLRequest {
+        var result = proposed
+        // Missing original metadata is not evidence of cellular consent.
+        result.allowsCellularAccess = (original?.allowsCellularAccess == true) &&
+            proposed.allowsCellularAccess
+        result.allowsExpensiveNetworkAccess = (original?.allowsExpensiveNetworkAccess == true) &&
+            proposed.allowsExpensiveNetworkAccess
+        result.allowsConstrainedNetworkAccess = (original?.allowsConstrainedNetworkAccess == true) &&
+            proposed.allowsConstrainedNetworkAccess
+        return result
     }
 
     private static let catalogSession: URLSession = {
