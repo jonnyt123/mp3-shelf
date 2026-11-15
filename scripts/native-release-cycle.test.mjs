@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runNativeReleaseCycle, selectNativeEvidence } from './native-release-cycle.mjs';
@@ -69,5 +69,61 @@ test('wrong SHA or an existing artifact cannot be treated as freshly packaged', 
       preflight: async () => ({ status: 'already-staged', sha }),
       packageProject: async () => { throw Error('must not overwrite'); } });
     assert.equal(result.packaging, 'EXISTING_OUTPUT_REQUIRES_HASH_REVIEW');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('unpromoted native verification cannot authorize packaging', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    await assert.rejects(runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'verified-not-staged', sha, evidence: f.native }),
+      packageProject: async () => { throw Error('packager must not run'); }
+    }), /did not confirm staging/);
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('outside-SHA evidence path cannot authorize packaging', async () => {
+  const f = fixture();
+  try {
+    const other = join(f.home, 'other-native-receipt');
+    mkdirSync(other);
+    await assert.rejects(runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'staged-draft-only', sha, evidence: other }),
+      packageProject: async () => { throw Error('packager must not run'); }
+    }), /exact candidate SHA directory/);
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('symlinked device evidence is blocked before package invocation', async () => {
+  const f = fixture();
+  try {
+    const actual = join(f.home, 'actual-device');
+    mkdirSync(actual);
+    writeFileSync(join(actual, 'physical-inventory.json'), '{}');
+    writeFileSync(join(actual, 'hardware-acceptance.json'), '{}');
+    rmSync(f.device, { recursive: true });
+    symlinkSync(actual, f.device, 'dir');
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => { throw Error('packager must not run'); }
+    });
+    assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('symlinked hardware approval is blocked before package invocation', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    const outside = join(f.home, 'approval.json');
+    writeFileSync(outside, '{}');
+    symlinkSync(outside, join(f.device, 'hardware-acceptance.json'));
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => { throw Error('packager must not run'); }
+    });
+    assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
