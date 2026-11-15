@@ -827,6 +827,41 @@ enum PortableShelfArchive {
                           writtenIdentity.changedNanoseconds == current.changedNanoseconds else {
                         throw ArchiveError.invalidRange
                     }
+                    // Filesystem identity and timestamps cannot prove byte equality:
+                    // an in-place writer can change the same inode and restore its
+                    // timestamps. Compare the actual reopened output against the
+                    // inspected archive slice before returning it for import.
+                    try input.seek(toOffset: start)
+                    try completed.seek(toOffset: 0)
+                    var verifiedBytes: Int64 = 0
+                    while verifiedBytes < part.length {
+                        try Task.checkCancellation()
+                        let count = Int(min(part.length - verifiedBytes, 64 * 1024))
+                        let expectedBytes = try readExactly(count, from: input)
+                        let actualBytes = try readExactly(count, from: completed)
+                        guard expectedBytes.count == count,
+                              actualBytes.count == count,
+                              actualBytes == expectedBytes else {
+                            throw ArchiveError.invalidRange
+                        }
+                        verifiedBytes += Int64(count)
+                    }
+                    guard (try completed.read(upToCount: 1) ?? Data()).isEmpty else {
+                        throw ArchiveError.invalidRange
+                    }
+                    // A writer can race the comparison itself. Reject any
+                    // observed identity/size/timestamp drift before close.
+                    let afterComparison = try verifyOpenedAudioSource(completed, at: target,
+                                                                      expectedLength: part.length)
+                    guard current.device == afterComparison.device,
+                          current.inode == afterComparison.inode,
+                          current.size == afterComparison.size,
+                          current.modifiedSeconds == afterComparison.modifiedSeconds,
+                          current.modifiedNanoseconds == afterComparison.modifiedNanoseconds,
+                          current.changedSeconds == afterComparison.changedSeconds,
+                          current.changedNanoseconds == afterComparison.changedNanoseconds else {
+                        throw ArchiveError.invalidRange
+                    }
                     try completed.close()
                 } catch {
                     try? completed.close()
