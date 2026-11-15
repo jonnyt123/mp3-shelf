@@ -529,6 +529,56 @@ enum PortableShelfArchive {
                 throw ArchiveError.invalidRange
             }
         }
+        // Verify the staged audio payload against the current source bytes, not
+        // merely inode/size/timestamps. A writer can restore timestamps after
+        // modifying a recording; publishing those stale bytes would create a
+        // backup that appears valid but no longer matches the saved library.
+        // Stream both sides in bounded chunks to keep memory constant.
+        let stagedInput = try FileHandle(forReadingFrom: staging)
+        do {
+            var payloadCursor = UInt64(magic.count + 4 + JSON.count)
+            for part in parts {
+                try Task.checkCancellation()
+                if let sourceURL = part.url {
+                    guard let expectedIdentity = part.sourceIdentity else {
+                        throw ArchiveError.invalidManifest
+                    }
+                    let source = try FileHandle(forReadingFrom: sourceURL)
+                    do {
+                        let current = try verifyOpenedAudioSource(source, at: sourceURL,
+                                                                  expectedLength: part.expectedLength)
+                        guard current.device == expectedIdentity.device,
+                              current.inode == expectedIdentity.inode else {
+                            throw ArchiveError.invalidRange
+                        }
+                        try stagedInput.seek(toOffset: payloadCursor)
+                        var remaining = part.expectedLength
+                        while remaining > 0 {
+                            try Task.checkCancellation()
+                            let count = Int(min(remaining, 64 * 1024))
+                            let original = try readExactly(count, from: source)
+                            let archived = try readExactly(count, from: stagedInput)
+                            guard original.count == count, archived.count == count,
+                                  original == archived else {
+                                throw ArchiveError.invalidRange
+                            }
+                            remaining -= Int64(count)
+                        }
+                        _ = try verifyOpenedAudioSource(source, at: sourceURL,
+                                                        expectedLength: part.expectedLength)
+                        try source.close()
+                    } catch {
+                        try? source.close()
+                        throw error
+                    }
+                }
+                payloadCursor += UInt64(part.expectedLength)
+            }
+            try stagedInput.close()
+        } catch {
+            try? stagedInput.close()
+            throw error
+        }
         // Publish without replacing an existing user backup. A fileExists
         // check followed by rename/move is not atomic: another export can
         // create the destination between those operations, and POSIX rename
