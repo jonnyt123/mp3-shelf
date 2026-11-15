@@ -200,7 +200,9 @@ for round in 0..<64 {
         try publishGeneration(ticket, generation: old)
         preconditionFailure("stale callback replaced retry completion")
     } catch GenerationError.stale { }
-    check(try Data(contentsOf: generationManifest) == snapshot, "stale callback mutated durable receipt")
-    check(try Data(contentsOf: audioPaths[ticket]) == payloads[ticket], "retry changed recording")
+    let journalUnchanged = try Data(contentsOf: generationManifest) == snapshot
+    check(journalUnchanged, "stale callback mutated durable receipt")
+    let recordingUnchanged = try Data(contentsOf: audioPaths[ticket]) == payloads[ticket]
+    check(recordingUnchanged, "retry changed recording")
 }
 print("PASS: 64 coordinated retry/callback boundaries, durable generation replacement, and byte-preserved recordings")
