@@ -514,6 +514,23 @@ extension AudioSourceFinder {
 
     static let maxOpenversePages = 2
 
+    /// Openverse reports a total page count. Missing counts are allowed for
+    /// older API responses, but contradictory totals or oversized pages cannot
+    /// establish that a matching recording is unique.
+    static func openversePageIsConsistent(returned: Int, page: Int,
+                                         pageCount: Int?, expectedPageCount: Int?) -> Bool {
+        guard page >= 1, page <= maxOpenversePages,
+              returned >= 0, returned <= 50 else { return false }
+        if let pageCount {
+            guard pageCount >= page, pageCount <= 10_000,
+                  expectedPageCount == nil || expectedPageCount == pageCount else { return false }
+            if page < pageCount && returned < 50 { return false }
+        } else if expectedPageCount != nil {
+            return false
+        }
+        return true
+    }
+
     /// Keep extra queries bounded for battery life and anonymous API limits.
     /// A second page is only useful when no verified recording was found on
     /// the first page and the catalog reports that more results exist.
@@ -549,6 +566,7 @@ extension AudioSourceFinder {
         var firstSearchError: Error?
         var candidates: [String: AudioCatalogMatch] = [:]
         for fieldSearch in [true, false] {
+            var expectedPageCount: Int?
             for page in 1...maxOpenversePages {
                 try Task.checkCancellation()
                 let result: OpenverseResponse
@@ -561,6 +579,11 @@ extension AudioSourceFinder {
                     if firstSearchError == nil { firstSearchError = error }
                     break
                 }
+                guard openversePageIsConsistent(
+                    returned: result.results.count, page: page,
+                    pageCount: result.page_count, expectedPageCount: expectedPageCount
+                ) else { throw SourceError.invalidResponse }
+                if let pageCount = result.page_count { expectedPageCount = pageCount }
                 for match in result.results.compactMap({
                     openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
                                        landing: $0.foreign_landing_url, license: $0.license_url,
