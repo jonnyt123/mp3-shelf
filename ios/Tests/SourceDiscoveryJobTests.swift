@@ -776,6 +776,60 @@ enum SourceDiscoveryJobTests {
                         restoredRefresh.webSources?[wishes[0].id.uuidString] == nil &&
                         restoredRefresh.wishes.suffix(2).map(\.id) == [wishes[0].id, wishes[2].id],
                         "a paused refresh clears old source evidence and preserves credits and the retry deadline")
+        // A corrected recording must not inherit an exhausted source-retry
+        // budget or a deferred link deadline from the old edition.
+        var editionRecovery = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0], wishes[1]])
+        editionRecovery.record(.queued)
+        editionRecovery.record(.queued)
+        let oldKey = wishes[0].id.uuidString
+        let otherKey = wishes[1].id.uuidString
+        let futureDeadline = retryClock.addingTimeInterval(7200)
+        editionRecovery.sourceRecoveryAttempts = [oldKey: 3, otherKey: 2]
+        editionRecovery.sourceRecoveryNotBefore = [oldKey: futureDeadline, otherKey: futureDeadline]
+        verifyDiscovery(editionRecovery.refreshMissingWishes([correctedQueued]) == 1 &&
+                        editionRecovery.sourceRecoveryAttempts?[oldKey] == nil &&
+                        editionRecovery.sourceRecoveryNotBefore?[oldKey] == nil &&
+                        editionRecovery.sourceRecoveryAttempts?[otherKey] == 2 &&
+                        editionRecovery.sourceRecoveryNotBefore?[otherKey] == futureDeadline,
+                        "corrected recording resets only its own exhausted recovery state")
+        editionRecovery = try JSONDecoder().decode(SourceDiscoveryJob.self,
+            from: JSONEncoder().encode(editionRecovery))
+        verifyDiscovery(editionRecovery.requeueFailedSource(for: wishes[0].id) == false &&
+                        editionRecovery.currentWish?.id == correctedQueued.id,
+                        "corrected recording remains pending after checkpoint restore")
+        // An unprocessed current recording has its own provider retry budget;
+        // a metadata correction invalidates that budget immediately.
+        var currentEdition = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
+        currentEdition.recordTransientFailure("Old edition lookup failed", at: retryClock)
+        currentEdition.sourceRecoveryAttempts = [oldKey: 3]
+        currentEdition.sourceRecoveryNotBefore = [oldKey: futureDeadline]
+        verifyDiscovery(currentEdition.refreshMissingWishes([correctedQueued]) == 0 &&
+                        currentEdition.nextRetryAt == nil &&
+                        currentEdition.transientFailureCount == nil &&
+                        currentEdition.canAttemptLookup(at: retryClock) &&
+                        currentEdition.sourceRecoveryAttempts?[oldKey] == nil,
+                        "corrected current edition can search without stale provider backoff")
+        // Duplicate playlist feed entries keep their first occurrence's
+        // position while the last supplied metadata wins.
+        let repeatedNew = PlaylistWish(title: "New edition", artist: "Band",
+            album: "Original", spotifyURL: nil, durationSeconds: 180)
+        var correctedNew = repeatedNew
+        correctedNew.title = "New edition (remastered)"
+        correctedNew.durationSeconds = 187
+        var duplicateFeed = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
+        verifyDiscovery(duplicateFeed.refreshMissingWishes([repeatedNew, wishes[1], correctedNew]) == 2 &&
+                        duplicateFeed.wishes.map(\.id) == [wishes[0].id, repeatedNew.id, wishes[1].id] &&
+                        duplicateFeed.wishes[1] == correctedNew,
+                        "duplicate new playlist entries use latest recording metadata without changing order")
+        // A deferred source that is processed again and immediately retried
+        // must not inherit its prior delayed URL's deadline.
+        var immediateRecovery = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
+        immediateRecovery.record(.queued)
+        immediateRecovery.sourceRecoveryNotBefore = [oldKey: futureDeadline]
+        verifyDiscovery(immediateRecovery.requeueFailedSource(for: wishes[0].id) &&
+                        immediateRecovery.nextLookupAt == nil &&
+                        immediateRecovery.canAttemptLookup(at: retryClock),
+                        "immediate failed-source retry clears stale deferred link deadline")
         verifyDiscovery(processedRefresh.refreshMissingWishes([correctedQueued, correctedFailure]) == 0,
                         "repeating the same refresh does not queue the corrections twice")
         var legacyRefresh = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
