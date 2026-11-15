@@ -316,31 +316,23 @@ final class MusicLibrary: ObservableObject {
             // Only a successful export gives this task ownership of that path.
             try Task.checkCancellation()
             try PortableShelfArchive.export(items, playlists: playlistSnapshot, to: destination)
-            do {
-                try Task.checkCancellation()
-                return destination
-            } catch {
-                // Cancellation after publication must not leave an unwanted
-                // large backup. This branch is reached only after export()
-                // returned successfully, so the destination is ours.
-                try? FileManager.default.removeItem(at: destination)
-                throw error
-            }
+            // Publication is the ownership boundary: cancellation after this
+            // point must not unlink a pathname that another process may have
+            // replaced. The completed archive remains recoverable in the
+            // temporary directory; the caller can still report cancellation.
+            return destination
         }
         // Detached work does not inherit the caller's cancellation. Without
         // forwarding it, dismissing the export UI can leave a large archive
         // streaming for minutes and publish a backup nobody requested.
         return try await withTaskCancellationHandler {
             let exported = try await worker.value
-            do {
-                try Task.checkCancellation()
-                return exported
-            } catch {
-                // The worker may have completed just as cancellation arrived.
-                // Remove only our unique temporary export, never source audio.
-                try? manager.removeItem(at: exported)
-                throw error
-            }
+            // A late cancellation may arrive after publication. Do not remove
+            // the final pathname: another writer may already have replaced it.
+            // A completed temporary archive is safer than deleting unrelated
+            // bytes; the OS may reclaim unclaimed temporary exports later.
+            try Task.checkCancellation()
+            return exported
         } onCancel: {
             worker.cancel()
         }
