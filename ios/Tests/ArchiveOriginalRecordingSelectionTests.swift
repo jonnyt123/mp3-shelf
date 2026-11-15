@@ -24,6 +24,26 @@ enum ArchiveOriginalRecordingSelectionTests {
         func match(_ files: String) throws -> AudioCatalogMatch? {
             AudioSourceFinder.archiveCandidate(try item(files), identifier: "safe_item", for: wish)
         }
+        expect(AudioSourceFinder.archiveFileCandidate(
+            name: "Example Song.mp3", source: "original", sizeBytes: "120000",
+            itemTitle: "Example Song", itemCreator: "Example Artist",
+            audioFileCount: 1, wish: wish),
+            "single original passes the direct matching boundary")
+        expect(!AudioSourceFinder.archiveFileCandidate(
+            name: "Example Song.mp3", source: "derivative", sizeBytes: "120000",
+            itemTitle: "Example Song", itemCreator: "Example Artist",
+            audioFileCount: 1, wish: wish),
+            "single derivative is rejected by direct matching boundary")
+        expect(!AudioSourceFinder.archiveFileCandidate(
+            name: "Example Song.mp3", source: "unknown", sizeBytes: "120000",
+            itemTitle: "Example Song", itemCreator: "Example Artist",
+            audioFileCount: 1, wish: wish),
+            "unknown source category cannot bypass direct matching boundary")
+        expect(AudioSourceFinder.archiveFileCandidate(
+            name: "Example Song.mp3", source: nil, sizeBytes: "120000",
+            itemTitle: "Example Song", itemCreator: "Example Artist",
+            audioFileCount: 1, wish: wish),
+            "legacy single-file metadata remains compatible")
         expect(try match(original) != nil, "explicit original recording accepted")
         expect(try match(derived) == nil, "transcoded derivative cannot auto-select")
         expect(try match(legacy) != nil, "legacy item with omitted source remains discoverable")
