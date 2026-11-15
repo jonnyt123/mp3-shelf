@@ -45,7 +45,8 @@ func load() throws -> Snapshot {
 }
 func save(_ value: Snapshot, interrupted: Bool = false) throws {
     if interrupted { throw ReplayError.interrupted }
-    guard safeJournal() || !fm.fileExists(atPath: journal.path) else { throw ReplayError.unsafe }
+    guard (try? fm.destinationOfSymbolicLink(atPath: journal.path)) == nil,
+          (safeJournal() || !fm.fileExists(atPath: journal.path)) else { throw ReplayError.unsafe }
     try JSONEncoder().encode(value).write(to: journal, options: .atomic)
 }
 // Validate the directory entry before reading: a terminal receipt must never
@@ -167,6 +168,10 @@ catch ReplayError.corrupt {}
 do { try save(Snapshot(entries: [], receipts: [])); try check(false, "symlink journal overwritten") }
 catch ReplayError.unsafe {}
 try check(try Data(contentsOf: outsideJournal) == trustedJournal, "symlink target changed")
+try fm.removeItem(at: journal)
+try fm.createSymbolicLink(atPath: journal.path, withDestinationPath: root.appendingPathComponent("missing-journal").path)
+do { try save(Snapshot(entries: [], receipts: [])); try check(false, "dangling symlink journal overwritten") }
+catch ReplayError.unsafe {}
 try fm.removeItem(at: journal)
 try fm.linkItem(at: outsideJournal, to: journal)
 do { try complete(); try check(false, "hard-linked journal accepted") }
