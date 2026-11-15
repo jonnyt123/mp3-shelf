@@ -171,25 +171,18 @@ for round in 0..<64 {
     let ready = DispatchSemaphore(value: 0)
     let proceed = DispatchSemaphore(value: 0)
     let finished = DispatchSemaphore(value: 0)
-    let results = NSLock()
-    var staleRejected = false
-    var unexpectedError: String?
+    let callbackResult = ConcurrentFailures()
+    let staleResult = ConcurrentFailures()
     DispatchQueue.global(qos: .userInitiated).async {
         ready.signal()
         proceed.wait()
         do {
             try publishGeneration(ticket, generation: old)
-            results.lock()
-            unexpectedError = "old generation published after retry"
-            results.unlock()
+            callbackResult.record("old generation published after retry")
         } catch GenerationError.stale {
-            results.lock()
-            staleRejected = true
-            results.unlock()
+            staleResult.record("stale")
         } catch {
-            results.lock()
-            unexpectedError = String(describing: error)
-            results.unlock()
+            callbackResult.record(String(describing: error))
         }
         finished.signal()
     }
@@ -199,7 +192,8 @@ for round in 0..<64 {
     check(persisted.pending[ticket] == next && persisted.completed.isEmpty, "retry not durably published")
     proceed.signal()
     finished.wait()
-    check(staleRejected && unexpectedError == nil, "old callback escaped retry boundary: \(unexpectedError ?? "unknown")")
+    check(staleResult.snapshot() == ["stale"] && callbackResult.snapshot().isEmpty,
+          "old callback escaped retry boundary: \(callbackResult.snapshot())")
     try publishGeneration(ticket, generation: next)
     let committed = try JSONDecoder().decode(GenerationJournal.self, from: Data(contentsOf: generationManifest))
     check(committed.completed == [GenerationReceipt(id: ticket, generation: next,
