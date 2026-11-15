@@ -805,7 +805,33 @@ enum PortableShelfArchive {
                 try verifyArchive(input, from: archive)
                 try Task.checkCancellation()
                 try output.synchronize()
+                // A concurrent writer may replace or truncate the UUID output
+                // while extraction is running. Validate the actual descriptor
+                // and its current pathname before exposing it to the importer.
+                let writtenIdentity = try verifyOpenedAudioSource(output, at: target,
+                                                                  expectedLength: part.length)
                 try output.close()
+                // Reopening detects replacement during close. Do not return a
+                // pathname pointing at somebody else's audio, even if it has
+                // the same byte count as the extracted recording.
+                let completed = try FileHandle(forReadingFrom: target)
+                do {
+                    let current = try verifyOpenedAudioSource(completed, at: target,
+                                                              expectedLength: part.length)
+                    guard writtenIdentity.device == current.device,
+                          writtenIdentity.inode == current.inode,
+                          writtenIdentity.size == current.size,
+                          writtenIdentity.modifiedSeconds == current.modifiedSeconds,
+                          writtenIdentity.modifiedNanoseconds == current.modifiedNanoseconds,
+                          writtenIdentity.changedSeconds == current.changedSeconds,
+                          writtenIdentity.changedNanoseconds == current.changedNanoseconds else {
+                        throw ArchiveError.invalidRange
+                    }
+                    try completed.close()
+                } catch {
+                    try? completed.close()
+                    throw error
+                }
                 try verifyArchive(input, from: archive)
                 // The last archive verification may complete after cancellation.
                 // Throw inside the cleanup scope so no completed temporary audio
