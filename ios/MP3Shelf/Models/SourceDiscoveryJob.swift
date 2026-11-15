@@ -163,6 +163,33 @@ enum BackgroundTicketManifestPolicy {
     }
 }
 
+
+/// Restore persisted per-playlist cellular permission defensively. UUID keys
+/// are case-insensitive, so differently cased legacy keys can represent the
+/// same playlist. Prefer the latest *valid* expiry without trapping on a
+/// duplicate dictionary key or accidentally extending the 24-hour grant.
+enum BackgroundCellularConsentPolicy {
+    static let lifetime: TimeInterval = 24 * 60 * 60
+
+    static func validExpirations(_ stored: [String: Date], now: Date) -> [UUID: Date] {
+        var result: [UUID: Date] = [:]
+        for (raw, expiry) in stored {
+            guard let id = UUID(uuidString: raw),
+                  expiry > now,
+                  expiry.timeIntervalSince(now) <= lifetime else { continue }
+            if let existing = result[id], existing >= expiry { continue }
+            result[id] = expiry
+        }
+        return result
+    }
+
+    static func mayUpgradeQueuedTransfer(approvedUntil: Date?, now: Date) -> Bool {
+        guard let approvedUntil else { return false }
+        return approvedUntil > now &&
+            approvedUntil.timeIntervalSince(now) <= lifetime
+    }
+}
+
 /// Small, bounded recovery budget for actual background file transfers.
 /// The source catalog has its own independent lookup retry policy. Do not
 /// retry invalid media, rejected permissions, or conflicting song metadata.
