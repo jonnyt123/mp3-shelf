@@ -44,17 +44,16 @@ func complete(interruptTerminal: Bool = false) throws {
     guard let index = snapshot.entries.firstIndex(where: { $0.id == "ticket" }) else { throw ReplayError.corrupt }
     if snapshot.entries[index].state == .imported { return }
     guard snapshot.entries[index].state == .pending || snapshot.entries[index].state == .importing else { return }
-    guard fm.fileExists(atPath: stage.path) else { throw ReplayError.missing }
-    guard try Data(contentsOf: stage) == original else { throw ReplayError.conflict }
+    let stagedExists = fm.fileExists(atPath: stage.path)
+    let destinationExists = fm.fileExists(atPath: dest.path)
+    guard stagedExists || (snapshot.entries[index].state == .importing && destinationExists) else { throw ReplayError.missing }
+    if stagedExists { guard try Data(contentsOf: stage) == original else { throw ReplayError.conflict } }
+    if destinationExists { guard try Data(contentsOf: dest) == original else { throw ReplayError.conflict } }
     if snapshot.entries[index].state == .pending {
         snapshot.entries[index].state = .importing
         try save(snapshot)
     }
-    if fm.fileExists(atPath: dest.path) {
-        guard try Data(contentsOf: dest) == original else { throw ReplayError.conflict }
-    } else {
-        try fm.copyItem(at: stage, to: dest)
-    }
+    if !destinationExists { try fm.copyItem(at: stage, to: dest) }
     snapshot.entries[index].state = .imported
     snapshot.receipts.append("ticket")
     try save(snapshot, interrupted: interruptTerminal)
@@ -70,9 +69,10 @@ for round in 0..<48 {
     catch ReplayError.interrupted {}
     try check(try load().entries[0].state == .importing, "pending state lost")
     try check(try Data(contentsOf: dest) == original, "copied recording lost")
-    // Simulate process death: no retained in-memory state; reload durable journal.
+    // Simulate process death, including lost temporary URLSession staging.
+    if round % 3 == 0 { try fm.removeItem(at: stage) }
     try complete()
-    try fm.removeItem(at: stage)
+    if fm.fileExists(atPath: stage.path) { try fm.removeItem(at: stage) }
     try complete() // late duplicate after stage cleanup must be idempotent
     let result = try load()
     try check(result.receipts == ["ticket"], "duplicate receipt")
@@ -87,4 +87,15 @@ for round in 0..<48 {
         try valid.write(to: journal, options: .atomic)
     }
 }
-print("PASS: 48 crash/replay rounds, 48 duplicate callbacks after stage cleanup, 24 corrupt-journal rejections, byte preservation")
+// Neither absent nor foreign destination bytes can authorize a receipt.
+try save(Snapshot(entries: [Entry(id: "ticket", state: .importing, filename: "song.mp3")], receipts: []))
+if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+do { try complete(); try check(false, "missing destination accepted") }
+catch ReplayError.missing {}
+try check(try load().receipts.isEmpty, "missing audio published receipt")
+try Data("foreign recording".utf8).write(to: dest, options: .atomic)
+do { try complete(); try check(false, "foreign destination accepted") }
+catch ReplayError.conflict {}
+try check(try load().receipts.isEmpty, "foreign audio published receipt")
+try check(try Data(contentsOf: dest) == Data("foreign recording".utf8), "foreign audio modified")
+print("PASS: 48 crash/replay rounds (16 without staging), 48 duplicates, 24 corrupt journals, missing/foreign destination rejection")
