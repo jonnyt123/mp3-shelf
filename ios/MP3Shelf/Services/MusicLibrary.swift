@@ -549,7 +549,8 @@ final class MusicLibrary: ObservableObject {
                 try Task.checkCancellation()
                 let imported = try addLocalAudio(
                     sourceURL: file, originalName: original,
-                    cancellationAware: true, duplicateCandidatesAlreadyChecked: true)
+                    cancellationAware: true, duplicateCandidatesAlreadyChecked: true,
+                    expectedArchiveAudio: (archived.audio, archive))
                 if imported { report.imported += 1 }
                 else { report.skipped += 1 }
 
@@ -1045,7 +1046,8 @@ final class MusicLibrary: ObservableObject {
                                matching wish: PlaylistWish? = nil,
                                attribution: AudioSourceAttribution? = nil,
                                cancellationAware: Bool = false,
-                               duplicateCandidatesAlreadyChecked: Bool = false) throws -> Bool {
+                               duplicateCandidatesAlreadyChecked: Bool = false,
+                               expectedArchiveAudio: (PortableShelfArchive.Part, PortableShelfArchive.Opened)? = nil) throws -> Bool {
         // Archive restoration is cancellable; ordinary synchronous imports
         // retain their existing behavior. Check at expensive I/O boundaries
         // before publishing any new catalog entry.
@@ -1102,6 +1104,10 @@ final class MusicLibrary: ObservableObject {
                 from: sourceURL, to: destination,
                 validate: { staged in
                     if cancellationAware { try Task.checkCancellation() }
+                    if let expectedArchiveAudio {
+                        try PortableShelfArchive.verifyStagedAudio(
+                            staged, part: expectedArchiveAudio.0, from: expectedArchiveAudio.1)
+                    }
                     // Staging preserves the extension so AVFoundation can
                     // validate the audio before any final filename is created.
                     let asset = AVURLAsset(url: staged)
