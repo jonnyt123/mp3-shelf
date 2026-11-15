@@ -387,6 +387,12 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
     const latestPreview = remoteSHA(project, PREVIEW_REF);
     const errors = promotionPolicy({ base, proposed, current, latestPreview, changedFiles, gateErrors });
     if (errors.length) throw Error(errors.join('; '));
+    // A later ZIP exporter can independently re-check the original native
+    // ancestry and exact log receipts even after draft #29 has advanced.
+    writeFileSync(join(output, 'native-baseline.json'), JSON.stringify({
+      schema: 'mp3shelf-native-baseline-v1', baseSha: base,
+      candidateSha: proposed, verifiedForDraft: 29
+    }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     if (!promote) return { status: 'verified-not-staged', sha: proposed, evidence: output };
     // A draft PR may have been closed, superseded or retargeted during Xcode.
     await githubDraftReview(base, proposed);
