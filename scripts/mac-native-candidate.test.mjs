@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { BASE_REF, PREVIEW_REF, promotionPolicy, verifyDraftPreflightPR, executeNativePreflight }
+import { BASE_REF, PREVIEW_REF, promotionPolicy, verifyDraftPreflightPR, verifyConsolidatedDraftPR, executeNativePreflight }
   from './mac-native-candidate.mjs';
 const base = 'a'.repeat(40), proposed = 'b'.repeat(40);
 const paths = [
@@ -64,4 +64,28 @@ test('draft PR review metadata must agree with both Git SHA refs', () => {
     const modified = structuredClone(pr); mutation(modified);
     assert(verifyDraftPreflightPR(modified, { base, proposed }).length > 0);
   }
+});
+
+test('consolidated candidate must remain an open draft at the exact baseline', () => {
+  const pr = { number: 29, state: 'open', draft: true,
+    head: { sha: base, ref: 'feat/ios-consolidated-candidate',
+      repo: { full_name: 'jonnyt123/mp3-shelf' } },
+    base: { sha: 'c'.repeat(40), ref: 'main',
+      repo: { full_name: 'jonnyt123/mp3-shelf' } } };
+  assert.deepEqual(verifyConsolidatedDraftPR(pr, { base }), []);
+  for (const mutation of [
+    p => { p.number = 4; },
+    p => { p.state = 'closed'; },
+    p => { p.draft = false; },
+    p => { p.head.sha = proposed; },
+    p => { p.head.ref = 'main'; },
+    p => { p.head.repo.full_name = 'other/repo'; },
+    p => { p.base.ref = 'feat/ios-consolidated-candidate'; },
+    p => { p.base.repo.full_name = 'other/repo'; }
+  ]) {
+    const modified = structuredClone(pr);
+    mutation(modified);
+    assert(verifyConsolidatedDraftPR(modified, { base }).length > 0);
+  }
+  assert(verifyConsolidatedDraftPR(null, { base }).length > 0);
 });
