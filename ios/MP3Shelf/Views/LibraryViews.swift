@@ -878,6 +878,7 @@ struct MusicTrackRow: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 12) {
             Button { playOrExplainMissingAudio() } label: {
                 HStack(spacing: 12) {
@@ -984,6 +985,14 @@ struct MusicTrackRow: View {
             .accessibilityLabel("More options for \(track.title) by \(track.artist)")
             .accessibilityHint("Favorite, add to playlist, edit, share or delete this download")
         }
+        if let playbackNotice {
+            Text(playbackNotice)
+                .font(.caption)
+                .foregroundStyle(ShelfTheme.mint)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.updatesFrequently)
+        }
+        }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(track.id == playback.currentTrackID
@@ -1012,17 +1021,6 @@ struct MusicTrackRow: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("\(recoveryReason) Your library entry and playlists are unchanged.")
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let playbackNotice {
-                Text(playbackNotice)
-                    .font(.caption)
-                    .foregroundStyle(ShelfTheme.mint)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .accessibilityAddTraits(.updatesFrequently)
-            }
         }
         .confirmationDialog("Delete downloaded song?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Song", role: .destructive) {
