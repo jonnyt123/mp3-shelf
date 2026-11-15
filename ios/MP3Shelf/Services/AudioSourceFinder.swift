@@ -40,10 +40,36 @@ enum AudioSourceFinder {
         let name: String
         let source: String?
         let size: String?
-        // Internet Archive reports audio duration in seconds, often as a
-        // decimal string. It is not the byte size and must not be inferred
-        // from a filename or the item's total runtime.
+        // Archive's per-file values may be JSON strings or numbers.
+        // Invalid optional evidence must not discard an otherwise readable
+        // catalog item; candidate validation still rejects bad durations.
         let length: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case name, source, size, length
+        }
+
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            name = try fields.decode(String.self, forKey: .name)
+            source = try? fields.decode(String.self, forKey: .source)
+            size = Self.optionalNumberText(fields, key: .size)
+            length = Self.optionalNumberText(fields, key: .length)
+        }
+
+        private static func optionalNumberText(
+            _ fields: KeyedDecodingContainer<CodingKeys>, key: CodingKeys
+        ) -> String? {
+            if let value = try? fields.decode(String.self, forKey: key) { return value }
+            if let value = try? fields.decode(Int64.self, forKey: key) {
+                return String(value)
+            }
+            if let value = try? fields.decode(Double.self, forKey: key),
+               value.isFinite {
+                return String(value)
+            }
+            return nil
+        }
     }
 
     static func exactMetadataMatch(title: String, creator: String, wish: PlaylistWish) -> Bool {
