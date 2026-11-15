@@ -772,6 +772,8 @@ struct MusicTrackRow: View {
     @EnvironmentObject private var playback: PlaybackController
     @State private var confirmDelete = false
     @State private var missingRecordingAlert = false
+    @State private var playbackNotice: String?
+    @State private var recoveryReason = "The local recording is unavailable."
     @State private var audioAvailability: Bool?
     @State private var isCheckingPlayback = false
     @State private var playbackCheckTask: Task<Void, Never>?
@@ -811,6 +813,7 @@ struct MusicTrackRow: View {
         // actor. An unavailable neighbor must never become the next song.
         guard !isCheckingPlayback, scenePhase == .active else { return }
         isCheckingPlayback = true
+        playbackNotice = nil
         let selectedURL = library.fileURL(for: track)
         let queueSnapshot = context.map { ($0.id, library.fileURL(for: $0)) }
         let snapshotIDs = context.map(\.id)
@@ -837,6 +840,7 @@ struct MusicTrackRow: View {
                   let currentTrack = library.tracks.first(where: { $0.id == track.id }),
                   library.fileURL(for: currentTrack) == selectedURL else {
                 audioAvailability = false
+                recoveryReason = "The song or its location changed while checking offline audio. Retry to use the current library."
                 missingRecordingAlert = true
                 return
             }
@@ -860,11 +864,16 @@ struct MusicTrackRow: View {
             guard queue.count == context.filter({ playableIDs.contains($0.id) }).count,
                   playableIDs.contains(track.id) else {
                 audioAvailability = false
+                recoveryReason = "This recording is missing, empty or changed during playback preparation. Restore its audio file and retry."
                 missingRecordingAlert = true
                 return
             }
             audioAvailability = true
             playback.play(currentTrack, queue: queue)
+            let skipped = context.count - queue.count
+            if skipped > 0 {
+                playbackNotice = "\(skipped) unavailable \(skipped == 1 ? "recording was" : "recordings were") skipped. Playing \(queue.count) available \(queue.count == 1 ? "song" : "songs")."
+            }
         }
     }
 
@@ -999,9 +1008,21 @@ struct MusicTrackRow: View {
             isCheckingPlayback = false
         }
         .alert("Recording unavailable", isPresented: $missingRecordingAlert) {
-            Button("OK", role: .cancel) {}
+            Button("Retry playback") { playOrExplainMissingAudio() }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The audio file for \(track.title) is missing or empty on this iPhone. Your library entry and playlists are unchanged. Reimport the recording to listen offline.")
+            Text("\(recoveryReason) Your library entry and playlists are unchanged.")
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let playbackNotice {
+                Text(playbackNotice)
+                    .font(.caption)
+                    .foregroundStyle(ShelfTheme.mint)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
         }
         .confirmationDialog("Delete downloaded song?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Song", role: .destructive) {
