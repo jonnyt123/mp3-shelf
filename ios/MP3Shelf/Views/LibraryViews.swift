@@ -34,6 +34,42 @@ struct LibraryView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var offlineRecordingCount: Int?
     @State private var offlineCountRefreshRequest = 0
+    @State private var recentPlaybackCheck: UUID?
+    @State private var recentPlaybackTask: Task<Void, Never>?
+    @State private var missingRecentRecording = false
+
+    // Recently added artwork must observe the same missing-file safety rule
+    // as a normal library row. Never perform coordinated file I/O on the UI actor.
+    private func playRecentRecording(_ track: MusicTrack) {
+        guard recentPlaybackCheck == nil else { return }
+        recentPlaybackCheck = track.id
+        let url = library.fileURL(for: track)
+        recentPlaybackTask = Task {
+            let scan = Task.detached(priority: .userInitiated) { () -> Bool in
+                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                      values.isRegularFile == true, let size = values.fileSize else { return false }
+                return size > 0
+            }
+            let available = await withTaskCancellationHandler {
+                await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            recentPlaybackCheck = nil
+            recentPlaybackTask = nil
+            guard available else {
+                missingRecentRecording = true
+                return
+            }
+            // The library may have changed while filesystem validation ran.
+            guard library.tracks.contains(where: { $0.id == track.id }) else {
+                missingRecentRecording = true
+                return
+            }
+            playback.play(track, queue: recentlyAdded)
+        }
+    }
 
     // Resolve file URLs on the library's actor, then check disk off the UI thread.
     // A nil count is deliberately not presented as zero while scanning.
@@ -401,7 +437,7 @@ struct LibraryView: View {
                                 LazyHStack(alignment: .top, spacing: 14) {
                                     ForEach(recentlyAdded) { track in
                                         Button {
-                                            playback.play(track, queue: recentlyAdded)
+                                            playRecentRecording(track)
                                         } label: {
                                             VStack(alignment: .leading, spacing: 8) {
                                                 ArtworkTile(track: track, size: 122)
@@ -422,7 +458,11 @@ struct LibraryView: View {
                                                    alignment: .leading)
                                         }
                                         .buttonStyle(.plain)
-                                        .accessibilityLabel("Play \(track.title) by \(track.artist)")
+                                        .disabled(recentPlaybackCheck != nil)
+                                        .accessibilityLabel(recentPlaybackCheck == track.id
+                                            ? "Checking \(track.title) for offline playback"
+                                            : "Play \(track.title) by \(track.artist)")
+                                        .accessibilityHint("Checks the local recording before playback without using the network")
                                     }
                                 }
                                 .padding(.vertical, 4)
@@ -500,6 +540,16 @@ struct LibraryView: View {
             await refreshOfflineRecordingCount()
         }
         .background(PremiumBackdrop())
+        .alert("Recording unavailable", isPresented: $missingRecentRecording) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("This recording is missing or empty on your iPhone. Your library entry has been preserved.")
+        }
+        .onDisappear {
+            recentPlaybackTask?.cancel()
+            recentPlaybackTask = nil
+            recentPlaybackCheck = nil
+        }
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
