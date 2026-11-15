@@ -7,7 +7,7 @@ if [[ "$(uname -s)" != Darwin ]]; then
 fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 NODE="$(command -v node || true)"
-[[ -n "$NODE" && -f "$ROOT/scripts/mac-native-candidate.mjs" ]] || {
+[[ -n "$NODE" && -f "$ROOT/scripts/native-release-cycle.mjs" ]] || {
   echo "Node.js 20+ and the release-tooling repository checkout are required." >&2; exit 2;
 }
 xcodebuild -version >/dev/null
