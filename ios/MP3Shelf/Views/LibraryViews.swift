@@ -579,6 +579,8 @@ struct MusicTrackRow: View {
     @State private var confirmDelete = false
     @State private var missingRecordingAlert = false
     @State private var audioAvailability: Bool?
+    @State private var isCheckingPlayback = false
+    @State private var playbackCheckTask: Task<Void, Never>?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
 
@@ -611,16 +613,35 @@ struct MusicTrackRow: View {
     }
 
     private func playOrExplainMissingAudio() {
-        // Always revalidate at the moment of selection: the file may have
-        // disappeared since the asynchronous row scan completed.
+        // File metadata queries can block on coordinated/iCloud-backed URLs.
+        // Revalidate off the main actor before starting playback, even when
+        // the visible availability badge was previously green.
+        guard !isCheckingPlayback else { return }
+        isCheckingPlayback = true
         let url = library.fileURL(for: track)
-        guard Self.isUsableRecording(at: url) else {
-            audioAvailability = false
-            missingRecordingAlert = true
-            return
+        playbackCheckTask = Task {
+            let scan = Task.detached(priority: .userInitiated) {
+                Self.isUsableRecording(at: url)
+            }
+            let available = await withTaskCancellationHandler {
+                await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            guard !Task.isCancelled else {
+                isCheckingPlayback = false
+                playbackCheckTask = nil
+                return
+            }
+            audioAvailability = available
+            isCheckingPlayback = false
+            playbackCheckTask = nil
+            guard available else {
+                missingRecordingAlert = true
+                return
+            }
+            playback.play(track, queue: context)
         }
-        audioAvailability = true
-        playback.play(track, queue: context)
     }
 
     var body: some View {
@@ -639,7 +660,10 @@ struct MusicTrackRow: View {
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                     }
                     Spacer(minLength: 0)
-                    if audioAvailability == false {
+                    if isCheckingPlayback {
+                        ProgressView()
+                            .accessibilityHidden(true)
+                    } else if audioAvailability == false {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(ShelfTheme.coral)
                             .accessibilityHidden(true)
@@ -657,13 +681,18 @@ struct MusicTrackRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(audioAvailability == false
+            .disabled(isCheckingPlayback)
+            .accessibilityLabel(isCheckingPlayback
+                                ? "Checking recording: \(track.title) by \(track.artist)"
+                                : audioAvailability == false
                                 ? "Audio missing: \(track.title) by \(track.artist)"
                                 : track.id == playback.currentTrackID
                                 ? "Now playing: \(track.title) by \(track.artist)"
                                 : "Play \(track.title) by \(track.artist)")
             .accessibilityValue(track.duration.shelfClock)
-            .accessibilityHint(audioAvailability == false
+            .accessibilityHint(isCheckingPlayback
+                               ? "Checking that the local audio file is ready to play"
+                               : audioAvailability == false
                                ? "The local recording is unavailable. Double tap for recovery information."
                                : track.id == playback.currentTrackID
                                ? "Restart the current song"
@@ -732,6 +761,11 @@ struct MusicTrackRow: View {
                           ? ShelfTheme.accent.opacity(0.34) : ShelfTheme.border, lineWidth: 1))
         .task(id: availabilityRefreshKey) {
             await refreshAudioAvailability()
+        }
+        .onDisappear {
+            playbackCheckTask?.cancel()
+            playbackCheckTask = nil
+            isCheckingPlayback = false
         }
         .alert("Recording unavailable", isPresented: $missingRecordingAlert) {
             Button("OK", role: .cancel) {}
