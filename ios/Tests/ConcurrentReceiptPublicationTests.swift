@@ -68,3 +68,71 @@ for round in 0..<32 {
     check(before.receipts == after.receipts, "duplicate changed manifest")
 }
 print("PASS: 32 rounds, 1024 concurrent callbacks, 512 unique receipts, duplicate rejection, and 16 byte-preserved recordings")
+
+
+// A replacement generation must never be completed by an old callback.
+// Reusing the same ticket identity after a retry is particularly dangerous:
+// an obsolete callback can arrive after the new generation is queued.
+enum GenerationError: Error { case stale, duplicate, invalid }
+struct GenerationReceipt: Codable, Equatable {
+    let id: Int
+    let generation: Int
+    let filename: String
+}
+struct GenerationJournal: Codable {
+    var pending: [Int: Int]
+    var completed: [GenerationReceipt]
+}
+let generationManifest = root.appendingPathComponent("generation-manifest.json")
+let generationLock = NSLock()
+func publishGeneration(_ id: Int, generation: Int) throws {
+    generationLock.lock()
+    defer { generationLock.unlock() }
+    var state = try JSONDecoder().decode(GenerationJournal.self, from: Data(contentsOf: generationManifest))
+    guard let current = state.pending[id], current == generation else { throw GenerationError.stale }
+    guard !state.completed.contains(where: { $0.id == id }) else { throw GenerationError.duplicate }
+    guard (0..<fileCount).contains(id),
+          try Data(contentsOf: audioPaths[id]) == payloads[id] else { throw GenerationError.invalid }
+    state.completed.append(GenerationReceipt(id: id, generation: generation,
+                                              filename: audioPaths[id].lastPathComponent))
+    try JSONEncoder().encode(state).write(to: generationManifest, options: .atomic)
+}
+for round in 0..<48 {
+    let currentGeneration = 100 + round
+    let journal = GenerationJournal(pending: Dictionary(uniqueKeysWithValues:
+        (0..<fileCount).map { ($0, currentGeneration) }), completed: [])
+    try JSONEncoder().encode(journal).write(to: generationManifest, options: .atomic)
+    let failures = NSLock()
+    var unexpected: [String] = []
+    DispatchQueue.concurrentPerform(iterations: fileCount * 3) { callback in
+        let id = (callback * 11 + round) % fileCount
+        let generation = callback % 3 == 0 ? currentGeneration - 1 : currentGeneration
+        do { try publishGeneration(id, generation: generation) }
+        catch GenerationError.stale { }
+        catch GenerationError.duplicate { }
+        catch {
+            failures.lock()
+            unexpected.append("round \(round), callback \(callback): \(error)")
+            failures.unlock()
+        }
+    }
+    check(unexpected.isEmpty, "generation callback failed unexpectedly: \(unexpected)")
+    let recovered = try JSONDecoder().decode(GenerationJournal.self, from: Data(contentsOf: generationManifest))
+    // Each ticket receives two valid-generation callbacks in every round.
+    check(recovered.completed.count == fileCount, "lost generation completion")
+    check(Set(recovered.completed.map(\.id)) == Set(0..<fileCount), "duplicate or missing ticket")
+    check(recovered.completed.allSatisfy { $0.generation == currentGeneration &&
+        $0.filename == "audio-\($0.id).mp3" }, "stale callback took ownership")
+    let before = try Data(contentsOf: generationManifest)
+    for id in 0..<fileCount {
+        do { try publishGeneration(id, generation: currentGeneration - 1)
+            preconditionFailure("stale callback accepted after commit")
+        } catch GenerationError.stale { }
+        do { try publishGeneration(id, generation: currentGeneration)
+            preconditionFailure("duplicate callback accepted after commit")
+        } catch GenerationError.duplicate { }
+        check(try Data(contentsOf: audioPaths[id]) == payloads[id], "generation changed audio")
+    }
+    check(try Data(contentsOf: generationManifest) == before, "rejected callback rewrote journal")
+}
+print("PASS: 48 rounds of mixed-generation concurrent callbacks; stale and duplicate rejection, exact journal and audio preservation")
