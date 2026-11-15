@@ -96,3 +96,92 @@ for round in 0..<64 {
     try assertQA(try Data(contentsOf: audioURL) == audio, "saved recording changed")
 }
 print("PASS: 64 cancellation/retry/restart boundaries, stale/duplicate rejection, byte-preserved audio")
+
+
+// A storage failure at the cancellation/retry boundary must not leave a
+// half-updated journal or permit a delayed callback to own the replacement.
+// Inject faults before atomic publication; do not rely on permissions (which
+// behave differently under root, simulators and macOS sandboxes).
+enum PublicationFault: Error { case injected }
+func mutateWithFault(_ failBeforeCommit: Bool,
+                     _ body: (inout CancellationManifest) throws -> Void) throws {
+    gate.lock()
+    defer { gate.unlock() }
+    var state = try readManifest()
+    try body(&state)
+    let encoded = try JSONEncoder().encode(state)
+    if failBeforeCommit { throw PublicationFault.injected }
+    try encoded.write(to: manifestURL, options: .atomic)
+}
+for round in 0..<64 {
+    let id = "faulted-ticket"
+    let unrelated = "preserved-ticket"
+    let old = 2000 + round * 2
+    let next = old + 1
+    let baseline = CancellationManifest(tickets: [
+        id: CancellationTicket(generation: old, status: "pending", filename: nil),
+        unrelated: CancellationTicket(generation: 7, status: "imported", filename: "existing.mp3")
+    ])
+    try JSONEncoder().encode(baseline).write(to: manifestURL, options: .atomic)
+    let originalBytes = try Data(contentsOf: manifestURL)
+
+    // A failed cancellation must not silently change the persisted ticket.
+    do {
+        try mutateWithFault(true) {
+            $0.tickets[id] = CancellationTicket(generation: old, status: "cancelled", filename: nil)
+        }
+        preconditionFailure("injected cancellation fault was ignored")
+    } catch PublicationFault.injected { }
+    try assertQA(try Data(contentsOf: manifestURL) == originalBytes,
+                 "failed cancellation changed durable bytes")
+
+    // Publish cancellation, then fail the retry transition. A callback from
+    // the cancelled generation must still be rejected after a fresh decode.
+    try mutateWithFault(false) {
+        $0.tickets[id] = CancellationTicket(generation: old, status: "cancelled", filename: nil)
+    }
+    let cancelledBytes = try Data(contentsOf: manifestURL)
+    do {
+        try mutateWithFault(true) {
+            $0.tickets[id] = CancellationTicket(generation: next, status: "pending", filename: nil)
+        }
+        preconditionFailure("injected retry fault was ignored")
+    } catch PublicationFault.injected { }
+    try assertQA(try Data(contentsOf: manifestURL) == cancelledBytes,
+                 "failed retry changed cancelled journal")
+    do {
+        try complete(id, generation: old)
+        preconditionFailure("cancelled generation completed")
+    } catch CancellationFault.cancelled { }
+
+    // Commit the retry. A failed completion publication must leave the
+    // replacement pending, allowing exactly one subsequent successful import.
+    try mutateWithFault(false) {
+        $0.tickets[id] = CancellationTicket(generation: next, status: "pending", filename: nil)
+    }
+    let pendingBytes = try Data(contentsOf: manifestURL)
+    do {
+        try mutateWithFault(true) { state in
+            guard state.tickets[id]?.generation == next else { throw CancellationFault.stale }
+            state.tickets[id] = CancellationTicket(generation: next, status: "imported",
+                                                    filename: audioURL.lastPathComponent)
+        }
+        preconditionFailure("injected completion fault was ignored")
+    } catch PublicationFault.injected { }
+    try assertQA(try Data(contentsOf: manifestURL) == pendingBytes,
+                 "failed completion wrote a phantom receipt")
+    do {
+        try complete(id, generation: old)
+        preconditionFailure("old generation completed new transfer")
+    } catch CancellationFault.stale { }
+    try complete(id, generation: next)
+    let recovered = try readManifest()
+    try assertQA(recovered.tickets[id]?.status == "imported" &&
+                 recovered.tickets[id]?.generation == next,
+                 "successful completion not durable")
+    try assertQA(recovered.tickets[unrelated] == baseline.tickets[unrelated],
+                 "fault injection altered unrelated ticket")
+    try assertQA(try Data(contentsOf: audioURL) == audio,
+                 "fault injection modified user audio")
+}
+print("PASS: 64 injected cancellation/retry/completion publication failures, exact rollback, stale callback isolation, and audio preservation")
