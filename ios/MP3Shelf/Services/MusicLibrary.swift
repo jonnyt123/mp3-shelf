@@ -821,7 +821,6 @@ final class MusicLibrary: ObservableObject {
         }
         try Task.checkCancellation()
 
-        let previousLyrics = tracks[index].lyricsFileName
         let filename = trackID.uuidString + "-" + UUID().uuidString + ".lrc"
         let destination = lyricsDirectory.appendingPathComponent(filename)
         // Manual lyrics imports must use the same no-replace publication as
@@ -837,20 +836,10 @@ final class MusicLibrary: ObservableObject {
             updatedTracks[index].lyricsFileName = filename
             try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
             tracks = updatedTracks
-            // Cleanup follows the durable catalog write. Restored/legacy
-            // recordings can share a lyrics filename; preserve shared files.
-            if let previousLyrics,
-               previousLyrics != filename,
-               !LocalLibraryFileSafety.isReferenced(
-                   previousLyrics, by: updatedTracks.map(\.lyricsFileName)),
-               let owned = LocalLibraryFileSafety.regularFile(
-                   named: previousLyrics, in: lyricsDirectory) {
-                do {
-                    try manager.removeItem(at: owned)
-                } catch {
-                    print("MP3 Shelf retained an unreferenced lyrics sidecar: \(error)")
-                }
-            }
+            // The previous lyrics file remains recoverable after replacement.
+            // Checking references and then unlinking by pathname is not atomic:
+            // a concurrent writer could replace it after the check. Keep the
+            // old bytes rather than risk deleting a newly published sidecar.
         } catch {
             // The sidecar was already published. Another writer may have
             // replaced its pathname; removing it here could delete their file.
@@ -1148,14 +1137,10 @@ final class MusicLibrary: ObservableObject {
         } catch {
             // The transaction cleans only its own staging/published file.
             // A colliding destination existed before us and is never removed.
-            if let artworkName,
-               !LocalAudioRecoveryRecord.retainsArtwork(
-                   artworkName, for: id, in: musicDirectory) {
-                // Ordinary validation/persistence failures remove their new
-                // sidecar. A failed rollback retains a durable recovery intent
-                // that still references it, so keep the sidecar for relaunch.
-                try? manager.removeItem(at: artworkDirectory.appendingPathComponent(artworkName))
-            }
+            // A published artwork filename can be replaced after the import
+            // transaction returns an error. Never unlink it by pathname:
+            // another writer may now own that file. Retain unreferenced bytes
+            // for recovery; the persisted catalog remains authoritative.
             throw error
         }
     }
