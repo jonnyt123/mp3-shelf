@@ -44,3 +44,33 @@ precondition(source.contains("pageCount <= 10_000"))
 precondition(source.contains("throw SourceError.invalidResponse"))
 precondition(source.contains("throw SourceError.unavailable"))
 print("PASS: production integration anchors")
+
+// Openverse durations are milliseconds. Missing or malformed timing must never
+// authorize a high-confidence automatic recording selection.
+func durationCompatible(_ milliseconds: Double?, _ expected: Double?) -> Bool {
+    guard let milliseconds, milliseconds.isFinite,
+          milliseconds > 0, milliseconds <= 3_600_000 else { return false }
+    guard let expected else { return true }
+    guard expected.isFinite, expected > 0 else { return false }
+    return abs(milliseconds / 1000.0 - expected) <= 4.0
+}
+
+let durationCases: [(String, Double?, Double?, Bool)] = [
+    ("exact recording", 183_000, 183, true),
+    ("four second tolerance", 187_000, 183, true),
+    ("wrong edition", 210_000, 183, false),
+    ("missing duration", nil, 183, false),
+    ("missing duration without Spotify timing", nil, nil, false),
+    ("zero duration", 0, 183, false),
+    ("negative duration", -1000, 183, false),
+    ("infinite duration", .infinity, 183, false),
+    ("NaN duration", .nan, 183, false),
+    ("overlong audio", 3_600_001, 183, false),
+    ("invalid expected duration", 183_000, .nan, false),
+    ("valid catalog duration without Spotify timing", 183_000, nil, true)
+]
+for (name, milliseconds, expected, accepted) in durationCases {
+    precondition(durationCompatible(milliseconds, expected) == accepted,
+                 "Openverse duration regression: \\(name)")
+}
+print("PASS: \\(durationCases.count) Openverse duration cases")
