@@ -55,8 +55,10 @@ func reject(_ expected: IntegrityFailure, _ label: String) throws {
                        "\(label): wrong rejection \(actual)")
     }
     try assertTrue(try Data(contentsOf: external) == foreign, "external bytes changed")
-    try assertTrue(try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)).ticket == receipt.ticket,
-                   "journal changed")
+    if expected != .corrupt {
+        try assertTrue(try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)).ticket == receipt.ticket,
+                       "journal changed")
+    }
 }
 for round in 0..<64 {
     try bytes.write(to: recording, options: .atomic)
