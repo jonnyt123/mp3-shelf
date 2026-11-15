@@ -1439,6 +1439,10 @@ struct PlaylistDetailView: View {
     @State private var manuallyAdding: PlaylistWish?
     @State private var showWebDiscovery = false
     @State private var reviewingRecording: PlaylistWish?
+    @State private var playlistPlaybackTask: Task<Void, Never>?
+    @State private var playlistPlaybackPending = false
+    @State private var playlistPlaybackError: String?
+    @Environment(\.scenePhase) private var playlistScenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
 
@@ -1499,43 +1503,71 @@ struct PlaylistDetailView: View {
         return ("Awaiting MP3 source search", "magnifyingglass")
     }
 
-    // Both actions start a new playlist queue. Explicitly set shuffle mode for
-    // each action so a previous shuffled session cannot silently affect Play.
+    // Capture file URLs on the library actor and validate them away from the UI.
+    // A playlist may contain saved metadata whose audio was removed by Files.
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
-        guard let first = shuffled ? tracks.randomElement() : tracks.first else { return }
-        playback.isShuffled = shuffled
-        playback.play(first, queue: tracks)
+        guard !playlistPlaybackPending, !tracks.isEmpty else { return }
+        playlistPlaybackPending = true
+        let requestedPlaylistID = playlistID
+        let snapshots = tracks.map { ($0.id, library.fileURL(for: $0)) }
+        playlistPlaybackTask = Task {
+            let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
+                var valid = Set<UUID>()
+                for (id, url) in snapshots {
+                    if Task.isCancelled { break }
+                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                          values.isRegularFile == true, let size = values.fileSize, size > 0 else { continue }
+                    valid.insert(id)
+                }
+                return valid
+            }
+            let validIDs = await withTaskCancellationHandler {
+                await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            playlistPlaybackPending = false
+            playlistPlaybackTask = nil
+            guard playlistScenePhase == .active,
+                  library.playlists.contains(where: { $0.id == requestedPlaylistID }) else { return }
+            let currentTracks = library.songs(in: library.playlists.first {
+                $0.id == requestedPlaylistID
+            }!)
+            let originalURLs = Dictionary(uniqueKeysWithValues: snapshots)
+            let queue = currentTracks.filter { track in
+                validIDs.contains(track.id) && originalURLs[track.id] == library.fileURL(for: track)
+            }
+            guard let first = shuffled ? queue.randomElement() : queue.first else {
+                playlistPlaybackError = "No playable offline recordings are available. Check Downloads or restore the missing audio files."
+                return
+            }
+            playback.isShuffled = shuffled
+            playback.play(first, queue: queue)
+        }
     }
 
     private func playlistPlayButton(_ tracks: [MusicTrack]) -> some View {
-        Button {
-            startPlaylist(tracks, shuffled: false)
-        } label: {
-            Label("Play", systemImage: "play.fill")
+        Button { startPlaylist(tracks, shuffled: false) } label: {
+            Label(playlistPlaybackPending ? "Checking recordings…" : "Play", systemImage: "play.fill")
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.borderedProminent)
         .tint(ShelfTheme.accent)
-        .disabled(tracks.isEmpty)
-        .accessibilityLabel("Play playlist in order")
-        .accessibilityHint(tracks.isEmpty
-                           ? "No saved recordings are available to play"
-                           : "Start at the first saved song and play in playlist order")
+        .disabled(tracks.isEmpty || playlistPlaybackPending)
+        .accessibilityLabel(playlistPlaybackPending ? "Checking playlist recordings" : "Play playlist in order")
+        .accessibilityHint("Play available offline recordings in playlist order; missing files are skipped")
     }
 
     private func playlistShuffleButton(_ tracks: [MusicTrack]) -> some View {
-        Button {
-            startPlaylist(tracks, shuffled: true)
-        } label: {
+        Button { startPlaylist(tracks, shuffled: true) } label: {
             Label("Shuffle", systemImage: "shuffle")
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
-        .disabled(tracks.isEmpty)
+        .disabled(tracks.isEmpty || playlistPlaybackPending)
         .accessibilityLabel("Shuffle playlist")
-        .accessibilityHint(tracks.isEmpty
-                           ? "No saved recordings are available to shuffle"
-                           : "Start with a random saved song and shuffle the playlist")
+        .accessibilityHint("Shuffle available offline recordings; missing files are skipped")
     }
 
     var body: some View {
@@ -1897,6 +1929,26 @@ struct PlaylistDetailView: View {
         .sheet(item: $reviewingRecording) { wish in
             RecordingMatchReviewView(wish: wish, playlistID: playlistID,
                 candidates: library.discoveryJob(for: playlistID)?.recordingCandidates?[wish.id.uuidString] ?? [])
+        }
+        .alert("Playlist playback unavailable", isPresented: Binding(
+            get: { playlistPlaybackError != nil },
+            set: { if !$0 { playlistPlaybackError = nil } }
+        )) {
+            Button("OK", role: .cancel) { playlistPlaybackError = nil }
+        } message: {
+            Text(playlistPlaybackError ?? "")
+        }
+        .onChange(of: playlistScenePhase) { _, phase in
+            if phase != .active {
+                playlistPlaybackTask?.cancel()
+                playlistPlaybackTask = nil
+                playlistPlaybackPending = false
+            }
+        }
+        .onDisappear {
+            playlistPlaybackTask?.cancel()
+            playlistPlaybackTask = nil
+            playlistPlaybackPending = false
         }
     }
 }
