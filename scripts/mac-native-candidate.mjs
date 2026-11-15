@@ -133,12 +133,18 @@ export function runLogged(command, args, cwd, logPath) {
       else resolvePromise();
     };
     const output = createWriteStream(logPath, { flags: 'wx', mode: 0o600 });
-    // A full disk, permission error or broken log stream must never turn a
-    // successful xcodebuild exit into an unrecorded PASS.
-    output.on('error', error => {
+    let streamFailure = null;
+    let processClosed = false;
+    // Do not settle while a failed native command is still running: callers
+    // remove the detached worktree immediately after this promise settles.
+    // A late log error must also override a successful process exit.
+    const failStream = (kind, error) => {
+      if (!streamFailure)
+        streamFailure = Error(kind + ': ' + error.message);
       child?.kill('SIGTERM');
-      finish(Error('Native verification log could not be written: ' + error.message));
-    });
+      if (processClosed) finish(streamFailure);
+    };
+    output.on('error', error => failStream('Native verification log could not be written', error));
     try {
       child = spawn(command, args, {
         cwd, stdio: ['ignore', 'pipe', 'pipe'], timeout: MAX_NATIVE_SECONDS * 1000,
@@ -150,24 +156,26 @@ export function runLogged(command, args, cwd, logPath) {
       return;
     }
     child.on('error', error => {
+      failStream('Native verification process failed to start', error);
       output.destroy();
-      finish(Error('Native verification process failed to start: ' + error.message));
     });
     // A readable stream failure is not equivalent to a successful native run:
     // otherwise a truncated Xcode log could be hashed as complete evidence.
     for (const stream of [child.stdout, child.stderr]) {
       stream.on('error', error => {
-        child.kill('SIGTERM');
+        failStream('Native verification output stream failed', error);
         output.destroy();
-        finish(Error('Native verification output stream failed: ' + error.message));
       });
       stream.pipe(output, { end: false });
     }
     child.on('close', (code, signal) => {
+      processClosed = true;
       if (settled) return;
+      if (streamFailure) { finish(streamFailure); return; }
       // Register before end(): small buffered logs may finish synchronously.
       output.once('finish', () => {
-        if (code === 0 && signal === null) finish();
+        if (streamFailure) finish(streamFailure);
+        else if (code === 0 && signal === null) finish();
         else finish(Error('Native runner failed (exit ' + code +
           ', signal ' + (signal ?? 'none') + '); see ' + logPath));
       });
