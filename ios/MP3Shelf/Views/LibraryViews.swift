@@ -1514,7 +1514,10 @@ struct PlaylistDetailView: View {
         playlistPlaybackError = nil
         playlistPlaybackNotice = nil
         let requestedPlaylistID = playlistID
-        let snapshots = tracks.map { ($0.id, library.fileURL(for: $0)) }
+        // Check each distinct recording only once even when the playlist
+        // deliberately repeats a song. Preserve repetitions in the final queue.
+        let snapshots = Array(Dictionary(tracks.map { ($0.id, library.fileURL(for: $0)) },
+                                         uniquingKeysWith: { first, _ in first }))
         playlistPlaybackTask = Task {
             let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
                 var valid = Set<UUID>()
@@ -1822,8 +1825,12 @@ struct PlaylistDetailView: View {
                     // for every row repeatedly scans all playlist IDs and
                     // creates a new queue for each track in large collections.
                     let availableTracks = library.songs(in: playlist)
-                    ForEach(availableTracks) { track in
+                    // Playlist entries are positions, not unique track IDs: a song
+                    // can intentionally appear twice. Identity by track.id causes
+                    // duplicate SwiftUI row IDs and unpredictable move rendering.
+                    ForEach(Array(availableTracks.enumerated()), id: \.offset) { position, track in
                         MusicTrackRow(track: track, context: availableTracks, renaming: $editing)
+                            .accessibilityValue("Playlist position \(position + 1) of \(availableTracks.count)")
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             .swipeActions {
