@@ -778,7 +778,27 @@ final class MusicLibrary: ObservableObject {
         // limited sidecar checks rather than reading arbitrary paths into memory.
         guard let data = try? PortableShelfArchive.readSidecar(
                   named: name, from: artworkDirectory, maximumBytes: 20 * 1024 * 1024),
-              let image = UIImage(data: data) else { return nil }
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? NSDictionary,
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+              width > 0, height > 0,
+              width <= 8192, height <= 8192,
+              width <= 32_000_000 / height else { return nil }
+        // Library rows can be rendered repeatedly during scrolling. Never
+        // decode a full-resolution embedded cover before caching it: a tiny
+        // compressed file can otherwise allocate hundreds of MiB per image.
+        // ImageIO applies orientation and caps decoded dimensions to 1024px.
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1024,
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceShouldCacheImmediately: false
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let image = UIImage(cgImage: thumbnail)
         // Cache is automatically evicted under memory pressure. Decoding the
         // same cover on every library row render would be unnecessarily costly.
         let estimatedBytes = image.size.width * image.size.height * 4
