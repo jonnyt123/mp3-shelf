@@ -310,8 +310,6 @@ final class MusicLibrary: ObservableObject {
         try Task.checkCancellation()
         let worker = Task.detached(priority: .userInitiated) {
             // The export may finish publishing just as cancellation arrives.
-            // Own the output until a successful return; remove it on every
-            // thrown path, including cancellation after publication.
             // export() owns its unpublished .partial file and refuses to
             // overwrite an existing destination. Never unlink the destination
             // when export() throws: it may be an unrelated pre-existing backup.
