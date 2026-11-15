@@ -243,10 +243,17 @@ struct LibraryView: View {
     // Validate the whole playback queue off the main actor. A missing local
     // recording must not be selected by Play results or Shuffle results.
     private func playDisplayed(shuffled: Bool) {
-        guard !isSearchUpdating, !bulkPlaybackPending else { return }
+        guard scenePhase == .active, !isSearchUpdating, !bulkPlaybackPending else { return }
         let songs = displayed
         guard !songs.isEmpty else { return }
+        // A search, filter, sort or library edit during disk I/O invalidates
+        // the requested results. Never start playback from an obsolete snapshot.
+        let requestedIDs = songs.map(\.id)
+        let requestedQuery = settledSearchText
+        let requestedFavorites = favoritesOnly
+        let requestedSort = sortMode
         let locations = songs.map { ($0.id, library.fileURL(for: $0)) }
+        message = nil
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
             let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
@@ -268,6 +275,14 @@ struct LibraryView: View {
             guard !Task.isCancelled, scenePhase == .active else { return }
             bulkPlaybackPending = false
             bulkPlaybackTask = nil
+            guard !isSearchUpdating,
+                  settledSearchText == requestedQuery,
+                  favoritesOnly == requestedFavorites,
+                  sortMode == requestedSort,
+                  displayed.map(\.id) == requestedIDs else {
+                message = "Your library results changed while checking offline recordings. Tap Play or Shuffle again to use the updated songs."
+                return
+            }
             // Reconcile the current library and its URLs after the asynchronous
             // scan; a deleted or replaced recording cannot enter the queue.
             let currentTracks = Dictionary(uniqueKeysWithValues: library.tracks.map { ($0.id, $0) })
@@ -285,6 +300,10 @@ struct LibraryView: View {
             }
             playback.isShuffled = shuffled
             playback.play(first, queue: queue)
+            let skipped = songs.count - queue.count
+            if skipped > 0 {
+                message = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
+            }
         }
     }
 
