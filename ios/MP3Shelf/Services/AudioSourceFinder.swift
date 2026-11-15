@@ -551,7 +551,7 @@ extension AudioSourceFinder {
         guard page >= 1, page <= maxOpenversePages,
               returned >= 0, returned <= 50 else { return false }
         guard let pageCount else { return true }
-        guard pageCount >= page, pageCount > 0 else { return false }
+        guard pageCount >= page, pageCount <= 10_000 else { return false }
         if page < pageCount && returned != 50 { return false }
         return true
     }
@@ -606,12 +606,12 @@ extension AudioSourceFinder {
                     page: page, pageCount: result.page_count,
                     returned: result.results.count
                 ) else { throw SourceError.invalidResponse }
-                if let count = result.page_count {
-                    if let expectedOpenversePages, expectedOpenversePages != count {
+                if let pageCount = result.page_count {
+                    if let expectedPageCount, expectedPageCount != pageCount {
                         throw SourceError.unavailable
                     }
-                    expectedOpenversePages = count
-                } else if page > 1 && expectedOpenversePages != nil {
+                    expectedPageCount = pageCount
+                } else if page > 1 && expectedPageCount != nil {
                     throw SourceError.unavailable
                 }
                 for match in result.results.compactMap({
