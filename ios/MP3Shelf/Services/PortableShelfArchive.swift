@@ -838,7 +838,27 @@ enum PortableShelfArchive {
         // destination name can change owners at any time. Never unlink it on
         // cancellation, validation failure, or a racing catalog write.
         try manager.linkItem(at: staging, to: destination)
+        // A validation callback may replace the published pathname or edit its
+        // contents. Never commit a catalog reference unless the destination
+        // still identifies the exact durable sidecar we staged. Do not unlink
+        // the destination on failure: it may now belong to another writer.
+        let published = try FileHandle(forReadingFrom: staging)
+        defer { try? published.close() }
+        let expected = try archiveIdentity(of: published, at: staging)
+        guard expected.size == off_t(bytes.count) else {
+            throw ArchiveError.invalidFile
+        }
         try validate()
+        let checked = try archiveIdentity(of: published, at: destination)
+        guard expected.device == checked.device,
+              expected.inode == checked.inode,
+              expected.size == checked.size,
+              expected.modifiedSeconds == checked.modifiedSeconds,
+              expected.modifiedNanoseconds == checked.modifiedNanoseconds,
+              expected.changedSeconds == checked.changedSeconds,
+              expected.changedNanoseconds == checked.changedNanoseconds else {
+            throw ArchiveError.invalidFile
+        }
         try Task.checkCancellation()
     }
 
