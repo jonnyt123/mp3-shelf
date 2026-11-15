@@ -5,9 +5,10 @@
  * The native DEBUG audit runs in the installed app; this script starts phases.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { captureDevicePlaylist, physicalIPhone }
@@ -58,12 +59,34 @@ export async function runIPhonePhase({ phase, deviceID, bundleID, playlistID,
       physicalAcceptance: 'INCOMPLETE' };
   }
   if (phase === 'collect') {
-    if (!UUID.test(playlistID ?? '') || typeof output !== 'string' || !output)
-      throw Error('Collection requires a playlist UUID and explicit report destination.');
+    if (!UUID.test(playlistID ?? '') || (output !== undefined &&
+      (typeof output !== 'string' || !output)))
+      throw Error('Collection requires a playlist UUID and safe report destination.');
+    const target = resolve(output ?? join(homedir(), 'Library', 'Logs', 'MP3Shelf',
+      'DeviceAcceptance', sha, 'physical-inventory.json'));
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
     const report = await captureDevicePlaylist({
-      deviceID, bundleID, playlistID, expectedSha: sha, output, platform
+      deviceID, bundleID, playlistID, expectedSha: sha, output: target, platform
     });
-    return { phase, output: resolve(output),
+    // This is a TEMPLATE, never approval: independent actual iPhone testing,
+    // app-install provenance and issue #6 review must fill every field.
+    const raw = readFileSync(target);
+    const template = {
+      schema: 'mp3shelf-hardware-acceptance-v1', candidateSha: sha,
+      installedSourceSha: 'NOT_VERIFIED', signedAppSHA256: 'NOT_VERIFIED',
+      inventorySHA256: createHash('sha256').update(raw).digest('hex'),
+      reviewer: 'NOT_VERIFIED', reviewedAt: null,
+      deviceModel: report.device?.productType ?? 'NOT_VERIFIED',
+      iOSVersion: report.device?.osVersion ?? 'NOT_VERIFIED',
+      checks: Object.fromEntries([
+        'signingInstallation','offlinePlayback','backgroundDownloads',
+        'failureHandling','spotifyMetadata','backupInterop','accessibility',
+        'sourcePolicy','finalAcceptance'
+      ].map(key => [key, 'UNVERIFIED']))
+    };
+    writeFileSync(join(dirname(target), 'hardware-acceptance.template.json'),
+      JSON.stringify(template, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    return { phase, output: target,
       copiedTracks: report.copiedTracks,
       offlinePlayback: report.offlinePlaybackAfterRestart,
       backgroundTransfer: report.backgroundTransfer,
@@ -75,9 +98,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const [phase, deviceID, bundleID, sha, playlistID, output, ...rest] = process.argv.slice(2);
   if (!['arm', 'offline', 'collect', 'stop'].includes(phase) || rest.length ||
       !deviceID || !bundleID || !sha ||
-      (['offline', 'collect'].includes(phase) && !playlistID) ||
-      (phase === 'collect' && !output)) {
-    console.error('Usage: node scripts/iphone-qa-session.mjs arm|offline|collect|stop DEVICE_ID com.jonnyt.mp3shelf SHA [PLAYLIST_UUID] [OUTPUT_JSON]');
+      (['offline', 'collect'].includes(phase) && !playlistID)) {
+    console.error('Usage: node scripts/iphone-qa-session.mjs arm|offline|collect|stop DEVICE_ID com.jonnyt.mp3shelf SHA [PLAYLIST_UUID] [OUTPUT_JSON_OPTIONAL]');
     process.exitCode = 2;
   } else {
     runIPhonePhase({ phase, deviceID, bundleID, sha, playlistID, output }).then(r => {
