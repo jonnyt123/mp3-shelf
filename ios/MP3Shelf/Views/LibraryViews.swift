@@ -94,7 +94,7 @@ struct LibraryView: View {
             recentPlaybackCheck = nil
             recentPlaybackTask = nil
             guard availability.count == recent.count,
-                  recentlyAdded.map(\.id) == recent.map(\.id) else {
+                  recentlyAdded.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) } == locations.map { RecordingLocationKey(id: $0.0, url: $0.1) } else {
                 missingRecentRecording = true
                 return
             }
@@ -315,7 +315,6 @@ struct LibraryView: View {
         guard !songs.isEmpty else { return }
         // A search, filter, sort or library edit during disk I/O invalidates
         // the requested results. Never start playback from an obsolete snapshot.
-        let requestedIDs = songs.map(\.id)
         let requestedQuery = settledSearchText
         let requestedFavorites = favoritesOnly
         let requestedSort = sortMode
@@ -352,7 +351,7 @@ struct LibraryView: View {
                   settledSearchText == requestedQuery,
                   favoritesOnly == requestedFavorites,
                   sortMode == requestedSort,
-                  displayed.map(\.id) == requestedIDs,
+                  displayed.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) } == locations.map { RecordingLocationKey(id: $0.0, url: $0.1) },
                   availability.count == songs.count else {
                 message = "Your library results changed while checking offline recordings. Tap Play or Shuffle again to use the updated songs."
                 return
