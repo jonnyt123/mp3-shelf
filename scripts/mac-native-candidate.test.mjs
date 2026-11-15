@@ -144,3 +144,26 @@ test('log write failure terminates the native subprocess before cleanup', async 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('native timeout escalates when a subprocess ignores SIGTERM', async () => {
+  if (process.platform === 'win32') return;
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-native-timeout-'));
+  try {
+    const log = join(dir, 'timeout.log');
+    const started = Date.now();
+    await assert.rejects(runLogged(process.execPath, ['-e',
+      "process.on('SIGTERM', () => {}); setInterval(() => process.stdout.write('alive\\n'), 10)"],
+      dir, log, { timeoutMs: 400, killGraceMs: 300 }), /exceeded timeout/);
+    assert(Date.now() - started < 5000, 'Timed-out native verification must terminate promptly');
+    assert.match(readFileSync(log, 'utf8'), /alive/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native timeout options reject invalid durations before spawning', () => {
+  assert.throws(() => runLogged(process.execPath, [], '.', '/tmp/unused', {
+    timeoutMs: 0
+  }), /positive safe integers/);
+  assert.throws(() => runLogged(process.execPath, [], '.', '/tmp/unused', {
+    killGraceMs: Number.POSITIVE_INFINITY
+  }), /positive safe integers/);
+});
