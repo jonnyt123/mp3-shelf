@@ -86,11 +86,31 @@ enum AudioSourceFinder {
         return request
     }
 
+    /// Catalog lookups never forward metadata requests to an unexpected host.
+    /// URLSession.shared follows redirects and can silently change the origin;
+    /// reject them so each catalog's explicit endpoint remains authoritative.
+    private final class CatalogRedirectBlocker: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    private static let catalogSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 18
+        configuration.timeoutIntervalForResource = 25
+        return URLSession(configuration: configuration,
+                          delegate: CatalogRedirectBlocker(), delegateQueue: nil)
+    }()
+
     private static func requestJSON<T: Decodable>(
         _ url: URL, allowsCellular: Bool = false
     ) async throws -> T {
         let request = catalogRequest(for: url, allowsCellular: allowsCellular)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await catalogSession.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
         guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
         guard data.count < 2_000_000 else { throw SourceError.invalidResponse }
