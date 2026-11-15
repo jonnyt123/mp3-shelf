@@ -539,7 +539,23 @@ enum PortableShelfArchive {
             var payloadCursor = UInt64(magic.count + 4 + JSON.count)
             for part in parts {
                 try Task.checkCancellation()
-                if let sourceURL = part.url {
+                if let inlineBytes = part.bytes {
+                    // Artwork is part of the portable backup too. A staged archive
+                    // can be modified in place without changing its length or
+                    // timestamps; validate inline payloads before publication.
+                    try stagedInput.seek(toOffset: payloadCursor)
+                    var checked = 0
+                    while checked < inlineBytes.count {
+                        try Task.checkCancellation()
+                        let count = min(64 * 1024, inlineBytes.count - checked)
+                        let actual = try readExactly(count, from: stagedInput)
+                        guard actual.count == count,
+                              actual.elementsEqual(inlineBytes[checked..<(checked + count)]) else {
+                            throw ArchiveError.invalidRange
+                        }
+                        checked += count
+                    }
+                } else if let sourceURL = part.url {
                     guard let expectedIdentity = part.sourceIdentity else {
                         throw ArchiveError.invalidManifest
                     }
@@ -574,6 +590,10 @@ enum PortableShelfArchive {
                 }
                 payloadCursor += UInt64(part.expectedLength)
             }
+            // Validate the same staged inode after the entire payload pass.
+            // Detect concurrent replacement, truncation or metadata changes
+            // before linking this archive into the user's backup destination.
+            _ = try archiveIdentity(of: stagedInput, at: staging)
             try stagedInput.close()
         } catch {
             try? stagedInput.close()
