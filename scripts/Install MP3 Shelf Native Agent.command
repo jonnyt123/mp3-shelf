@@ -24,14 +24,13 @@ mkdir -p "$HOME/Library/LaunchAgents" "$LOGS"
 python3 - "$DEST" "$NODE" "$ROOT" "$LOGS" <<'PY'
 import os, plistlib, sys
 dest, node, root, logs = sys.argv[1:]
-arguments = [node, os.path.join(root, "scripts", "mac-native-candidate.mjs") or
-                 str(x).endswith("native-release-cycle.mjs"),
-             root, "--promote"]
+arguments = [node, os.path.join(root, "scripts", "native-release-cycle.mjs"), root]
 if os.path.exists(dest):
     with open(dest, "rb") as f:
         old = plistlib.load(f)
     if old.get("Label") != "com.jonnyt.mp3shelf.native-preflight" or not \
-            any(str(x).endswith("mac-native-candidate.mjs") for x in old.get("ProgramArguments", [])):
+            any(str(x).endswith(("mac-native-candidate.mjs", "native-release-cycle.mjs"))
+                for x in old.get("ProgramArguments", [])):
         raise SystemExit("Refusing to overwrite an unrelated LaunchAgent")
 plist = {
     "Label": "com.jonnyt.mp3shelf.native-preflight",
@@ -54,6 +53,7 @@ launchctl bootout "$LABEL" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$DEST"
 launchctl kickstart -k "$LABEL"
 echo "Installed: $AGENT (hourly and at login)."
-echo "This runs Xcode against a fresh temporary candidate checkout."
+echo "This runs the native Xcode verifier against a temporary candidate checkout."
 echo "Promotion is NON-FORCE to draft PR #29 only, after exact-SHA tests."
+echo "After physical issue #6 and evidence approval, the cycle writes a verified Xcode ZIP and manifest."
 echo "Full logs: $LOGS. Physical-iPhone acceptance remains separate."
