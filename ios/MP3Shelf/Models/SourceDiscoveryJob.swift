@@ -644,10 +644,23 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
             guard let latest = updated[previous.id] else { continue }
             if !previous.matchesSourceRequest(latest) {
                 let key = previous.id.uuidString
+                // A replacement edition/duration is a new recording request.
+                // Never let a previous recording's exhausted recovery budget,
+                // deferred retry deadline or cached candidates suppress it.
                 recordingCandidates?.removeValue(forKey: key)
                 webSources?.removeValue(forKey: key)
                 lookupDetails?.removeValue(forKey: key)
-                if index < nextIndex { correctedProcessed.append(index) }
+                sourceRecoveryAttempts?.removeValue(forKey: key)
+                sourceRecoveryNotBefore?.removeValue(forKey: key)
+                if index < nextIndex {
+                    correctedProcessed.append(index)
+                } else if index == nextIndex {
+                    // A pending song can change while its provider is backing
+                    // off. The old request's retry budget must not apply.
+                    transientFailureCount = nil
+                    nextRetryAt = nil
+                    lastError = nil
+                }
             }
             wishes[index] = latest
         }
