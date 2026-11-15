@@ -11,6 +11,7 @@ import { createWriteStream, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { Transform } from 'node:stream';
 import { buildLocalReceipt } from './local-evidence.mjs';
 import { checkNativeStage } from './verify-native-stage.mjs';
 
@@ -30,6 +31,7 @@ const OWNED_PATHS = new Set([
   'ios/Tests/DuplicateCompletionStagingRaceTests.swift'
 ]);
 const MAX_NATIVE_SECONDS = 3600;
+const MAX_NATIVE_LOG_BYTES = 32 * 1024 * 1024;
 
 export function promotionPolicy({ base, proposed, current, latestPreview, changedFiles, gateErrors }) {
   const errors = [];
@@ -122,9 +124,10 @@ function assertWorktreeClean(repo, sha) {
       git(repo, 'status', '--porcelain', '--untracked-files=all') !== '')
     throw Error('Candidate worktree is not clean at the expected SHA.');
 }
-export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_SECONDS * 1000, killGraceMs = 5000 } = {}) {
+export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_SECONDS * 1000, killGraceMs = 5000, maxLogBytes = MAX_NATIVE_LOG_BYTES } = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
-      !Number.isSafeInteger(killGraceMs) || killGraceMs < 1)
+      !Number.isSafeInteger(killGraceMs) || killGraceMs < 1 ||
+      !Number.isSafeInteger(maxLogBytes) || maxLogBytes < 1)
     throw Error('Native runner timeouts must be positive safe integers.');
   return new Promise((resolvePromise, reject) => {
     let settled = false;
@@ -137,6 +140,13 @@ export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_
     };
     const output = createWriteStream(logPath, { flags: 'wx', mode: 0o600 });
     let streamFailure = null;
+    let loggedBytes = 0;
+    const boundedLog = new Transform({ transform(chunk, _encoding, callback) {
+      loggedBytes += chunk.length;
+      if (loggedBytes > maxLogBytes) {
+        callback(Error('Native verification log exceeded ' + maxLogBytes + ' bytes'));
+      } else callback(null, chunk);
+    } });
     let processClosed = false;
     let watchdog, escalation;
     // Native verification launches bash -> xcodebuild -> test runners. Killing
@@ -169,6 +179,8 @@ export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_
       if (processClosed) finish(streamFailure);
     };
     output.on('error', error => failStream('Native verification log could not be written', error));
+    boundedLog.on('error', error => failStream('Native verification log limit or stream failure', error));
+    boundedLog.pipe(output, { end: false });
     try {
       child = spawn(command, args, {
         cwd, stdio: ['ignore', 'pipe', 'pipe'],
@@ -195,7 +207,7 @@ export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_
         failStream('Native verification output stream failed', error);
         output.destroy();
       });
-      stream.pipe(output, { end: false });
+      stream.pipe(boundedLog, { end: false });
     }
     child.on('close', (code, signal) => {
       processClosed = true;
@@ -211,7 +223,11 @@ export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_
         else finish(Error('Native runner failed (exit ' + code +
           ', signal ' + (signal ?? 'none') + '); see ' + logPath));
       });
-      output.end();
+      boundedLog.end();
+      // The shared transform must flush before the evidence log is finalized.
+      // The transform's finish event is not sufficient: its readable side can
+      // still hold buffered data while the destination is backpressured.
+      boundedLog.once('end', () => output.end());
     });
   });
 }
