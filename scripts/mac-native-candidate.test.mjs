@@ -73,7 +73,7 @@ test('consolidated candidate must remain an open draft at the exact baseline', (
   const pr = { number: 29, state: 'open', draft: true,
     head: { sha: base, ref: 'feat/ios-consolidated-candidate',
       repo: { full_name: 'jonnyt123/mp3-shelf' } },
-    base: { sha: 'c'.repeat(40), ref: 'main',
+    base: { sha: 'c'.repeat(40), ref: 'fix/ios-download-finalization-and-conversion',
       repo: { full_name: 'jonnyt123/mp3-shelf' } } };
   assert.deepEqual(verifyConsolidatedDraftPR(pr, { base }), []);
   for (const mutation of [
@@ -205,4 +205,15 @@ test('native log size budget is validated before starting a subprocess', () => {
   assert.throws(() => runLogged(process.execPath, [], '.', '/tmp/unused', {
     maxLogBytes: 0
   }), /positive safe integers/);
+});
+
+test('stacked draft target is correct while retargeting to main is rejected', () => {
+  const draft = { number: 29, state: 'open', draft: true,
+    head: { sha: base, ref: 'feat/ios-consolidated-candidate',
+      repo: { full_name: 'jonnyt123/mp3-shelf' } },
+    base: { ref: 'fix/ios-download-finalization-and-conversion',
+      repo: { full_name: 'jonnyt123/mp3-shelf' } } };
+  assert.deepEqual(verifyConsolidatedDraftPR(draft, { base }), []);
+  assert(verifyConsolidatedDraftPR({ ...draft, base: { ...draft.base, ref: 'main' } },
+    { base }).length > 0);
 });
