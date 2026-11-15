@@ -29,7 +29,8 @@ func validate() throws {
         throw IntegrityFailure.corrupt
     }
     guard let journalAttributes = try? fm.attributesOfItem(atPath: journal.path),
-          journalAttributes[.type] as? FileAttributeType == .typeRegular else {
+          journalAttributes[.type] as? FileAttributeType == .typeRegular,
+          (journalAttributes[.referenceCount] as? NSNumber)?.intValue == 1 else {
         throw IntegrityFailure.corrupt
     }
     let state: Receipt
@@ -48,7 +49,8 @@ func validate() throws {
     let attributes: [FileAttributeKey: Any]
     do { attributes = try fm.attributesOfItem(atPath: recording.path) }
     catch { throw IntegrityFailure.absent }
-    guard attributes[.type] as? FileAttributeType == .typeRegular else {
+    guard attributes[.type] as? FileAttributeType == .typeRegular,
+          (attributes[.referenceCount] as? NSNumber)?.intValue == 1 else {
         throw IntegrityFailure.unsafe
     }
     guard (attributes[.size] as? NSNumber)?.intValue == state.expectedSize,
@@ -91,6 +93,11 @@ for round in 0..<64 {
     try fm.createSymbolicLink(atPath: recording.path, withDestinationPath: root.appendingPathComponent("missing.mp3").path)
     try reject(.unsafe, "dangling symlink")
     try fm.removeItem(at: recording)
+    // A hard link is a regular file, but aliases another directory entry.
+    // Never trust it as exclusively owned audio in the recovery model.
+    try fm.linkItem(at: external, to: recording)
+    try reject(.unsafe, "hard-linked foreign audio")
+    try fm.removeItem(at: recording)
     try bytes.write(to: recording, options: .atomic)
     try validate()
     if round % 2 == 0 {
@@ -127,7 +134,16 @@ try fm.removeItem(at: journal)
 try fm.createDirectory(at: journal, withIntermediateDirectories: false)
 try reject(.corrupt, "directory substituted for journal")
 try fm.removeItem(at: journal)
+// A hard-linked journal can be changed through its other name without touching
+// the expected receipt path. Reject it rather than treating it as private state.
+let journalAlias = root.appendingPathComponent("journal-alias.json")
+try originalJournal.write(to: journalAlias, options: .atomic)
+try fm.linkItem(at: journalAlias, to: journal)
+try reject(.corrupt, "hard-linked journal")
+try assertTrue(try Data(contentsOf: journalAlias) == originalJournal, "journal alias modified")
+try fm.removeItem(at: journal)
+try fm.removeItem(at: journalAlias)
 try originalJournal.write(to: journal, options: .atomic)
 try validate()
 try assertTrue(try Data(contentsOf: recording) == bytes, "valid audio changed during journal tampering")
-print("PASS: 64 receipt rounds, 384 invalid files, 32 corrupt journals, 48 substituted receipts, 3 unsafe journal paths")
+print("PASS: 64 receipt rounds, 448 invalid files, 32 corrupt journals, 48 substituted receipts, 4 unsafe journal paths")
