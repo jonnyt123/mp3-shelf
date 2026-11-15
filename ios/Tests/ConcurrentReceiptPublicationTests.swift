@@ -131,8 +131,10 @@ for round in 0..<48 {
         do { try publishGeneration(id, generation: currentGeneration)
             preconditionFailure("duplicate callback accepted after commit")
         } catch GenerationError.duplicate { }
-        check(try Data(contentsOf: audioPaths[id]) == payloads[id], "generation changed audio")
+        let preservedAudio = try Data(contentsOf: audioPaths[id]) == payloads[id]
+        check(preservedAudio, "generation changed audio")
     }
-    check(try Data(contentsOf: generationManifest) == before, "rejected callback rewrote journal")
+    let unchangedJournal = try Data(contentsOf: generationManifest) == before
+    check(unchangedJournal, "rejected callback rewrote journal")
 }
 print("PASS: 48 rounds of mixed-generation concurrent callbacks; stale and duplicate rejection, exact journal and audio preservation")
