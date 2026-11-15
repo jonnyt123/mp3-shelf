@@ -882,6 +882,7 @@ extension AudioSourceFinder {
         let provider: String
         let candidate: AudioCatalogMatch?
         let failure: String?
+        var wasCancelled: Bool = false
     }
 
     struct CatalogSearchReport: Sendable {
@@ -891,6 +892,9 @@ extension AudioSourceFinder {
     }
 
     static func catalogReport(from results: [CatalogLookup]) throws -> CatalogSearchReport {
+        // Cancellation is not a provider outage or an empty search result. A
+        // partial inventory must never be persisted as a completed discovery.
+        if results.contains(where: \.wasCancelled) { throw CancellationError() }
         let ordered = results.sorted { $0.rank < $1.rank }
         let candidates = uniqueDownloadSources(ordered.compactMap(\.candidate))
         let warnings = ordered.compactMap { result in
@@ -956,7 +960,8 @@ extension AudioSourceFinder {
                         failure: nil)
                 } catch {
                     return CatalogLookup(rank: 0, provider: "Audius", candidate: nil,
-                                         failure: error.localizedDescription)
+                                         failure: error.localizedDescription,
+                                         wasCancelled: error is CancellationError)
                 }
             }
             group.addTask {
@@ -966,7 +971,8 @@ extension AudioSourceFinder {
                         failure: nil)
                 } catch {
                     return CatalogLookup(rank: 1, provider: "Openverse", candidate: nil,
-                                         failure: error.localizedDescription)
+                                         failure: error.localizedDescription,
+                                         wasCancelled: error is CancellationError)
                 }
             }
             group.addTask {
@@ -976,7 +982,8 @@ extension AudioSourceFinder {
                         failure: nil)
                 } catch {
                     return CatalogLookup(rank: 2, provider: "Wikimedia Commons", candidate: nil,
-                                         failure: error.localizedDescription)
+                                         failure: error.localizedDescription,
+                                         wasCancelled: error is CancellationError)
                 }
             }
             group.addTask {
@@ -986,7 +993,8 @@ extension AudioSourceFinder {
                         failure: nil)
                 } catch {
                     return CatalogLookup(rank: 3, provider: "Internet Archive", candidate: nil,
-                                         failure: error.localizedDescription)
+                                         failure: error.localizedDescription,
+                                         wasCancelled: error is CancellationError)
                 }
             }
             group.addTask {
@@ -996,7 +1004,8 @@ extension AudioSourceFinder {
                         failure: nil)
                 } catch {
                     return CatalogLookup(rank: 4, provider: "ccMixter", candidate: nil,
-                                         failure: error.localizedDescription)
+                                         failure: error.localizedDescription,
+                                         wasCancelled: error is CancellationError)
                 }
             }
             var results: [CatalogLookup] = []
