@@ -292,11 +292,7 @@ final class MusicLibrary: ObservableObject {
                 // size, frame count and decoded dimensions *before* asking
                 // UIKit to allocate a bitmap for JPEG conversion. A tiny
                 // compressed image can otherwise exhaust memory on export.
-                guard Self.isSafeArtwork(imageBytes),
-                      let image = UIImage(data: imageBytes),
-                      let jpeg = image.jpegData(compressionQuality: 0.9),
-                      !jpeg.isEmpty,
-                      jpeg.count <= 20 * 1024 * 1024 else {
+                guard let jpeg = Self.archiveJPEGArtwork(imageBytes) else {
                     throw PortableShelfArchive.ArchiveError.invalidManifest
                 }
                 artwork = jpeg
@@ -346,10 +342,10 @@ final class MusicLibrary: ObservableObject {
 
     /// Adds valid files from a browser or native backup without deleting
     /// anything already on this iPhone. Archive metadata is validated first.
-    // Reject compressed image bombs before UIKit allocates a decoded bitmap.
+    // Bound actual decoded pixels, not only image headers, during JPEG export.
     // ImageIO reads header properties without caching pixel data; malformed,
     // animated, or excessively large artwork is optional and never blocks audio.
-    private static func isSafeArtwork(_ bytes: Data) -> Bool {
+    private static func archiveJPEGArtwork(_ bytes: Data) -> Data? {
         guard !bytes.isEmpty, bytes.count <= 20 * 1024 * 1024,
               let source = CGImageSourceCreateWithData(bytes as CFData, nil),
               CGImageSourceGetCount(source) == 1,
@@ -358,8 +354,8 @@ final class MusicLibrary: ObservableObject {
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
               width > 0, height > 0,
               width <= 8192, height <= 8192,
-              width <= 32_000_000 / height else { return false }
-        // Decode only a bounded thumbnail for validation: a full-resolution
+              width <= 32_000_000 / height else { return nil }
+        // Decode only a bounded thumbnail for conversion: a full-resolution
         // UIImage can allocate hundreds of MiB even for a small compressed file.
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -368,7 +364,13 @@ final class MusicLibrary: ObservableObject {
             kCGImageSourceShouldCache: false,
             kCGImageSourceShouldCacheImmediately: false
         ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) != nil
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, thumbnail, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), output.length > 0,
+              output.length <= 20 * 1024 * 1024 else { return nil }
+        return output as Data
     }
 
     func importPortableBackup(from url: URL) async throws -> ImportReport {
