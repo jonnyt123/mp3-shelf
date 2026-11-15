@@ -1442,6 +1442,7 @@ struct PlaylistDetailView: View {
     @State private var playlistPlaybackTask: Task<Void, Never>?
     @State private var playlistPlaybackPending = false
     @State private var playlistPlaybackError: String?
+    @State private var playlistPlaybackNotice: String?
     @Environment(\.scenePhase) private var playlistScenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
@@ -1508,6 +1509,8 @@ struct PlaylistDetailView: View {
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
         guard !playlistPlaybackPending, !tracks.isEmpty else { return }
         playlistPlaybackPending = true
+        playlistPlaybackError = nil
+        playlistPlaybackNotice = nil
         let requestedPlaylistID = playlistID
         let snapshots = tracks.map { ($0.id, library.fileURL(for: $0)) }
         playlistPlaybackTask = Task {
@@ -1539,6 +1542,10 @@ struct PlaylistDetailView: View {
             guard let first = shuffled ? queue.randomElement() : queue.first else {
                 playlistPlaybackError = "No playable offline recordings are available. Check Downloads or restore the missing audio files."
                 return
+            }
+            let skippedCount = currentTracks.count - queue.count
+            if skippedCount > 0 {
+                playlistPlaybackNotice = "\(skippedCount) unavailable \(skippedCount == 1 ? "recording was" : "recordings were") skipped. Playing \(queue.count) available \(queue.count == 1 ? "song" : "songs")."
             }
             playback.isShuffled = shuffled
             playback.play(first, queue: queue)
@@ -1613,6 +1620,12 @@ struct PlaylistDetailView: View {
                             playlistPlayButton(availableTracks)
                             playlistShuffleButton(availableTracks)
                         }
+                    }
+                    if let playlistPlaybackNotice {
+                        Label(playlistPlaybackNotice, systemImage: "exclamationmark.circle")
+                            .font(.callout)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if playlist.appleMusicLibraryID != nil {
                         Label("Imported from your Apple Music library", systemImage: "music.note.list")
