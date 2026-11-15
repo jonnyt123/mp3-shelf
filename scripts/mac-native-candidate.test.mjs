@@ -186,3 +186,23 @@ test('native timeout terminates descendants rather than only the shell', async (
       'Timed-out Xcode descendants must not survive detached worktree cleanup');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+test('native verification refuses unbounded output without accepting truncated evidence', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-native-log-limit-'));
+  try {
+    const log = join(dir, 'bounded.log');
+    await assert.rejects(runLogged(process.execPath, ['-e',
+      "process.stdout.write('X'.repeat(16384)); setInterval(() => {}, 100)"],
+      dir, log, { maxLogBytes: 1024, timeoutMs: 5000, killGraceMs: 200 }),
+      /log limit|exceeded 1024 bytes/);
+    assert(readFileSync(log).length <= 1024,
+      'Rejected output must never grow beyond the configured evidence limit');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native log size budget is validated before starting a subprocess', () => {
+  assert.throws(() => runLogged(process.execPath, [], '.', '/tmp/unused', {
+    maxLogBytes: 0
+  }), /positive safe integers/);
+});
