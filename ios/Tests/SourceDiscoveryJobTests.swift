@@ -1092,6 +1092,27 @@ enum SourceDiscoveryJobTests {
                         unchangedCorrection.nextRetryAt == originalRetry &&
                         unchangedCorrection.transientFailureCount == 1,
                         "unchanged metadata retains bounded backoff")
+        // A second recovery can explicitly request an immediate retry after
+        // a prior failed transfer left a long provider-specific deadline.
+        let retryWish = PlaylistWish(title: "Retry Song", artist: "Artist",
+                                     album: "Album", spotifyURL: nil)
+        var immediateRetry = SourceDiscoveryJob(playlistID: UUID(), wishes: [retryWish])
+        immediateRetry.record(.queued)
+        let retryKey = retryWish.id.uuidString
+        immediateRetry.sourceRecoveryNotBefore = [retryKey: .distantFuture]
+        verifyDiscovery(immediateRetry.requeueFailedSource(for: retryWish.id) &&
+                        immediateRetry.sourceRecoveryNotBefore?[retryKey] == nil &&
+                        immediateRetry.canAttemptLookup(at: .now) &&
+                        immediateRetry.prepareLookup(at: .now),
+                        "immediate failed-source recovery clears stale deferred retry")
+        immediateRetry.record(.queued)
+        let deferred = Date.now.addingTimeInterval(900)
+        verifyDiscovery(immediateRetry.requeueFailedSource(for: retryWish.id, notBefore: deferred) &&
+                        immediateRetry.sourceRecoveryNotBefore?[retryKey] == deferred &&
+                        !immediateRetry.canAttemptLookup(at: .now),
+                        "explicit deferred recovery still respects its retry deadline")
+        verifyDiscovery(immediateRetry.prepareLookup(at: deferred.addingTimeInterval(1)),
+                        "deferred retry resumes after its deadline")
         print("Persistent discovery checkpoint tests passed")
     }
 }
