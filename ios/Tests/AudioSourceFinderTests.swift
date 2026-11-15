@@ -169,6 +169,33 @@ enum AudioSourceFinderTests {
         verify(publicMatch?.downloadURL.lastPathComponent == "song.mp3" &&
                publicMatch?.licenseURL == nil,
                "real Archive decimal duration and absent license do not reject matching MP3")
+        // Archive duration belongs to the selected audio file, not to the
+        // item title or a similarly named album. Only the original recording
+        // within four seconds of Spotify may enter automatic download.
+        for (length, accepted) in [
+            ("212", true), ("208", true), ("216", true),
+            ("207.99", false), ("216.01", false), ("30", false),
+            ("0", false), ("-1", false), ("nan", false),
+            ("inf", false), ("not-a-duration", false)
+        ] {
+            let fixture = archiveJSON.replacingOccurrences(of: "212.43", with: length)
+            let item = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                                from: Data(fixture.utf8))
+            verify((AudioSourceFinder.archiveCandidate(item,
+                identifier: "public-recording", for: wish) != nil) == accepted,
+                "Archive per-file duration \(length) matches Spotify runtime policy")
+        }
+        let missingLength = archiveJSON.replacingOccurrences(of: #","length":"212.43""#, with: "")
+        let missingItem = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                                  from: Data(missingLength.utf8))
+        verify(AudioSourceFinder.archiveCandidate(missingItem,
+            identifier: "public-recording", for: wish) == nil,
+            "Archive cannot auto-select a recording without per-file runtime evidence")
+        let noSpotifyDuration = PlaylistWish(title: "The Song", artist: "The Artist",
+            album: "The Album", spotifyURL: nil, durationSeconds: nil)
+        verify(AudioSourceFinder.archiveCandidate(missingItem,
+            identifier: "public-recording", for: noSpotifyDuration) != nil,
+            "Archive keeps metadata-only songs discoverable when Spotify omits duration")
         let oversizedJSON = archiveJSON.replacingOccurrences(of: "8419768", with: "104857601")
         let oversizedItem = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
                                                      from: Data(oversizedJSON.utf8))
