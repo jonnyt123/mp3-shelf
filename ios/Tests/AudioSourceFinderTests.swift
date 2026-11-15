@@ -888,6 +888,31 @@ enum AudioSourceFinderTests {
             AudioSourceFinder.audiusCandidate($0, for: wish)
         } == nil, "an Audius gated download cannot enter the automatic queue")
 
+        // A cancelled provider cannot be converted into an ordinary empty
+        // search or a successful partial inventory, even when another catalog
+        // already found a plausible recording. The caller must retain its
+        // persisted cursor and retry on explicit resume.
+        let cancelledLookup = AudioSourceFinder.CatalogLookup(
+            rank: 0, provider: "Cancelled provider", candidate: nil,
+            failure: "cancelled", wasCancelled: true)
+        let healthyEmptyLookup = AudioSourceFinder.CatalogLookup(
+            rank: 1, provider: "Healthy provider", candidate: nil, failure: nil)
+        do {
+            _ = try AudioSourceFinder.catalogReport(from: [cancelledLookup, healthyEmptyLookup])
+            verify(false, "cancelled catalog search must not complete as unavailable")
+        } catch is CancellationError {
+            verify(true, "cancelled provider propagates cancellation")
+        } catch {
+            verify(false, "cancelled provider must throw CancellationError")
+        }
+        do {
+            let emptyReport = try AudioSourceFinder.catalogReport(from: [healthyEmptyLookup])
+            verify(emptyReport.candidates.isEmpty && emptyReport.warnings.isEmpty,
+                   "a healthy empty catalog is a completed no-match result")
+        } catch {
+            verify(false, "healthy empty catalog must not be cancelled")
+        }
+
         let firstSource = AudioCatalogMatch(
             downloadURL: URL(string: "https://first.example/song.mp3")!,
             itemURL: URL(string: "https://first.example/song")!,
