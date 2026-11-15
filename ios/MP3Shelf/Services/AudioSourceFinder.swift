@@ -365,11 +365,17 @@ extension AudioSourceFinder {
               filesize == nil || (filesize! > 0 && filesize! <= 100 * 1024 * 1024)
         else { return nil }
 
-        if let expected = wish.durationSeconds, let duration {
-            // Openverse API documents duration in milliseconds, including
-            // short tracks. Never guess units based on an arbitrary threshold.
+        // A title/artist pair is not sufficient to distinguish edits, covers,
+        // remasters or similarly named recordings. When Spotify supplies a
+        // duration, require finite catalog evidence before auto-selection.
+        if let expected = wish.durationSeconds {
+            guard expected.isFinite, expected > 0,
+                  let duration, duration.isFinite, duration > 0 else { return nil }
+            // Openverse documents duration in milliseconds, including short
+            // tracks; do not infer units from an arbitrary threshold.
             let measured = duration / 1000.0
-            guard abs(measured - expected) <= 4.0 else { return nil }
+            guard measured.isFinite, measured > 0,
+                  abs(measured - expected) <= 4.0 else { return nil }
         }
         // Openverse supplies the creator, link and license but does not itself
         // certify that a publisher actually owns the recording.
