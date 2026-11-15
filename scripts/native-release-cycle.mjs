@@ -56,7 +56,9 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
       const meta = lstatSync(path);
       return meta.isFile() && !meta.isSymbolicLink() && meta.nlink === 1;
     });
-  if (!nativeDir || !deviceSafe)
+  const nativeSafe = nativeDir && existsSync(nativeDir) &&
+    lstatSync(nativeDir).isDirectory() && !lstatSync(nativeDir).isSymbolicLink();
+  if (!nativeSafe || !deviceSafe)
     return { candidateSha: sha, integration: integration.status,
       packaging: 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE' };
   const destination = join(home, 'Documents', 'MP3Shelf', 'VerifiedReleases');
