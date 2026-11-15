@@ -122,7 +122,10 @@ function assertWorktreeClean(repo, sha) {
       git(repo, 'status', '--porcelain', '--untracked-files=all') !== '')
     throw Error('Candidate worktree is not clean at the expected SHA.');
 }
-export function runLogged(command, args, cwd, logPath) {
+export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_SECONDS * 1000, killGraceMs = 5000 } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
+      !Number.isSafeInteger(killGraceMs) || killGraceMs < 1)
+    throw Error('Native runner timeouts must be positive safe integers.');
   return new Promise((resolvePromise, reject) => {
     let settled = false;
     let child;
@@ -135,19 +138,27 @@ export function runLogged(command, args, cwd, logPath) {
     const output = createWriteStream(logPath, { flags: 'wx', mode: 0o600 });
     let streamFailure = null;
     let processClosed = false;
+    let watchdog, escalation;
+    const terminate = () => {
+      if (processClosed || !child?.pid) return;
+      child.kill('SIGTERM');
+      if (!escalation) escalation = setTimeout(() => {
+        if (!processClosed) child.kill('SIGKILL');
+      }, killGraceMs);
+    };
     // Do not settle while a failed native command is still running: callers
     // remove the detached worktree immediately after this promise settles.
     // A late log error must also override a successful process exit.
     const failStream = (kind, error) => {
       if (!streamFailure)
         streamFailure = Error(kind + ': ' + error.message);
-      child?.kill('SIGTERM');
+      terminate();
       if (processClosed) finish(streamFailure);
     };
     output.on('error', error => failStream('Native verification log could not be written', error));
     try {
       child = spawn(command, args, {
-        cwd, stdio: ['ignore', 'pipe', 'pipe'], timeout: MAX_NATIVE_SECONDS * 1000,
+        cwd, stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, LC_ALL: 'C' }
       });
     } catch (error) {
@@ -155,6 +166,10 @@ export function runLogged(command, args, cwd, logPath) {
       finish(error);
       return;
     }
+    watchdog = setTimeout(() => {
+      if (!streamFailure) streamFailure = Error('Native verification exceeded timeout of ' + timeoutMs + 'ms');
+      terminate();
+    }, timeoutMs);
     child.on('error', error => {
       failStream('Native verification process failed to start', error);
       output.destroy();
@@ -170,6 +185,8 @@ export function runLogged(command, args, cwd, logPath) {
     }
     child.on('close', (code, signal) => {
       processClosed = true;
+      clearTimeout(watchdog);
+      clearTimeout(escalation);
       if (settled) return;
       if (streamFailure) { finish(streamFailure); return; }
       // Register before end(): small buffered logs may finish synchronously.
