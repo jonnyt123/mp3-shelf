@@ -131,6 +131,11 @@ enum AudioSourceFinder {
             guard let bytes = Int64(sizeBytes), bytes > 0,
                   bytes <= 100 * 1024 * 1024 else { return false }
         }
+        // A lone generated derivative is not the original recording. Archive
+        // metadata can contain only a transcode after the source was removed.
+        // Missing source is tolerated for legacy uploads, but an explicit
+        // non-original classification must never be auto-imported.
+        guard source == nil || source == "original" else { return false }
         if audioFileCount == 1 {
             return exactMetadataMatch(title: itemTitle, creator: itemCreator, wish: wish)
         }
