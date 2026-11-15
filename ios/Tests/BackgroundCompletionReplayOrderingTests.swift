@@ -27,7 +27,15 @@ let other = root.appendingPathComponent("other.mp3")
 let original = Data((0..<32768).map { UInt8(($0 * 17 + 9) % 251) })
 let unrelated = Data((0..<32768).map { UInt8(($0 * 11 + 3) % 251) })
 try unrelated.write(to: other)
+func safeJournal() -> Bool {
+    guard (try? fm.destinationOfSymbolicLink(atPath: journal.path)) == nil,
+          let attributes = try? fm.attributesOfItem(atPath: journal.path),
+          attributes[.type] as? FileAttributeType == .typeRegular,
+          (attributes[.referenceCount] as? NSNumber)?.intValue == 1 else { return false }
+    return true
+}
 func load() throws -> Snapshot {
+    guard safeJournal() else { throw ReplayError.corrupt }
     guard let value = try? JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: journal)) else { throw ReplayError.corrupt }
     let ids = value.entries.map(\.id)
     guard Set(ids).count == ids.count, Set(value.receipts).count == value.receipts.count,
@@ -37,6 +45,7 @@ func load() throws -> Snapshot {
 }
 func save(_ value: Snapshot, interrupted: Bool = false) throws {
     if interrupted { throw ReplayError.interrupted }
+    guard safeJournal() || !fm.fileExists(atPath: journal.path) else { throw ReplayError.unsafe }
     try JSONEncoder().encode(value).write(to: journal, options: .atomic)
 }
 // Validate the directory entry before reading: a terminal receipt must never
@@ -48,7 +57,8 @@ func verifiedRecording(_ url: URL) throws -> Bool {
     let attributes: [FileAttributeKey: Any]
     do { attributes = try fm.attributesOfItem(atPath: url.path) }
     catch { return false }
-    guard attributes[.type] as? FileAttributeType == .typeRegular else {
+    guard attributes[.type] as? FileAttributeType == .typeRegular,
+          (attributes[.referenceCount] as? NSNumber)?.intValue == 1 else {
         throw ReplayError.unsafe
     }
     guard (attributes[.size] as? NSNumber)?.intValue == original.count,
@@ -142,4 +152,39 @@ do { try complete(); try check(false, "foreign destination accepted") }
 catch ReplayError.conflict {}
 try check(try load().receipts.isEmpty, "foreign audio published receipt")
 try check(try Data(contentsOf: dest) == Data("foreign recording".utf8), "foreign audio modified")
+// Journal entry substitution must fail closed without touching an external
+// target or changing durable completion state.
+try original.write(to: dest, options: .atomic)
+try save(Snapshot(entries: [Entry(id: "ticket", state: .imported, filename: "song.mp3")],
+                  receipts: ["ticket"]))
+let trustedJournal = try Data(contentsOf: journal)
+let outsideJournal = root.appendingPathComponent("outside-journal.json")
+try trustedJournal.write(to: outsideJournal, options: .atomic)
+try fm.removeItem(at: journal)
+try fm.createSymbolicLink(at: journal, withDestinationURL: outsideJournal)
+do { try complete(); try check(false, "symlink journal accepted") }
+catch ReplayError.corrupt {}
+do { try save(Snapshot(entries: [], receipts: [])); try check(false, "symlink journal overwritten") }
+catch ReplayError.unsafe {}
+try check(try Data(contentsOf: outsideJournal) == trustedJournal, "symlink target changed")
+try fm.removeItem(at: journal)
+try fm.linkItem(at: outsideJournal, to: journal)
+do { try complete(); try check(false, "hard-linked journal accepted") }
+catch ReplayError.corrupt {}
+do { try save(Snapshot(entries: [], receipts: [])); try check(false, "hard-linked journal overwritten") }
+catch ReplayError.unsafe {}
+try check(try Data(contentsOf: outsideJournal) == trustedJournal, "hard-link target changed")
+try fm.removeItem(at: journal)
+try trustedJournal.write(to: journal, options: .atomic)
+try complete()
+try fm.removeItem(at: dest)
+try fm.linkItem(at: other, to: dest)
+do { try complete(); try check(false, "hard-linked foreign destination accepted") }
+catch ReplayError.unsafe {}
+try check(try Data(contentsOf: other) == unrelated, "hard-linked audio target changed")
+try fm.removeItem(at: dest)
+try original.write(to: dest, options: .atomic)
+try complete()
+try check(try Data(contentsOf: journal) == trustedJournal, "valid journal changed during recovery")
+
 print("PASS: 48 crash/replay rounds (16 without staging), 48 duplicates, 24 corrupt journals, terminal receipt integrity and unsafe path rejection")
