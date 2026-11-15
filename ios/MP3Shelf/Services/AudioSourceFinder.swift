@@ -492,6 +492,15 @@ extension AudioSourceFinder {
         return title
     }
 
+    static func openverseDurationIsCompatible(durationMilliseconds: Double?,
+                                              expectedSeconds: Double?) -> Bool {
+        guard let durationMilliseconds, durationMilliseconds.isFinite,
+              durationMilliseconds > 0, durationMilliseconds <= 3_600_000 else { return false }
+        guard let expectedSeconds else { return true }
+        guard expectedSeconds.isFinite, expectedSeconds > 0 else { return false }
+        return abs(durationMilliseconds / 1000.0 - expectedSeconds) <= 4.0
+    }
+
     static func openverseCandidate(
         title: String?, creator: String?, download: String?, landing: String?,
         license: String?, filetype: String?, duration: Double?, source: String?,
@@ -522,12 +531,11 @@ extension AudioSourceFinder {
               filesize == nil || (filesize! > 0 && filesize! <= 100 * 1024 * 1024)
         else { return nil }
 
-        if let expected = wish.durationSeconds, let duration {
-            // Openverse API documents duration in milliseconds, including
-            // short tracks. Never guess units based on an arbitrary threshold.
-            let measured = duration / 1000.0
-            guard abs(measured - expected) <= 4.0 else { return nil }
-        }
+        // A matching title and artist cannot identify a particular recording
+        // when the catalog omits its duration. Never auto-queue a source with
+        // missing, non-finite, or nonsensical timing metadata.
+        guard openverseDurationIsCompatible(durationMilliseconds: duration,
+                                           expectedSeconds: wish.durationSeconds) else { return nil }
         // Openverse supplies the creator, link and license but does not itself
         // certify that a publisher actually owns the recording.
         return AudioCatalogMatch(downloadURL: downloadURL, itemURL: landingURL,
