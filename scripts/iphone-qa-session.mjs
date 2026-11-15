@@ -5,9 +5,12 @@
  * The native DEBUG audit runs in the installed app; this script starts phases.
  */
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { captureDevicePlaylist }
+import { captureDevicePlaylist, physicalIPhone }
   from './collect-iphone-playlist-evidence.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -41,8 +44,14 @@ export async function runIPhonePhase({ phase, deviceID, bundleID, playlistID,
     throw Error('Physical device QA requires a clean checkout of the exact candidate.');
   // Never allow a passed-in install path or arbitrary bundle ID to redirect a
   // physical user device task toward unrelated apps.
-  const command = devicePhaseArguments(phase, { deviceID, bundleID, playlistID });
   if (phase === 'arm' || phase === 'offline' || phase === 'stop') {
+    const command = devicePhaseArguments(phase, { deviceID, bundleID, playlistID });
+    const temp = mkdtempSync(join(tmpdir(), 'mp3shelf-device-qa-'));
+    try {
+      const inventoryPath = join(temp, 'devices.json');
+      run('xcrun', ['devicectl', 'list', 'devices', '--json-output', inventoryPath]);
+      physicalIPhone(JSON.parse(readFileSync(inventoryPath, 'utf8')), deviceID);
+    } finally { rmSync(temp, { recursive: true, force: true }); }
     run('xcrun', command);
     return { phase, device: 'PHYSICAL_DEVICE_LAUNCH_REQUESTED',
       offlinePlayback: 'NOT_VERIFIED', sourceSHA: sha,
