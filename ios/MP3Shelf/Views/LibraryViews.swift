@@ -38,6 +38,7 @@ struct LibraryView: View {
     @State private var recentPlaybackTask: Task<Void, Never>?
     @State private var missingRecentRecording = false
     @State private var bulkPlaybackPending = false
+    @State private var bulkPlaybackTask: Task<Void, Never>?
 
     // Recently added artwork must observe the same missing-file safety rule
     // as a normal library row. Never perform coordinated file I/O on the UI actor.
@@ -247,7 +248,7 @@ struct LibraryView: View {
         guard !songs.isEmpty else { return }
         let locations = songs.map { ($0.id, library.fileURL(for: $0)) }
         bulkPlaybackPending = true
-        Task {
+        bulkPlaybackTask = Task {
             let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
                 var playable = Set<UUID>()
                 for (id, url) in locations {
@@ -264,8 +265,9 @@ struct LibraryView: View {
             } onCancel: {
                 scan.cancel()
             }
-            bulkPlaybackPending = false
             guard !Task.isCancelled, scenePhase == .active else { return }
+            bulkPlaybackPending = false
+            bulkPlaybackTask = nil
             // Reconcile the current library and its URLs after the asynchronous
             // scan; a deleted or replaced recording cannot enter the queue.
             let currentTracks = Dictionary(uniqueKeysWithValues: library.tracks.map { ($0.id, $0) })
@@ -599,6 +601,18 @@ struct LibraryView: View {
             recentPlaybackTask?.cancel()
             recentPlaybackTask = nil
             recentPlaybackCheck = nil
+            bulkPlaybackTask?.cancel()
+            bulkPlaybackTask = nil
+            bulkPlaybackPending = false
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active else { return }
+            recentPlaybackTask?.cancel()
+            recentPlaybackTask = nil
+            recentPlaybackCheck = nil
+            bulkPlaybackTask?.cancel()
+            bulkPlaybackTask = nil
+            bulkPlaybackPending = false
         }
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
