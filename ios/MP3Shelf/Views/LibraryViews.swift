@@ -302,18 +302,24 @@ struct LibraryView: View {
         message = nil
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
-            let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
-                var playable = Set<UUID>()
-                for (id, url) in locations {
-                    if Task.isCancelled { break }
+            // Keep one availability result per visible occurrence. An ID set can
+            // incorrectly authorize a missing duplicate that shares a track ID.
+            let scan = Task.detached(priority: .userInitiated) { () -> [Bool] in
+                var availability: [Bool] = []
+                availability.reserveCapacity(locations.count)
+                for (_, url) in locations {
+                    if Task.isCancelled { return [] }
                     guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
                           values.isRegularFile == true, let size = values.fileSize,
-                          size > 0 else { continue }
-                    playable.insert(id)
+                          size > 0 else {
+                        availability.append(false)
+                        continue
+                    }
+                    availability.append(true)
                 }
-                return playable
+                return availability
             }
-            let validIDs = await withTaskCancellationHandler {
+            let availability = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: {
                 scan.cancel()
@@ -325,34 +331,28 @@ struct LibraryView: View {
                   settledSearchText == requestedQuery,
                   favoritesOnly == requestedFavorites,
                   sortMode == requestedSort,
-                  displayed.map(\.id) == requestedIDs else {
+                  displayed.map(\.id) == requestedIDs,
+                  availability.count == songs.count else {
                 message = "Your library results changed while checking offline recordings. Tap Play or Shuffle again to use the updated songs."
                 return
             }
-            // Reconcile against the current library without assuming IDs are
-            // unique. Duplicate IDs can occur in imported or recovering libraries;
-            // Dictionary(uniqueKeysWithValues:) would trap and crash the UI.
-            var currentTracks: [UUID: MusicTrack] = [:]
-            for track in library.tracks where currentTracks[track.id] == nil {
-                currentTracks[track.id] = track
-            }
-            var scannedURLs: [UUID: URL] = [:]
-            for (id, url) in locations where scannedURLs[id] == nil {
-                scannedURLs[id] = url
-            }
-            let queue = songs.compactMap { song -> MusicTrack? in
-                guard validIDs.contains(song.id),
-                      let current = currentTracks[song.id],
-                      let scannedURL = scannedURLs[song.id],
-                      library.fileURL(for: current) == scannedURL else { return nil }
-                return current
-            }
-            // A replacement/import can change the underlying file without
-            // changing a track ID. Reject the whole stale request rather than
-            // silently starting an unexpected partial queue.
-            guard queue.count == songs.filter({ validIDs.contains($0.id) }).count else {
-                message = "Some recordings changed while preparing playback. Tap Play or Shuffle again to use the current library."
-                return
+            // Resolve the exact original file location, not just its ID.
+            // A changed or removed recording invalidates this request; a file
+            // that was already missing at scan time is simply skipped.
+            let current = library.tracks
+            var queue: [MusicTrack] = []
+            queue.reserveCapacity(songs.count)
+            for (index, song) in songs.enumerated() {
+                let originalURL = locations[index].1
+                guard let match = current.first(where: {
+                    $0.id == song.id && library.fileURL(for: $0) == originalURL
+                }) else {
+                    message = "Some recordings changed while preparing playback. Tap Play or Shuffle again to use the current library."
+                    return
+                }
+                if availability[index] {
+                    queue.append(match)
+                }
             }
             guard let first = shuffled ? queue.randomElement() : queue.first else {
                 message = "No playable offline recordings were found in these results."
