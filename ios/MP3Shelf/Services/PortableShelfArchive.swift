@@ -865,32 +865,37 @@ enum PortableShelfArchive {
         let manager = FileManager.default
         let staging = destination.deletingLastPathComponent()
             .appendingPathComponent(".mp3shelf-sidecar-\(UUID().uuidString).tmp")
-        defer { try? manager.removeItem(at: staging) }
-        try bytes.write(to: staging, options: .atomic)
-        let handle = try FileHandle(forWritingTo: staging)
+        // Claim the staging name exclusively: atomic Data.write can replace
+        // an unrelated file if the randomly chosen name is concurrently taken.
+        let output = try createExclusiveOutput(at: staging)
         do {
-            try handle.synchronize()
-            try handle.close()
+            try output.write(contentsOf: bytes)
+            try output.synchronize()
+            try output.close()
         } catch {
-            try? handle.close()
+            try? output.close()
+            // Do not unlink by pathname: a concurrent writer may already have
+            // replaced it. Unreferenced temporary bytes are recoverable.
             throw error
         }
         try Task.checkCancellation()
-        // link(2) publishes without replacement, including dangling symlinks.
-        // The staging name remains ours to remove, but after publication the
-        // destination name can change owners at any time. Never unlink it on
-        // cancellation, validation failure, or a racing catalog write.
-        try manager.linkItem(at: staging, to: destination)
-        // A validation callback may replace the published pathname or edit its
-        // contents. Never commit a catalog reference unless the destination
-        // still identifies the exact durable sidecar we staged. Do not unlink
-        // the destination on failure: it may now belong to another writer.
+        // Retain a descriptor to the exact staged bytes before publication.
+        // The validation callback is arbitrary code and may replace either
+        // pathname, so no pathname cleanup is permitted after invoking it.
         let published = try FileHandle(forReadingFrom: staging)
         defer { try? published.close() }
         let expected = try archiveIdentity(of: published, at: staging)
         guard expected.size == off_t(bytes.count) else {
             throw ArchiveError.invalidFile
         }
+        // link(2) publishes without replacing existing destinations.
+        try manager.linkItem(at: staging, to: destination)
+        // Release the staging directory entry before executing the callback,
+        // avoiding a late defer that could delete another writer's replacement.
+        // A failed unlink is deliberately nonfatal: preserving bytes is safer.
+        try? manager.removeItem(at: staging)
+        // Validate the published destination against the retained descriptor.
+        // Never unlink the destination on cancellation or validation failure.
         try validate()
         // Metadata identity alone cannot prove the restored bytes survived a
         // validation callback: another writer can edit the same inode and
