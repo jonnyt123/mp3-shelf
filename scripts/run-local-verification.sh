@@ -160,7 +160,7 @@ run() {
   fi
 }
 if [[ "$MODE" == node-only || "$MODE" == web || "$MODE" == all ]]; then
-  run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs scripts/run-local-verification.test.mjs scripts/local-evidence.test.mjs scripts/measure-agent-throughput.test.mjs scripts/verify-native-stage.test.mjs scripts/verify-playlist-acceptance.test.mjs scripts/collect-iphone-playlist-evidence.test.mjs scripts/mac-native-candidate.test.mjs scripts/native-build-diagnostics.test.mjs
+  run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs scripts/run-local-verification.test.mjs scripts/local-evidence.test.mjs scripts/measure-agent-throughput.test.mjs scripts/verify-native-stage.test.mjs scripts/verify-playlist-acceptance.test.mjs scripts/collect-iphone-playlist-evidence.test.mjs scripts/mac-native-candidate.test.mjs scripts/native-build-diagnostics.test.mjs scripts/iphone-qa-session.test.mjs
 fi
 # Node-only checks can also mutate the checkout. Without this pre-receipt
 # check, a clean initial SHA could be reported after tests changed HEAD/files.
