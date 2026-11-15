@@ -29,8 +29,12 @@ function valid() {
       '- Source provenance: repository HEAD',
       '- Uncommitted changes: no',
       '- Mode: all',
+      '- Simulator smoke requested: false',
       '- Overall execution: PASS',
       '- Exit status: 0',
+      '- Failure reason: none',
+      '- Apple signing / physical iPhone acceptance: NOT TESTED',
+      '- GitHub Actions used: NO',
       '- Completed checks: ' + completed.join(' ')
     ].join('\n') + '\n'
   };
@@ -116,4 +120,20 @@ test('missing native QA fields fail closed', () => {
   const x = valid();
   x.qaRecord = x.qaRecord.replace(/^- Exit status: 0\n/m, '');
   assert(nativeStageErrors(x).some(e => e.includes('Missing native QA field: Exit status')));
+});
+
+test('native stage refuses ambiguous smoke, failed reason and device/CI approval claims', () => {
+  for (const [original, replacement] of [
+    ['- Simulator smoke requested: false', '- Simulator smoke requested: true'],
+    ['- Failure reason: none', '- Failure reason: Step simulator-debug failed'],
+    ['- Apple signing / physical iPhone acceptance: NOT TESTED', '- Apple signing / physical iPhone acceptance: PASS'],
+    ['- GitHub Actions used: NO', '- GitHub Actions used: YES']
+  ]) {
+    const x = valid();
+    x.qaRecord = x.qaRecord.replace(original, replacement);
+    assert(nativeStageErrors(x).some(error => error.includes('full-suite')));
+  }
+  const x = valid();
+  x.qaRecord = x.qaRecord.replace('- Failure reason: none\\n', '');
+  assert(nativeStageErrors(x).some(error => error.includes('Missing native QA field: Failure reason')));
 });
