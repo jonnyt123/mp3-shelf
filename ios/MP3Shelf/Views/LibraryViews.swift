@@ -37,6 +37,8 @@ struct LibraryView: View {
     @State private var recentPlaybackCheck: UUID?
     @State private var recentPlaybackTask: Task<Void, Never>?
     @State private var missingRecentRecording = false
+    @State private var recentPlaybackNotice: String?
+    @State private var recentRetryTrackID: UUID?
     @State private var bulkPlaybackPending = false
     @State private var bulkPlaybackTask: Task<Void, Never>?
 
@@ -45,6 +47,8 @@ struct LibraryView: View {
     private func playRecentRecording(_ track: MusicTrack) {
         guard scenePhase == .active, recentPlaybackCheck == nil else { return }
         recentPlaybackCheck = track.id
+        recentRetryTrackID = track.id
+        recentPlaybackNotice = nil
         missingRecentRecording = false
         // Snapshot the visible queue and URLs before leaving the UI actor.
         // A missing neighbor must not be queued behind an otherwise playable song.
@@ -75,8 +79,12 @@ struct LibraryView: View {
                 missingRecentRecording = true
                 return
             }
-            let currentTracks = Dictionary(uniqueKeysWithValues: library.tracks.map { ($0.id, $0) })
-            let scannedURLs = Dictionary(uniqueKeysWithValues: locations)
+            // Keep the first matching library record rather than trapping on duplicate IDs.
+            var currentTracks: [UUID: MusicTrack] = [:]
+            for current in library.tracks where currentTracks[current.id] == nil {
+                currentTracks[current.id] = current
+            }
+            let scannedURLs = Dictionary(locations, uniquingKeysWith: { first, _ in first })
             let queue = recent.compactMap { song -> MusicTrack? in
                 guard availableIDs.contains(song.id),
                       let current = currentTracks[song.id],
@@ -89,7 +97,20 @@ struct LibraryView: View {
                 return
             }
             playback.play(selected, queue: queue)
+            let skipped = recent.count - queue.count
+            if skipped > 0 {
+                recentPlaybackNotice = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
+            }
         }
+    }
+
+    private func retryRecentRecording() {
+        guard let id = recentRetryTrackID,
+              let current = recentlyAdded.first(where: { $0.id == id }) else {
+            recentPlaybackNotice = "This song is no longer in Recently Added. Choose another recording."
+            return
+        }
+        playRecentRecording(current)
     }
 
     // Resolve file URLs on the library's actor, then check disk off the UI thread.
@@ -553,6 +574,17 @@ struct LibraryView: View {
                                 .padding(.vertical, 4)
                             }
                             .scrollIndicators(.hidden)
+                            if recentPlaybackCheck != nil {
+                                ProgressView("Checking local recordings…")
+                                    .accessibilityLabel("Checking Recently Added for offline playback")
+                            }
+                            if let recentPlaybackNotice {
+                                Text(recentPlaybackNotice)
+                                    .font(.footnote)
+                                    .foregroundStyle(ShelfTheme.subdued)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityAddTraits(.updatesFrequently)
+                            }
                         }
                     }
                     filterControls
@@ -626,9 +658,10 @@ struct LibraryView: View {
         }
         .background(PremiumBackdrop())
         .alert("Recording unavailable", isPresented: $missingRecentRecording) {
-            Button("OK", role: .cancel) {}
+            Button("Retry playback") { retryRecentRecording() }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This recording is missing or empty on your iPhone. Your library entry has been preserved.")
+            Text("The selected recording is unavailable or the Recently Added queue changed. Your library entry is preserved. Retry after restoring the recording.")
         }
         .onDisappear {
             recentPlaybackTask?.cancel()
