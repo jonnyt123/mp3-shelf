@@ -817,7 +817,12 @@ enum PortableShelfArchive {
             }
             return target
         } catch {
-            try? FileManager.default.removeItem(at: target)
+            // Never unlink by pathname after releasing the descriptor. A
+            // concurrent importer can replace the temporary name while this
+            // task is unwinding; deleting that replacement loses its bytes.
+            // An orphaned UUID-named partial is safer than deleting data we
+            // no longer own. Recovery can reclaim abandoned temporary files
+            // only after establishing their provenance and age.
             throw error
         }
     }
