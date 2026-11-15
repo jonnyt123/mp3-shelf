@@ -63,11 +63,16 @@ struct LibraryView: View {
                 return
             }
             // The library may have changed while filesystem validation ran.
-            guard library.tracks.contains(where: { $0.id == track.id }) else {
+            guard let currentTrack = library.tracks.first(where: { $0.id == track.id }),
+                  library.fileURL(for: currentTrack) == url else {
                 missingRecentRecording = true
                 return
             }
-            playback.play(track, queue: recentlyAdded)
+            // Rebuild the queue from current library objects; never reintroduce
+            // a deleted track from the captured Recently Added snapshot.
+            let currentIDs = Set(library.tracks.map(\.id))
+            let currentQueue = recentlyAdded.filter { currentIDs.contains($0.id) }
+            playback.play(currentTrack, queue: currentQueue)
         }
     }
 
@@ -83,7 +88,12 @@ struct LibraryView: View {
             var count = 0
             for url in urls {
                 if Task.isCancelled { return nil }
-                if FileManager.default.fileExists(atPath: url.path) { count += 1 }
+                // fileExists also returns true for directories and empty staging
+                // placeholders; neither is an offline-playable recording.
+                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                      values.isRegularFile == true, let size = values.fileSize,
+                      size > 0 else { continue }
+                count += 1
             }
             return count
         }
