@@ -40,6 +40,7 @@ enum AudioSourceFinder {
         let name: String
         let source: String?
         let size: String?
+        let length: String?
     }
 
     static func exactMetadataMatch(title: String, creator: String, wish: PlaylistWish) -> Bool {
@@ -435,6 +436,17 @@ enum AudioSourceFinder {
         return uniqueCandidates.count == 1 ? uniqueCandidates.values.first : nil
     }
 
+    /// Internet Archive file.length is seconds, unlike Openverse duration (milliseconds).
+    /// Reject absent or contradictory duration when Spotify supplies an expected length;
+    /// a title and creator alone cannot distinguish a radio edit from the album cut.
+    static func archiveDurationIsCompatible(lengthSeconds: String?, expectedSeconds: Double?) -> Bool {
+        guard let expectedSeconds else { return true }
+        guard expectedSeconds.isFinite, expectedSeconds > 0,
+              let lengthSeconds, let actual = Double(lengthSeconds),
+              actual.isFinite, actual > 0, actual <= 3_600 else { return false }
+        return abs(actual - expectedSeconds) <= 4.0
+    }
+
     static func archiveCandidate(_ item: ArchiveItem, identifier: String,
                                  for wish: PlaylistWish) -> AudioCatalogMatch? {
         guard safeIdentifier(identifier), let metadata = item.metadata else { return nil }
@@ -449,6 +461,8 @@ enum AudioSourceFinder {
         let originals = audioFiles.filter { $0.source == "original" }
         let eligible = originals.isEmpty ? audioFiles : originals
         let matches = eligible.filter { file in
+            archiveDurationIsCompatible(lengthSeconds: file.length,
+                                        expectedSeconds: wish.durationSeconds) &&
             archiveFileCandidate(name: file.name, source: file.source, sizeBytes: file.size,
                                  itemTitle: metadata.title?.value ?? "",
                                  itemCreator: metadata.creator?.value ?? "",
