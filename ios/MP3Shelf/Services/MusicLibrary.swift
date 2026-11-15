@@ -419,13 +419,9 @@ final class MusicLibrary: ObservableObject {
 
             var restored = current
             var created: [URL] = []
-            // Cancellation must discard unpublished sidecars, not leave orphans.
-            var committed = false
-            defer {
-                if !committed {
-                    for url in created { try? manager.removeItem(at: url) }
-                }
-            }
+            // A published sidecar may be replaced by another writer before
+            // persistence fails. Never delete its pathname on rollback:
+            // an unreferenced sidecar is recoverable; another writer's bytes are not.
             if needsArtwork, let artwork = archived.artwork {
                 do {
                     try Task.checkCancellation()
@@ -465,7 +461,6 @@ final class MusicLibrary: ObservableObject {
                 try Task.checkCancellation()
                 try PersistedLibrary(tracks: candidate, playlists: playlists).write(to: databaseURL)
                 tracks = candidate
-                committed = true
             } catch {
                 // Never publish a reference to an uncommitted sidecar. An
                 // interrupted/low-storage restore must preserve old catalog.
@@ -633,14 +628,9 @@ final class MusicLibrary: ObservableObject {
                 // are durable: a failed catalog write must preserve old bytes.
                 // Optional sidecar failures are reported without losing audio.
                 var createdSidecars: [URL] = []
-                var sidecarsCommitted = false
-                // The catalog is the commit point. Cancellation, low storage,
-                // or a failed write must never strand unpublished sidecars.
-                defer {
-                    if !sidecarsCommitted {
-                        for sidecar in createdSidecars { try? manager.removeItem(at: sidecar) }
-                    }
-                }
+                // Catalog writes are the commit point. If they fail, retain
+                // published sidecars instead of unlinking a pathname that may
+                // now belong to another writer. Unreferenced bytes are recoverable.
                 if let artwork = archived.artwork {
                     do {
                         try Task.checkCancellation()
@@ -681,7 +671,6 @@ final class MusicLibrary: ObservableObject {
                     candidateTracks[index] = restoredTrack
                     try PersistedLibrary(tracks: candidateTracks, playlists: playlists).write(to: databaseURL)
                     tracks = candidateTracks
-                    sidecarsCommitted = true
                 } catch {
                     // Audio was already committed by addLocalAudio. Leave its
                     // published metadata unchanged when this write fails.
@@ -863,9 +852,9 @@ final class MusicLibrary: ObservableObject {
                 }
             }
         } catch {
-            // Only delete the new, unreferenced sidecar. The previous lyrics
-            // and catalog remain available for recovery.
-            try? manager.removeItem(at: destination)
+            // The sidecar was already published. Another writer may have
+            // replaced its pathname; removing it here could delete their file.
+            // Keep the orphan for recovery and preserve the previous catalog.
             throw error
         }
     }
