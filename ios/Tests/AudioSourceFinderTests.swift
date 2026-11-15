@@ -84,6 +84,41 @@ enum AudioSourceFinderTests {
                "spoofed license host rejected")
         verify(AudioSourceFinder.licensedURL("https://example.com/free-download.mp3") == nil,
                "audio links are not misrepresented as Creative Commons licenses")
+        // A single numeric or malformed optional field must not abort a
+        // whole Archive metadata response and hide unrelated valid tracks.
+        let archiveMixedJSON = """
+        {"metadata":{"title":"The Song","creator":"The Artist"},
+         "files":[
+           {"name":"The Song.mp3","source":"original","size":5120000,"length":212.0},
+           {"name":"bad.mp3","source":"original","size":{"unexpected":1},"length":"unknown"}
+         ]}
+        """
+        let archiveMixed = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(archiveMixedJSON.utf8))
+        verify(archiveMixed.files?.count == 2 &&
+               archiveMixed.files?.first?.size == "5120000" &&
+               Double(archiveMixed.files?.first?.length ?? "") == 212,
+               "numeric Archive size and duration decode without dropping catalog files")
+        verify(archiveMixed.files?.last?.size == nil &&
+               archiveMixed.files?.last?.length == "unknown",
+               "malformed optional size does not invalidate other catalog files")
+        let archiveValidOnlyJSON = """
+        {"metadata":{"title":"The Song","creator":"The Artist"},
+         "files":[{"name":"The Song.mp3","source":"original",
+                   "size":5120000,"length":212.0}]}
+        """
+        let archiveValidOnly = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(archiveValidOnlyJSON.utf8))
+        verify(AudioSourceFinder.archiveCandidate(
+            archiveValidOnly, identifier: "fixture-recording", for: wish) != nil,
+               "numeric duration permits an otherwise exact original recording")
+        let archivePreviewJSON = archiveValidOnlyJSON.replacingOccurrences(
+            of: "\"length\":212.0", with: "\"length\":30.0")
+        let archivePreview = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(archivePreviewJSON.utf8))
+        verify(AudioSourceFinder.archiveCandidate(
+            archivePreview, identifier: "fixture-preview", for: wish) == nil,
+               "numeric short previews still fail exact-duration selection")
         let archiveSearch = URLComponents(
             url: AudioSourceFinder.archiveSearchURL(for: wish, page: 2),
             resolvingAgainstBaseURL: false)!
