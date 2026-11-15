@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const sha40 = /^[0-9a-f]{40}$/i;
 const safeID = /^[A-Za-z0-9-]{8,120}$/;
+const UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const safeBundle = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 export function physicalIPhone(inventory, selected) {
   const list = inventory?.result?.devices;
@@ -93,12 +94,22 @@ export function verifyPhysicalDeviceTelemetry(proof, events, playlistID, selecte
       !has('offline-verification-started', proof.processToken) ||
       !has('offline-verification-finished', proof.processToken))
     throw Error('Device QA log does not corroborate distinct armed and offline processes');
-  const staged = events.some(row => row?.event === 'download-audio-staged' &&
-    typeof row.ticketID === 'string');
-  const woke = events.some(row => row?.event === 'background-session-wake');
+  // Background transfer proof requires the SAME ticket and process to
+  // receive the OS wake, delegate callback and verified staging event.
+  // A foreground download plus an unrelated old wake is NOT evidence.
+  const realBackground = events.some((row, i) => {
+    if (row?.event !== 'download-audio-staged' || !UUID_RE.test(row.ticketID ?? '') ||
+        typeof row.processToken !== 'string') return false;
+    const inSameProcess = e => e?.processToken === row.processToken;
+    const wake = events.findIndex((e, j) => j < i && inSameProcess(e) &&
+      e.event === 'background-session-wake');
+    const completion = events.findIndex((e, j) => j < i && inSameProcess(e) &&
+      e.event === 'download-completion-callback' && e.ticketID === row.ticketID);
+    return wake >= 0 && completion >= 0;
+  });
   return {
     offlinePlaybackAfterRestart: 'APP_INSTRUMENTED_PHYSICAL_PASS',
-    backgroundTransfer: staged && woke
+    backgroundTransfer: realBackground
       ? 'APP_RECORDED_STAGING_AND_BACKGROUND_WAKE'
       : 'NOT_VERIFIED'
   };
