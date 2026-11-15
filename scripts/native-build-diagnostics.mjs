@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+/** Deterministic, fail-closed native build diagnosis; no source-file rewrites. */
+import { openSync, readSync, closeSync, statSync, lstatSync, rmSync } from 'node:fs';
+import { resolve, join, relative, sep } from 'node:path';
+
+const MAX_READ = 1024 * 1024;
+const TRANSIENT = [
+  /unable to initiate PIF transfer session/i,
+  /build service could not create build operation/i,
+  /database is locked.*build\.db/i,
+  /database is locked.*XCBuildData/i
+];
+const GENERATED_CACHE = [
+  /malformed compiled module file/i,
+  /malformed (?:PCM|PCH) file/i,
+  /module cache.*(?:corrupt|malformed)/i,
+  /error:.*(?:modulecache|ModuleCache\.noindex).*(?:corrupt|malformed)/i
+];
+const SOURCE_FAILURE = [
+  /(?:^|\n)[^\n]*\berror: (?:cannot find|no such module|type .* has no member|ambiguous use of|missing argument|extra argument|cannot convert|invalid redeclaration|expression is ambiguous|expected .* declaration|consecutive statements)/i,
+  /Swift Compiler Error/i,
+  /(?:^|\n)[^\n]*CompileSwift .* failed/i
+];
+
+/** This result cannot grant a build PASS. Only a fresh full runner exit=0 can. */
+export function diagnoseNativeLog(log) {
+  const value = typeof log === 'string' ? log.slice(-MAX_READ) : '';
+  if (!value) return { category: 'unavailable', retryable: false, repair: 'none' };
+  if (SOURCE_FAILURE.some(re => re.test(value))) {
+    return { category: 'swift-source', retryable: false, repair: 'none' };
+  }
+  if (GENERATED_CACHE.some(re => re.test(value))) {
+    return { category: 'generated-cache', retryable: true, repair: 'clear-isolated-derived-data' };
+  }
+  if (TRANSIENT.some(re => re.test(value))) {
+    return { category: 'transient-xcode-service', retryable: true, repair: 'retry-isolated-build' };
+  }
+  return { category: 'unclassified', retryable: false, repair: 'none' };
+}
+export function readNativeLogTail(path) {
+  const metadata = lstatSync(path);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 32 * 1024 * 1024)
+    throw Error('Native build log is missing or unsafe to inspect');
+  const fd = openSync(path, 'r');
+  try {
+    const opened = statSync(path);
+    if (opened.size !== metadata.size || opened.ino !== metadata.ino)
+      throw Error('Native build log changed during diagnosis');
+    const n = Math.min(metadata.size, MAX_READ), buffer = Buffer.alloc(n);
+    if (readSync(fd, buffer, 0, n, metadata.size - n) !== n)
+      throw Error('Native build log shortened during diagnosis');
+    return buffer.toString('utf8');
+  } finally { closeSync(fd); }
+}
+export function clearIsolatedDerivedData(worktree) {
+  const root = resolve(worktree);
+  const generated = resolve(root, 'ios/build/local-release/DerivedData');
+  const rel = relative(root, generated);
+  if (rel.startsWith('..' + sep) || rel === '..' || !rel)
+    throw Error('Refusing to repair a generated path outside isolated worktree');
+  const meta = lstatSync(generated, { throwIfNoEntry: false });
+  if (!meta) return false;
+  if (!meta.isDirectory() || meta.isSymbolicLink())
+    throw Error('Expected isolated DerivedData to be a real generated directory');
+  rmSync(generated, { recursive: true, force: true });
+  return true;
+}
