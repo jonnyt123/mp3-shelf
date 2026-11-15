@@ -1,6 +1,9 @@
 import { test } from 'node:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { strict as assert } from 'node:assert';
-import { BASE_REF, PREVIEW_REF, promotionPolicy, verifyDraftPreflightPR, verifyConsolidatedDraftPR, executeNativePreflight }
+import { BASE_REF, PREVIEW_REF, promotionPolicy, verifyDraftPreflightPR, verifyConsolidatedDraftPR, executeNativePreflight, runLogged }
   from './mac-native-candidate.mjs';
 const base = 'a'.repeat(40), proposed = 'b'.repeat(40);
 const paths = [
@@ -88,4 +91,36 @@ test('consolidated candidate must remain an open draft at the exact baseline', (
     assert(verifyConsolidatedDraftPR(modified, { base }).length > 0);
   }
   assert(verifyConsolidatedDraftPR(null, { base }).length > 0);
+});
+
+test('native log captures both streams before declaring success', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-native-log-'));
+  try {
+    const log = join(dir, 'combined.log');
+    await runLogged(process.execPath, ['-e',
+      "process.stdout.write('stdout-proof\\n'); process.stderr.write('stderr-proof\\n')"],
+      dir, log);
+    const output = readFileSync(log, 'utf8');
+    assert.match(output, /stdout-proof/);
+    assert.match(output, /stderr-proof/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native runner rejects nonzero exit and preserves diagnostic log', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-native-fail-'));
+  try {
+    const log = join(dir, 'failure.log');
+    await assert.rejects(runLogged(process.execPath, ['-e',
+      "process.stderr.write('failed-check\\n'); process.exitCode = 7"],
+      dir, log), /exit 7/);
+    assert.match(readFileSync(log, 'utf8'), /failed-check/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native runner rejects unwritable log target instead of reporting PASS', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-native-log-error-'));
+  try {
+    await assert.rejects(runLogged(process.execPath, ['-e', "process.stdout.write('ok')"],
+      dir, dir), /log could not be written|EISDIR|Native verification/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
