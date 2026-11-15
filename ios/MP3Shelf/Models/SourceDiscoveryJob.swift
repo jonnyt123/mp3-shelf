@@ -507,6 +507,10 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         if let notBefore {
             if sourceRecoveryNotBefore == nil { sourceRecoveryNotBefore = [:] }
             sourceRecoveryNotBefore?[wishID.uuidString] = notBefore
+        } else {
+            // An explicit immediate recovery supersedes any stale deadline
+            // left by an earlier transfer attempt for this same recording.
+            sourceRecoveryNotBefore?.removeValue(forKey: wishID.uuidString)
         }
         return true
     }
