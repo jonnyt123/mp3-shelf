@@ -14,7 +14,7 @@ struct Evidence {
     let events: [Event]
 
     func hasBackgroundCompletion(task: String) -> Bool {
-        // An OS wake must precede a production delegate completion and a
+        // After a process restart, an OS wake must precede a delegate completion and a
         // staged-file event for the same task in the same restarted process.
         let matching = events.filter {
             $0.process == armed.process && $0.session == armed.session
@@ -32,7 +32,7 @@ struct Evidence {
 func check(_ condition: Bool, _ message: String) {
     precondition(condition, message)
 }
-let arm = Event(kind: "auditArmed", process: "process-2", session: "session-new", task: nil, time: 100)
+let arm = Event(kind: "auditArmed", process: "process-1", session: "session-new", task: nil, time: 100)
 func event(_ kind: String, _ time: Int, _ task: String? = nil,
            process: String = "process-2", session: String = "session-new") -> Event {
     Event(kind: kind, process: process, session: session, task: task, time: time)
