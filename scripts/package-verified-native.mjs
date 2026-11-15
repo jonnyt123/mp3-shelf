@@ -125,10 +125,8 @@ export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
   const nativeErrors = verifyLocalReceipt(receipt, { expectedSha: sha, logDir: native });
   if (nativeErrors.length) throw Error('Source native log integrity failure: ' + nativeErrors.join('; '));
   const inventoryPath = join(device, 'physical-inventory.json');
-  const inventoryBytes = readFileSync(inventoryPath);
-  if (!inventoryBytes.length || inventoryBytes.length > 2 * 1024 * 1024)
-    throw Error('Physical inventory is absent or exceeds size limit.');
   const inventory = boundedJSON(inventoryPath, 2 * 1024 * 1024);
+  const inventoryBytes = readFileSync(inventoryPath);
   const inventoryHash = fingerprint(inventoryBytes);
   const hardware = boundedJSON(join(device, 'hardware-acceptance.json'), 32 * 1024);
   const endpoint = 'https://api.github.com/repos/jonnyt123/mp3-shelf';
@@ -158,9 +156,13 @@ export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
     execFileSync('unzip', ['-tqq', draftZip], { timeout: 120000, maxBuffer: 1024 * 1024 });
     const files = execFileSync('unzip', ['-Z', '-1', draftZip],
       { encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024 }).split(/\r?\n/).filter(Boolean);
+    // Git archive may emit explicit ZIP directory entries for the prefix and
+    // ios/ folder. Accept those directories without allowing path traversal.
     if (files.length < 15 || !files.includes(prefix + 'ios/MP3Shelf.xcodeproj/project.pbxproj') ||
         !files.includes(prefix + 'ios/MP3Shelf/MP3ShelfApp.swift') ||
-        files.some(p => !p.startsWith(prefix + 'ios/') || p.includes('../') || p.includes('/.git/')))
+        files.some(p =>
+          !(p === prefix || p === prefix + 'ios/' || p.startsWith(prefix + 'ios/')) ||
+          p.includes('../') || p.includes('/.git/') || p.includes('\\')))
       throw Error('Archive is not a complete, safe native Xcode project tree.');
     const meta = { schema: 'mp3shelf-verified-xcode-project-v1',
       candidateSha: sha, nativeBaselineSha: baseline.baseSha,
