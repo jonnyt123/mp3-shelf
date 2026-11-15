@@ -7,7 +7,9 @@ import { resolve } from 'node:path';
 const SHA = /^[0-9a-f]{40}$/;
 const QA_MAX_BYTES = 256 * 1024;
 const QA_FIELDS = ['Checked commit', 'Source provenance', 'Uncommitted changes',
-  'Mode', 'Overall execution', 'Exit status', 'Completed checks'];
+  'Mode', 'Simulator smoke requested', 'Overall execution', 'Exit status',
+  'Failure reason', 'Completed checks', 'Apple signing / physical iPhone acceptance',
+  'GitHub Actions used'];
 
 export function readNativeQaRecord(path) {
   const before = lstatSync(path);
@@ -75,7 +77,11 @@ export function nativeStageErrors({ proposed, current, receipt, qaRecord }) {
   const field = name => fields.get(name);
   if (field('Checked commit') !== proposed || field('Source provenance') !== 'repository HEAD' ||
       field('Uncommitted changes') !== 'no' || field('Mode') !== 'all' ||
-      field('Overall execution') !== 'PASS' || field('Exit status') !== '0')
+      field('Simulator smoke requested') !== 'false' ||
+      field('Overall execution') !== 'PASS' || field('Exit status') !== '0' ||
+      field('Failure reason') !== 'none' ||
+      field('Apple signing / physical iPhone acceptance') !== 'NOT TESTED' ||
+      field('GitHub Actions used') !== 'NO')
     errors.push('Native QA record is not a successful full-suite execution at the proposed clean SHA.');
   const observed = (field('Completed checks') ?? '').split(/\s+/).filter(Boolean);
   if (observed.length !== CHECKS.length ||
