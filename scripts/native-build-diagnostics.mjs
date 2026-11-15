@@ -58,10 +58,16 @@ export function clearIsolatedDerivedData(worktree) {
   const rel = relative(root, generated);
   if (rel.startsWith('..' + sep) || rel === '..' || !rel)
     throw Error('Refusing to repair a generated path outside isolated worktree');
-  const meta = lstatSync(generated, { throwIfNoEntry: false });
-  if (!meta) return false;
-  if (!meta.isDirectory() || meta.isSymbolicLink())
-    throw Error('Expected isolated DerivedData to be a real generated directory');
+  // A symlink at ANY parent level could redirect cleanup outside the
+  // temporary candidate and destroy user-owned files. Refuse all such paths.
+  let segment = root;
+  for (const name of ['ios', 'build', 'local-release', 'DerivedData']) {
+    segment = join(segment, name);
+    const entry = lstatSync(segment, { throwIfNoEntry: false });
+    if (!entry) return false;
+    if (!entry.isDirectory() || entry.isSymbolicLink())
+      throw Error('Refusing generated-cache cleanup through symlink or non-directory');
+  }
   rmSync(generated, { recursive: true, force: true });
   return true;
 }
