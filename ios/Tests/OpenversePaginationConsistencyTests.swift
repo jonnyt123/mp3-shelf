@@ -71,6 +71,8 @@ let durationCases: [(String, Double?, Double?, Bool)] = [
 ]
 for (name, milliseconds, expected, accepted) in durationCases {
     precondition(durationCompatible(milliseconds, expected) == accepted,
-                 "Openverse duration regression: \\(name)")
+                 "Openverse duration regression: \(name)")
 }
-print("PASS: \\(durationCases.count) Openverse duration cases")
+precondition(source.contains("static func openverseDurationIsCompatible("))
+precondition(source.contains("guard openverseDurationIsCompatible(durationMilliseconds: duration,"))
+print("PASS: \(durationCases.count) Openverse duration cases and production anchors")
