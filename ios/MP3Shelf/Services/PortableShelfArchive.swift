@@ -849,6 +849,26 @@ enum PortableShelfArchive {
             throw ArchiveError.invalidFile
         }
         try validate()
+        // Metadata identity alone cannot prove the restored bytes survived a
+        // validation callback: another writer can edit the same inode and
+        // restore its timestamps. Verify the actual published bytes through
+        // the descriptor retained above, in bounded chunks, before allowing
+        // the library to commit a reference to this sidecar.
+        try published.seek(toOffset: 0)
+        var verifiedOffset = 0
+        while verifiedOffset < bytes.count {
+            try Task.checkCancellation()
+            let count = min(64 * 1024, bytes.count - verifiedOffset)
+            let actual = try readExactly(count, from: published)
+            guard actual.count == count,
+                  actual.elementsEqual(bytes[verifiedOffset..<(verifiedOffset + count)]) else {
+                throw ArchiveError.invalidFile
+            }
+            verifiedOffset += count
+        }
+        guard (try published.read(upToCount: 1) ?? Data()).isEmpty else {
+            throw ArchiveError.invalidFile
+        }
         let checked = try archiveIdentity(of: published, at: destination)
         guard expected.device == checked.device,
               expected.inode == checked.inode,
