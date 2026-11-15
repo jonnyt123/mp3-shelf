@@ -809,8 +809,8 @@ struct MusicTrackRow: View {
     }
 
     private func playOrExplainMissingAudio() {
-        // Validate the selected recording and every queued neighbor off the UI
-        // actor. An unavailable neighbor must never become the next song.
+        // A duplicated track ID must not allow one usable file to make a
+        // different, missing occurrence appear playable.
         guard !isCheckingPlayback, scenePhase == .active else { return }
         isCheckingPlayback = true
         playbackNotice = nil
@@ -818,15 +818,16 @@ struct MusicTrackRow: View {
         let queueSnapshot = context.map { ($0.id, library.fileURL(for: $0)) }
         let snapshotIDs = context.map(\.id)
         playbackCheckTask = Task {
-            let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
-                var playable = Set<UUID>()
-                for (id, url) in queueSnapshot {
-                    if Task.isCancelled { break }
-                    if Self.isUsableRecording(at: url) { playable.insert(id) }
+            let scan = Task.detached(priority: .userInitiated) { () -> [Bool] in
+                var results: [Bool] = []
+                results.reserveCapacity(queueSnapshot.count)
+                for (_, url) in queueSnapshot {
+                    if Task.isCancelled { return [] }
+                    results.append(Self.isUsableRecording(at: url))
                 }
-                return playable
+                return results
             }
-            let playableIDs = await withTaskCancellationHandler {
+            let playable = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: {
                 scan.cancel()
@@ -834,9 +835,10 @@ struct MusicTrackRow: View {
             guard !Task.isCancelled, scenePhase == .active else { return }
             isCheckingPlayback = false
             playbackCheckTask = nil
-            // A restore, deletion, or playlist edit can invalidate a queue
-            // while its filesystem scan is suspended.
-            guard context.map(\.id) == snapshotIDs,
+            // A restore, deletion, or playlist edit invalidates the requested
+            // queue. Validate every occurrence, not only its UUID.
+            guard playable.count == queueSnapshot.count,
+                  context.map(\.id) == snapshotIDs,
                   let currentTrack = library.tracks.first(where: { $0.id == track.id }),
                   library.fileURL(for: currentTrack) == selectedURL else {
                 audioAvailability = false
@@ -848,23 +850,31 @@ struct MusicTrackRow: View {
             for current in library.tracks where currentByID[current.id] == nil {
                 currentByID[current.id] = current
             }
-            var originalURLs: [UUID: URL] = [:]
-            for (id, url) in queueSnapshot where originalURLs[id] == nil {
-                originalURLs[id] = url
+            var queue: [MusicTrack] = []
+            queue.reserveCapacity(context.count)
+            var changedRecording = false
+            for index in context.indices {
+                let entry = context[index]
+                let originalURL = queueSnapshot[index].1
+                guard let current = currentByID[entry.id],
+                      library.fileURL(for: current) == originalURL else {
+                    changedRecording = true
+                    break
+                }
+                if playable[index] { queue.append(current) }
             }
-            let queue = context.compactMap { entry -> MusicTrack? in
-                guard playableIDs.contains(entry.id),
-                      let current = currentByID[entry.id],
-                      let original = originalURLs[entry.id],
-                      library.fileURL(for: current) == original else { return nil }
-                return current
-            }
-            // A changed file location requires a new scan, not a partial
-            // queue assembled from stale metadata.
-            guard queue.count == context.filter({ playableIDs.contains($0.id) }).count,
-                  playableIDs.contains(track.id) else {
+            guard !changedRecording else {
                 audioAvailability = false
-                recoveryReason = "This recording is missing, empty or changed during playback preparation. Restore its audio file and retry."
+                recoveryReason = "A recording changed during playback preparation. Retry to use the current library."
+                missingRecordingAlert = true
+                return
+            }
+            // The selected occurrence must itself be usable. Another row
+            // sharing the same ID is not evidence that this file exists.
+            guard Self.isUsableRecording(at: selectedURL),
+                  queue.contains(where: { $0.id == track.id }) else {
+                audioAvailability = false
+                recoveryReason = "This recording is missing or empty. Restore its audio file and retry."
                 missingRecordingAlert = true
                 return
             }
