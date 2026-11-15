@@ -167,3 +167,22 @@ test('native timeout options reject invalid durations before spawning', () => {
     killGraceMs: Number.POSITIVE_INFINITY
   }), /positive safe integers/);
 });
+
+test('native timeout terminates descendants rather than only the shell', async () => {
+  if (process.platform === 'win32') return;
+  const dir = mkdtempSync(join(tmpdir(), 'mp3-native-descendants-'));
+  try {
+    const log = join(dir, 'descendants.log');
+    const marker = join(dir, 'orphan-marker');
+    // A shell that starts a background child can exit on SIGTERM while that
+    // child remains alive. The process-group signal must reach both.
+    const script = `node -e "process.on('SIGTERM', () => {}); setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'orphan'), 1200); setInterval(() => {}, 50)" "${marker}" & wait`;
+    await assert.rejects(
+      runLogged('sh', ['-c', script], dir, log, { timeoutMs: 300, killGraceMs: 200 }),
+      /exceeded timeout/
+    );
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    assert.equal(existsSync(marker), false,
+      'Timed-out Xcode descendants must not survive detached worktree cleanup');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
