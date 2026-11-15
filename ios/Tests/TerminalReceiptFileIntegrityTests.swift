@@ -25,10 +25,21 @@ let receipt = Receipt(ticket: UUID(), expectedSize: bytes.count, expectedBytes: 
 try JSONEncoder().encode(receipt).write(to: journal, options: .atomic)
 
 func validate() throws {
+    if (try? fm.destinationOfSymbolicLink(atPath: journal.path)) != nil {
+        throw IntegrityFailure.corrupt
+    }
+    guard let journalAttributes = try? fm.attributesOfItem(atPath: journal.path),
+          journalAttributes[.type] as? FileAttributeType == .typeRegular else {
+        throw IntegrityFailure.corrupt
+    }
     let state: Receipt
     do { state = try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)) }
     catch { throw IntegrityFailure.corrupt }
-    guard state.ticket == receipt.ticket else { throw IntegrityFailure.corrupt }
+    guard state.ticket == receipt.ticket,
+          state.expectedSize == receipt.expectedSize,
+          state.expectedBytes == receipt.expectedBytes else {
+        throw IntegrityFailure.corrupt
+    }
     // Inspect the directory entry itself: fileExists follows symlinks and
     // considers directories to exist, neither of which proves a safe file.
     if (try? fm.destinationOfSymbolicLink(atPath: recording.path)) != nil {
@@ -89,4 +100,34 @@ for round in 0..<64 {
         try saved.write(to: journal, options: .atomic)
     }
 }
-print("PASS: 64 receipt validation/recovery rounds, 384 invalid filesystem cases, 32 corrupt journals")
+let originalJournal = try Data(contentsOf: journal)
+try bytes.write(to: recording, options: .atomic)
+for round in 0..<48 {
+    let altered: Receipt
+    switch round % 3 {
+    case 0:
+        altered = Receipt(ticket: UUID(), expectedSize: bytes.count, expectedBytes: bytes)
+    case 1:
+        altered = Receipt(ticket: receipt.ticket, expectedSize: bytes.count - 1, expectedBytes: bytes)
+    default:
+        altered = Receipt(ticket: receipt.ticket, expectedSize: foreign.count, expectedBytes: foreign)
+    }
+    try JSONEncoder().encode(altered).write(to: journal, options: .atomic)
+    try reject(.corrupt, "substituted receipt \(round)")
+    try originalJournal.write(to: journal, options: .atomic)
+    try validate()
+}
+try fm.removeItem(at: journal)
+try fm.createSymbolicLink(at: journal, withDestinationURL: external)
+try reject(.corrupt, "journal symlink")
+try fm.removeItem(at: journal)
+try fm.createSymbolicLink(atPath: journal.path, withDestinationPath: root.appendingPathComponent("missing-journal").path)
+try reject(.corrupt, "dangling journal symlink")
+try fm.removeItem(at: journal)
+try fm.createDirectory(at: journal, withIntermediateDirectories: false)
+try reject(.corrupt, "directory substituted for journal")
+try fm.removeItem(at: journal)
+try originalJournal.write(to: journal, options: .atomic)
+try validate()
+try assertTrue(try Data(contentsOf: recording) == bytes, "valid audio changed during journal tampering")
+print("PASS: 64 receipt rounds, 384 invalid files, 32 corrupt journals, 48 substituted receipts, 3 unsafe journal paths")
