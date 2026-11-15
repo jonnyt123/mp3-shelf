@@ -544,6 +544,18 @@ extension AudioSourceFinder {
         return pageCount.map { page < $0 } ?? (returned >= 50)
     }
 
+    /// A malformed or shifting index cannot establish that one recording is unique.
+    /// The request uses page_size=50; every non-final page must be complete.
+    static func openversePageIsConsistent(page: Int, pageCount: Int?,
+                                         returned: Int) -> Bool {
+        guard page >= 1, page <= maxOpenversePages,
+              returned >= 0, returned <= 50 else { return false }
+        guard let pageCount else { return true }
+        guard pageCount >= page, pageCount > 0 else { return false }
+        if page < pageCount && returned != 50 { return false }
+        return true
+    }
+
     static func openverseSearchURL(for wish: PlaylistWish, fieldSearch: Bool,
                                    page: Int) -> URL {
         var components = URLComponents(string: "https://api.openverse.org/v1/audio/")!
@@ -588,6 +600,20 @@ extension AudioSourceFinder {
                     pageCount: result.page_count, expectedPageCount: expectedPageCount
                 ) else { throw SourceError.invalidResponse }
                 if let pageCount = result.page_count { expectedPageCount = pageCount }
+                // Reject malformed page snapshots before considering any automatic match.
+                // Openverse's page_count is a count of pages, not a result count.
+                guard openversePageIsConsistent(
+                    page: page, pageCount: result.page_count,
+                    returned: result.results.count
+                ) else { throw SourceError.invalidResponse }
+                if let count = result.page_count {
+                    if let expectedOpenversePages, expectedOpenversePages != count {
+                        throw SourceError.unavailable
+                    }
+                    expectedOpenversePages = count
+                } else if page > 1 && expectedOpenversePages != nil {
+                    throw SourceError.unavailable
+                }
                 for match in result.results.compactMap({
                     openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
                                        landing: $0.foreign_landing_url, license: $0.license_url,
