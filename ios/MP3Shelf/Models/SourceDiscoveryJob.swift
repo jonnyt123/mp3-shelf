@@ -671,8 +671,15 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         if !correctedProcessed.isEmpty {
             moveProcessedWishesToPending(at: correctedProcessed)
         }
+        // Repeated IDs in an incoming playlist snapshot must use the newest
+        // recording metadata, including for songs not yet in this checkpoint.
+        // Preserve the first appearance's playlist position while selecting
+        // the last occurrence's artist/title/edition for that identity.
         var ids = Set(wishes.map(\.id))
-        let appended = missing.filter { ids.insert($0.id).inserted }
+        var appended: [PlaylistWish] = []
+        for wish in missing where ids.insert(wish.id).inserted {
+            if let latest = updated[wish.id] { appended.append(latest) }
+        }
         wishes.append(contentsOf: appended)
         return appended.count + correctedProcessed.count
     }
