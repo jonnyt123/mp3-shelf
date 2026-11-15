@@ -139,12 +139,25 @@ export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_
     let streamFailure = null;
     let processClosed = false;
     let watchdog, escalation;
+    // Native verification launches bash -> xcodebuild -> test runners. Killing
+    // only bash can leave descendants modifying the detached worktree after
+    // verification has failed. Own a POSIX process group and signal the group.
+    const signalGroup = signal => {
+      if (!child?.pid) return;
+      try {
+        if (process.platform !== 'win32') process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+      }
+    };
     const terminate = () => {
-      if (processClosed || !child?.pid) return;
-      child.kill('SIGTERM');
-      if (!escalation) escalation = setTimeout(() => {
-        if (!processClosed) child.kill('SIGKILL');
-      }, killGraceMs);
+      if (!child?.pid) return;
+      signalGroup('SIGTERM');
+      if (!escalation) {
+        escalation = setTimeout(() => signalGroup('SIGKILL'), killGraceMs);
+        escalation.unref();
+      }
     };
     // Do not settle while a failed native command is still running: callers
     // remove the detached worktree immediately after this promise settles.
@@ -159,6 +172,7 @@ export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_
     try {
       child = spawn(command, args, {
         cwd, stdio: ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
         env: { ...process.env, LC_ALL: 'C' }
       });
     } catch (error) {
@@ -186,7 +200,8 @@ export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_
     child.on('close', (code, signal) => {
       processClosed = true;
       clearTimeout(watchdog);
-      clearTimeout(escalation);
+      // Keep escalation armed after the parent exits: descendants can outlive bash.
+      if (!streamFailure) clearTimeout(escalation);
       if (settled) return;
       if (streamFailure) { finish(streamFailure); return; }
       // Register before end(): small buffered logs may finish synchronously.
