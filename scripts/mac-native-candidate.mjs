@@ -61,22 +61,43 @@ export function verifyDraftPreflightPR(pr, { base, proposed }) {
   return errors;
 }
 
+export function verifyConsolidatedDraftPR(pr, { base }) {
+  const errors = [];
+  if (!pr || pr.number !== 29 || pr.state !== 'open' || pr.draft !== true)
+    errors.push('Expected open draft consolidated PR #29.');
+  if (pr?.head?.sha !== base ||
+      pr?.head?.ref !== 'feat/ios-consolidated-candidate' ||
+      pr?.head?.repo?.full_name !== 'jonnyt123/mp3-shelf')
+    errors.push('Consolidated draft head differs from the verified native baseline.');
+  if (pr?.base?.ref !== 'main' ||
+      pr?.base?.repo?.full_name !== 'jonnyt123/mp3-shelf')
+    errors.push('Consolidated draft no longer targets this repository main.');
+  return errors;
+}
+
 async function githubDraftReview(base, proposed) {
-  const url = 'https://api.github.com/repos/jonnyt123/mp3-shelf/pulls/37';
+  const urls = [29, 37].map(number =>
+    'https://api.github.com/repos/jonnyt123/mp3-shelf/pulls/' + number);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-    const response = await fetch(url, {
-      headers: { Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        ...(token ? { Authorization: 'Bearer ' + token } : {}) },
-      signal: controller.signal
-    });
-    if (!response.ok) throw Error('Unable to verify live draft PR status (HTTP ' + response.status + ')');
-    const snapshot = await response.json();
-    const errors = verifyDraftPreflightPR(snapshot, { base, proposed });
-    if (errors.length) throw Error(errors.join('; '));
+    // Validate BOTH open draft PRs before any source promotion. A closed or
+    // retargeted consolidated PR must not be silently pushed by its branch name.
+    for (const [index, url] of urls.entries()) {
+      const response = await fetch(url, {
+        headers: { Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        signal: controller.signal
+      });
+      if (!response.ok) throw Error('Unable to verify live draft PR status (HTTP ' + response.status + ')');
+      const snapshot = await response.json();
+      const errors = index === 0
+        ? verifyConsolidatedDraftPR(snapshot, { base })
+        : verifyDraftPreflightPR(snapshot, { base, proposed });
+      if (errors.length) throw Error(errors.join('; '));
+    }
   } finally { clearTimeout(timeout); }
 }
 
