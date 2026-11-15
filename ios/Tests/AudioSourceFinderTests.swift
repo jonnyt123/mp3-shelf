@@ -119,6 +119,32 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.archiveCandidate(
             archivePreview, identifier: "fixture-preview", for: wish) == nil,
                "numeric short previews still fail exact-duration selection")
+        // Archive can encode the same recording length as seconds, MM:SS,
+        // or HH:MM:SS. These must agree without accepting malformed clocks.
+        for value in ["212", "212.0", "3:32", "03:32.0", "0:03:32", "00:03:32.000"] {
+            verify(AudioSourceFinder.archiveDurationSeconds(value) == 212,
+                   "Archive duration parses valid clock or seconds: \\(value)")
+            let item = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                from: Data(archiveValidOnlyJSON.replacingOccurrences(
+                    of: "212.0", with: "\\"\\(value)\\"").utf8))
+            verify(AudioSourceFinder.archiveCandidate(item,
+                identifier: "duration-clock-fixture", for: wish) != nil,
+                "matching Archive clock evidence permits exact recording: \\(value)")
+        }
+        for value in ["", "0", "-1", "3:60", "1:60:00", "3:", ":32",
+                      "1:2:3:4", "3:32garbage", "1.5:32", "NaN", "Infinity",
+                      "999999999999999999999999:00"] {
+            verify(AudioSourceFinder.archiveDurationSeconds(value) == nil,
+                   "malformed Archive duration rejected: \\(value)")
+        }
+        for value in ["0:30", "3:45", "00:03:45"] {
+            let item = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                from: Data(archiveValidOnlyJSON.replacingOccurrences(
+                    of: "212.0", with: "\\"\\(value)\\"").utf8))
+            verify(AudioSourceFinder.archiveCandidate(item,
+                identifier: "wrong-edition-fixture", for: wish) == nil,
+                "preview or wrong edition rejected despite exact artist/title: \\(value)")
+        }
         let archiveSearch = URLComponents(
             url: AudioSourceFinder.archiveSearchURL(for: wish, page: 2),
             resolvingAgainstBaseURL: false)!
