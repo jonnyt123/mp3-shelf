@@ -1113,6 +1113,30 @@ enum SourceDiscoveryJobTests {
                         "explicit deferred recovery still respects its retry deadline")
         verifyDiscovery(immediateRetry.prepareLookup(at: deferred.addingTimeInterval(1)),
                         "deferred retry resumes after its deadline")
+        // A playlist snapshot can repeat a Spotify identity with corrected
+        // metadata. New songs must retain the first position but use the
+        // latest recording details, just like existing checkpoint entries.
+        let firstNew = PlaylistWish(title: "Track (Live)", artist: "Singer",
+                                    album: "Concert", spotifyURL: nil)
+        var newestNew = PlaylistWish(title: "Track (Studio)", artist: "Singer",
+                                     album: "Album", spotifyURL: nil)
+        newestNew.id = firstNew.id
+        let otherNew = PlaylistWish(title: "Second", artist: "Band",
+                                    album: "Album", spotifyURL: nil)
+        var duplicateImport = SourceDiscoveryJob(playlistID: UUID(), wishes: [])
+        verifyDiscovery(duplicateImport.refreshMissingWishes(
+            [firstNew, otherNew, newestNew]) == 2 &&
+            duplicateImport.wishes.count == 2 &&
+            duplicateImport.wishes[0].id == firstNew.id &&
+            duplicateImport.wishes[0].title == newestNew.title &&
+            duplicateImport.wishes[0].album == newestNew.album &&
+            duplicateImport.wishes[1].id == otherNew.id,
+            "duplicate new Spotify IDs retain playlist order and newest recording metadata")
+        verifyDiscovery(duplicateImport.refreshMissingWishes(
+            [firstNew, otherNew, newestNew]) == 0 &&
+            duplicateImport.wishes.count == 2 &&
+            duplicateImport.wishes[0].title == newestNew.title,
+            "repeated snapshot refresh is idempotent and does not restore stale editions")
         print("Persistent discovery checkpoint tests passed")
     }
 }
