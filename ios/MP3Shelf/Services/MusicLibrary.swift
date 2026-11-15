@@ -479,7 +479,13 @@ final class MusicLibrary: ObservableObject {
                 let file = try PortableShelfArchive.extract(
                     archived.audio, from: archive, extensionName: ext)
                 temporary = file
-                defer { try? manager.removeItem(at: file) }
+                // Extraction owns this temporary pathname only until it returns.
+                // A concurrent writer can replace the pathname before this
+                // operation finishes; removing it by name could then destroy
+                // unrelated audio. Leave an unreferenced temporary file for
+                // OS-managed temporary-directory reclamation instead.
+                // Never delete by pathname after passing the URL to import.
+
                 let initialName = archived.originalName?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let rawName = initialName.flatMap { $0.isEmpty ? nil : $0 }
                     ?? archived.name + "." + ext
@@ -687,7 +693,9 @@ final class MusicLibrary: ObservableObject {
                 if Task.isCancelled { throw CancellationError() }
                 report.errors.append("\(archived.name): \(error.localizedDescription)")
             }
-            if let temporary { try? manager.removeItem(at: temporary) }
+            // Do not unlink the extraction pathname after a failed import.
+            // It may now refer to a replacement file owned by another writer.
+            _ = temporary
         }
         // Track imports above are individually durable. Playlist edits below
         // are not: stage playlist changes until their final durable write.
