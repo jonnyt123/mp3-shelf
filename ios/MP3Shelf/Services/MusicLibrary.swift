@@ -288,9 +288,15 @@ final class MusicLibrary: ObservableObject {
                 maximumBytes: 20 * 1024 * 1024)
             let artwork: Data?
             if let imageBytes {
-                guard let image = UIImage(data: imageBytes),
+                // The archive contract stores JPEG artwork. Check compressed
+                // size, frame count and decoded dimensions *before* asking
+                // UIKit to allocate a bitmap for JPEG conversion. A tiny
+                // compressed image can otherwise exhaust memory on export.
+                guard Self.isSafeArtwork(imageBytes),
+                      let image = UIImage(data: imageBytes),
                       let jpeg = image.jpegData(compressionQuality: 0.9),
-                      !jpeg.isEmpty else {
+                      !jpeg.isEmpty,
+                      jpeg.count <= 20 * 1024 * 1024 else {
                     throw PortableShelfArchive.ArchiveError.invalidManifest
                 }
                 artwork = jpeg
