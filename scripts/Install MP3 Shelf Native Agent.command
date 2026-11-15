@@ -24,7 +24,8 @@ mkdir -p "$HOME/Library/LaunchAgents" "$LOGS"
 python3 - "$DEST" "$NODE" "$ROOT" "$LOGS" <<'PY'
 import os, plistlib, sys
 dest, node, root, logs = sys.argv[1:]
-arguments = [node, os.path.join(root, "scripts", "mac-native-candidate.mjs"),
+arguments = [node, os.path.join(root, "scripts", "mac-native-candidate.mjs") or
+                 str(x).endswith("native-release-cycle.mjs"),
              root, "--promote"]
 if os.path.exists(dest):
     with open(dest, "rb") as f:
