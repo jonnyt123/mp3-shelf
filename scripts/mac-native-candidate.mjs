@@ -71,9 +71,12 @@ export function verifyConsolidatedDraftPR(pr, { base }) {
       pr?.head?.ref !== 'feat/ios-consolidated-candidate' ||
       pr?.head?.repo?.full_name !== 'jonnyt123/mp3-shelf')
     errors.push('Consolidated draft head differs from the verified native baseline.');
-  if (pr?.base?.ref !== 'main' ||
+  // #29 is deliberately stacked over the native download-finalization
+  // branch, not main. Validate that exact reviewed base rather than
+  // incorrectly rejecting every legitimate native preflight run.
+  if (pr?.base?.ref !== 'fix/ios-download-finalization-and-conversion' ||
       pr?.base?.repo?.full_name !== 'jonnyt123/mp3-shelf')
-    errors.push('Consolidated draft no longer targets this repository main.');
+    errors.push('Consolidated draft native stack base was unexpectedly retargeted.');
   return errors;
 }
 
