@@ -19,6 +19,39 @@ enum AudioSourceFinderTests {
                "archive duration rejects missing, preview, nonfinite and zero timing")
         verify(AudioSourceFinder.archiveDurationIsCompatible(lengthSeconds: nil, expectedSeconds: nil),
                "archive retains metadata-only discovery when playlist duration is unavailable")
+        // Archive sometimes returns numeric length/size values rather than strings.
+        // The full metadata object must remain decodable and must still reject
+        // wrong-length recordings after the normalization.
+        let archiveNumeric = #"""
+        {"metadata":{"title":"The Song","creator":"The Artist"},
+         "files":[{"name":"The Song.mp3","source":"original",
+                   "size":5812400,"length":212.5}]}
+        """#
+        let decodedNumeric = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(archiveNumeric.utf8))
+        verify(decodedNumeric.files?.first?.size == "5812400" &&
+               decodedNumeric.files?.first?.length == "212.5",
+               "numeric Archive file size and duration decode without losing the item")
+        verify(decodedNumeric.files.map { files in
+            files.contains { AudioSourceFinder.archiveDurationIsCompatible(
+                lengthSeconds: $0.length, expectedSeconds: 212) }
+        } == true, "numeric Archive duration remains eligible for exact recording")
+        let archiveMixed = #"""
+        {"metadata":{"title":"The Song","creator":"The Artist"},
+         "files":[{"name":"The Song.mp3","size":"5812400","length":"212"},
+                  {"name":"Preview.mp3","size":{"invalid":true},"length":30},
+                  {"name":"Other.mp3","size":null,"length":null}]}
+        """#
+        let decodedMixed = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(archiveMixed.utf8))
+        verify(decodedMixed.files?.count == 3 &&
+               decodedMixed.files?[0].length == "212" &&
+               decodedMixed.files?[1].size == nil &&
+               decodedMixed.files?[2].length == nil,
+               "mixed Archive metadata keeps other files when an optional scalar is malformed")
+        verify(!AudioSourceFinder.archiveDurationIsCompatible(
+            lengthSeconds: decodedMixed.files?[1].length, expectedSeconds: 212),
+               "numeric preview duration cannot match the requested recording")
         let fallbackRequest = WebAudioSearch.searchRequest(
             query: "The Artist The Song", apiKey: "test-token", allowsCellular: false)
         verify(!fallbackRequest.allowsCellularAccess &&
