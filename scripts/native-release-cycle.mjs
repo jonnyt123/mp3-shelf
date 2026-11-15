@@ -29,7 +29,7 @@ export function selectNativeEvidence(root, sha) {
 }
 export async function runNativeReleaseCycle({ repo, preflight = executeNativePreflight,
   packageProject = packageNativeXcode, home = homedir() } = {}) {
-  const root = resolve(repo ?? join(import.meta.dirname, '..'));
+  const root = resolve(repo ?? join(dirname(fileURLToPath(import.meta.url)), '..'));
   const integration = await preflight({ repo: root, promote: true });
   if (!SHA.test(integration?.sha ?? '')) throw Error('Native staging did not return an exact commit.');
   const sha = integration.sha;
