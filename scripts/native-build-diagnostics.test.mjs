@@ -32,7 +32,7 @@ test('cache cleanup only touches isolated directory; symlink parents are rejecte
     writeFileSync(join(outside, 'user-audio.mp3'), 'valuable');
     assert.equal(clearIsolatedDerivedData(root), true);
     assert.equal(existsSync(generated), false);
-    mkdirSync(join(root, 'ios/build'), { recursive: true });
+    rmSync(join(root, 'ios/build/local-release'), { recursive: true, force: true });
     symlinkSync(outside, join(root, 'ios/build/local-release'));
     assert.throws(() => clearIsolatedDerivedData(root), /symlink|non-directory/);
     assert.equal(readFileSync(join(outside, 'user-audio.mp3'), 'utf8'), 'valuable');
