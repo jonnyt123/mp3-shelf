@@ -683,14 +683,24 @@ struct MusicTrackRow: View {
                 playbackCheckTask = nil
                 return
             }
-            audioAvailability = available
             isCheckingPlayback = false
             playbackCheckTask = nil
+            // A restore, deletion or reimport may replace the track while the
+            // filesystem check is suspended. Never play a stale URL or queue.
+            guard let currentTrack = library.tracks.first(where: { $0.id == track.id }),
+                  library.fileURL(for: currentTrack) == url else {
+                audioAvailability = false
+                missingRecordingAlert = true
+                return
+            }
+            audioAvailability = available
             guard available else {
                 missingRecordingAlert = true
                 return
             }
-            playback.play(track, queue: context)
+            let currentIDs = Set(library.tracks.map(\.id))
+            let currentQueue = context.filter { currentIDs.contains($0.id) }
+            playback.play(currentTrack, queue: currentQueue)
         }
     }
 
@@ -811,6 +821,13 @@ struct MusicTrackRow: View {
                           ? ShelfTheme.accent.opacity(0.34) : ShelfTheme.border, lineWidth: 1))
         .task(id: availabilityRefreshKey) {
             await refreshAudioAvailability()
+        }
+        .onChange(of: availabilityRefreshKey) { _, _ in
+            // Invalidate selection when a restore changes the recording path
+            // or the app moves between foreground and background.
+            playbackCheckTask?.cancel()
+            playbackCheckTask = nil
+            isCheckingPlayback = false
         }
         .onDisappear {
             playbackCheckTask?.cancel()
