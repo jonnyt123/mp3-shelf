@@ -1443,6 +1443,7 @@ struct PlaylistDetailView: View {
     @State private var playlistPlaybackPending = false
     @State private var playlistPlaybackError: String?
     @State private var playlistPlaybackNotice: String?
+    @State private var lastPlaylistPlaybackWasShuffled = false
     @Environment(\.scenePhase) private var playlistScenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
@@ -1509,6 +1510,7 @@ struct PlaylistDetailView: View {
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
         guard !playlistPlaybackPending, !tracks.isEmpty else { return }
         playlistPlaybackPending = true
+        lastPlaylistPlaybackWasShuffled = shuffled
         playlistPlaybackError = nil
         playlistPlaybackNotice = nil
         let requestedPlaylistID = playlistID
@@ -1535,7 +1537,11 @@ struct PlaylistDetailView: View {
             guard playlistScenePhase == .active,
                   let currentPlaylist = library.playlists.first(where: { $0.id == requestedPlaylistID }) else { return }
             let currentTracks = library.songs(in: currentPlaylist)
-            let originalURLs = Dictionary(uniqueKeysWithValues: snapshots)
+            // A playlist may contain the same track more than once. Building a
+            // dictionary with uniqueKeysWithValues traps on duplicate IDs.
+            let originalURLs = snapshots.reduce(into: [UUID: URL]()) { result, item in
+                result[item.0] = item.1
+            }
             let queue = currentTracks.filter { track in
                 validIDs.contains(track.id) && originalURLs[track.id] == library.fileURL(for: track)
             }
@@ -1626,6 +1632,7 @@ struct PlaylistDetailView: View {
                             .font(.callout)
                             .foregroundStyle(ShelfTheme.subdued)
                             .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.updatesFrequently)
                     }
                     if playlist.appleMusicLibraryID != nil {
                         Label("Imported from your Apple Music library", systemImage: "music.note.list")
@@ -1945,7 +1952,13 @@ struct PlaylistDetailView: View {
             get: { playlistPlaybackError != nil },
             set: { if !$0 { playlistPlaybackError = nil } }
         )) {
-            Button("OK", role: .cancel) { playlistPlaybackError = nil }
+            Button("Retry playback") {
+                playlistPlaybackError = nil
+                if let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }) {
+                    startPlaylist(library.songs(in: currentPlaylist), shuffled: lastPlaylistPlaybackWasShuffled)
+                }
+            }
+            Button("Cancel", role: .cancel) { playlistPlaybackError = nil }
         } message: {
             Text(playlistPlaybackError ?? "")
         }
