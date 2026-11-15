@@ -312,17 +312,22 @@ final class MusicLibrary: ObservableObject {
             // The export may finish publishing just as cancellation arrives.
             // Own the output until a successful return; remove it on every
             // thrown path, including cancellation after publication.
-            var published = false
-            defer {
-                if !published {
-                    try? FileManager.default.removeItem(at: destination)
-                }
-            }
+            // export() owns its unpublished .partial file and refuses to
+            // overwrite an existing destination. Never unlink the destination
+            // when export() throws: it may be an unrelated pre-existing backup.
+            // Only a successful export gives this task ownership of that path.
             try Task.checkCancellation()
             try PortableShelfArchive.export(items, playlists: playlistSnapshot, to: destination)
-            try Task.checkCancellation()
-            published = true
-            return destination
+            do {
+                try Task.checkCancellation()
+                return destination
+            } catch {
+                // Cancellation after publication must not leave an unwanted
+                // large backup. This branch is reached only after export()
+                // returned successfully, so the destination is ours.
+                try? FileManager.default.removeItem(at: destination)
+                throw error
+            }
         }
         // Detached work does not inherit the caller's cancellation. Without
         // forwarding it, dismissing the export UI can leave a large archive
