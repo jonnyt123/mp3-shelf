@@ -1529,6 +1529,9 @@ struct PlaylistDetailView: View {
         playlistPlaybackError = nil
         playlistPlaybackNotice = nil
         let requestedPlaylistID = playlistID
+        // Preserve the exact saved occurrence order being checked. A playlist
+        // edit during the scan must not silently play an obsolete subset.
+        let requestedTrackIDs = tracks.map(\.id)
         // Check each distinct recording only once even when the playlist
         // deliberately repeats a song. Preserve repetitions in the final queue.
         let snapshots = Array(Dictionary(tracks.map { ($0.id, library.fileURL(for: $0)) },
@@ -1555,6 +1558,10 @@ struct PlaylistDetailView: View {
             guard playlistScenePhase == .active,
                   let currentPlaylist = library.playlists.first(where: { $0.id == requestedPlaylistID }) else { return }
             let currentTracks = library.songs(in: currentPlaylist)
+            guard currentTracks.map(\.id) == requestedTrackIDs else {
+                playlistPlaybackError = "This playlist changed while recordings were being checked. Retry playback to use its latest song order."
+                return
+            }
             // A playlist may contain the same track more than once. Building a
             // dictionary with uniqueKeysWithValues traps on duplicate IDs.
             let originalURLs = snapshots.reduce(into: [UUID: URL]()) { result, item in
