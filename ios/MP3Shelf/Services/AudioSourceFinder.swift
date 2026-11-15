@@ -307,6 +307,10 @@ enum AudioSourceFinder {
         // different recording hidden in the uninspected results.
         var searchIncomplete = false
         var uniqueCandidates: [URL: AudioCatalogMatch] = [:]
+        // A changing index between pages cannot prove recording uniqueness.
+        // Fail closed instead of silently selecting a first-page recording.
+        var expectedArchiveTotal: Int?
+        var seenArchiveIdentifiers = Set<String>()
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
             guard ArchiveLookupBudget.stillWithinWindow(
@@ -325,6 +329,22 @@ enum AudioSourceFinder {
                 total: search.response.numFound,
                 page: page
             ) else { throw SourceError.invalidResponse }
+            if let total = search.response.numFound {
+                if let expectedArchiveTotal, expectedArchiveTotal != total {
+                    throw SourceError.unavailable
+                }
+                expectedArchiveTotal = total
+            } else if page > 1 && expectedArchiveTotal != nil {
+                throw SourceError.unavailable
+            }
+            // A repeated identifier across pages indicates an unstable search
+            // snapshot, not an independent candidate to ignore as a duplicate.
+            for entry in search.response.docs {
+                guard safeIdentifier(entry.identifier) else { continue }
+                guard seenArchiveIdentifiers.insert(entry.identifier).inserted else {
+                    throw SourceError.unavailable
+                }
+            }
             let ranked = search.response.docs.prefix(20).enumerated().sorted { left, right in
                 let l = archiveIndexRelevance(
                     title: left.element.title?.value ?? "",
