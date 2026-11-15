@@ -24,7 +24,13 @@ let cases: [(String, Int, Int, Int?, Int?, Bool)] = [
     ("negative count", 0, 1, -1, nil, false),
     ("oversized response", 51, 1, 2, nil, false),
     ("excessive count", 50, 1, 10001, nil, false),
-    ("unknown total on first page", 50, 1, nil, nil, true)
+    ("unknown total on first page", 50, 1, nil, nil, true),
+    ("reported total too large", 50, 1, 10001, nil, false),
+    ("page zero", 50, 0, 2, nil, false),
+    ("negative response size", -1, 1, 2, nil, false),
+    ("missing second-page count", 50, 2, nil, 2, false),
+    ("changed total on second page", 50, 2, 4, 2, false),
+    ("short intermediate page", 49, 1, 2, nil, false)
 ]
 for (name, returned, page, count, expected, accepted) in cases {
     precondition(consistent(returned, page, count, expected) == accepted, name)
@@ -34,4 +40,7 @@ let source = try String(contentsOfFile: "ios/MP3Shelf/Services/AudioSourceFinder
 precondition(source.contains("static func openversePageIsConsistent("))
 precondition(source.contains("guard openversePageIsConsistent("))
 precondition(source.contains("expectedPageCount = pageCount"))
+precondition(source.contains("pageCount <= 10_000"))
+precondition(source.contains("throw SourceError.invalidResponse"))
+precondition(source.contains("throw SourceError.unavailable"))
 print("PASS: production integration anchors")
