@@ -32,12 +32,31 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
   const root = resolve(repo ?? join(dirname(fileURLToPath(import.meta.url)), '..'));
   const integration = await preflight({ repo: root, promote: true });
   if (!SHA.test(integration?.sha ?? '')) throw Error('Native staging did not return an exact commit.');
+  if (!['already-staged', 'staged-draft-only'].includes(integration.status))
+    throw Error('Native preflight did not confirm staging to draft #29.');
   const sha = integration.sha;
-  const nativeDir = integration.evidence ||
-    selectNativeEvidence(join(home, 'Library', 'Logs', 'MP3Shelf', 'NativePreflight'), sha);
+  const evidenceRoot = join(home, 'Library', 'Logs', 'MP3Shelf', 'NativePreflight');
+  // Never accept a caller-supplied evidence directory outside the exact-SHA
+  // preflight tree; this also prevents following a symlinked SHA directory.
+  const shaRoot = join(evidenceRoot, sha);
+  const candidateEvidence = integration.evidence ? resolve(integration.evidence) : null;
+  if (candidateEvidence && (dirname(candidateEvidence) !== shaRoot ||
+      !existsSync(shaRoot) || lstatSync(shaRoot).isSymbolicLink() ||
+      !lstatSync(shaRoot).isDirectory()))
+    throw Error('Native evidence path is not inside the exact candidate SHA directory.');
+  const nativeDir = candidateEvidence ||
+    selectNativeEvidence(evidenceRoot, sha);
   const deviceDir = join(home, 'Library', 'Logs', 'MP3Shelf', 'DeviceAcceptance', sha);
-  if (!nativeDir || !existsSync(join(deviceDir, 'physical-inventory.json')) ||
-      !existsSync(join(deviceDir, 'hardware-acceptance.json')))
+  const deviceFiles = ['physical-inventory.json', 'hardware-acceptance.json'];
+  const deviceSafe = existsSync(deviceDir) &&
+    lstatSync(deviceDir).isDirectory() && !lstatSync(deviceDir).isSymbolicLink() &&
+    deviceFiles.every(name => {
+      const path = join(deviceDir, name);
+      if (!existsSync(path)) return false;
+      const meta = lstatSync(path);
+      return meta.isFile() && !meta.isSymbolicLink() && meta.nlink === 1;
+    });
+  if (!nativeDir || !deviceSafe)
     return { candidateSha: sha, integration: integration.status,
       packaging: 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE' };
   const destination = join(home, 'Documents', 'MP3Shelf', 'VerifiedReleases');
