@@ -38,7 +38,7 @@ struct LibraryView: View {
     @State private var recentPlaybackTask: Task<Void, Never>?
     @State private var missingRecentRecording = false
     @State private var recentPlaybackNotice: String?
-    @State private var recentRetryTrackID: UUID?
+    @State private var recentRetrySelection: (id: UUID, url: URL)?
     @State private var bulkPlaybackPending = false
     @State private var bulkPlaybackTask: Task<Void, Never>?
 
@@ -47,13 +47,19 @@ struct LibraryView: View {
     private func playRecentRecording(_ track: MusicTrack) {
         guard scenePhase == .active, recentPlaybackCheck == nil else { return }
         recentPlaybackCheck = track.id
-        recentRetryTrackID = track.id
+        let selectedURL = library.fileURL(for: track)
+        recentRetrySelection = (track.id, selectedURL)
         recentPlaybackNotice = nil
         missingRecentRecording = false
         // Snapshot the visible queue and URLs before leaving the UI actor.
         // A missing neighbor must not be queued behind an otherwise playable song.
         let recent = recentlyAdded
         let locations = recent.map { ($0.id, library.fileURL(for: $0)) }
+        guard let selectedIndex = locations.firstIndex(where: { $0.0 == track.id && $0.1 == selectedURL }) else {
+            recentPlaybackCheck = nil
+            missingRecentRecording = true
+            return
+        }
         recentPlaybackTask = Task {
             // Preserve each occurrence's file identity. A Set<UUID> would let an
             // available duplicate authorize a missing recording with the same ID.
@@ -94,7 +100,8 @@ struct LibraryView: View {
                     $0.id == song.id && library.fileURL(for: $0) == originalURL
                 }
             }
-            guard let selected = queue.first(where: { $0.id == track.id && library.fileURL(for: $0) == library.fileURL(for: track) }) else {
+            guard availability[selectedIndex],
+                  let selected = library.tracks.first(where: { $0.id == track.id && library.fileURL(for: $0) == selectedURL }) else {
                 missingRecentRecording = true
                 return
             }
@@ -107,8 +114,10 @@ struct LibraryView: View {
     }
 
     private func retryRecentRecording() {
-        guard let id = recentRetryTrackID,
-              let current = recentlyAdded.first(where: { $0.id == id }) else {
+        guard let selection = recentRetrySelection,
+              let current = recentlyAdded.first(where: {
+                  $0.id == selection.id && library.fileURL(for: $0) == selection.url
+              }) else {
             recentPlaybackNotice = "This song is no longer in Recently Added. Choose another recording."
             return
         }
