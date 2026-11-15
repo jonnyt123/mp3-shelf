@@ -55,18 +55,24 @@ struct LibraryView: View {
         let recent = recentlyAdded
         let locations = recent.map { ($0.id, library.fileURL(for: $0)) }
         recentPlaybackTask = Task {
-            let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
-                var available = Set<UUID>()
-                for (id, url) in locations {
-                    if Task.isCancelled { break }
+            // Preserve each occurrence's file identity. A Set<UUID> would let an
+            // available duplicate authorize a missing recording with the same ID.
+            let scan = Task.detached(priority: .userInitiated) { () -> [Bool] in
+                var results: [Bool] = []
+                results.reserveCapacity(locations.count)
+                for (_, url) in locations {
+                    if Task.isCancelled { return [] }
                     guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
                           values.isRegularFile == true, let size = values.fileSize,
-                          size > 0 else { continue }
-                    available.insert(id)
+                          size > 0 else {
+                        results.append(false)
+                        continue
+                    }
+                    results.append(true)
                 }
-                return available
+                return results
             }
-            let availableIDs = await withTaskCancellationHandler {
+            let availability = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: {
                 scan.cancel()
@@ -74,23 +80,19 @@ struct LibraryView: View {
             guard !Task.isCancelled, scenePhase == .active else { return }
             recentPlaybackCheck = nil
             recentPlaybackTask = nil
-            // Do not play a stale queue after a library edit or import while scanning.
-            guard recentlyAdded.map(\.id) == recent.map(\.id) else {
+            guard availability.count == recent.count,
+                  recentlyAdded.map(\.id) == recent.map(\.id) else {
                 missingRecentRecording = true
                 return
             }
-            // Keep the first matching library record rather than trapping on duplicate IDs.
-            var currentTracks: [UUID: MusicTrack] = [:]
-            for current in library.tracks where currentTracks[current.id] == nil {
-                currentTracks[current.id] = current
-            }
-            let scannedURLs = Dictionary(locations, uniquingKeysWith: { first, _ in first })
-            let queue = recent.compactMap { song -> MusicTrack? in
-                guard availableIDs.contains(song.id),
-                      let current = currentTracks[song.id],
-                      let originalURL = scannedURLs[song.id],
-                      library.fileURL(for: current) == originalURL else { return nil }
-                return current
+            // Never resolve duplicates through an ID-only dictionary. Match the
+            // original URL as well so import/recovery cannot substitute a file.
+            let queue: [MusicTrack] = recent.enumerated().compactMap { index, song in
+                guard availability[index] else { return nil }
+                let originalURL = locations[index].1
+                return library.tracks.first {
+                    $0.id == song.id && library.fileURL(for: $0) == originalURL
+                }
             }
             guard let selected = queue.first(where: { $0.id == track.id }) else {
                 missingRecentRecording = true
