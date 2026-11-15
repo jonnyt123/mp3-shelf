@@ -149,3 +149,46 @@ for round in 0..<64 {
                  "stale snapshot was not identified")
 }
 print("PASS: 64 interleaved lost-update reproductions and serialized replay recoveries")
+
+
+// Regression for the actual fix contract: the read/validate/write sequence,
+// not merely the final rename, must share one exclusive serialization boundary.
+// A callback must re-read the durable journal *inside* that boundary.
+let publicationLock = NSLock()
+func completeSerialized(_ ticket: UUID, generation: Int, file: URL) throws {
+    publicationLock.lock()
+    defer { publicationLock.unlock() }
+    try complete(ticket, generation: generation, file: file)
+}
+for round in 0..<128 {
+    let generation = 2000 + round
+    let initial = Journal(receipts: [], pending: [a: generation, b: generation])
+    try writeJournal(initial)
+    // Exercise both callback arrival orders and a stale read taken before
+    // either callback. The stale snapshot must never be published directly.
+    let staleSnapshot = try readJournal()
+    let order: [(UUID, URL)] = round.isMultiple(of: 2)
+        ? [(a, pathA), (b, pathB)] : [(b, pathB), (a, pathA)]
+    for (ticket, file) in order {
+        try completeSerialized(ticket, generation: generation, file: file)
+    }
+    let committed = try readJournal()
+    try assertQA(committed.receipts.count == 2 &&
+                 Set(committed.receipts.map(\.ticket)) == Set([a, b]),
+                 "serialized callbacks lost or duplicated a receipt")
+    try assertQA(staleSnapshot.receipts.isEmpty &&
+                 committed.receipts != staleSnapshot.receipts,
+                 "callback published an obsolete manifest snapshot")
+    for (ticket, file) in order {
+        do {
+            try completeSerialized(ticket, generation: generation, file: file)
+            try assertQA(false, "serialized duplicate callback accepted")
+        } catch Fault.duplicate {}
+    }
+    try assertQA(try readJournal() == committed,
+                 "duplicate callback mutated durable manifest")
+    try assertQA(try Data(contentsOf: pathA) == audioA &&
+                 Data(contentsOf: pathB) == audioB,
+                 "serialized publication modified audio bytes")
+}
+print("PASS: 128 serialized two-ticket completions, both callback orders, duplicate replay and byte preservation")
