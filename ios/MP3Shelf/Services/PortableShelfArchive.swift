@@ -318,6 +318,19 @@ enum PortableShelfArchive {
         }
     }
 
+    /// Atomically claim a new output without following a symlink or
+    /// truncating an existing file. The caller owns the returned descriptor
+    /// and must close it before publishing or importing the output.
+    private static func createExclusiveOutput(at url: URL) throws -> FileHandle {
+        let descriptor = url.path.withCString {
+            open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(0o600))
+        }
+        guard descriptor >= 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    }
+
     static func export(_ inputs: [MediaInput], playlists: [MusicPlaylist], to destination: URL) throws {
         var parts: [(url: URL?, bytes: Data?, expectedLength: Int64, sourceIdentity: ArchiveSourceIdentity?)] = []
         var offset: Int64 = 0
@@ -447,11 +460,11 @@ enum PortableShelfArchive {
         }
         let staging = destination.deletingLastPathComponent()
             .appendingPathComponent("." + destination.lastPathComponent + "." + UUID().uuidString + ".partial")
-        guard manager.createFile(atPath: staging.path, contents: nil) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
+        // Exclusive, no-follow creation is essential even for UUID staging
+        // names: createFile may truncate an existing file after a collision or
+        // malicious pathname substitution. Never destroy unrelated bytes.
+        let output = try createExclusiveOutput(at: staging)
         do {
-        let output = try FileHandle(forWritingTo: staging)
         defer { try? output.close() }
         try output.write(contentsOf: magic)
         let n = UInt32(JSON.count)
@@ -771,11 +784,10 @@ enum PortableShelfArchive {
         try Task.checkCancellation()
         // A backup may still be truncated while streaming. Remove partial
         // output on every read/write failure rather than importing bad audio.
-        guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
+        // An extraction must never truncate a pre-existing file, including
+        // when another writer claims the otherwise random destination name.
+        let output = try createExclusiveOutput(at: target)
         do {
-            let output = try FileHandle(forWritingTo: target)
             // A successful write is not a successful extraction until the
             // destination has been flushed and closed. In particular, do not
             // hand a partially persisted audio file to the library importer.
