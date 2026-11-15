@@ -988,6 +988,42 @@ enum SourceDiscoveryJobTests {
             in: repeated).successful.count == BackgroundProviderHistoryPolicy.maxOutcomes,
             "source ranking only processes the most recent 200 eligible outcomes")
 
+        // A legacy UserDefaults dictionary may contain the same UUID in
+        // upper/lower case. Restoring it must neither crash nor grant cellular
+        // access beyond the original explicit 24-hour window.
+        let consentNow = Date(timeIntervalSince1970: 1_800_000_000)
+        let consentID = UUID()
+        let consentKey = consentID.uuidString
+        let consentValid = consentNow.addingTimeInterval(3600)
+        let consentLater = consentNow.addingTimeInterval(7200)
+        let consentExpired = consentNow.addingTimeInterval(-10)
+        let consentTooLong = consentNow.addingTimeInterval(25 * 3600)
+        let consentOtherID = UUID()
+        let restoredConsent = BackgroundCellularConsentPolicy.validExpirations([
+            consentKey: consentValid,
+            consentKey.lowercased(): consentLater,
+            consentOtherID.uuidString: consentValid,
+            "not-a-uuid": consentValid,
+            UUID().uuidString: consentExpired,
+            UUID().uuidString.lowercased(): consentTooLong
+        ], now: consentNow)
+        verifyDiscovery(restoredConsent[consentID] == consentLater &&
+                        restoredConsent[consentOtherID] == consentValid &&
+                        restoredConsent.count == 2,
+                        "duplicate UUID consent keys restore deterministically without losing other playlists")
+        verifyDiscovery(!BackgroundCellularConsentPolicy.mayUpgradeQueuedTransfer(
+                            approvedUntil: consentExpired, now: consentNow) &&
+                        !BackgroundCellularConsentPolicy.mayUpgradeQueuedTransfer(
+                            approvedUntil: consentTooLong, now: consentNow) &&
+                        !BackgroundCellularConsentPolicy.mayUpgradeQueuedTransfer(
+                            approvedUntil: nil, now: consentNow) &&
+                        BackgroundCellularConsentPolicy.mayUpgradeQueuedTransfer(
+                            approvedUntil: consentValid, now: consentNow),
+                        "delayed URLSession inventory cannot upgrade after consent expiry or without approval")
+        verifyDiscovery(!BackgroundCellularConsentPolicy.mayUpgradeQueuedTransfer(
+                            approvedUntil: consentValid, now: consentValid),
+                        "consent expiration boundary never authorizes a new cellular task")
+
         struct ManifestFixture {
             let id: UUID
             let startedAt: Date?
