@@ -534,6 +534,10 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         if let notBefore {
             if sourceRecoveryNotBefore == nil { sourceRecoveryNotBefore = [:] }
             sourceRecoveryNotBefore?[wishID.uuidString] = notBefore
+        } else {
+            // An immediate replacement search must not inherit a previous
+            // delayed URL's deadline after the song was processed again.
+            sourceRecoveryNotBefore?.removeValue(forKey: wishID.uuidString)
         }
         return true
     }
@@ -674,6 +678,14 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
                 recordingCandidates?.removeValue(forKey: key)
                 webSources?.removeValue(forKey: key)
                 lookupDetails?.removeValue(forKey: key)
+                // These retries belong to the previous recording edition.
+                // Preserve other songs' budgets and paid search reservations.
+                sourceRecoveryAttempts?.removeValue(forKey: key)
+                sourceRecoveryNotBefore?.removeValue(forKey: key)
+                if index == nextIndex {
+                    transientFailureCount = nil
+                    nextRetryAt = nil
+                }
                 if index < nextIndex { correctedProcessed.append(index) }
             }
             wishes[index] = latest
@@ -682,7 +694,10 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
             moveProcessedWishesToPending(at: correctedProcessed)
         }
         var ids = Set(wishes.map(\.id))
+        // Preserve first-seen playlist position but use the latest metadata
+        // for repeated IDs, matching the update policy for existing wishes.
         let appended = missing.filter { ids.insert($0.id).inserted }
+            .compactMap { updated[$0.id] }
         wishes.append(contentsOf: appended)
         return appended.count + correctedProcessed.count
     }
