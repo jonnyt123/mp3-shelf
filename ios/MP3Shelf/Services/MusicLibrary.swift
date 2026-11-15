@@ -549,7 +549,7 @@ final class MusicLibrary: ObservableObject {
                 try Task.checkCancellation()
                 let imported = try addLocalAudio(
                     sourceURL: file, originalName: original,
-                    cancellationAware: true)
+                    cancellationAware: true, duplicateCandidatesAlreadyChecked: true)
                 if imported { report.imported += 1 }
                 else { report.skipped += 1 }
 
@@ -1044,7 +1044,8 @@ final class MusicLibrary: ObservableObject {
                                expectedDuration: TimeInterval? = nil,
                                matching wish: PlaylistWish? = nil,
                                attribution: AudioSourceAttribution? = nil,
-                               cancellationAware: Bool = false) throws -> Bool {
+                               cancellationAware: Bool = false,
+                               duplicateCandidatesAlreadyChecked: Bool = false) throws -> Bool {
         // Archive restoration is cancellable; ordinary synchronous imports
         // retain their existing behavior. Check at expensive I/O boundaries
         // before publishing any new catalog entry.
@@ -1062,7 +1063,12 @@ final class MusicLibrary: ObservableObject {
         // Compare only equal-sized candidates; the archive comparator streams in
         // bounded chunks rather than loading entire recordings into memory.
         // An unreadable candidate is never considered a duplicate.
-        if fileSize > 0 {
+        // Archive restore has already compared every same-sized owned recording
+        // using its incrementally maintained size index. This synchronous
+        // @MainActor call cannot admit another library import between that
+        // comparison and transaction publication. Avoid rescanning the entire
+        // library for every restored track (O(n²) on large backups).
+        if fileSize > 0 && !duplicateCandidatesAlreadyChecked {
             for track in tracks {
                 // The comparator deliberately returns false when cancelled,
                 // because its nonthrowing API also serves ordinary imports.
