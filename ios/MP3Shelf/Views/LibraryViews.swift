@@ -1444,6 +1444,7 @@ struct PlaylistDetailView: View {
     @State private var playlistPlaybackError: String?
     @State private var playlistPlaybackNotice: String?
     @State private var lastPlaylistPlaybackWasShuffled = false
+    @State private var playlistEditWarning: String?
     @Environment(\.scenePhase) private var playlistScenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
@@ -1835,11 +1836,26 @@ struct PlaylistDetailView: View {
                             .listRowSeparator(.hidden)
                             .swipeActions {
                                 Button("Remove", role: .destructive) {
+                                    // Persistence removes by ID, not occurrence. Refuse
+                                    // destructive edits that would remove every duplicate.
+                                    let copies = playlist.trackIDs.filter { $0 == track.id }.count
+                                    guard copies == 1 else {
+                                        playlistEditWarning = "This song appears \(copies) times. Removing one copy is not supported yet; no songs were changed."
+                                        return
+                                    }
                                     library.removeTrack(track.id, from: playlistID)
                                 }
                             }
                     }
-                    .onMove { from, to in library.moveTracks(in: playlistID, from: from, to: to) }
+                    .onMove { from, to in
+                        // The visible list excludes unresolved IDs, so its offsets
+                        // cannot safely address the full persisted playlist.
+                        guard availableTracks.count == playlist.trackIDs.count else {
+                            playlistEditWarning = "Some saved playlist entries are unavailable. Reordering is paused to protect the original order."
+                            return
+                        }
+                        library.moveTracks(in: playlistID, from: from, to: to)
+                    }
                 }
                 if !playlist.sourceOrder.isEmpty {
                     Section("SONG-BY-SONG MP3 RESULTS") {
@@ -1942,6 +1958,8 @@ struct PlaylistDetailView: View {
                     Image(systemName: "arrow.down.circle")
                 }
                 EditButton()
+                    .disabled(playlist.map { library.songs(in: $0).count != $0.trackIDs.count } ?? true)
+                    .accessibilityHint("Reordering requires every saved playlist entry to be available")
             }
         }
         .sheet(item: $editing) { track in RenameTrackView(track: track) }
@@ -1954,6 +1972,14 @@ struct PlaylistDetailView: View {
         .sheet(item: $reviewingRecording) { wish in
             RecordingMatchReviewView(wish: wish, playlistID: playlistID,
                 candidates: library.discoveryJob(for: playlistID)?.recordingCandidates?[wish.id.uuidString] ?? [])
+        }
+        .alert("Playlist edit protected", isPresented: Binding(
+            get: { playlistEditWarning != nil },
+            set: { if !$0 { playlistEditWarning = nil } }
+        )) {
+            Button("OK", role: .cancel) { playlistEditWarning = nil }
+        } message: {
+            Text(playlistEditWarning ?? "")
         }
         .alert("Playlist playback unavailable", isPresented: Binding(
             get: { playlistPlaybackError != nil },
