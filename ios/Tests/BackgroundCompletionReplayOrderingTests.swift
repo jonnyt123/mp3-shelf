@@ -12,7 +12,7 @@ struct Snapshot: Codable {
     var entries: [Entry]
     var receipts: [String]
 }
-enum ReplayError: Error { case corrupt, missing, conflict, interrupted }
+enum ReplayError: Error { case corrupt, missing, conflict, unsafe, interrupted }
 func check(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
     if try !condition() { throw NSError(domain: "ReplayQA", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
 }
@@ -39,16 +39,33 @@ func save(_ value: Snapshot, interrupted: Bool = false) throws {
     if interrupted { throw ReplayError.interrupted }
     try JSONEncoder().encode(value).write(to: journal, options: .atomic)
 }
+// Validate the directory entry before reading: a terminal receipt must never
+// authorize a missing, foreign or symlink-substituted recording after restart.
+func verifiedRecording(_ url: URL) throws -> Bool {
+    if (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil {
+        throw ReplayError.unsafe
+    }
+    let attributes: [FileAttributeKey: Any]
+    do { attributes = try fm.attributesOfItem(atPath: url.path) }
+    catch { return false }
+    guard attributes[.type] as? FileAttributeType == .typeRegular else {
+        throw ReplayError.unsafe
+    }
+    guard (attributes[.size] as? NSNumber)?.intValue == original.count,
+          try Data(contentsOf: url) == original else { throw ReplayError.conflict }
+    return true
+}
 func complete(interruptTerminal: Bool = false) throws {
     var snapshot = try load()
     guard let index = snapshot.entries.firstIndex(where: { $0.id == "ticket" }) else { throw ReplayError.corrupt }
-    if snapshot.entries[index].state == .imported { return }
+    if snapshot.entries[index].state == .imported {
+        guard try verifiedRecording(dest) else { throw ReplayError.missing }
+        return
+    }
     guard snapshot.entries[index].state == .pending || snapshot.entries[index].state == .importing else { return }
-    let stagedExists = fm.fileExists(atPath: stage.path)
-    let destinationExists = fm.fileExists(atPath: dest.path)
+    let stagedExists = try verifiedRecording(stage)
+    let destinationExists = try verifiedRecording(dest)
     guard stagedExists || (snapshot.entries[index].state == .importing && destinationExists) else { throw ReplayError.missing }
-    if stagedExists { guard try Data(contentsOf: stage) == original else { throw ReplayError.conflict } }
-    if destinationExists { guard try Data(contentsOf: dest) == original else { throw ReplayError.conflict } }
     if snapshot.entries[index].state == .pending {
         snapshot.entries[index].state = .importing
         try save(snapshot)
@@ -87,6 +104,33 @@ for round in 0..<48 {
         try valid.write(to: journal, options: .atomic)
     }
 }
+// A persisted terminal receipt must not mask deletion, substitution, or a
+// symlink introduced between launches. Invalid files must remain untouched.
+try save(Snapshot(entries: [Entry(id: "ticket", state: .imported, filename: "song.mp3")],
+                  receipts: ["ticket"]))
+try original.write(to: dest, options: .atomic)
+try complete()
+try fm.removeItem(at: dest)
+do { try complete(); try check(false, "terminal receipt accepted missing audio") }
+catch ReplayError.missing {}
+try unrelated.write(to: dest, options: .atomic)
+do { try complete(); try check(false, "terminal receipt accepted foreign audio") }
+catch ReplayError.conflict {}
+try fm.removeItem(at: dest)
+try fm.createSymbolicLink(at: dest, withDestinationURL: other)
+do { try complete(); try check(false, "terminal receipt accepted symlink") }
+catch ReplayError.unsafe {}
+try fm.removeItem(at: dest)
+try fm.createDirectory(at: dest, withIntermediateDirectories: false)
+do { try complete(); try check(false, "terminal receipt accepted directory") }
+catch ReplayError.unsafe {}
+try fm.removeItem(at: dest)
+try check(try load().receipts == ["ticket"], "invalid terminal check rewrote receipt")
+try check(try Data(contentsOf: other) == unrelated, "foreign target modified")
+try original.write(to: dest, options: .atomic)
+try complete()
+try check(try load().receipts == ["ticket"], "recovery duplicated receipt")
+try fm.removeItem(at: dest)
 // Neither absent nor foreign destination bytes can authorize a receipt.
 try save(Snapshot(entries: [Entry(id: "ticket", state: .importing, filename: "song.mp3")], receipts: []))
 if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
@@ -98,4 +142,4 @@ do { try complete(); try check(false, "foreign destination accepted") }
 catch ReplayError.conflict {}
 try check(try load().receipts.isEmpty, "foreign audio published receipt")
 try check(try Data(contentsOf: dest) == Data("foreign recording".utf8), "foreign audio modified")
-print("PASS: 48 crash/replay rounds (16 without staging), 48 duplicates, 24 corrupt journals, missing/foreign destination rejection")
+print("PASS: 48 crash/replay rounds (16 without staging), 48 duplicates, 24 corrupt journals, terminal receipt integrity and unsafe path rejection")
