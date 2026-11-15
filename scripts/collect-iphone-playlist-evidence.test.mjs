@@ -124,6 +124,7 @@ function observed() {
   const events = [
     { event: 'qa-armed', processToken: proof.armedProcessToken },
     { event: 'background-session-wake', processToken: proof.armedProcessToken },
+    { event: 'download-completion-callback', processToken: proof.armedProcessToken, ticketID: id },
     { event: 'download-audio-staged', processToken: proof.armedProcessToken, ticketID: id },
     { event: 'offline-verification-started', processToken: proof.processToken },
     { event: 'offline-verification-finished', processToken: proof.processToken }
@@ -156,4 +157,23 @@ test('a playback receipt alone cannot fabricate background URLSession completion
   const result = verifyPhysicalDeviceTelemetry(proof, noCallback, playlistID, selected);
   assert.equal(result.offlinePlaybackAfterRestart, 'APP_INSTRUMENTED_PHYSICAL_PASS');
   assert.equal(result.backgroundTransfer, 'NOT_VERIFIED');
+});
+
+test('an unrelated foreground ticket or background wake cannot authorize download proof', () => {
+  const wrongTicket = observed();
+  wrongTicket.events.find(e => e.event === 'download-completion-callback').ticketID =
+    'ffffffff-ffff-ffff-ffff-ffffffffffff';
+  assert.equal(verifyPhysicalDeviceTelemetry(wrongTicket.proof, wrongTicket.events,
+    playlistID, wrongTicket.selected).backgroundTransfer, 'NOT_VERIFIED');
+  const wrongProcess = observed();
+  wrongProcess.events.find(e => e.event === 'background-session-wake').processToken =
+    'ffffffff-ffff-ffff-ffff-ffffffffffff';
+  assert.equal(verifyPhysicalDeviceTelemetry(wrongProcess.proof, wrongProcess.events,
+    playlistID, wrongProcess.selected).backgroundTransfer, 'NOT_VERIFIED');
+  const reordering = observed();
+  const index = reordering.events.findIndex(e => e.event === 'background-session-wake');
+  const [wake] = reordering.events.splice(index, 1);
+  reordering.events.push(wake);
+  assert.equal(verifyPhysicalDeviceTelemetry(reordering.proof, reordering.events,
+    playlistID, reordering.selected).backgroundTransfer, 'NOT_VERIFIED');
 });
