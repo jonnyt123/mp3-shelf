@@ -220,6 +220,10 @@ enum AudioSourceFinder {
             guard let bytes = Int64(sizeBytes), bytes > 0,
                   bytes <= 100 * 1024 * 1024 else { return false }
         }
+        // A single derivative is still a derivative. The helper is also used
+        // by isolated matching tests, so enforce the source contract here rather
+        // than relying exclusively on archiveCandidate's upstream filter.
+        guard source == nil || source == "original" else { return false }
         if audioFileCount == 1 {
             return exactMetadataMatch(title: itemTitle, creator: itemCreator, wish: wish)
         }
