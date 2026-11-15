@@ -339,6 +339,31 @@ enum AudioSourceFinder {
         return uniqueCandidates.count == 1 ? uniqueCandidates.values.first : nil
     }
 
+    /// Archive metadata may encode duration as seconds or a clock timestamp.
+    /// Parse the entire value; malformed or overflowing fields cannot authorize
+    /// an unattended recording match.
+    static func archiveDurationSeconds(_ raw: String?) -> Double? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+        if !raw.contains(":") {
+            guard let seconds = Double(raw), seconds.isFinite, seconds > 0 else { return nil }
+            return seconds
+        }
+        let fields = raw.split(separator: ":", omittingEmptySubsequences: false)
+        guard fields.count == 2 || fields.count == 3 else { return nil }
+        var total = 0.0
+        for (index, field) in fields.enumerated() {
+            guard !field.isEmpty, field.count <= 8,
+                  field.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+                  let value = Double(field), value.isFinite, value >= 0 else { return nil }
+            // Only the final (seconds) component may contain fractions.
+            if index < fields.count - 1 && value.rounded(.towardZero) != value { return nil }
+            if index > 0 && value >= 60 { return nil }
+            total = total * 60 + value
+        }
+        return total.isFinite && total > 0 ? total : nil
+    }
+
     static func archiveCandidate(_ item: ArchiveItem, identifier: String,
                                  for wish: PlaylistWish) -> AudioCatalogMatch? {
         guard safeIdentifier(identifier), let metadata = item.metadata else { return nil }
@@ -359,8 +384,7 @@ enum AudioSourceFinder {
         // remain available for manual review, not automatic selection.
         if let expected = wish.durationSeconds {
             guard expected.isFinite, expected > 0,
-                  let rawLength = file.length?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  let measured = Double(rawLength), measured.isFinite, measured > 0,
+                  let measured = archiveDurationSeconds(file.length),
                   abs(measured - expected) <= 4.0 else { return nil }
         }
         return AudioCatalogMatch(
