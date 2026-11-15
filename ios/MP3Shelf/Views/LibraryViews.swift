@@ -318,16 +318,30 @@ struct LibraryView: View {
                 message = "Your library results changed while checking offline recordings. Tap Play or Shuffle again to use the updated songs."
                 return
             }
-            // Reconcile the current library and its URLs after the asynchronous
-            // scan; a deleted or replaced recording cannot enter the queue.
-            let currentTracks = Dictionary(uniqueKeysWithValues: library.tracks.map { ($0.id, $0) })
-            let scannedURLs = Dictionary(uniqueKeysWithValues: locations)
+            // Reconcile against the current library without assuming IDs are
+            // unique. Duplicate IDs can occur in imported or recovering libraries;
+            // Dictionary(uniqueKeysWithValues:) would trap and crash the UI.
+            var currentTracks: [UUID: MusicTrack] = [:]
+            for track in library.tracks where currentTracks[track.id] == nil {
+                currentTracks[track.id] = track
+            }
+            var scannedURLs: [UUID: URL] = [:]
+            for (id, url) in locations where scannedURLs[id] == nil {
+                scannedURLs[id] = url
+            }
             let queue = songs.compactMap { song -> MusicTrack? in
                 guard validIDs.contains(song.id),
                       let current = currentTracks[song.id],
                       let scannedURL = scannedURLs[song.id],
                       library.fileURL(for: current) == scannedURL else { return nil }
                 return current
+            }
+            // A replacement/import can change the underlying file without
+            // changing a track ID. Reject the whole stale request rather than
+            // silently starting an unexpected partial queue.
+            guard queue.count == songs.filter({ validIDs.contains($0.id) }).count else {
+                message = "Some recordings changed while preparing playback. Tap Play or Shuffle again to use the current library."
+                return
             }
             guard let first = shuffled ? queue.randomElement() : queue.first else {
                 message = "No playable offline recordings were found in these results."
