@@ -138,3 +138,69 @@ for round in 0..<48 {
     check(unchangedJournal, "rejected callback rewrote journal")
 }
 print("PASS: 48 rounds of mixed-generation concurrent callbacks; stale and duplicate rejection, exact journal and audio preservation")
+
+
+// Retry and cancellation are journal mutations, not merely callback filters.
+// Exercise an actual generation transition while callback workers are waiting.
+// The old callback must not publish after the retry is durably recorded.
+func replaceGeneration(_ id: Int, with next: Int) throws {
+    generationLock.lock()
+    defer { generationLock.unlock() }
+    var state = try JSONDecoder().decode(GenerationJournal.self, from: Data(contentsOf: generationManifest))
+    guard state.pending[id] != nil, !state.completed.contains(where: { $0.id == id }) else {
+        throw GenerationError.invalid
+    }
+    state.pending[id] = next
+    try JSONEncoder().encode(state).write(to: generationManifest, options: .atomic)
+}
+for round in 0..<64 {
+    let old = 500 + round * 2
+    let next = old + 1
+    let ticket = round % fileCount
+    let initial = GenerationJournal(pending: [ticket: old], completed: [])
+    try JSONEncoder().encode(initial).write(to: generationManifest, options: .atomic)
+    let ready = DispatchSemaphore(value: 0)
+    let proceed = DispatchSemaphore(value: 0)
+    let finished = DispatchSemaphore(value: 0)
+    let results = NSLock()
+    var staleRejected = false
+    var unexpectedError: String?
+    DispatchQueue.global(qos: .userInitiated).async {
+        ready.signal()
+        proceed.wait()
+        do {
+            try publishGeneration(ticket, generation: old)
+            results.lock()
+            unexpectedError = "old generation published after retry"
+            results.unlock()
+        } catch GenerationError.stale {
+            results.lock()
+            staleRejected = true
+            results.unlock()
+        } catch {
+            results.lock()
+            unexpectedError = String(describing: error)
+            results.unlock()
+        }
+        finished.signal()
+    }
+    ready.wait()
+    try replaceGeneration(ticket, with: next)
+    let persisted = try JSONDecoder().decode(GenerationJournal.self, from: Data(contentsOf: generationManifest))
+    check(persisted.pending[ticket] == next && persisted.completed.isEmpty, "retry not durably published")
+    proceed.signal()
+    finished.wait()
+    check(staleRejected && unexpectedError == nil, "old callback escaped retry boundary: \(unexpectedError ?? "unknown")")
+    try publishGeneration(ticket, generation: next)
+    let committed = try JSONDecoder().decode(GenerationJournal.self, from: Data(contentsOf: generationManifest))
+    check(committed.completed == [GenerationReceipt(id: ticket, generation: next,
+        filename: audioPaths[ticket].lastPathComponent)], "retry completion incorrect")
+    let snapshot = try Data(contentsOf: generationManifest)
+    do {
+        try publishGeneration(ticket, generation: old)
+        preconditionFailure("stale callback replaced retry completion")
+    } catch GenerationError.stale { }
+    check(try Data(contentsOf: generationManifest) == snapshot, "stale callback mutated durable receipt")
+    check(try Data(contentsOf: audioPaths[ticket]) == payloads[ticket], "retry changed recording")
+}
+print("PASS: 64 coordinated retry/callback boundaries, durable generation replacement, and byte-preserved recordings")
