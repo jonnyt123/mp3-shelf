@@ -1,10 +1,45 @@
 #!/usr/bin/env node
 /** Blocks draft #29 staging unless the proposed tree passed full native Xcode verification. */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { constants as fsConstants, closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const SHA = /^[0-9a-f]{40}$/;
+const QA_MAX_BYTES = 256 * 1024;
+const QA_FIELDS = ['Checked commit', 'Source provenance', 'Uncommitted changes',
+  'Mode', 'Overall execution', 'Exit status', 'Completed checks'];
+
+export function readNativeQaRecord(path) {
+  const before = lstatSync(path);
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 ||
+      before.size < 1 || before.size > QA_MAX_BYTES)
+    throw Error('Native QA record must be a bounded regular file without links.');
+  const fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino ||
+        opened.nlink !== 1 || opened.size !== before.size)
+      throw Error('Native QA record changed while opening.');
+    const chunks = [];
+    const buffer = Buffer.allocUnsafe(16 * 1024);
+    let bytes = 0, count;
+    while ((count = readSync(fd, buffer, 0, buffer.length, null)) !== 0) {
+      bytes += count;
+      if (bytes > QA_MAX_BYTES) throw Error('Native QA record exceeds size limit.');
+      chunks.push(Buffer.from(buffer.subarray(0, count)));
+    }
+    const after = fstatSync(fd);
+    const named = lstatSync(path);
+    if (bytes !== opened.size || after.size !== opened.size ||
+        after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs ||
+        named.dev !== opened.dev || named.ino !== opened.ino ||
+        named.mtimeMs !== after.mtimeMs || named.ctimeMs !== after.ctimeMs ||
+        named.nlink !== 1 || named.isSymbolicLink())
+      throw Error('Native QA record changed during reading.');
+    return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes));
+  } finally { closeSync(fd); }
+}
+
 const CHECKS = [
   'playback-order', 'playback-interruptions', 'downloaded-audio-signature',
   'downloaded-audio-format', 'playlist-parser', 'lyrics-parser',
@@ -28,7 +63,16 @@ export function nativeStageErrors({ proposed, current, receipt, qaRecord }) {
       !nativeSteps.some(s => s?.name === 'post-native-checkout-integrity' && s.success === true))
     errors.push('Native Xcode execution and post-build Git checkout integrity are required.');
   const lines = typeof qaRecord === 'string' ? qaRecord : '';
-  const field = name => lines.match(new RegExp('^- ' + name + ': (.+)$', 'm'))?.[1]?.trim();
+  const fields = new Map();
+  for (const line of lines.split(/\r?\n/)) {
+    const match = /^- ([^:]+): (.*)$/.exec(line);
+    if (!match || !QA_FIELDS.includes(match[1])) continue;
+    if (fields.has(match[1])) errors.push('Duplicate native QA field: ' + match[1]);
+    fields.set(match[1], match[2].trim());
+  }
+  for (const name of QA_FIELDS) if (!fields.has(name))
+    errors.push('Missing native QA field: ' + name);
+  const field = name => fields.get(name);
   if (field('Checked commit') !== proposed || field('Source provenance') !== 'repository HEAD' ||
       field('Uncommitted changes') !== 'no' || field('Mode') !== 'all' ||
       field('Overall execution') !== 'PASS' || field('Exit status') !== '0')
@@ -55,7 +99,7 @@ export async function checkNativeStage({ proposed, current, receiptPath, logDir,
       { cwd, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch { errors.push('Proposed commit is not a descendant of the current draft candidate.'); }
   let receipt, qaRecord;
-  try { receipt = readPersistedReceipt(receiptPath); qaRecord = readFileSync(qaPath, 'utf8'); }
+  try { receipt = readPersistedReceipt(receiptPath); qaRecord = readNativeQaRecord(qaPath); }
   catch (error) { return [...errors, 'Native evidence is unavailable: ' + error.message]; }
   errors.push(...nativeStageErrors({ proposed, current, receipt, qaRecord }));
   errors.push(...verifyLocalReceipt(receipt, { expectedSha: proposed, logDir }));
