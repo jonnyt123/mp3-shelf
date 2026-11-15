@@ -2,7 +2,8 @@
 /** Hourly Mac release cycle: verified draft staging, then hardware-gated ZIP. */
 import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { executeNativePreflight } from './mac-native-candidate.mjs';
 import { packageNativeXcode } from './package-verified-native.mjs';
