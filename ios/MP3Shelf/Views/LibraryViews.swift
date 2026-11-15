@@ -43,38 +43,52 @@ struct LibraryView: View {
     // Recently added artwork must observe the same missing-file safety rule
     // as a normal library row. Never perform coordinated file I/O on the UI actor.
     private func playRecentRecording(_ track: MusicTrack) {
-        guard recentPlaybackCheck == nil else { return }
+        guard scenePhase == .active, recentPlaybackCheck == nil else { return }
         recentPlaybackCheck = track.id
-        let url = library.fileURL(for: track)
+        missingRecentRecording = false
+        // Snapshot the visible queue and URLs before leaving the UI actor.
+        // A missing neighbor must not be queued behind an otherwise playable song.
+        let recent = recentlyAdded
+        let locations = recent.map { ($0.id, library.fileURL(for: $0)) }
         recentPlaybackTask = Task {
-            let scan = Task.detached(priority: .userInitiated) { () -> Bool in
-                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                      values.isRegularFile == true, let size = values.fileSize else { return false }
-                return size > 0
+            let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
+                var available = Set<UUID>()
+                for (id, url) in locations {
+                    if Task.isCancelled { break }
+                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                          values.isRegularFile == true, let size = values.fileSize,
+                          size > 0 else { continue }
+                    available.insert(id)
+                }
+                return available
             }
-            let available = await withTaskCancellationHandler {
+            let availableIDs = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, scenePhase == .active else { return }
             recentPlaybackCheck = nil
             recentPlaybackTask = nil
-            guard available else {
+            // Do not play a stale queue after a library edit or import while scanning.
+            guard recentlyAdded.map(\.id) == recent.map(\.id) else {
                 missingRecentRecording = true
                 return
             }
-            // The library may have changed while filesystem validation ran.
-            guard let currentTrack = library.tracks.first(where: { $0.id == track.id }),
-                  library.fileURL(for: currentTrack) == url else {
+            let currentTracks = Dictionary(uniqueKeysWithValues: library.tracks.map { ($0.id, $0) })
+            let scannedURLs = Dictionary(uniqueKeysWithValues: locations)
+            let queue = recent.compactMap { song -> MusicTrack? in
+                guard availableIDs.contains(song.id),
+                      let current = currentTracks[song.id],
+                      let originalURL = scannedURLs[song.id],
+                      library.fileURL(for: current) == originalURL else { return nil }
+                return current
+            }
+            guard let selected = queue.first(where: { $0.id == track.id }) else {
                 missingRecentRecording = true
                 return
             }
-            // Rebuild the queue from current library objects; never reintroduce
-            // a deleted track from the captured Recently Added snapshot.
-            let currentIDs = Set(library.tracks.map(\.id))
-            let currentQueue = recentlyAdded.filter { currentIDs.contains($0.id) }
-            playback.play(currentTrack, queue: currentQueue)
+            playback.play(selected, queue: queue)
         }
     }
 
