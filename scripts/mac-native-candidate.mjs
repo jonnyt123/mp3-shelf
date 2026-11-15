@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Transform } from 'node:stream';
 import { buildLocalReceipt } from './local-evidence.mjs';
 import { checkNativeStage } from './verify-native-stage.mjs';
+import { diagnoseNativeLog, readNativeLogTail, clearIsolatedDerivedData } from './native-build-diagnostics.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 export const BASE_REF = 'refs/heads/feat/ios-consolidated-candidate';
@@ -234,6 +235,60 @@ export function runLogged(command, args, cwd, logPath, { timeoutMs = MAX_NATIVE_
     });
   });
 }
+/**
+ * Every attempt executes the ENTIRE native runner. Only a narrowly recognized
+ * generated-cache or transient Xcode build-service failure gets one retry.
+ * Source/compiler failures are evidence for agents to repair in Git, not
+ * permission to rewrite user code in an unattended Mac LaunchAgent.
+ */
+export async function runNativeWithBoundedRecovery({
+  cwd, output, run = runLogged,
+  inspect = readNativeLogTail, resetGenerated = clearIsolatedDerivedData
+}) {
+  const firstLog = join(output, 'native-console.log');
+  const diagnosisFile = join(output, 'native-diagnosis.json');
+  const diagnosis = {
+    schema: 'mp3shelf-build-diagnosis-v1',
+    firstAttempt: 'RUNNING', category: 'none',
+    repair: 'none', retryCount: 0, finalStatus: 'BLOCKED'
+  };
+  try {
+    try {
+      await run('bash', ['ios/scripts/verify-local-release.sh'], cwd, firstLog);
+      diagnosis.firstAttempt = 'PASS';
+      diagnosis.finalStatus = 'NATIVE_RUNNER_EXIT_ZERO';
+      return;
+    } catch (error) {
+      diagnosis.firstAttempt = 'FAIL';
+      let classified;
+      try { classified = diagnoseNativeLog(inspect(firstLog)); }
+      catch { classified = { category: 'unavailable', retryable: false, repair: 'none' }; }
+      diagnosis.category = classified.category;
+      diagnosis.repair = classified.repair;
+      if (!classified.retryable) {
+        throw Error('Native compilation blocked (' + classified.category +
+          '); source changes require a reviewed Git commit. ' + error.message);
+      }
+      // This worktree is disposable, but the user checkout and global Xcode
+      // cache never are. Delete only an isolated DerivedData directory.
+      if (classified.repair === 'clear-isolated-derived-data')
+        resetGenerated(cwd);
+      diagnosis.retryCount = 1;
+      try {
+        await run('bash', ['ios/scripts/verify-local-release.sh'], cwd,
+          join(output, 'native-console-retry.log'));
+        diagnosis.finalStatus = 'NATIVE_RUNNER_EXIT_ZERO_AFTER_SAFE_RETRY';
+      } catch (retryError) {
+        throw Error('Bounded native retry failed (' + classified.category +
+          '): ' + retryError.message);
+      }
+    }
+  } finally {
+    writeFileSync(diagnosisFile, JSON.stringify(diagnosis, null, 2) + '\n',
+      { flag: 'wx', mode: 0o600 });
+  }
+}
+
 async function hashFile(path) {
   const file = readFileSync(path);
   return createHash('sha256').update(file).digest('hex');
@@ -302,8 +357,7 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
     git(project, 'worktree', 'add', '--detach', worktree, proposed);
     installedWorktree = true;
     assertWorktreeClean(worktree, proposed);
-    const consoleLog = join(output, 'native-console.log');
-    await runLogged('bash', ['ios/scripts/verify-local-release.sh'], worktree, consoleLog);
+    await runNativeWithBoundedRecovery({ cwd: worktree, output });
     const qaPath = join(worktree, 'ios', 'build', 'local-release', 'QA_RECORD.md');
     if (statSync(qaPath).size > 256 * 1024) throw Error('Native QA record exceeds size limit.');
     const preservedQA = join(output, 'native-QA_RECORD.md');
