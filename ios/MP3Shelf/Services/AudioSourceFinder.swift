@@ -1445,6 +1445,16 @@ enum AutomaticWebAudioFinder {
         return wish.durationSeconds.map { abs($0 - seconds) <= 4 } ?? true
     }
 
+    // A matching title/artist is not sufficient to identify the exact recording.
+    // Require at least one duration claim when Spotify supplies a duration, and
+    // reject conflicting claims even if another claim happens to match.
+    static func recordingDurationEvidenceMatches(
+        recording: Any?, audio: Any?, wish: PlaylistWish
+    ) -> Bool {
+        guard recording != nil || audio != nil || wish.durationSeconds == nil else { return false }
+        return durationMatches(recording, wish: wish) && durationMatches(audio, wish: wish)
+    }
+
     static func matches(in html: String, pageURL: URL,
                         wish: PlaylistWish) -> [AudioCatalogMatch] {
         guard automaticURL(pageURL) != nil, html.utf8.count <= 1_000_000 else { return [] }
@@ -1505,7 +1515,7 @@ enum AutomaticWebAudioFinder {
                   let title = node["name"] as? String,
                   names(node["byArtist"] ?? node["creator"]).contains(where: {
                     AudioSourceFinder.exactMetadataMatch(title: title, creator: $0, wish: wish)
-                  }), durationMatches(node["duration"], wish: wish) else { continue }
+                  }) else { continue }
             var media: [Any] = kind.contains("audioobject") ? [node] : []
             for key in ["audio", "associatedMedia", "encoding"] {
                 if let array = node[key] as? [Any] { media.append(contentsOf: array) }
@@ -1515,7 +1525,8 @@ enum AutomaticWebAudioFinder {
                 guard let rawAudio = value as? [String: Any] else { continue }
                 let audio = resolved(rawAudio)
                 guard !types(audio).contains("videoobject"),
-                      durationMatches(audio["duration"], wish: wish),
+                      recordingDurationEvidenceMatches(recording: node["duration"],
+                                                       audio: audio["duration"], wish: wish),
                       let url = audio["contentUrl"] as? String else { continue }
                 if let title = audio["name"] as? String,
                    MusicMatching.key(title) != MusicMatching.key(wish.title) { continue }
