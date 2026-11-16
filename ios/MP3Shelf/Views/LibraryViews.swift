@@ -135,6 +135,14 @@ struct LibraryView: View {
         return index
     }
 
+    private func cancelRecentPlaybackPreparation() {
+        guard recentPlaybackCheck != nil else { return }
+        recentPlaybackTask?.cancel()
+        recentPlaybackTask = nil
+        recentPlaybackCheck = nil
+        recentPlaybackNotice = "Playback preparation cancelled. Your saved recordings were not changed."
+    }
+
     private func retryRecentRecording() {
         guard let selection = recentRetrySelection,
               let current = recentlyAdded.first(where: {
@@ -650,8 +658,18 @@ struct LibraryView: View {
                             }
                             .scrollIndicators(.hidden)
                             if recentPlaybackCheck != nil {
-                                ProgressView("Checking local recordings…")
-                                    .accessibilityLabel("Checking Recently Added for offline playback")
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ProgressView("Checking local recordings…")
+                                        .accessibilityLabel("Checking Recently Added for offline playback")
+                                    Button {
+                                        cancelRecentPlaybackPreparation()
+                                    } label: {
+                                        Label("Cancel Recently Added playback", systemImage: "xmark.circle")
+                                            .frame(minHeight: 44, alignment: .leading)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityHint("Stop checking local files without deleting or changing any saved music")
+                                }
                             }
                             if let recentPlaybackNotice {
                                 Text(recentPlaybackNotice)
@@ -740,18 +758,14 @@ struct LibraryView: View {
             Text("The selected recording is unavailable or the Recently Added queue changed. Your library entry is preserved. Retry after restoring the recording.")
         }
         .onDisappear {
-            recentPlaybackTask?.cancel()
-            recentPlaybackTask = nil
-            recentPlaybackCheck = nil
+            cancelRecentPlaybackPreparation()
             bulkPlaybackTask?.cancel()
             bulkPlaybackTask = nil
             bulkPlaybackPending = false
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
-            recentPlaybackTask?.cancel()
-            recentPlaybackTask = nil
-            recentPlaybackCheck = nil
+            cancelRecentPlaybackPreparation()
             bulkPlaybackTask?.cancel()
             bulkPlaybackTask = nil
             bulkPlaybackPending = false
