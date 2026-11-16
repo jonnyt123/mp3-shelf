@@ -50,6 +50,8 @@ struct LibraryView: View {
     @State private var bulkPlaybackPending = false
     @State private var bulkPlaybackNotice: String?
     @State private var bulkPlaybackTask: Task<Void, Never>?
+    // An older scan must never clear a newer request's busy state or feedback.
+    @State private var bulkPlaybackGeneration: UUID?
     // Keep the user's original Play/Shuffle intent for a safe, explicit retry.
     @State private var bulkRetryShuffle: Bool?
 
@@ -168,6 +170,7 @@ struct LibraryView: View {
     // Background/navigation cancellation must not leave a stale retry affordance.
     private func cancelBulkPlaybackPreparation(showFeedback: Bool) {
         guard bulkPlaybackPending else { return }
+        bulkPlaybackGeneration = nil
         bulkPlaybackTask?.cancel()
         bulkPlaybackTask = nil
         bulkPlaybackPending = false
@@ -405,6 +408,8 @@ struct LibraryView: View {
         let requestedFavorites = favoritesOnly
         let requestedSort = sortMode
         let locations = songs.map { ($0.id, library.fileURL(for: $0)) }
+        let generation = UUID()
+        bulkPlaybackGeneration = generation
         bulkPlaybackNotice = nil
         bulkRetryShuffle = shuffled
         bulkPlaybackPending = true
@@ -431,7 +436,9 @@ struct LibraryView: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled, scenePhase == .active else { return }
+            guard !Task.isCancelled, scenePhase == .active,
+                  bulkPlaybackGeneration == generation else { return }
+            bulkPlaybackGeneration = nil
             bulkPlaybackPending = false
             bulkPlaybackTask = nil
             guard !isSearchUpdating,
