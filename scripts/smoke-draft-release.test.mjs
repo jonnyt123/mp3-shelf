@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { smokePreflight, verifiedDraftUpload, runDraftSmoke }
+import { smokePreflight, workflowMayRunOnDraftTag, verifiedDraftUpload, runDraftSmoke }
   from './smoke-draft-release.mjs';
 const sha='a'.repeat(40),tag='mp3shelf-upload-smoke-'+sha.slice(0,12)+'-1730000000000-abcdef';
 const zip='mp3shelf-draft-smoke-aaaaaaaaaaaa.zip';
@@ -53,4 +53,21 @@ test('remote live smoke never starts by default or from non-Mac host',async()=>{
  await assert.rejects(runDraftSmoke({platform:'linux',allowLive:true}),/MAC_AND_GH_REQUIRED/);
  if(process.platform!=='darwin')
    await assert.rejects(runDraftSmoke({allowLive:false}),/MAC_AND_GH_REQUIRED/);
+});
+
+test('quoted, inline, aliased or missing workflow triggers block remote draft smoke',()=>{
+ for(const workflow of [
+   'on:\n  "push":\n    tags: ["*"]\n',
+   "'on':\n  'release':\n    types: [created]\n",
+   'on: ["push", "pull_request"]\n',
+   'on: { "create": { } }\n',
+   'on: *shared_events\n',
+   'on:\n  <<: *events\n',
+   'name: missing-trigger\njobs:\n  test:\n    runs-on: ubuntu-latest\n'
+ ]) assert.equal(workflowMayRunOnDraftTag(workflow),true,workflow);
+ for(const workflow of [
+   'on:\n  pull_request:\n    branches: [main]\n',
+   '"on": [workflow_dispatch, pull_request]\n',
+   'on: workflow_dispatch\n'
+ ]) assert.equal(workflowMayRunOnDraftTag(workflow),false,workflow);
 });
