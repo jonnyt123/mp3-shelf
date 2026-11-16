@@ -138,10 +138,13 @@ struct LibraryView: View {
     }
 
     private func cancelRecentPlaybackPreparation(showFeedback: Bool) {
-        guard recentPlaybackCheck != nil else { return }
-        recentPlaybackTask?.cancel()
-        recentPlaybackTask = nil
-        recentPlaybackCheck = nil
+        if recentPlaybackCheck != nil {
+            recentPlaybackTask?.cancel()
+            recentPlaybackTask = nil
+            recentPlaybackCheck = nil
+        } else if showFeedback {
+            return
+        }
         if showFeedback {
             recentPlaybackNotice = "Playback preparation cancelled. Your saved recordings were not changed."
         } else {
