@@ -268,6 +268,14 @@ final class PlaybackController: NSObject, ObservableObject {
             if failedTrackID != nil { retryFailedPlayback() }
             return
         }
+        // A decode-error delegate leaves the old AVAudioPlayer allocated but
+        // unusable. Reopen the recording on retry so a repaired/reimported file
+        // is actually read. A failed manual selection is different: its ID is
+        // not the current track, and Resume must preserve the paused source.
+        if !isPlaying, failedTrackID == currentTrackID, failedTrackID != nil {
+            retryFailedPlayback()
+            return
+        }
         do {
             try activateAudio()
             guard audioPlayer.play() else { throw CocoaError(.fileReadCorruptFile) }
