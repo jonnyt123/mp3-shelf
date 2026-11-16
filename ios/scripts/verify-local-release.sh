@@ -149,11 +149,13 @@ run_suite() {
     [[ "$source" == ios/MP3Shelf/Models/MusicModels.swift ]] && has_models=1
     [[ "$source" == ios/MP3Shelf/Services/PortableShelfArchive.swift ]] && has_archive=1
   done
-  local -a dependencies=()
+  # sources is never empty, avoiding unbound-array behavior in macOS Bash 3.2
+  # with set -u while retaining the exact original argument ordering.
+  local -a sources=("$@")
   if [[ "$has_models" == 1 && "$has_archive" == 0 ]]; then
-    dependencies=(ios/MP3Shelf/Services/PortableShelfArchive.swift)
+    sources+=(ios/MP3Shelf/Services/PortableShelfArchive.swift)
   fi
-  swiftc "$@" "${dependencies[@]}" -o "$RUN_OUT/$name" 2>&1 | tee "$RUN_OUT/$name-compile.log"
+  swiftc "${sources[@]}" -o "$RUN_OUT/$name" 2>&1 | tee "$RUN_OUT/$name-compile.log"
   run_step "$name" "$RUN_OUT/$name"
 }
 
