@@ -51,6 +51,7 @@ export function releaseAssetsMatch(release, zipName, zipHash, manifestName, mani
     return false;
   const expected = new Map([[zipName, zipHash], [manifestName, manifestHash]]);
   return release.assets.every(asset => expected.has(asset.name) &&
+    asset.state === 'uploaded' && Number.isSafeInteger(asset.size) && asset.size > 0 &&
     asset.digest === 'sha256:' + expected.get(asset.name) && expected.delete(asset.name)) &&
     expected.size === 0;
 }
@@ -65,6 +66,7 @@ export function missingDraftAssets(release, zipName, zipHash, manifestName, mani
   const seen = new Set();
   for (const asset of release.assets) {
     if (!expected.has(asset?.name) || seen.has(asset.name) ||
+        asset.state !== 'uploaded' || !Number.isSafeInteger(asset.size) || asset.size < 1 ||
         asset.digest !== 'sha256:' + expected.get(asset.name))
       throw Error('Existing draft contains an unexpected, duplicate or corrupted asset.');
     seen.add(asset.name);
