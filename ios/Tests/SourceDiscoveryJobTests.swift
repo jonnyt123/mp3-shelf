@@ -643,6 +643,28 @@ enum SourceDiscoveryJobTests {
             BackgroundTransferProgressPolicy.shouldPublish(
                 received: 250, total: -1, previousReceived: 50_000),
             "finished downloads and restarted transfers always refresh progress")
+        // Restored progress may be corrupt, and URLSession reports unknown
+        // sizes as negative. Neither case may trap through Int64 subtraction.
+        verifyDiscovery(BackgroundTransferProgressPolicy.shouldPublish(
+            received: 0, total: -1, previousReceived: Int64.min) &&
+            BackgroundTransferProgressPolicy.shouldPublish(
+                received: Int64.max, total: -1, previousReceived: 0) &&
+            BackgroundTransferProgressPolicy.shouldPublish(
+                received: 10, total: -1, previousReceived: -1),
+            "corrupt negative and extreme restored progress safely refreshes the UI")
+        verifyDiscovery(!BackgroundTransferProgressPolicy.shouldPublish(
+            received: Int64.max, total: -1, previousReceived: Int64.max - 1) &&
+            !BackgroundTransferProgressPolicy.shouldPublish(
+                received: 1024, total: -1, previousReceived: 1024) &&
+            !BackgroundTransferProgressPolicy.shouldPublish(
+                received: -1, total: -1, previousReceived: 0),
+            "tiny extreme increments, unchanged counts and invalid bytes do not publish")
+        verifyDiscovery(BackgroundTransferProgressPolicy.shouldPublish(
+            received: BackgroundTransferProgressPolicy.minimumUpdateBytes,
+            total: -1, previousReceived: 0) &&
+            BackgroundTransferProgressPolicy.shouldPublish(
+                received: 1024, total: 1024, previousReceived: 1000),
+            "threshold and final completion remain observable after overflow hardening")
         verifyDiscovery(BackgroundTransferRetryPolicy.delay(afterFailure: 1) == 45,
                         "first interrupted background transfer is delayed")
         verifyDiscovery(BackgroundTransferRetryPolicy.delay(afterFailure: 2) == 150 &&
