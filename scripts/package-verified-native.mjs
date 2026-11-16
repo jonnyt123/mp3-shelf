@@ -131,12 +131,20 @@ async function githubJSON(url) {
 // truncated pagination, malformed pages, or a repository that changes mid-read.
 export async function fetchAllIssueComments(url, read = githubJSON, maxPages = 20) {
   const all = [];
+  const seenIds = new Set();
   for (let page = 1; page <= maxPages; page++) {
     const separator = url.includes('?') ? '&' : '?';
     const records = await read(url + separator + 'per_page=100&page=' + page);
     if (!Array.isArray(records) || records.length > 100)
       throw Error('Malformed GitHub hardware approval comment page.');
-    all.push(...records);
+    for (const record of records) {
+      if (!Number.isSafeInteger(record?.id) || record.id < 0 ||
+          seenIds.has(record.id) || typeof record.body !== 'string' ||
+          typeof record.user?.login !== 'string')
+        throw Error('Malformed or repeated GitHub hardware approval comment.');
+      seenIds.add(record.id);
+      all.push(record);
+    }
     if (records.length < 100) return all;
   }
   throw Error('Hardware approval comment history exceeds bounded pagination.');
