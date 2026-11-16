@@ -16,6 +16,7 @@ import { buildLocalReceipt } from './local-evidence.mjs';
 import { checkNativeStage } from './verify-native-stage.mjs';
 import { diagnoseNativeLog, readNativeLogTail, clearIsolatedDerivedData } from './native-build-diagnostics.mjs';
 import { publishCompilerHandoff } from './publish-native-compiler-handoff.mjs';
+import { preserveNativeFailure } from './preserve-native-failure.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 export const BASE_REF = 'refs/heads/feat/ios-consolidated-candidate';
@@ -362,6 +363,18 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
     try {
       await runNativeWithBoundedRecovery({ cwd: worktree, output });
     } catch (error) {
+      // Save each failing native QA_RECORD and suite/compiler log before the
+      // detached worktree is removed. Errors copying evidence cannot conceal
+      // the original compiler/build failure or authorize promotion.
+      try {
+        preserveNativeFailure({ worktree, output, sourceSHA: proposed });
+      } catch (snapshotError) {
+        try {
+          writeFileSync(join(output, 'native-failure-snapshot-error.json'),
+            JSON.stringify({ status: 'UNVERIFIED', type: snapshotError.code ?? 'CAPTURE_ERROR' }) + '\n',
+            { flag: 'wx', mode: 0o600 });
+        } catch { /* Preserve original failing native command status. */ }
+      }
       // A Swift compiler error needs a reviewed source commit, not an unsafe
       // unattended rewrite. Publish only sanitized line/category diagnostics.
       try {
