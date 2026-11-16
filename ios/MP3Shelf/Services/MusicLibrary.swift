@@ -634,16 +634,25 @@ final class MusicLibrary: ObservableObject {
                         try PortableShelfArchive.verifyStagedAudio(
                             file, part: archived.audio, from: archive)
                         try Task.checkCancellation()
-                        if !tracks.contains(where: {
+                        // A concurrent writer may have claimed the portable ID
+                        // after the initial identity-owner check. A verified
+                        // same-byte duplicate is not a successful restore unless
+                        // its identity is either already correct or durably bound.
+                        guard !tracks.contains(where: {
                             $0.id != tracks[index].id &&
                             ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
-                        }) {
-                            if tracks[index].portableBackupID == nil {
-                                var updatedTracks = tracks
-                                updatedTracks[index].portableBackupID = archived.id
-                                try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
-                                tracks = updatedTracks
+                        }) else {
+                            throw PortableShelfArchive.ArchiveError.invalidManifest
+                        }
+                        if let assignedID = tracks[index].portableBackupID {
+                            guard assignedID == archived.id else {
+                                throw PortableShelfArchive.ArchiveError.invalidManifest
                             }
+                        } else if tracks[index].id.uuidString != archived.id {
+                            var updatedTracks = tracks
+                            updatedTracks[index].portableBackupID = archived.id
+                            try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
+                            tracks = updatedTracks
                         }
                         try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
                         restoredIDs[archived.id] = tracks[index].id
@@ -673,14 +682,17 @@ final class MusicLibrary: ObservableObject {
                 // Keep archive metadata private until its catalog write succeeds.
                 // Published tracks must never expose references to uncommitted sidecars.
                 var restoredTrack = tracks[index]
-                // If the archived identifier belongs to a different local
-                // recording, keep this song's new UUID as its export identity.
-                if !tracks.contains(where: {
+                // An identity conflict discovered after audio publication must
+                // not produce a successful restore or playlist membership under
+                // a newly invented export identity. Keep the audio intact for a
+                // subsequent retry after the conflicting catalog entry is fixed.
+                guard !tracks.contains(where: {
                     $0.id != tracks[index].id &&
-                            ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
-                }) {
-                    restoredTrack.portableBackupID = archived.id
+                    ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
+                }) else {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
                 }
+                restoredTrack.portableBackupID = archived.id
                 restoredTrack.title = archived.name
                 if let artist = archived.artist { restoredTrack.artist = artist }
                 if let album = archived.album { restoredTrack.album = album }
