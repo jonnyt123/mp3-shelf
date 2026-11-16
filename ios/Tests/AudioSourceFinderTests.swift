@@ -10,6 +10,35 @@ enum AudioSourceFinderTests {
     static func main() throws {
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        // Archive may contain one broken file entry among usable recordings.
+        // Preserve the valid original instead of discarding the whole item.
+        let mixedArchive = #"""
+        {"metadata":{"title":"The Song","creator":"The Artist"},"files":[
+          {"name":17,"source":"original","length":"212"},
+          {"name":"The Song.mp3","source":"original","size":"3500000","length":"3:32"},
+          null,
+          {"source":"original","length":"212"}
+        ]}
+        """#.data(using: .utf8)!
+        let decodedMixed = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                                    from: mixedArchive)
+        verify(decodedMixed.files?.count == 1 &&
+               decodedMixed.files?.first?.name == "The Song.mp3",
+               "malformed Archive file entries do not discard valid siblings")
+        verify(AudioSourceFinder.archiveCandidate(decodedMixed, identifier: "mixed_archive",
+                                                 for: wish) != nil,
+               "valid exact-duration original remains discoverable beside corrupt entries")
+        let onlyBroken = #"""
+        {"metadata":{"title":"The Song","creator":"The Artist"},"files":[
+          {"name":17,"source":"original"},null,{"source":"original"}
+        ]}
+        """#.data(using: .utf8)!
+        let decodedBroken = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                                     from: onlyBroken)
+        verify(decodedBroken.files?.isEmpty == true &&
+               AudioSourceFinder.archiveCandidate(decodedBroken, identifier: "broken_archive",
+                                                  for: wish) == nil,
+               "corrupt-only Archive items never become automatic downloads")
         let fallbackRequest = WebAudioSearch.searchRequest(
             query: "The Artist The Song", apiKey: "test-token", allowsCellular: false)
         verify(!fallbackRequest.allowsCellularAccess &&
