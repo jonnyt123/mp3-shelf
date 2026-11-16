@@ -41,7 +41,12 @@ func load() throws -> Snapshot {
     // Reject ambiguous or escaping destinations before any replay operation.
     // A corrupt journal must not turn an unrelated file into a ticket's audio.
     let names = value.entries.map(\.filename)
+    let canonicalNames = names.map {
+        $0.precomposedStringWithCanonicalMapping.folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+    }
+    // Portable destinations can alias across Unicode normalization and case folding.
     guard Set(ids).count == ids.count, Set(names).count == names.count,
+          Set(canonicalNames).count == canonicalNames.count,
           value.entries.allSatisfy({ entry in
               !entry.id.isEmpty && !entry.filename.isEmpty &&
               entry.filename != "." && entry.filename != ".." &&
@@ -145,6 +150,12 @@ let invalidSnapshots: [Snapshot] = [
                        Entry(id: "second", state: .pending, filename: "song.mp3")], receipts: []),
     Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3"),
                        Entry(id: "ticket", state: .pending, filename: "second.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "Song.mp3"),
+                       Entry(id: "second", state: .pending, filename: "song.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "café.mp3"),
+                       Entry(id: "second", state: .pending, filename: "cafe\u{301}.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "MUSIC.mp3"),
+                       Entry(id: "second", state: .pending, filename: "music.mp3")], receipts: []),
     Snapshot(entries: [Entry(id: "", state: .pending, filename: "song.mp3")], receipts: []),
     Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "other.mp3")], receipts: []),
     Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3\\n")], receipts: []),
