@@ -47,6 +47,7 @@ struct LibraryView: View {
     @State private var recentPlaybackNotice: String?
     @State private var recentRetrySelection: (id: UUID, url: URL)?
     @State private var bulkPlaybackPending = false
+    @State private var bulkPlaybackNotice: String?
     @State private var bulkPlaybackTask: Task<Void, Never>?
 
     // Recently added artwork must observe the same missing-file safety rule
@@ -307,6 +308,35 @@ struct LibraryView: View {
         }
     }
 
+    private var bulkPlaybackFeedback: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if bulkPlaybackPending {
+                HStack(spacing: 12) {
+                    ProgressView().accessibilityHidden(true)
+                    Text("Checking recordings stored on this iPhone…")
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                Button("Cancel playback preparation", systemImage: "xmark.circle") {
+                    bulkPlaybackTask?.cancel()
+                    bulkPlaybackTask = nil
+                    bulkPlaybackPending = false
+                }
+                .frame(minHeight: 44, alignment: .leading)
+                .accessibilityHint("Stops checking local files without changing your music library")
+            }
+            if let bulkPlaybackNotice {
+                Text(bulkPlaybackNotice)
+                    .font(.footnote)
+                    .foregroundStyle(ShelfTheme.subdued)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // Validate the whole playback queue off the main actor. A missing local
     // recording must not be selected by Play results or Shuffle results.
     private func playDisplayed(shuffled: Bool) {
@@ -320,6 +350,7 @@ struct LibraryView: View {
         let requestedSort = sortMode
         let locations = songs.map { ($0.id, library.fileURL(for: $0)) }
         message = nil
+        bulkPlaybackNotice = nil
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
             // Keep one availability result per visible occurrence. An ID set can
@@ -380,7 +411,7 @@ struct LibraryView: View {
             playback.play(first, queue: queue)
             let skipped = songs.count - queue.count
             if skipped > 0 {
-                message = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
+                bulkPlaybackNotice = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
             }
         }
     }
@@ -409,6 +440,7 @@ struct LibraryView: View {
                         }
                         filterControls
                         browsingPlaybackControls(hasResults: !visibleTracks.isEmpty)
+                        bulkPlaybackFeedback
                         if isSearchUpdating {
                             ProgressView("Searching songs…")
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -650,6 +682,7 @@ struct LibraryView: View {
                             }
                         }
                         browsingPlaybackControls(hasResults: !visibleTracks.isEmpty)
+                        bulkPlaybackFeedback
                         if visibleTracks.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 EmptyShelfView(
