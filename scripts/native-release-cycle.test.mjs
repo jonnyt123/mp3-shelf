@@ -193,3 +193,33 @@ test('symlinked DeviceAcceptance ancestor cannot authorize packaging', async () 
     assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
+
+test('newest incomplete native run blocks stale complete receipt fallback', async () => {
+  const f = fixture();
+  try {
+    const newer = join(f.home, 'Library/Logs/MP3Shelf/NativePreflight', sha, '2026-11-16T120000Z');
+    mkdirSync(newer);
+    writeFileSync(join(newer, 'native-baseline.json'), '{}');
+    const root = join(f.home, 'Library/Logs/MP3Shelf/NativePreflight');
+    assert.equal(selectNativeEvidence(root, sha), null);
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => { throw Error('older complete receipt must not package'); }
+    });
+    assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('newest redirected native run blocks stale complete receipt fallback', () => {
+  const f = fixture();
+  try {
+    const newer = join(f.home, 'Library/Logs/MP3Shelf/NativePreflight', sha, '2026-11-16T120000Z');
+    const outside = join(f.home, 'external-receipt');
+    mkdirSync(outside);
+    symlinkSync(outside, newer, 'dir');
+    const root = join(f.home, 'Library/Logs/MP3Shelf/NativePreflight');
+    assert.equal(selectNativeEvidence(root, sha), null);
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
