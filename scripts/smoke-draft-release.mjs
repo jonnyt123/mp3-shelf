@@ -10,15 +10,35 @@ const REPO='jonnyt123/mp3-shelf', SHA=/^[0-9a-f]{40}$/;
 const TAG=/^mp3shelf-upload-smoke-[0-9a-f]{12}-[0-9]{13}-[0-9a-f]{6}$/;
 const digest=b=>createHash('sha256').update(b).digest('hex');
 
+// Treat unknown trigger syntax as unsafe: a draft/tag can consume Actions minutes.
+export function workflowMayRunOnDraftTag(content) {
+ if (typeof content !== 'string') return true;
+ let inTriggers = false, found = false;
+ for (const original of content.split(/\r?\n/)) {
+   const line = original.replace(/\s+#.*$/, '');
+   if (!line.trim() || /^\s*#/.test(line)) continue;
+   if (!/^\s/.test(line)) {
+     inTriggers = false;
+     const match = line.match(/^(?:on|["']on["'])\s*:\s*(.*)$/);
+     if (!match) continue;
+     found = inTriggers = true;
+     const value = match[1].trim();
+     if (value && (!/^(?:\[.*\]|\{.*\}|["']?[\w-]+["']?)$/.test(value) ||
+       /\b(?:push|release|create)\b/i.test(value))) return true;
+     continue;
+   }
+   if (inTriggers && /\b(?:push|release|create)\b/i.test(line)) return true;
+   if (inTriggers && /(?:\*\w+|<<\s*:|!\w+)/.test(line)) return true;
+ }
+ return !found;
+}
+
 export function smokePreflight({ tag, sha, existing, workflows }){
  const issues=[];
  if(!SHA.test(sha??'') || !TAG.test(tag??'') || !tag.includes(sha?.slice(0,12)??''))
    issues.push('Use a unique dedicated smoke namespace bound to an exact commit.');
  if(existing !== null) issues.push('Smoke tag or release already exists; refuse overwrite.');
- if(!Array.isArray(workflows) ||
-     workflows.some(content=>typeof content!=='string' ||
-       /(?:^|\n)\s*(?:push|release|create):/m.test(content) ||
-       /(?:^|\n)\s*on\s*:\s*(?:\[[^\]]*(?:push|release|create)|\{[^}]*(?:push|release|create)|(?:push|release|create)\s*(?:#|$))/m.test(content)))
+ if(!Array.isArray(workflows) || workflows.some(workflowMayRunOnDraftTag))
    issues.push('Workflows may trigger paid tag/release Actions; refuse remote smoke.');
  return issues;
 }
