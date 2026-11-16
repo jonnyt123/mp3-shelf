@@ -140,7 +140,20 @@ run_suite() {
   local name="$1"; shift
   echo "==> Compiling $name"
   FAILURE_REASON="Compile $name failed (see $RUN_OUT/$name-compile.log)"
-  swiftc "$@" -o "$RUN_OUT/$name" 2>&1 | tee "$RUN_OUT/$name-compile.log"
+  # MusicModels.swift contains durable recovery types that depend on
+  # PortableShelfArchive. Standalone swiftc suites do not get Xcode's
+  # automatic source discovery, even though the full app builds.
+  # Include the real dependency exactly once for every affected fixture.
+  local has_models=0 has_archive=0 source
+  for source in "$@"; do
+    [[ "$source" == ios/MP3Shelf/Models/MusicModels.swift ]] && has_models=1
+    [[ "$source" == ios/MP3Shelf/Services/PortableShelfArchive.swift ]] && has_archive=1
+  done
+  local -a dependencies=()
+  if [[ "$has_models" == 1 && "$has_archive" == 0 ]]; then
+    dependencies=(ios/MP3Shelf/Services/PortableShelfArchive.swift)
+  fi
+  swiftc "$@" "${dependencies[@]}" -o "$RUN_OUT/$name" 2>&1 | tee "$RUN_OUT/$name-compile.log"
   run_step "$name" "$RUN_OUT/$name"
 }
 
