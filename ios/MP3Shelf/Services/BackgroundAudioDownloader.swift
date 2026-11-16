@@ -196,6 +196,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func attach(to library: MusicLibrary) {
         self.library = library
+        recoverSharedFollowers()
         activate()
         cancelObsoleteTransfers(in: library)
         updatePending()
@@ -228,6 +229,55 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return AudioSourceFinder.prioritize(
             candidates, successfulProviders: proven.successful,
             failedProviders: proven.failed)
+    }
+
+    /// Resolve follower tickets after a leader is cancelled, fails, or is
+    /// replaced. One follower is promoted to the new leader; siblings are
+    /// redirected in the same durable manifest transaction.
+    private func promoteSharedFollowers(of leaderID: UUID) {
+        let followers = tickets.values.filter {
+            $0.status == .queued && $0.sharedLeaderID == leaderID
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        guard let first = followers.first else { return }
+        if library?.hasOfflineRecording(matching: first.requested) == true {
+            reconcileAlreadyStoredDownloads()
+            return
+        }
+        guard Self.allowedDownloadURL(first.downloadURL) else { return }
+        var promoted = first
+        promoted.sharedLeaderID = nil
+        promoted.startedAt = .now
+        var updated = tickets
+        updated[promoted.id] = promoted
+        for follower in followers.dropFirst() {
+            var redirected = follower
+            redirected.sharedLeaderID = promoted.id
+            updated[follower.id] = redirected
+        }
+        do {
+            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+        } catch {
+            noteQueueWriteFailure(error, for: first.id)
+            return
+        }
+        tickets = updated
+        let task = session.downloadTask(with: downloadRequest(for: promoted.downloadURL,
+                                                               playlistID: promoted.playlistID))
+        task.taskDescription = promoted.id.uuidString
+        task.resume()
+        updatePending()
+    }
+
+    private func recoverSharedFollowers() {
+        let leaders = Set(tickets.values.filter {
+            $0.status == .queued && $0.sharedLeaderID == nil
+        }.map(\.id))
+        let abandoned = Set(tickets.values.compactMap { ticket -> UUID? in
+            guard ticket.status == .queued, let leader = ticket.sharedLeaderID,
+                  !leaders.contains(leader) else { return nil }
+            return leader
+        })
+        for leader in abandoned { promoteSharedFollowers(of: leader) }
     }
 
     /// Coalesce only an exact independently resolved audio URL and recording
@@ -442,6 +492,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return
         }
         tickets = updated
+        promoteSharedFollowers(of: id)
         conversions[id]?.cancel()
         // An active import owns its staged file until its cancellation
         // check finishes; never remove the file underneath conversion.
