@@ -30,6 +30,25 @@ enum AudioSourceFinder {
     struct ArchiveItem: Decodable {
         let metadata: ItemMetadata?
         let files: [ArchiveFile]?
+
+        private enum CodingKeys: String, CodingKey { case metadata, files }
+
+        // One corrupt file entry must not hide a valid recording in the same
+        // Archive item. Each surviving file still passes exact-match and
+        // downloaded-byte validation before it can enter the library.
+        private struct LossyFile: Decodable {
+            let value: ArchiveFile?
+            init(from decoder: Decoder) throws {
+                value = try? ArchiveFile(from: decoder)
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            metadata = try? fields.decode(ItemMetadata.self, forKey: .metadata)
+            files = (try? fields.decode([LossyFile].self, forKey: .files))?
+                .compactMap(\\.value)
+        }
     }
     struct ItemMetadata: Decodable {
         let title: FlexibleText?
