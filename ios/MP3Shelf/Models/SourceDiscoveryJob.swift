@@ -36,7 +36,10 @@ enum AudioDownloadDiagnostics {
         var libraryWriteFailed = false
         // Bound traversal even if an unusual error has cyclic underlying data.
         for _ in 0..<4 {
-            if current.domain == PersistedLibrary.writeFailureDomain { libraryWriteFailed = true }
+            if current.domain == PersistedLibrary.writeFailureDomain ||
+                current.domain == BackgroundTicketManifestPolicy.writeFailureDomain {
+                libraryWriteFailed = true
+            }
             if current.domain == NSCocoaErrorDomain {
                 if current.code == CocoaError.Code.fileWriteOutOfSpace.rawValue {
                     return "Not enough space on this iPhone. Free storage and retry."
