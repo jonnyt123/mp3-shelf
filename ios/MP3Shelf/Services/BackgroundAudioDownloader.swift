@@ -1081,6 +1081,34 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return true
     }
 
+    /// A duplicate callback may reuse already staged *audio*; a directory,
+    /// empty placeholder or symlink is not a completed media transfer.
+    nonisolated static func stagedFileSurvivesMoveFailure(at url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [
+            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey
+        ]), values.isRegularFile == true, values.isSymbolicLink != true,
+            let bytes = values.fileSize, bytes > 0,
+            Int64(bytes) <= BackgroundTransferProgressPolicy.maxBytes else {
+            return false
+        }
+        return true
+    }
+
+    nonisolated static func safeRedirectRequest(_ redirected: URLRequest,
+                                                 original: URLRequest?) -> URLRequest? {
+        guard let destination = redirected.url, allowedDownloadURL(destination) else { return nil }
+        var safe = redirected
+        // Redirect requests cannot grant cellular permission to a Wi-Fi-only
+        // task. Missing restored original metadata is treated conservatively.
+        let cellular = original?.allowsCellularAccess == true && redirected.allowsCellularAccess
+        safe.allowsCellularAccess = cellular
+        safe.allowsExpensiveNetworkAccess = cellular &&
+            original?.allowsExpensiveNetworkAccess == true && redirected.allowsExpensiveNetworkAccess
+        safe.allowsConstrainedNetworkAccess = cellular &&
+            original?.allowsConstrainedNetworkAccess == true && redirected.allowsConstrainedNetworkAccess
+        return safe
+    }
+
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask,
                                 willPerformHTTPRedirection response: HTTPURLResponse,
                                 newRequest request: URLRequest,
@@ -1091,12 +1119,24 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return
         }
         #endif
-        completionHandler(request.url.map { Self.allowedDownloadURL($0) } == true ? request : nil)
+        completionHandler(Self.safeRedirectRequest(request, original: task.originalRequest))
     }
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didFinishDownloadingTo location: URL) {
         guard let id = UUID(uuidString: downloadTask.taskDescription ?? "") else { return }
+        #if DEBUG
+        PhysicalDeviceAudit.recordEvent("download-completion-callback", ticketID: id)
+        #endif
+        // A second daemon completion must not fail or replace audio already
+        // staged by an earlier callback, even if its HTTP response is invalid.
+        if Self.stagedFileSurvivesMoveFailure(at: Self.stagingURL(id)) {
+            Task { @MainActor in
+                guard self.tickets[id]?.status == .queued else { return }
+                await self.recoverStagedDownloads()
+            }
+            return
+        }
         guard let http = downloadTask.response as? HTTPURLResponse,
               http.url.map({ Self.allowedDownloadURL($0) }) == true else {
             Task { @MainActor in self.setFailed(id, reason: "Invalid download response or destination") }
@@ -1143,6 +1183,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // Retain the first complete staged file and let recovery validate it.
             if !FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.moveItem(at: location, to: destination)
+                #if DEBUG
+                PhysicalDeviceAudit.recordEvent("download-audio-staged", ticketID: id)
+                #endif
             }
             Task { @MainActor in
                 // History may have been cleared after cancellation while this
@@ -1188,6 +1231,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask,
                                 didCompleteWithError error: Error?) {
         guard let error, let id = UUID(uuidString: task.taskDescription ?? "") else { return }
+        #if DEBUG
+        PhysicalDeviceAudit.recordEvent("download-error-callback", ticketID: id)
+        #endif
         let systemError = error as NSError
         let shouldRetry = systemError.domain == NSURLErrorDomain &&
             BackgroundTransferRetryPolicy.isTemporaryURLFailure(systemError.code)
@@ -1214,6 +1260,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        #if DEBUG
+        PhysicalDeviceAudit.recordEvent("urlsession-background-events-delivered")
+        #endif
         Task { @MainActor in await self.finishBackgroundEvents() }
     }
 }

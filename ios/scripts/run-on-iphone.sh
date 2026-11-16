@@ -35,6 +35,12 @@ DERIVED="$RUN_DIR/DerivedData"
 APP="$DERIVED/Build/Products/Debug-iphoneos/MP3Shelf.app"
 BUNDLE_OVERRIDE="$(printenv MP3SHELF_BUNDLE_ID 2>/dev/null || true)"
 BUNDLE_ID="${BUNDLE_OVERRIDE:-com.jonnyt.mp3shelf}"
+SOURCE_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ||
+      -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
+  echo "ERROR: Signed iPhone acceptance requires an exact clean Git commit." >&2
+  exit 2
+fi
 mkdir -p "$RUN_DIR"
 STEP=Preflight
 ACTIVE_LOG=""
@@ -58,6 +64,8 @@ finish() {
     echo "- Exit status: $result"
     echo "- Run: $RUN_ID"
     echo "- Source folder: $ROOT"
+    echo "- Checked commit: $SOURCE_SHA"
+    echo "- Signed app executable SHA256: ${SIGNED_BINARY_SHA256:-NOT_VERIFIED}"
     echo "- Signed development build: $BUILD_STATUS"
     echo "- Signature verification: $SIGNATURE_STATUS"
     echo "- Device app installation: $INSTALL_STATUS"
@@ -141,6 +149,14 @@ if [[ ! -d "$APP" || ! -f "$APP/embedded.mobileprovision" ]]; then
 fi
 codesign --verify --deep --strict --verbose=2 "$APP" > "$ACTIVE_LOG" 2>&1
 SIGNATURE_STATUS=PASS
+# The file digest identifies the locally signed executable installed below.
+# It does not independently prove the installed copy's on-device identity.
+if [[ ! -f "$APP/MP3Shelf" || -L "$APP/MP3Shelf" ]]; then
+  echo "ERROR: Signed app executable was not a regular file." >&2
+  exit 4
+fi
+SIGNED_BINARY_SHA256="$(shasum -a 256 "$APP/MP3Shelf" | awk '{print $1}')"
+[[ "$SIGNED_BINARY_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "ERROR: Signed executable hash failed." >&2; exit 4; }
 codesign -dv --verbose=4 "$APP" > "$RUN_DIR/signature-metadata.txt" 2>&1 || true
 if [[ "$MODE" == diagnose ]]; then
   STEP="Diagnostic build complete; installation not requested"

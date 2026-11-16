@@ -86,14 +86,103 @@ enum AudioSourceFinder {
         return request
     }
 
+    /// Retry only transient catalog throttling/outages, with a strict per-request
+    /// delay budget. Never retry authentication failures or malformed payloads.
+    /// A large Retry-After must be surfaced to the durable discovery scheduler,
+    /// not slept through inside a single background processing window.
+    static func catalogRetryDelay(status: Int, retryAfter: String?, attempt: Int) -> TimeInterval? {
+        guard attempt == 0, status == 429 || status == 503 else { return nil }
+        let fallback: TimeInterval = 1.5
+        guard let raw = retryAfter?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return fallback }
+        if let seconds = Double(raw) {
+            return seconds.isFinite && seconds >= 0 && seconds <= 3 ? seconds : nil
+        }
+        // HTTP-date Retry-After values are not bounded by this helper's clock.
+        // Defer those responses instead of accidentally ignoring a long cooldown.
+        return nil
+    }
+
+    /// Shared bounded transport for JSON and RSS catalogs. Keeping ccMixter on
+    /// the same retry path prevents a single 429/503 from silently dropping an
+    /// otherwise eligible playlist recording while other providers recover.
+    /// Catalog payloads must remain on the original HTTPS origin. URLSession
+    /// follows redirects, so inspect the final response before decoding or
+    /// allowing a redirected page to influence automatic source selection.
+    /// Query changes on the same origin are allowed for provider pagination.
+    static func trustedCatalogResponse(requested: URL, final: URL?) -> Bool {
+        guard let final,
+              requested.scheme?.lowercased() == "https",
+              final.scheme?.lowercased() == "https",
+              let requestedHost = requested.host?.lowercased(),
+              !requestedHost.isEmpty,
+              requestedHost == final.host?.lowercased(),
+              requested.user == nil, requested.password == nil,
+              final.user == nil, final.password == nil,
+              requested.port == nil || requested.port == 443,
+              final.port == nil || final.port == 443,
+              final.fragment == nil else { return false }
+        return true
+    }
+
+    // Reject an unsafe redirect *before* URLSession contacts its target.
+    // Checking HTTPURLResponse.url alone is too late: a malicious catalog
+    // redirect may already have reached a different origin or private host.
+    private final class CatalogRedirectGuard: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            guard let original = task.originalRequest?.url,
+                  let target = request.url,
+                  AudioSourceFinder.trustedCatalogResponse(requested: original, final: target)
+            else {
+                completionHandler(nil)
+                return
+            }
+            completionHandler(request)
+        }
+    }
+
+    private static let catalogSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: config, delegate: CatalogRedirectGuard(), delegateQueue: nil)
+    }()
+
+    private static func requestCatalogData(
+        _ url: URL, allowsCellular: Bool = false, maximumBytes: Int
+    ) async throws -> Data {
+        let request = catalogRequest(for: url, allowsCellular: allowsCellular)
+        for attempt in 0...1 {
+            try Task.checkCancellation()
+            let (data, response) = try await catalogSession.data(for: request)
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse,
+                  trustedCatalogResponse(requested: url, final: http.url) else {
+                throw SourceError.invalidResponse
+            }
+            if http.statusCode == 200 {
+                guard !data.isEmpty, data.count <= maximumBytes else {
+                    throw SourceError.invalidResponse
+                }
+                return data
+            }
+            guard let delay = catalogRetryDelay(
+                status: http.statusCode,
+                retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
+                attempt: attempt
+            ) else { throw SourceError.http(http.statusCode) }
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+        throw SourceError.invalidResponse
+    }
+
     private static func requestJSON<T: Decodable>(
         _ url: URL, allowsCellular: Bool = false
     ) async throws -> T {
-        let request = catalogRequest(for: url, allowsCellular: allowsCellular)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
-        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
-        guard data.count < 2_000_000 else { throw SourceError.invalidResponse }
+        let data = try await requestCatalogData(
+            url, allowsCellular: allowsCellular, maximumBytes: 1_999_999)
         return try JSONDecoder().decode(T.self, from: data)
     }
 

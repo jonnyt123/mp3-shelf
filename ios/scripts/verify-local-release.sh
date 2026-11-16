@@ -140,7 +140,22 @@ run_suite() {
   local name="$1"; shift
   echo "==> Compiling $name"
   FAILURE_REASON="Compile $name failed (see $RUN_OUT/$name-compile.log)"
-  swiftc "$@" -o "$RUN_OUT/$name" 2>&1 | tee "$RUN_OUT/$name-compile.log"
+  # MusicModels.swift contains durable recovery types that depend on
+  # PortableShelfArchive. Standalone swiftc suites do not get Xcode's
+  # automatic source discovery, even though the full app builds.
+  # Include the real dependency exactly once for every affected fixture.
+  local has_models=0 has_archive=0 source
+  for source in "$@"; do
+    [[ "$source" == ios/MP3Shelf/Models/MusicModels.swift ]] && has_models=1
+    [[ "$source" == ios/MP3Shelf/Services/PortableShelfArchive.swift ]] && has_archive=1
+  done
+  # sources is never empty, avoiding unbound-array behavior in macOS Bash 3.2
+  # with set -u while retaining the exact original argument ordering.
+  local -a sources=("$@")
+  if [[ "$has_models" == 1 && "$has_archive" == 0 ]]; then
+    sources+=(ios/MP3Shelf/Services/PortableShelfArchive.swift)
+  fi
+  swiftc "${sources[@]}" -o "$RUN_OUT/$name" 2>&1 | tee "$RUN_OUT/$name-compile.log"
   run_step "$name" "$RUN_OUT/$name"
 }
 
@@ -169,6 +184,20 @@ if [[ "$MODE" != builds ]]; then
     ios/MP3Shelf/Services/PlaylistCSV.swift \
     ios/MP3Shelf/Services/AudioSourceFinder.swift \
     ios/Tests/AudioSourceFinderTests.swift
+  run_suite catalog-retry-policy \
+    ios/MP3Shelf/Models/MusicModels.swift \
+    ios/MP3Shelf/Services/PlaylistCSV.swift \
+    ios/MP3Shelf/Services/AudioSourceFinder.swift \
+    ios/Tests/AudioCatalogRetryPolicyTests.swift
+  run_suite catalog-origin-safety \
+    ios/MP3Shelf/Models/MusicModels.swift \
+    ios/MP3Shelf/Services/PlaylistCSV.swift \
+    ios/MP3Shelf/Services/AudioSourceFinder.swift \
+    ios/Tests/CatalogResponseOriginTests.swift
+  # Compile/execute the production downloader policy method bodies with
+  # macOS Swift against both deterministic fixture executables. Full Xcode
+  # builds still validate the entire downloader and DEBUG device instrumentation.
+  run_step downloader-policy-runtime python3 ios/scripts/test-native-preflight-policies.py
   run_suite discovery-resume \
     ios/MP3Shelf/Models/MusicModels.swift \
     ios/MP3Shelf/Models/SourceDiscoveryJob.swift \
