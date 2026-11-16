@@ -121,7 +121,18 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
   const zip = join(destination, name + '.zip');
   const manifest = join(destination, name + '.manifest.json');
   const hasZip = existsSync(zip), hasManifest = existsSync(manifest);
-  if (hasZip !== hasManifest)
+  // Existing output is untrusted until checked: never hand a redirected,
+  // hard-linked or non-regular archive to the GitHub delivery process.
+  // lstat also detects dangling symlinks that existsSync would miss.
+  const safeOutputFile = path => {
+    try {
+      const stat = lstatSync(path);
+      return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1;
+    } catch (error) { return error.code === 'ENOENT' ? null : false; }
+  };
+  const zipState = safeOutputFile(zip), manifestState = safeOutputFile(manifest);
+  if (zipState === false || manifestState === false ||
+      (zipState === true) !== (manifestState === true))
     return { candidateSha: sha, integration: integration.status,
       packaging: 'INCOMPLETE_OUTPUT_REQUIRES_REVIEW' };
   // A correctly packaged archive may outlive a transient GitHub outage.
