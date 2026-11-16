@@ -8,6 +8,32 @@ func verify(_ condition: @autoclosure () -> Bool, _ description: String) {
 @main
 enum AudioSourceFinderTests {
     static func main() throws {
+        // RSS and JSON catalogs share one bounded response validator. A
+        // redirect is rejected by their common URLSession delegate before
+        // either response can be parsed; status and size fail closed here.
+        let catalogURL = URL(string: "https://ccmixter.org/api/query")!
+        let ok = HTTPURLResponse(url: catalogURL, statusCode: 200,
+                                 httpVersion: nil, headerFields: nil)!
+        let redirect = HTTPURLResponse(url: catalogURL, statusCode: 302,
+                                       httpVersion: nil, headerFields: nil)!
+        let throttled = HTTPURLResponse(url: catalogURL, statusCode: 429,
+                                        httpVersion: nil, headerFields: nil)!
+        let rss = Data("<rss/>".utf8)
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            rss, response: ok, maximumBytes: rss.count)) == rss,
+            "RSS response at exact size limit is accepted")
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            rss, response: redirect, maximumBytes: 100)) == nil,
+            "redirect responses cannot be mistaken for catalog data")
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            rss, response: throttled, maximumBytes: 100)) == nil,
+            "rate-limited RSS is not parsed as successful data")
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            Data(), response: ok, maximumBytes: 100)) == nil,
+            "empty RSS catalog response is rejected")
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            rss, response: ok, maximumBytes: rss.count - 1)) == nil,
+            "oversized RSS catalog response is rejected")
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
         // Archive may contain one broken file entry among usable recordings.
