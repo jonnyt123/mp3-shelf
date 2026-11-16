@@ -365,14 +365,18 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
       // unattended rewrite. Publish only sanitized line/category diagnostics.
       try {
         const result = await publishCompilerHandoff({ sha: proposed, output });
-        writeFileSync(join(output, 'compiler-handoff-result.json'),
-          JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
-      } catch (handoffError) {
+        try {
+          writeFileSync(join(output, 'compiler-handoff-result.json'),
+            JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+        } catch { /* A diagnostic artifact must not mask the original build error. */ }
+      } catch {
         // GitHub/network authorization problems never hide the real Xcode error.
-        writeFileSync(join(output, 'compiler-handoff-result.json'),
-          JSON.stringify({ status: 'HANDOFF_UNVERIFIED',
-            reason: 'GitHub handoff was unavailable; source compilation remains blocked.' }, null, 2) + '\n',
-          { flag: 'wx', mode: 0o600 });
+        try {
+          writeFileSync(join(output, 'compiler-handoff-result.json'),
+            JSON.stringify({ status: 'HANDOFF_UNVERIFIED',
+              reason: 'GitHub handoff was unavailable; source compilation remains blocked.' }, null, 2) + '\n',
+            { flag: 'wx', mode: 0o600 });
+        } catch { /* Preserve the native failure even if diagnostics cannot be written. */ }
       }
       throw error;
     }
