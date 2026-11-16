@@ -57,7 +57,7 @@ enum AudioDownloadDiagnostics {
             guard let underlying = current.userInfo[NSUnderlyingErrorKey] as? NSError else { break }
             current = underlying
         }
-        return libraryWriteFailed ? "The music library could not be saved. Check local storage and retry; another source cannot fix this save failure." : nil
+        return libraryWriteFailed ? "The download queue or music library could not be saved. Check local storage and retry; another source cannot fix this save failure." : nil
     }
 
     static func shouldTryAlternateSource(for error: Error) -> Bool {
