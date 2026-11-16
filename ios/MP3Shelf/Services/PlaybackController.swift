@@ -260,7 +260,14 @@ final class PlaybackController: NSObject, ObservableObject {
     func resume() {
         relay.invalidatePendingCompletions()
         interruptionState.cancelResume()
-        guard let audioPlayer else { return }
+        // Automatic advancement retires the finished player when the next
+        // recording cannot be opened. Lock-screen Play must retry that failed
+        // selection rather than silently succeeding with no audio player.
+        // A deliberately stopped session has no failedTrackID and stays stopped.
+        guard let audioPlayer else {
+            if failedTrackID != nil { retryFailedPlayback() }
+            return
+        }
         do {
             try activateAudio()
             guard audioPlayer.play() else { throw CocoaError(.fileReadCorruptFile) }
