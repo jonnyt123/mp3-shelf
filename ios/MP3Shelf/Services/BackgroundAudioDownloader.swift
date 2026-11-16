@@ -96,15 +96,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
     }()
 
-    private func downloadRequest(for url: URL, playlistID: UUID) -> URLRequest {
+    /// Apply all three per-request network permissions together. Restored
+    /// consent is evaluated immediately before scheduling each daemon task,
+    /// not inferred from the background session's permissive configuration.
+    nonisolated static func requestForAudio(_ url: URL, cellularApproved: Bool) -> URLRequest {
         var request = URLRequest(url: url)
-        // Background session is configured to support manual cellular opt-in,
-        // but EVERY task defaults to Wi-Fi-only at the request level.
-        let cellular = cellularAllowed(for: playlistID)
-        request.allowsCellularAccess = cellular
-        request.allowsExpensiveNetworkAccess = cellular
-        request.allowsConstrainedNetworkAccess = cellular
+        request.allowsCellularAccess = cellularApproved
+        request.allowsExpensiveNetworkAccess = cellularApproved
+        request.allowsConstrainedNetworkAccess = cellularApproved
         return request
+    }
+
+    private func downloadRequest(for url: URL, playlistID: UUID) -> URLRequest {
+        Self.requestForAudio(url, cellularApproved: cellularAllowed(for: playlistID))
     }
 
     /// Upgrade already-queued Wi-Fi tasks when the user explicitly approves
