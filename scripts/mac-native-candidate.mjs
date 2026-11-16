@@ -15,6 +15,7 @@ import { Transform } from 'node:stream';
 import { buildLocalReceipt } from './local-evidence.mjs';
 import { checkNativeStage } from './verify-native-stage.mjs';
 import { diagnoseNativeLog, readNativeLogTail, clearIsolatedDerivedData } from './native-build-diagnostics.mjs';
+import { publishCompilerHandoff } from './publish-native-compiler-handoff.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 export const BASE_REF = 'refs/heads/feat/ios-consolidated-candidate';
@@ -357,7 +358,24 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
     git(project, 'worktree', 'add', '--detach', worktree, proposed);
     installedWorktree = true;
     assertWorktreeClean(worktree, proposed);
-    await runNativeWithBoundedRecovery({ cwd: worktree, output });
+    try {
+      await runNativeWithBoundedRecovery({ cwd: worktree, output });
+    } catch (error) {
+      // A Swift compiler error needs a reviewed source commit, not an unsafe
+      // unattended rewrite. Publish only sanitized line/category diagnostics.
+      try {
+        const result = await publishCompilerHandoff({ sha: proposed, output });
+        writeFileSync(join(output, 'compiler-handoff-result.json'),
+          JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+      } catch (handoffError) {
+        // GitHub/network authorization problems never hide the real Xcode error.
+        writeFileSync(join(output, 'compiler-handoff-result.json'),
+          JSON.stringify({ status: 'HANDOFF_UNVERIFIED',
+            reason: 'GitHub handoff was unavailable; source compilation remains blocked.' }, null, 2) + '\n',
+          { flag: 'wx', mode: 0o600 });
+      }
+      throw error;
+    }
     const qaPath = join(worktree, 'ios', 'build', 'local-release', 'QA_RECORD.md');
     if (statSync(qaPath).size > 256 * 1024) throw Error('Native QA record exceeds size limit.');
     const preservedQA = join(output, 'native-QA_RECORD.md');
