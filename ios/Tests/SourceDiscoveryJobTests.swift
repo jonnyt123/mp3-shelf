@@ -117,6 +117,21 @@ enum SourceDiscoveryJobTests {
                         !AudioDownloadDiagnostics.maySearchForAnotherSource(
             reason: AudioDownloadDiagnostics.http(403), recordedAdvice: false),
                         "local storage failures do not cause paid web fallback")
+        let queueWriteError = NSError(domain: BackgroundTicketManifestPolicy.writeFailureDomain,
+                                      code: 1, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: NSCocoaErrorDomain,
+                                          code: CocoaError.Code.fileWriteOutOfSpace.rawValue)
+        ])
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: queueWriteError) &&
+                        AudioDownloadDiagnostics.message(for: queueWriteError).contains("Not enough space"),
+                        "queue manifest disk-full failures never trigger another network download")
+        let wrappedQueueWriteError = NSError(domain: BackgroundTicketManifestPolicy.writeFailureDomain,
+                                             code: 1, userInfo: [:])
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: wrappedQueueWriteError) &&
+                        AudioDownloadDiagnostics.message(for: wrappedQueueWriteError).contains("library could not be saved"),
+                        "queue manifest persistence failure is classified as local even without nested Cocoa error")
+        verifyDiscovery(AudioDownloadDiagnostics.shouldTryAlternateSource(for: URLError(.timedOut)),
+                        "a remote timeout remains eligible for a different source")
         verifyDiscovery(AudioDownloadDiagnostics.http(403).contains("source refused"),
                         "access refusal explains source permissions instead of generic failure")
         verifyDiscovery(AudioDownloadDiagnostics.http(404).contains("no longer available") &&
