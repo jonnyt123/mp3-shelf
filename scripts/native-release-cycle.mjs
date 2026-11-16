@@ -10,6 +10,21 @@ import { packageNativeXcode } from './package-verified-native.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 // Check ancestors too: a trusted leaf under redirected Logs is not trusted.
+function safeExistingOutputAncestors(path, boundary) {
+  const stop = resolve(boundary);
+  let current = resolve(path);
+  if (current !== stop && !current.startsWith(stop + '/')) return false;
+  while (true) {
+    if (existsSync(current)) {
+      const stat = lstatSync(current);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    }
+    if (current === stop) return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
 function safeDirectoryChain(path, boundary = path) {
   let current = resolve(path);
   const stop = resolve(boundary);
@@ -89,6 +104,13 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
     return { candidateSha: sha, integration: integration.status,
       packaging: 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE' };
   const destination = join(home, 'Documents', 'MP3Shelf', 'VerifiedReleases');
+  // A redirected Documents/VerifiedReleases path can send an otherwise
+  // correctly gated archive outside the reviewed destination. Check every
+  // existing ancestor before the packager creates any directories.
+  if (!safeDirectoryChain(home) ||
+      !safeExistingOutputAncestors(destination, home))
+    return { candidateSha: sha, integration: integration.status,
+      packaging: 'BLOCKED_UNSAFE_OUTPUT_DESTINATION' };
   const name = 'MP3-Shelf-Xcode-' + sha.slice(0, 12);
   if (existsSync(join(destination, name + '.zip')) ||
       existsSync(join(destination, name + '.manifest.json')))
