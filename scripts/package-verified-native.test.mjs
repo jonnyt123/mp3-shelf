@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { nativePackageGate, hardwareInventoryErrors, packageNativeXcode } from './package-verified-native.mjs';
+import { nativePackageGate, hardwareInventoryErrors, packageNativeXcode, fetchAllIssueComments } from './package-verified-native.mjs';
 const base = 'a'.repeat(40), sha = 'b'.repeat(40), hash = 'c'.repeat(64);
 const names = ['playback-order','playback-interruptions','downloaded-audio-signature',
   'downloaded-audio-format','playlist-parser','lyrics-parser','authorized-audio-sources',
@@ -141,4 +141,26 @@ test('unknown iOS version is not valid physical signing provenance', () => {
   x.inventory.device.osVersion = 'unknown';
   x.hardware.iOSVersion = 'unknown';
   assert(hardwareInventoryErrors(x.inventory, x.hardware).length > 0);
+});
+
+test('hardware approval pagination reads owner marker beyond first 100 comments', async () => {
+  const calls = [];
+  const pages = [
+    Array.from({length:100}, (_,i)=>({id:i,user:{login:'other'},body:'not approved'})),
+    [{id:101,user:{login:'jonnyt123'},body:'exact owner approval'}]
+  ];
+  const comments = await fetchAllIssueComments('https://api.github.com/repos/jonnyt123/mp3-shelf/issues/6/comments',
+    async url => { calls.push(url); return pages[calls.length-1]; });
+  assert.equal(comments.length,101);
+  assert.equal(comments[100].body,'exact owner approval');
+  assert.match(calls[0],/per_page=100&page=1$/);
+  assert.match(calls[1],/per_page=100&page=2$/);
+});
+test('hardware approval pagination fails closed on malformed and truncated history', async () => {
+  await assert.rejects(fetchAllIssueComments('https://example.test/comments',
+    async () => ({not:'an array'})), /Malformed/);
+  await assert.rejects(fetchAllIssueComments('https://example.test/comments',
+    async () => Array.from({length:100},()=>({})), 2), /exceeds bounded/);
+  await assert.rejects(fetchAllIssueComments('https://example.test/comments',
+    async () => Array.from({length:101},()=>({}))), /Malformed/);
 });
