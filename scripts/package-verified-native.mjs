@@ -252,8 +252,9 @@ export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
       archive: name + '.zip', sha256: await shaFile(draftZip),
       bytes: statSync(draftZip).size, trackedPaths: files.length,
       nativeReceiptSha256: await shaFile(join(native, 'local-evidence.json')),
-      deviceEvidenceSha256: inventoryHash, hardwareApprovalSha256:
-        await shaFile(join(device, 'hardware-acceptance.json')),
+      deviceEvidenceSha256: inventoryHash,
+      signedAppSHA256: hardware.signedAppSHA256,
+      hardwareApprovalSha256: await shaFile(join(device, 'hardware-acceptance.json')),
       hardwareIssue: 6, hardwareIssueClosed: true,
       reviewedAt: hardware.reviewedAt, buildType: 'Xcode project sources, NOT signed IPA',
       createdAt: new Date().toISOString() };
