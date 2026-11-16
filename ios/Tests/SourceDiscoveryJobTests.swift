@@ -1194,6 +1194,42 @@ enum SourceDiscoveryJobTests {
             id: { $0.id }, startedAt: { $0.startedAt })
         verifyDiscovery(legacyCollision[collisionID]?.title == "legacy first",
                         "legacy manifest duplicates without timestamps are stable and deterministic")
+        // A partially persisted checkpoint can contain authoritative per-song
+        // outcomes but stale aggregate counters. Repair must be idempotent and
+        // must not erase legacy counts when history contains unknown entries.
+        let countedWishes = [
+            PlaylistWish(title: "A", artist: "Artist", album: "Album", spotifyURL: nil),
+            PlaylistWish(title: "B", artist: "Artist", album: "Album", spotifyURL: nil),
+            PlaylistWish(title: "C", artist: "Artist", album: "Album", spotifyURL: nil)
+        ]
+        var interruptedCounts = SourceDiscoveryJob(playlistID: UUID(), wishes: countedWishes)
+        interruptedCounts.record(.queued)
+        interruptedCounts.record(.unavailable)
+        interruptedCounts.record(.failed)
+        interruptedCounts.queued = 3
+        interruptedCounts.unavailable = 0
+        interruptedCounts.failed = 0
+        verifyDiscovery(interruptedCounts.repairPersistedCheckpoint() &&
+                        interruptedCounts.queued == 1 &&
+                        interruptedCounts.unavailable == 1 &&
+                        interruptedCounts.failed == 1 &&
+                        !interruptedCounts.repairPersistedCheckpoint(),
+                        "complete outcomes restore exact counts once after interrupted persistence")
+        var unknownCounts = interruptedCounts
+        unknownCounts.outcomes = [.queued, .previous, .failed]
+        unknownCounts.unavailable = 1
+        verifyDiscovery(!unknownCounts.repairPersistedCheckpoint() &&
+                        unknownCounts.unavailable == 1,
+                        "legacy unknown outcomes preserve historical aggregate counters")
+        var excessHistory = interruptedCounts
+        excessHistory.nextIndex = 2
+        excessHistory.outcomes = [.queued, .unavailable, .failed]
+        verifyDiscovery(excessHistory.repairPersistedCheckpoint() &&
+                        excessHistory.outcomes == [.queued, .unavailable] &&
+                        excessHistory.failed == 0 &&
+                        excessHistory.queued == 1 &&
+                        excessHistory.unavailable == 1,
+                        "truncated processed prefix discards stale trailing outcomes and counts")
         let snapshot = SourceDiscoveryJob(playlistID: UUID(), wishes: [])
         verifyDiscovery(snapshot.isCurrent(in: [snapshot], at: 0),
                         "unchanged lookup snapshot can be applied")
