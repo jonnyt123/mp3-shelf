@@ -134,7 +134,7 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
       throw Error('Existing archive delivery did not verify exact source/hash.');
     return { candidateSha: sha, integration: integration.status,
       packaging: 'EXISTING_VERIFIED_ARCHIVE', delivery: delivery.status,
-      archive: zip, sha256: delivery.sha256, downloadURL: delivery.url };
+      archive: zip, sha256: delivery.sha256, downloadURL: delivery.downloadURL ?? delivery.url };
   }
   const result = await packageProject({ root, candidateSha: sha,
     nativeEvidence: nativeDir, deviceEvidence: deviceDir,
@@ -150,7 +150,7 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
     throw Error('GitHub delivery did not confirm matching verified ZIP hash.');
   return { candidateSha: sha, integration: integration.status,
     packaging: result.status, delivery: delivery.status,
-    archive: zip, sha256: delivery.sha256, downloadURL: delivery.url };
+    archive: zip, sha256: delivery.sha256, downloadURL: delivery.downloadURL ?? delivery.url };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
