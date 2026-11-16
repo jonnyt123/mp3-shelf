@@ -324,7 +324,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return true
         }
         // Only leaders consume an OS transfer slot.
-        guard BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount()) else { return false }
+        guard BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: activeTransferCount()) else { return false }
         var ticket = BackgroundAudioTicket(
             id: UUID(), playlistID: playlistID, requested: requested,
             downloadURL: source.downloadURL, sourcePage: source.itemURL,
@@ -509,6 +509,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 task.cancel()
             }
         }
+    }
+
+    private func activeTransferCount() -> Int {
+        tickets.values.filter { $0.status == .queued && $0.sharedLeaderID == nil }.count
+            + sourceResolutionTasks.count
     }
 
     func pendingCount(for playlistID: UUID? = nil) -> Int {
@@ -1050,7 +1055,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let first = await backgroundTaskInventory()
         let firstCheck = Date()
         let possible = tickets.values.filter { ticket in
-            ticket.status == .queued &&
+            ticket.status == .queued && ticket.sharedLeaderID == nil &&
             BackgroundTransferRecoveryPolicy.shouldRecover(
                 startedAt: ticket.startedAt, checkedAt: firstCheck,
                 firstScanHasTask: first.ids.contains(ticket.id),
@@ -1070,6 +1075,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         guard !second.hasUnknownTasks else { return }
         for id in possible {
             guard let current = tickets[id], current.status == .queued,
+                  current.sharedLeaderID == nil,
                   let library, library.hasCurrentSourceRequest(current.requested, for: current.playlistID),
                   BackgroundTransferRecoveryPolicy.shouldRecover(
                       startedAt: current.startedAt, checkedAt: Date(),
