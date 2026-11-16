@@ -253,6 +253,42 @@ try original.write(to: dest, options: .atomic)
 try complete()
 try check(try Data(contentsOf: journal) == trustedJournal, "valid journal changed during recovery")
 
+// Staged files are untrusted: a pending ticket must not follow a link,
+// import a directory, or accept foreign audio after a process restart.
+try save(Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3")], receipts: []))
+let stageCheckpoint = try Data(contentsOf: journal)
+try fm.removeItem(at: dest)
+if fm.fileExists(atPath: stage.path) { try fm.removeItem(at: stage) }
+let externalStage = root.appendingPathComponent("external-stage.mp3")
+try original.write(to: externalStage, options: .atomic)
+try fm.createSymbolicLink(at: stage, withDestinationURL: externalStage)
+do { try complete(); try check(false, "symlink stage accepted") }
+catch ReplayError.unsafe {}
+try check(try Data(contentsOf: journal) == stageCheckpoint, "symlink stage changed checkpoint")
+try check(!fm.fileExists(atPath: dest.path), "symlink stage created recording")
+try fm.removeItem(at: stage)
+try fm.linkItem(at: externalStage, to: stage)
+do { try complete(); try check(false, "hard-linked stage accepted") }
+catch ReplayError.unsafe {}
+try check(try Data(contentsOf: journal) == stageCheckpoint, "hard-linked stage changed checkpoint")
+try fm.removeItem(at: stage)
+try fm.createDirectory(at: stage, withIntermediateDirectories: false)
+do { try complete(); try check(false, "directory stage accepted") }
+catch ReplayError.unsafe {}
+try check(try Data(contentsOf: journal) == stageCheckpoint, "directory stage changed checkpoint")
+try fm.removeItem(at: stage)
+try unrelated.write(to: stage, options: .atomic)
+do { try complete(); try check(false, "foreign staged bytes accepted") }
+catch ReplayError.conflict {}
+try check(try Data(contentsOf: journal) == stageCheckpoint, "foreign stage changed checkpoint")
+try check(!fm.fileExists(atPath: dest.path), "foreign stage created recording")
+try check(try Data(contentsOf: other) == unrelated, "foreign stage mutated unrelated audio")
+try check(try Data(contentsOf: externalStage) == original, "external stage mutated")
+try original.write(to: stage, options: .atomic)
+try complete()
+try check(try Data(contentsOf: dest) == original, "valid retry did not recover audio")
+try check(try load().receipts == ["ticket"], "valid retry did not publish one receipt")
+
 // Reject terminal-state/receipt disagreement before replay. These are realistic
 // interrupted or manually corrupted checkpoint shapes, not recoverable tickets.
 let terminalMismatchCases: [Snapshot] = [
