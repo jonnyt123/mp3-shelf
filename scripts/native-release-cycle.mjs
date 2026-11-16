@@ -15,9 +15,13 @@ function safeExistingOutputAncestors(path, boundary) {
   let current = resolve(path);
   if (current !== stop && !current.startsWith(stop + '/')) return false;
   while (true) {
-    if (existsSync(current)) {
+    // existsSync follows symlinks and returns false for dangling links.
+    // lstat must inspect the directory entry itself before creating output.
+    try {
       const stat = lstatSync(current);
       if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    } catch (error) {
+      if (error.code !== 'ENOENT') return false;
     }
     if (current === stop) return true;
     const parent = dirname(current);
