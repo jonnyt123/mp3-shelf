@@ -407,7 +407,9 @@ enum SourceDiscoveryJobTests {
                         "source recovery preserves paid-search reservations and current-song backoff, invalidating stale lookups")
         // Corrupt persisted per-song retry budgets must not allow unlimited
         // replacement downloads. Preserve unrelated songs and the pause state.
-        var damagedBudget = beforeRecovery
+        var damagedBudget = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0], wishes[1]])
+        damagedBudget.record(.queued)
+        damagedBudget.record(.unavailable)
         damagedBudget.sourceRecoveryAttempts = [wishes[0].id.uuidString: -100]
         damagedBudget.isPaused = true
         verifyDiscovery(damagedBudget.requeueFailedSource(for: wishes[0].id) &&
@@ -424,7 +426,8 @@ enum SourceDiscoveryJobTests {
         damagedBudget.record(.queued)
         verifyDiscovery(!damagedBudget.requeueFailedSource(for: wishes[0].id),
                         "recovery budget stops after three retries even after corrupted legacy state")
-        var overflowBudget = beforeRecovery
+        var overflowBudget = SourceDiscoveryJob(playlistID: UUID(), wishes: [wishes[0]])
+        overflowBudget.record(.queued)
         overflowBudget.sourceRecoveryAttempts = [wishes[0].id.uuidString: Int.max]
         verifyDiscovery(!overflowBudget.requeueFailedSource(for: wishes[0].id) &&
                         overflowBudget.sourceRecoveryAttempts?[wishes[0].id.uuidString] == Int.max,
