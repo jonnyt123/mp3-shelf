@@ -127,6 +127,20 @@ async function githubJSON(url) {
     return response.json();
   } finally { clearTimeout(timeout); }
 }
+// Approval can be older than GitHub's first 100 comments. Fail closed on
+// truncated pagination, malformed pages, or a repository that changes mid-read.
+export async function fetchAllIssueComments(url, read = githubJSON, maxPages = 20) {
+  const all = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const separator = url.includes('?') ? '&' : '?';
+    const records = await read(url + separator + 'per_page=100&page=' + page);
+    if (!Array.isArray(records) || records.length > 100)
+      throw Error('Malformed GitHub hardware approval comment page.');
+    all.push(...records);
+    if (records.length < 100) return all;
+  }
+  throw Error('Hardware approval comment history exceeds bounded pagination.');
+}
 export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
   deviceEvidence, outputDirectory } = {}) {
   if (process.platform !== 'darwin') throw Error('MAC_HARDWARE_GATE_REQUIRED');
@@ -165,7 +179,7 @@ export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
   const endpoint = 'https://api.github.com/repos/jonnyt123/mp3-shelf';
   const [issue, comments, pr] = await Promise.all([
     githubJSON(endpoint + '/issues/6'),
-    githubJSON(endpoint + '/issues/6/comments?per_page=100'),
+    fetchAllIssueComments(endpoint + '/issues/6/comments'),
     githubJSON(endpoint + '/pulls/29')
   ]);
   const errors = nativePackageGate({
