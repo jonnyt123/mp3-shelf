@@ -58,8 +58,14 @@ export function playlistProgressFromCatalog(catalog, playlistID) {
       !Array.isArray(catalog?.tracks))
     return { status: 'WAITING' };
   const p=catalog.playlists.find(item=>item?.id===playlistID);
-  if (!p || typeof p.sourceURL!=='string' ||
-      !/^https:\/\/open\.spotify\.com\/playlist\/[A-Za-z0-9]{22}\/?$/.test(p.sourceURL) ||
+  let isSpotify=false;
+  try {
+    const url=new URL(p?.sourceURL);
+    isSpotify=url.protocol==='https:' && url.hostname==='open.spotify.com' &&
+      !url.username && !url.password && !url.hash &&
+      /^\/playlist\/[A-Za-z0-9]{22}\/?$/.test(url.pathname);
+  } catch { /* No source URL available yet. */ }
+  if (!p || !isSpotify ||
       !Array.isArray(p.sourceOrder) || p.sourceOrder.length<2 ||
       !Array.isArray(p.trackIDs) || !Array.isArray(p.missingTracks))
     return { status:'WAITING' };
