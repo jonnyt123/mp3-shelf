@@ -196,11 +196,17 @@ struct LibraryView: View {
     }
 
     private func retryRecentRecording() {
-        guard let selection = recentRetrySelection,
-              let current = recentlyAdded.first(where: {
-                  $0.id == selection.id && library.fileURL(for: $0) == selection.url
-              }) else {
-            recentPlaybackNotice = "This song is no longer in Recently Added. Choose another recording."
+        guard let selection = recentRetrySelection else { return }
+        let candidates = recentlyAdded.filter { $0.id == selection.id }
+        // Prefer the exact recording originally selected. After a successful
+        // reimport, its URL may change; accept that replacement only if the ID
+        // uniquely identifies one current recording. The normal playback scan
+        // still validates the replacement's actual bytes before queueing it.
+        let exact = candidates.first { library.fileURL(for: $0) == selection.url }
+        guard let current = exact ?? (candidates.count == 1 ? candidates[0] : nil) else {
+            recentPlaybackNotice = candidates.isEmpty
+                ? "This song is no longer in Recently Added. Choose another recording."
+                : "Multiple recordings match this song. Choose the correct recording to play."
             recentRetrySelection = nil
             return
         }
@@ -785,7 +791,18 @@ struct LibraryView: View {
                                                 .frame(minHeight: 44, alignment: .leading)
                                         }
                                         .buttonStyle(.bordered)
-                                        .accessibilityHint("Checks the same saved recording again without downloading audio")
+                                        .accessibilityHint("Rechecks the current local recording, including a restored file, without downloading audio")
+                                    }
+                                    if recentRetrySelection != nil && recentPlaybackCheck == nil {
+                                        Button {
+                                            showFilePicker = true
+                                        } label: {
+                                            Label("Restore Recently Added audio", systemImage: "square.and.arrow.down")
+                                                .frame(minHeight: 44, alignment: .leading)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .disabled(library.isImporting)
+                                        .accessibilityHint("Choose a replacement audio file from Files, then retry the recording")
                                     }
                                 }
                             }
@@ -914,6 +931,10 @@ struct LibraryView: View {
         }
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.audio],
                       allowsMultipleSelection: true) { result in
+            // A restore may replace an existing file while a disk scan is active.
+            // Cancel before import starts so an obsolete scan cannot start audio.
+            cancelRecentPlaybackPreparation(showFeedback: true)
+            cancelBulkPlaybackPreparation(showFeedback: true)
             switch result {
             case .success(let urls):
                 Task { message = await library.importAudio(urls: urls).description }
