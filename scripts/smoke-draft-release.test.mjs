@@ -23,7 +23,9 @@ test('refuses workflow configurations that could trigger paid Actions on tag or 
    'on: [push, pull_request]\n',
    'on: push\n',
    'on: {release: {types: [created]}}\n',
-   'on:\n  create:\n']) {
+   'on:\n  create:\n',
+   'on:\n  issue_comment:\n    types: [created]\n',
+   'on: [delete, workflow_dispatch]\n']) {
    assert(smokePreflight({tag,sha,existing:null,workflows:[workflow]}).length);
  }
  assert.deepEqual(smokePreflight({tag,sha,existing:null,
@@ -61,6 +63,7 @@ test('quoted, inline, aliased or missing workflow triggers block remote draft sm
    "'on':\n  'release':\n    types: [created]\n",
    'on: ["push", "pull_request"]\n',
    'on: { "create": { } }\n',
+   'on: issue_comment\n',
    'on: *shared_events\n',
    'on:\n  <<: *events\n',
    'name: missing-trigger\njobs:\n  test:\n    runs-on: ubuntu-latest\n'
