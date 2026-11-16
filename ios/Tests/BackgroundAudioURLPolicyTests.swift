@@ -8,6 +8,9 @@ enum BackgroundAudioURLPolicyTests {
         let rejected = [
             "http://audio.example/recording.mp3",
             "https://localhost/recording.mp3",
+            "https://audio.example./recording.mp3",
+            "https://open.spotify.com./track/fixture",
+            "https://r1.googlevideo.com./videoplayback",
             "https://speaker.local/recording.mp3",
             "https://gateway.internal/recording.mp3",
             "https://127.0.0.1/recording.mp3",
