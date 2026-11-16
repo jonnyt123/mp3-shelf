@@ -1124,6 +1124,35 @@ enum SourceDiscoveryJobTests {
         retriedSnapshot.lastError = "Newer lookup state"
         verifyDiscovery(!snapshot.isCurrent(in: [retriedSnapshot], at: 0),
                         "in-flight result cannot overwrite newer checkpoint state")
+        // A legacy/corrupt checkpoint can retain a valid cursor but a
+        // negative retry count. Recording another failure must not index a
+        // negative backoff slot, and must preserve the pending recording.
+        let retryClock = Date(timeIntervalSince1970: 1_800_100_000)
+        let retryWish = PlaylistWish(title: "Retry", artist: "Artist", album: "Album", spotifyURL: nil)
+        var malformedRetry = SourceDiscoveryJob(playlistID: UUID(), wishes: [retryWish])
+        malformedRetry.transientFailureCount = -100
+        malformedRetry.recordTransientFailure("Transient provider outage", at: retryClock)
+        verifyDiscovery(malformedRetry.nextIndex == 0 &&
+                        malformedRetry.currentWish?.id == retryWish.id &&
+                        malformedRetry.transientFailureCount == 1 &&
+                        malformedRetry.nextRetryAt == retryClock.addingTimeInterval(15),
+                        "negative persisted retry counts safely restart first backoff without skipping audio")
+        var excessiveRetry = SourceDiscoveryJob(playlistID: UUID(), wishes: [retryWish])
+        excessiveRetry.transientFailureCount = Int.max
+        excessiveRetry.recordTransientFailure("Provider still down", at: retryClock)
+        verifyDiscovery(excessiveRetry.transientFailureCount == SourceDiscoveryJob.automaticRetryLimit &&
+                        excessiveRetry.nextRetryAt == retryClock.addingTimeInterval(240) &&
+                        excessiveRetry.finishExhaustedRetriesIfNeeded() &&
+                        excessiveRetry.failed == 1 && excessiveRetry.isComplete,
+                        "overflowing retry counters clamp safely and allow the playlist to advance")
+        var invalidCursorRetry = SourceDiscoveryJob(playlistID: UUID(), wishes: [retryWish])
+        invalidCursorRetry.nextIndex = -5
+        invalidCursorRetry.transientFailureCount = -20
+        invalidCursorRetry.recordTransientFailure("Recovered checkpoint", at: retryClock)
+        verifyDiscovery(invalidCursorRetry.nextIndex == 0 &&
+                        invalidCursorRetry.transientFailureCount == 1 &&
+                        invalidCursorRetry.nextRetryAt == retryClock.addingTimeInterval(15),
+                        "malformed cursor and retry counter recover together")
         var exhausted = SourceDiscoveryJob(playlistID: UUID(), wishes: [
             PlaylistWish(title: "Song", artist: "Artist", album: "Album", spotifyURL: nil)
         ])
