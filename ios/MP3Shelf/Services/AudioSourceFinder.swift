@@ -742,6 +742,22 @@ extension AudioSourceFinder {
                 return false
             }
             guard !lower.contains(":"), lower.contains(".") else { return false }
+            // Old queue manifests may contain a direct Spotify/media URL or a
+            // numeric IP encoded as an integer/hex/octal hostname. Neither is
+            // an independently hosted, public DNS audio source. Do not allow
+            // the fallback path to bypass discovery's source restrictions.
+            for blocked in ["spotify.com", "spotifycdn.com", "scdn.co",
+                            "youtube.com", "googlevideo.com"] {
+                if lower == blocked || lower.hasSuffix("." + blocked) { return false }
+            }
+            let labels = lower.split(separator: ".", omittingEmptySubsequences: false)
+            guard !labels.contains(where: { $0.isEmpty }) else { return false }
+            if labels.allSatisfy({ label in
+                let value = String(label)
+                return value.allSatisfy(\\.isNumber) ||
+                    value.lowercased().hasPrefix("0x") &&
+                    UInt64(value.dropFirst(2), radix: 16) != nil
+            }) { return false }
             return true
         }) else { return nil }
         return (remaining[index], Array(remaining.dropFirst(index + 1)))
