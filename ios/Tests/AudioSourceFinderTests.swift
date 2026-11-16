@@ -944,6 +944,34 @@ enum AudioSourceFinderTests {
             AudioSourceFinder.audiusCandidate($0, for: wish)
         } == nil, "an Audius gated download cannot enter the automatic queue")
 
+        // Multiple enclosures in one RSS item may be different edits or
+        // recordings. XML ordering must never decide which file to import.
+        let multiEnclosureRSS = """
+        <rss version="2.0"><channel><item>
+          <title>The Song</title><dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">The Artist</dc:creator>
+          <link>https://ccmixter.org/files/artist/123</link>
+          <enclosure url="https://ccmixter.org/content/artist/one.mp3" type="audio/mpeg"/>
+          <enclosure url="https://ccmixter.org/content/artist/two.mp3" type="audio/mpeg"/>
+        </item></channel></rss>
+        """
+        let duplicateEnclosureRSS = multiEnclosureRSS.replacingOccurrences(
+            of: "two.mp3", with: "one.mp3")
+        let rssWish = PlaylistWish(title: "The Song", artist: "The Artist",
+            album: "", spotifyURL: nil, durationSeconds: nil)
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(multiEnclosureRSS.utf8), matching: rssWish)?.isEmpty == true,
+            "distinct RSS enclosures cannot select a recording by feed order")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(duplicateEnclosureRSS.utf8), matching: rssWish)?.count == 1,
+            "identical duplicate RSS enclosures preserve a unique source")
+        let reversedRSS = multiEnclosureRSS
+            .replacingOccurrences(of: "one.mp3", with: "temp.mp3")
+            .replacingOccurrences(of: "two.mp3", with: "one.mp3")
+            .replacingOccurrences(of: "temp.mp3", with: "two.mp3")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(reversedRSS.utf8), matching: rssWish)?.isEmpty == true,
+            "reversing ambiguous enclosure order never changes rejection")
+
         let firstSource = AudioCatalogMatch(
             downloadURL: URL(string: "https://first.example/song.mp3")!,
             itemURL: URL(string: "https://first.example/song")!,
