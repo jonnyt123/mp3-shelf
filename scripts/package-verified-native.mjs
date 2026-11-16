@@ -34,7 +34,8 @@ export function hardwareInventoryErrors(inventory, hardware, now = Date.now()) {
       !UUID.test(inventory?.playlistID ?? '') ||
       inventory?.source !== 'Spotify metadata only' ||
       inventory?.device?.productType !== hardware?.deviceModel ||
-      inventory?.device?.osVersion !== hardware?.iOSVersion)
+      inventory?.device?.osVersion !== hardware?.iOSVersion ||
+      !/^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?$/.test(inventory?.device?.osVersion ?? ''))
     errors.push('Hardware approval does not identify the exact inventoried app, device and playlist.');
   if (!Number.isSafeInteger(inventory?.requested) || inventory.requested < 2 ||
       inventory.requested > 20000 ||
@@ -81,8 +82,12 @@ export function nativePackageGate({ sha, base, receipt, qa, inventory, inventory
       ISSUE_LABELS.some(label => !issue.body.includes('- [x] **' + label + ':**')) ||
       /- \[ \]/.test(issue.body))
     errors.push('GitHub iPhone acceptance issue #6 is not completely checked and closed.');
+  // Approve the *same signed app binary* as the inventory and exact source.
+  // The hardware approval file alone is self-asserted; the authenticated owner
+  // must explicitly bind its binary digest to the accepted GitHub issue.
   const marker = 'MP3SHELF_DEVICE_GATE_APPROVED SHA=' + sha +
-    ' INVENTORY_SHA256=' + inventoryHash;
+    ' INVENTORY_SHA256=' + inventoryHash +
+    ' SIGNED_APP_SHA256=' + hardware?.signedAppSHA256;
   if (!Array.isArray(comments) || !comments.some(c =>
       c?.user?.login === 'jonnyt123' && typeof c.body === 'string' &&
       c.body.split(/\r?\n/).some(line => line.trim() === marker)))
