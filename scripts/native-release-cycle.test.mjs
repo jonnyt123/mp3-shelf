@@ -256,3 +256,19 @@ test('normal missing output directories remain eligible for packaging', async ()
     assert.equal(result.packaging, 'PACKAGED_VERIFIED_NATIVE_SOURCE');
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
+
+test('dangling symlink output ancestor is blocked without invoking packager', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const documents = join(f.home, 'Documents');
+    symlinkSync(join(f.home, 'missing-documents-target'), documents, 'dir');
+    let calls = 0;
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => { calls++; throw Error('must not package'); } });
+    assert.equal(calls, 0);
+    assert.equal(result.packaging, 'BLOCKED_UNSAFE_OUTPUT_DESTINATION');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
