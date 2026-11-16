@@ -613,6 +613,16 @@ extension AudioSourceFinder {
               landingURL.host?.lowercased() == "commons.wikimedia.org",
               bytes == nil || (bytes! > 0 && bytes! <= 100 * 1024 * 1024)
         else { return nil }
+        // Commons imageinfo does not provide decoded audio duration. A matching
+        // filename and artist cannot distinguish a radio edit, live version,
+        // or alternate master when Spotify supplies a specific runtime. Do
+        // not silently bypass the duration gate used by the other catalogs.
+        // Keep this source eligible for wishes without duration evidence;
+        // downloaded bytes still undergo the importer's codec verification.
+        if let expected = wish.durationSeconds {
+            guard expected.isFinite, expected > 0 else { return nil }
+            return nil
+        }
         return AudioCatalogMatch(downloadURL: audioURL, itemURL: landingURL,
                                  licenseURL: licensedURL(license), sourceName: "Wikimedia Commons")
     }
