@@ -16,9 +16,12 @@ struct Evidence {
     func hasBackgroundCompletion(task: String) -> Bool {
         // After a process restart, an OS wake must precede a delegate completion and a
         // staged-file event for the same task in the same restarted process.
-        guard armed.kind == "auditArmed", armed.task == nil else { return false }
+        guard armed.kind == "auditArmed", armed.task == nil,
+              !armed.process.isEmpty, !armed.session.isEmpty,
+              !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         for wake in events where wake.kind == "osBackgroundWake"
             && wake.session == armed.session && wake.process != armed.process
+            && !wake.process.isEmpty
             && (wake.task == nil || wake.task == task)
             && wake.time > armed.time {
             for completion in events where completion.kind == "urlSessionCompletion"
@@ -87,9 +90,23 @@ for (index, events) in invalid.enumerated() {
     check(!Evidence(armed: arm, events: events).hasBackgroundCompletion(task: "task-A"),
           "invalid evidence case \(index) was accepted")
 }
+// Empty identifiers can accidentally correlate unrelated callbacks; reject them.
+check(!Evidence(armed: arm, events: valid).hasBackgroundCompletion(task: ""),
+      "empty task identifier accepted")
+check(!Evidence(armed: arm, events: valid).hasBackgroundCompletion(task: "  "),
+      "whitespace-only task identifier accepted")
+let emptyArmProcess = Event(kind: "auditArmed", process: "", session: arm.session, task: nil, time: 100)
+let emptyArmSession = Event(kind: "auditArmed", process: arm.process, session: "", task: nil, time: 100)
+check(!Evidence(armed: emptyArmProcess, events: valid).hasBackgroundCompletion(task: "task-A"),
+      "empty armed process accepted")
+check(!Evidence(armed: emptyArmSession, events: valid).hasBackgroundCompletion(task: "task-A"),
+      "empty armed session accepted")
+let emptyWake = [event("osBackgroundWake", 110, process: ""), valid[1], valid[2]]
+check(!Evidence(armed: arm, events: emptyWake).hasBackgroundCompletion(task: "task-A"),
+      "empty wake process accepted")
 // Exercise Codable with actual serialized events, not only in-memory structs.
 let encoded = try JSONEncoder().encode(valid)
 let decoded = try JSONDecoder().decode([Event].self, from: encoded)
 check(Evidence(armed: arm, events: decoded).hasBackgroundCompletion(task: "task-A"),
       "JSON evidence round-trip failed")
-print("PASS: same-process/session/task wake-completion-staging correlation; 21 negative cases")
+print("PASS: same-process/session/task wake-completion-staging correlation; 26 negative cases")
