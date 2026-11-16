@@ -339,10 +339,14 @@ enum BackgroundTransferProgressPolicy {
     static func shouldPublish(received: Int64, total: Int64,
                               previousReceived: Int64?) -> Bool {
         guard received >= 0 else { return false }
-        guard let previousReceived else { return true }
-        return received < previousReceived ||
-            received - previousReceived >= minimumUpdateBytes ||
-            (total > 0 && received >= total && previousReceived < total)
+        guard let previousReceived, previousReceived >= 0 else { return true }
+        // Restored progress and daemon callbacks are not trusted arithmetic.
+        // Comparing by a bounded threshold avoids Int64 overflow when a
+        // corrupt checkpoint reports a negative or extreme previous count.
+        if received < previousReceived { return true }
+        if received >= minimumUpdateBytes &&
+            previousReceived <= received - minimumUpdateBytes { return true }
+        return total > 0 && received >= total && previousReceived < total
     }
 }
 
