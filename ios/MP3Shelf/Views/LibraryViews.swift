@@ -1760,6 +1760,8 @@ struct PlaylistDetailView: View {
     @State private var playlistPlaybackGeneration: UUID?
     @State private var playlistPlaybackError: String?
     @State private var playlistPlaybackNotice: String?
+    // Retry eligibility is state, not a substring of localized user-facing copy.
+    @State private var playlistPlaybackCanRetry = false
     @State private var lastPlaylistPlaybackWasShuffled = false
     @State private var playlistEditWarning: String?
     @Environment(\.scenePhase) private var playlistScenePhase
@@ -1829,6 +1831,7 @@ struct PlaylistDetailView: View {
         playlistPlaybackTask?.cancel()
         playlistPlaybackTask = nil
         playlistPlaybackPending = false
+        playlistPlaybackCanRetry = showFeedback
         if showFeedback {
             playlistPlaybackNotice = "Playback preparation cancelled. Your playlist and saved audio were not changed."
         } else {
@@ -1846,6 +1849,7 @@ struct PlaylistDetailView: View {
         lastPlaylistPlaybackWasShuffled = shuffled
         playlistPlaybackError = nil
         playlistPlaybackNotice = nil
+        playlistPlaybackCanRetry = false
         let requestedPlaylistID = playlistID
         // Snapshot every occurrence, including duplicates with distinct file URLs.
         // Matching only UUIDs can incorrectly authorize a missing duplicate.
@@ -1877,6 +1881,7 @@ struct PlaylistDetailView: View {
                 RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0))
             }
             guard currentLocations == snapshots, availability.count == snapshots.count else {
+                playlistPlaybackCanRetry = true
                 playlistPlaybackError = "This playlist or its recording locations changed while files were checked. Retry playback to use the latest recordings."
                 return
             }
@@ -1884,11 +1889,13 @@ struct PlaylistDetailView: View {
                 availability[index] ? track : nil
             }
             guard let first = shuffled ? queue.randomElement() : queue.first else {
+                playlistPlaybackCanRetry = true
                 playlistPlaybackError = "No playable offline recordings are available. Check Downloads or restore the missing audio files."
                 return
             }
             let skippedCount = currentTracks.count - queue.count
             if skippedCount > 0 {
+                playlistPlaybackCanRetry = true
                 playlistPlaybackNotice = "\(skippedCount) unavailable \(skippedCount == 1 ? "recording was" : "recordings were") skipped. Playing \(queue.count) available \(queue.count == 1 ? "song" : "songs")."
             }
             playback.isShuffled = shuffled
@@ -1992,10 +1999,7 @@ struct PlaylistDetailView: View {
                             // Retry also remains available after partial playback: restoring
                             // missing files should not require navigating away to replay them.
                             // Only offer it for the current nonempty playlist.
-                            if !playlistPlaybackPending &&
-                                (playlistPlaybackNotice.contains("cancelled") ||
-                                 playlistPlaybackNotice.contains("changed") ||
-                                 playlistPlaybackNotice.contains("unavailable")),
+                            if !playlistPlaybackPending && playlistPlaybackCanRetry,
                                let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }),
                                !library.songs(in: currentPlaylist).isEmpty {
                                 Button {
