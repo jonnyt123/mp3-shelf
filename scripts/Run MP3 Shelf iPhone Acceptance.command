@@ -20,10 +20,13 @@ SOURCE_SHA=""
 cleanup() {
   status=$?
   if [[ -n "$SOURCE_SHA" && -f "$WORKTREE/ios/build/iphone-device/QA_RECORD.md" ]]; then
-    QA_DIR="$HOME/Library/Logs/MP3Shelf/DeviceAcceptance/$SOURCE_SHA"
-    mkdir -p "$QA_DIR"
-    cp "$WORKTREE/ios/build/iphone-device/QA_RECORD.md" "$QA_DIR/signed-install-QA_RECORD.md"
-    chmod 600 "$QA_DIR/signed-install-QA_RECORD.md"
+    QA_DIR="$HOME/Library/Logs/MP3Shelf/DeviceAcceptance/$SOURCE_SHA/runs/$(date -u '+%Y%m%dT%H%M%SZ')-$"
+    if mkdir -p "$QA_DIR" && cp -n "$WORKTREE/ios/build/iphone-device/QA_RECORD.md" "$QA_DIR/signed-install-QA_RECORD.md"; then
+      chmod 600 "$QA_DIR/signed-install-QA_RECORD.md" || true
+      echo "Signed build evidence preserved: $QA_DIR/signed-install-QA_RECORD.md"
+    else
+      echo "WARNING: signed QA evidence could not be preserved; device approval must remain blocked." >&2
+    fi
   fi
   if [[ -d "$WORKTREE" ]]; then git -C "$ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true; fi
   rm -rf "$TMP"
