@@ -722,9 +722,10 @@ extension AudioSourceFinder {
 
     static func nextAlternative(to currentURL: URL, from remaining: [AudioCatalogMatch], at date: Date = .now)
         -> (source: AudioCatalogMatch, remaining: [AudioCatalogMatch])? {
-        guard let index = remaining.firstIndex(where: {
+        var seen: Set<URL> = [currentURL]
+        let eligible = remaining.filter {
             let url = $0.downloadURL
-            guard url != currentURL, url.scheme?.lowercased() == "https",
+            guard !seen.contains(url), url.scheme?.lowercased() == "https",
                   let host = url.host, !host.isEmpty,
                   url.user == nil, url.password == nil, url.port == nil,
                   url.fragment == nil, !AudioSourceLinks.hasExpired(url, at: date)
@@ -758,9 +759,11 @@ extension AudioSourceFinder {
                     value.lowercased().hasPrefix("0x") &&
                     UInt64(value.dropFirst(2), radix: 16) != nil
             }) { return false }
+            seen.insert(url)
             return true
-        }) else { return nil }
-        return (remaining[index], Array(remaining.dropFirst(index + 1)))
+        }
+        guard let first = eligible.first else { return nil }
+        return (first, Array(eligible.dropFirst()))
     }
 
     static func discover(for wish: PlaylistWish,
