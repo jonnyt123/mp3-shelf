@@ -639,9 +639,13 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     /// Increasing delays avoid hammering APIs during an outage. The next
     /// retry date is persisted alongside the existing discovery cursor.
     mutating func recordTransientFailure(_ message: String, at date: Date = .now) {
-        if nextIndex < 0 || nextIndex > wishes.count { repairPersistedCheckpoint() }
+        // Persisted retry counters are untrusted. Repair both the cursor and
+        // the counter before indexing a delay, including when the cursor is
+        // otherwise valid. A negative legacy count must never crash a resume.
+        repairPersistedCheckpoint()
         guard !isComplete else { return }
-        let count = min(Self.automaticRetryLimit, (transientFailureCount ?? 0) + 1)
+        let previous = min(max(0, transientFailureCount ?? 0), Self.automaticRetryLimit)
+        let count = min(Self.automaticRetryLimit, previous + 1)
         let delays: [TimeInterval] = [15, 30, 60, 120, 240]
         transientFailureCount = count
         nextRetryAt = date.addingTimeInterval(delays[count - 1])
