@@ -127,8 +127,11 @@ function observed() {
     { event: 'download-completion-callback', processToken: proof.armedProcessToken, ticketID: id },
     { event: 'download-audio-staged', processToken: proof.armedProcessToken, ticketID: id },
     { event: 'offline-verification-started', processToken: proof.processToken },
+    { event: 'offline-local-playback-advanced', processToken: proof.processToken, ticketID: id },
     { event: 'offline-verification-finished', processToken: proof.processToken }
-  ];
+  ].map((event, i) => ({
+    ...event, timeUTC: new Date(Date.now() - 60_000 + i * 1000).toISOString()
+  }));
   return { proof, events, selected: [{ id }] };
 }
 test('real app playback clock and two-process event receipts can support qualified device evidence', () => {
@@ -173,7 +176,41 @@ test('an unrelated foreground ticket or background wake cannot authorize downloa
   const reordering = observed();
   const index = reordering.events.findIndex(e => e.event === 'background-session-wake');
   const [wake] = reordering.events.splice(index, 1);
-  reordering.events.push(wake);
+  const stagedAt = reordering.events.findIndex(e => e.event === 'download-audio-staged');
+  reordering.events.splice(stagedAt + 1, 0, {
+    ...wake, timeUTC: reordering.events[stagedAt].timeUTC
+  });
   assert.equal(verifyPhysicalDeviceTelemetry(reordering.proof, reordering.events,
     playlistID, reordering.selected).backgroundTransfer, 'NOT_VERIFIED');
+});
+
+
+test('stale, future, malformed or out-of-order timestamps cannot pass physical acceptance', () => {
+  const changes = [
+    x => { x.events[0].timeUTC = new Date(Date.now() - 5 * 86400000).toISOString(); },
+    x => { x.events[0].timeUTC = new Date(Date.now() + 10 * 60_000).toISOString(); },
+    x => { x.events[0].timeUTC = 'not-a-timestamp'; },
+    x => { x.events[2].timeUTC = x.events[0].timeUTC.replace('Z', '+00:00'); },
+    x => { x.events[3].timeUTC = new Date(Date.now() - 3600_000).toISOString(); }
+  ];
+  for (const change of changes) {
+    const item = observed(); change(item);
+    assert.throws(() => verifyPhysicalDeviceTelemetry(item.proof, item.events,
+      playlistID, item.selected), /audit/);
+  }
+});
+test('native playback progression event must match the actual observed audio track', () => {
+  for (const change of [
+    x => { x.events = x.events.filter(e => e.event !== 'offline-local-playback-advanced'); },
+    x => { x.events.find(e => e.event === 'offline-local-playback-advanced').ticketID =
+      'ffffffff-ffff-ffff-ffff-ffffffffffff'; },
+    x => { x.events.find(e => e.event === 'offline-local-playback-advanced').processToken =
+      x.proof.armedProcessToken; },
+    x => { x.events.find(e => e.event === 'offline-verification-finished').event =
+      'process-ended'; }
+  ]) {
+    const item = observed(); change(item);
+    assert.throws(() => verifyPhysicalDeviceTelemetry(item.proof, item.events,
+      playlistID, item.selected), /session|playback|clock|events/);
+  }
 });
