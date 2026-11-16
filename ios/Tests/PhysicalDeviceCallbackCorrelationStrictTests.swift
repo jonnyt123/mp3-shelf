@@ -72,8 +72,8 @@ expectCallback(good, .invalidEvidence, "whitespace session", session: " ")
 let wrongTask = [good[0], event("urlSessionCompletion", task: "t2", time: 20), good[2]]
 for index in 0..<128 {
     let noise = event(index.isMultiple(of: 2) ? "urlSessionCompletion" : "durableStaging",
-                      "noise-\\(index)", task: "noise-\\(index)", time: 40 + index, session: "old")
-    expectCallback(good + [noise], .verified, "unrelated session noise \\(index)")
-    expectCallback(wrongTask + [noise], .invalidEvidence, "noise cannot repair task mismatch \\(index)")
+                      "noise-\(index)", task: "noise-\(index)", time: 40 + index, session: "old")
+    expectCallback(good + [noise], .verified, "unrelated session noise \(index)")
+    expectCallback(wrongTask + [noise], .invalidEvidence, "noise cannot repair task mismatch \(index)")
 }
 print("PASS: 20 deterministic correlation cases and 256 cross-session noise assertions; fixture only")
