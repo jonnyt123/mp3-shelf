@@ -86,6 +86,13 @@ async function ownerApproval(sha, manifest, issue) {
   }
   return false;
 }
+function tagPointsToCandidate(tag, sha) {
+  const ref = ghJSON('repos/' + REPO + '/git/ref/tags/' + tag);
+  // A lightweight tag directly points to the reviewed candidate commit.
+  // Refuse annotated/unknown tags rather than trusting release metadata alone.
+  return ref?.ref === 'refs/tags/' + tag &&
+    ref?.object?.type === 'commit' && ref.object.sha === sha;
+}
 function checkedRelease(tag) {
   try { return ghJSON('repos/' + REPO + '/releases/tags/' + tag); }
   catch (error) {
@@ -131,13 +138,16 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
         '. This is Xcode source, not a signed IPA.', zip, metadata);
     current = checkedRelease(tag);
   }
+  if (!tagPointsToCandidate(tag, sha))
+    throw Error('Git tag does not reference the exact approved candidate commit.');
   if (!current || !current.draft || current.tag_name !== tag ||
       current.target_commitish !== sha ||
       !releaseAssetsMatch(current, basename(zip), zipHash, basename(metadata), manifestHash))
     throw Error('Draft GitHub release asset digests are not verified; release was not published.');
   // Recheck latest branch and owner issue before public publication, so a
   // revoked approval or updated candidate cannot authorize a stale release.
-  if (JSON.parse(cli('api','repos/' + REPO + '/git/ref/heads/feat/ios-consolidated-candidate')).object?.sha !== sha ||
+  if (!tagPointsToCandidate(tag, sha) ||
+      JSON.parse(cli('api','repos/' + REPO + '/git/ref/heads/feat/ios-consolidated-candidate')).object?.sha !== sha ||
       !(await ownerApproval(sha, m, ghJSON('repos/' + REPO + '/issues/6'))))
     throw Error('Release eligibility changed after artifact upload; draft remains private.');
   cli('release', 'edit', tag, '--repo', REPO, '--draft=false');
