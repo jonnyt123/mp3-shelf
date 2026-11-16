@@ -111,6 +111,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         Self.requestForAudio(url, cellularApproved: cellularAllowed(for: playlistID))
     }
 
+    /// Never replace a Wi-Fi transfer that already has staged bytes or an
+    /// active decoder: its pending import is the authoritative completion.
+    nonisolated static func mayUpgradeToCellular(isQueued: Bool,
+                                                 hasStagedFile: Bool,
+                                                 isImporting: Bool,
+                                                 taskAlreadyAllowsCellular: Bool) -> Bool {
+        isQueued && !hasStagedFile && !isImporting && !taskAlreadyAllowsCellular
+    }
+
     /// Upgrade already-queued Wi-Fi tasks when the user explicitly approves
     /// cellular for this playlist. We use new ticket IDs so late delegate
     /// callbacks from cancelled tasks cannot corrupt the replacement.
@@ -129,9 +138,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                           let oldID = UUID(uuidString: raw),
                           let oldTicket = self.tickets[oldID],
                           oldTicket.playlistID == playlistID,
-                          oldTicket.status == .queued,
-                          !self.fm.fileExists(atPath: Self.stagingURL(oldID).path),
-                          task.originalRequest?.allowsCellularAccess == false
+                          Self.mayUpgradeToCellular(
+                              isQueued: oldTicket.status == .queued,
+                              hasStagedFile: self.fm.fileExists(atPath: Self.stagingURL(oldID).path),
+                              isImporting: self.processing.contains(oldID) || self.conversions[oldID] != nil,
+                              taskAlreadyAllowsCellular: task.originalRequest?.allowsCellularAccess != false)
                     else { continue }
                     if BackgroundTransferRetryPolicy.linkExpiresByStart(
                         oldTicket.downloadURL, earliestBeginDate: oldTicket.nextRetryAt) {
