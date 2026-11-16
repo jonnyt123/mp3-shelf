@@ -36,6 +36,14 @@ plist = {
     "Label": "com.jonnyt.mp3shelf.native-preflight",
     "ProgramArguments": arguments,
     "WorkingDirectory": root,
+    # launchd does not inherit an interactive Terminal PATH. Include the
+    # installed Node directory and standard Apple Silicon/Intel Homebrew
+    # locations so git, xcodebuild, swift, python3 and an existing gh login
+    # can be found without embedding any credential in the plist.
+    "EnvironmentVariables": {"PATH": os.pathsep.join(dict.fromkeys([
+        os.path.dirname(node), "/opt/homebrew/bin", "/usr/local/bin",
+        "/usr/bin", "/bin", "/usr/sbin", "/sbin"
+    ]))},
     "RunAtLoad": True,
     "StartInterval": 3600,
     "StandardOutPath": os.path.join(logs, "native-preflight.stdout.log"),
