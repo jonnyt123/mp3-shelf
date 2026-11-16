@@ -52,6 +52,19 @@ enum BackgroundAudioURLPolicyTests {
                 }
             }
         }
+        // A relaunched downloader can recover a bounded approval, but no
+        // session-level setting may override a request without consent.
+        let fixtureURL = URL(string: "https://audio.example.org/song.mp3")!
+        for approved in [false, true] {
+            let request = BackgroundAudioDownloader.requestForAudio(
+                fixtureURL, cellularApproved: approved)
+            guard request.allowsCellularAccess == approved,
+                  request.allowsExpensiveNetworkAccess == approved,
+                  request.allowsConstrainedNetworkAccess == approved else {
+                fatalError("Incorrect cellular request permissions for approval=\(approved)")
+            }
+        }
+        print("PASS: cellular, expensive and constrained network opt-in fixtures")
         print("PASS: background callback staged-file precedence fixtures")
         print("PASS: background download URL policy fixtures")
     }
