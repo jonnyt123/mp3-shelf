@@ -50,7 +50,7 @@ function fixture() {
   };
   const issue = {number:6,state:'closed',
     body:labels.map(x=>'- [x] **'+x+':** Passed on exact candidate').join('\n') };
-  const comments = [{user:{login:'jonnyt123'},body:'MP3SHELF_DEVICE_GATE_APPROVED SHA='+sha+' INVENTORY_SHA256='+hash}];
+  const comments = [{user:{login:'jonnyt123'},body:'MP3SHELF_DEVICE_GATE_APPROVED SHA='+sha+' INVENTORY_SHA256='+hash+' SIGNED_APP_SHA256='+hash}];
   const pr = {number:29,state:'open',draft:true,
     head:{sha,ref:'feat/ios-consolidated-candidate',repo:{full_name:'jonnyt123/mp3-shelf'}},
     base:{ref:'fix/ios-download-finalization-and-conversion',repo:{full_name:'jonnyt123/mp3-shelf'}}};
@@ -124,4 +124,21 @@ test('synthetic hardware approval requires full source inventory and current mat
   assert.deepEqual(nativePackageGate(evidence), []);
   evidence.inventory.copiedTracks = 3;
   assert(nativePackageGate(evidence).length > 0);
+});
+
+
+test('owner GitHub approval must bind the actual signed iPhone app digest', () => {
+  const x = fixture();
+  x.hardware.signedAppSHA256 = 'd'.repeat(64);
+  assert(nativePackageGate(x).some(error => error.includes('owner-issued')));
+  const altered = fixture();
+  altered.comments[0].body = altered.comments[0].body.replace(
+    ' SIGNED_APP_SHA256=' + hash, '');
+  assert(nativePackageGate(altered).some(error => error.includes('owner-issued')));
+});
+test('unknown iOS version is not valid physical signing provenance', () => {
+  const x = fixture();
+  x.inventory.device.osVersion = 'unknown';
+  x.hardware.iOSVersion = 'unknown';
+  assert(hardwareInventoryErrors(x.inventory, x.hardware).length > 0);
 });
