@@ -123,11 +123,11 @@ export async function runCompleteIPhoneJourney({
   };
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
-  const [deviceID,playlistID,sha,...rest]=process.argv.slice(2);
+  const [deviceID,playlistID,sha,localCheckout,...rest]=process.argv.slice(2);
   if(rest.length || !deviceID || !playlistID || !sha){
-    console.error('Usage: node scripts/run-iphone-playlist-acceptance.mjs DEVICE_UDID LOCAL_SPOTIFY_PLAYLIST_UUID EXACT_GIT_SHA');
+    console.error('Usage: node scripts/run-iphone-playlist-acceptance.mjs DEVICE_UDID LOCAL_SPOTIFY_PLAYLIST_UUID EXACT_GIT_SHA [CLEAN_NATIVE_CHECKOUT]');
     process.exitCode=2;
-  } else runCompleteIPhoneJourney({deviceID,playlistID,sha})
+  } else runCompleteIPhoneJourney({deviceID,playlistID,sha,cwd:localCheckout??process.cwd()})
     .then(report=>console.log(JSON.stringify(report,null,2)))
     .catch(error=>{console.error('PHYSICAL_IPHONE_ACCEPTANCE_BLOCKED: '+error.message);process.exitCode=1});
 }
