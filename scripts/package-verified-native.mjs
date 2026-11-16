@@ -20,6 +20,33 @@ const ISSUE_LABELS = ['Signing / installation', 'Offline playback',
   'Background licensed downloads', 'Failure handling', 'Spotify metadata integration',
   'Portable backup interoperability', 'Accessible responsive UI',
   'Policy/source audit', 'Final acceptance'];
+const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+export function hardwareInventoryErrors(inventory, hardware, now = Date.now()) {
+  const errors = [];
+  const captured = Date.parse(inventory?.capturedAt ?? '');
+  const reviewed = Date.parse(hardware?.reviewedAt ?? '');
+  if (!Number.isFinite(captured) || !Number.isFinite(reviewed) ||
+      captured < now - 7 * 86400000 || captured > now + 300000 ||
+      reviewed < captured || reviewed > now + 300000)
+    errors.push('Device inventory is stale, future dated or reviewed before it was captured.');
+  if (!HASH.test(inventory?.device?.identifierSha256 ?? '') ||
+      inventory?.bundleID !== 'com.jonnyt.mp3shelf' ||
+      !UUID.test(inventory?.playlistID ?? '') ||
+      inventory?.source !== 'Spotify metadata only' ||
+      inventory?.device?.productType !== hardware?.deviceModel ||
+      inventory?.device?.osVersion !== hardware?.iOSVersion)
+    errors.push('Hardware approval does not identify the exact inventoried app, device and playlist.');
+  if (!Number.isSafeInteger(inventory?.requested) || inventory.requested < 2 ||
+      inventory.requested > 20000 ||
+      !Number.isSafeInteger(inventory?.unavailable) || inventory.unavailable < 0 ||
+      inventory.unavailable > inventory.requested ||
+      inventory.copiedTracks > inventory.requested ||
+      !Array.isArray(inventory.files) ||
+      inventory.files.some(row => !UUID.test(row?.trackID ?? '')) ||
+      new Set(inventory.files.map(row => row.trackID)).size !== inventory.files.length)
+    errors.push('Playlist inventory is incomplete, duplicated or inconsistent with source order.');
+  return errors;
+}
 
 export function nativePackageGate({ sha, base, receipt, qa, inventory, inventoryHash,
   hardware, issue, comments, pr }) {
@@ -48,6 +75,7 @@ export function nativePackageGate({ sha, base, receipt, qa, inventory, inventory
       !hardware.deviceModel || !hardware.iOSVersion ||
       CHECKS.some(key => hardware.checks?.[key] !== 'PASS'))
     errors.push('Signed-install and independent hardware QA approval incomplete or wrong SHA.');
+  errors.push(...hardwareInventoryErrors(inventory, hardware));
   if (issue?.number !== 6 || issue.state !== 'closed' ||
       typeof issue.body !== 'string' ||
       ISSUE_LABELS.some(label => !issue.body.includes('- [x] **' + label + ':**')) ||
