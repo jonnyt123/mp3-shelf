@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { smokeAttestationLine } from './draft-smoke-attestation.mjs';
 const REPO='jonnyt123/mp3-shelf', SHA=/^[0-9a-f]{40}$/;
 const TAG=/^mp3shelf-upload-smoke-[0-9a-f]{12}-[0-9]{13}-[0-9a-f]{6}$/;
 const digest=b=>createHash('sha256').update(b).digest('hex');
@@ -24,10 +25,10 @@ export function workflowMayRunOnDraftTag(content) {
      found = inTriggers = true;
      const value = match[1].trim();
      if (value && (!/^(?:\[.*\]|\{.*\}|["']?[\w-]+["']?)$/.test(value) ||
-       /\b(?:push|release|create)\b/i.test(value))) return true;
+       /\b(?:push|release|create|delete|issue_comment|issues)\b/i.test(value))) return true;
      continue;
    }
-   if (inTriggers && /\b(?:push|release|create)\b/i.test(line)) return true;
+   if (inTriggers && /\b(?:push|release|create|delete|issue_comment|issues)\b/i.test(line)) return true;
    if (inTriggers && /(?:\*\w+|<<\s*:|!\w+)/.test(line)) return true;
  }
  return !found;
@@ -147,8 +148,20 @@ export async function runDraftSmoke({root=process.cwd(),platform=process.platfor
  if(!verified)throw Error('Draft Release verification was incomplete');
  if(readSmokeRelease(tag) || releaseRef(tag))
    throw Error('Disposable smoke Release or tag still exists after cleanup');
- return{status:'DRAFT_ASSET_UPLOAD_DOWNLOAD_VERIFIED_AND_CLEANED',sourceSha:sha,
-   assetCount:2,tagWasNeverPublished:true,zipSHA256:zipSHA};
+ // The authenticated owner records completed remote byte-for-byte smoke
+ // evidence on GitHub. No private files, credentials or user content included.
+ // This is a separate release transport gate, NOT iPhone hardware acceptance.
+ const body=smokeAttestationLine({toolingSha:sha,tag,zipSHA256:zipSHA,manifestSHA256:manifestSHA});
+ const me=api('user');
+ if(me?.login!=='jonnyt123')throw Error('Smoke attestation needs the repository owner GitHub login.');
+ const posted=JSON.parse(command('gh',['api','--method','POST',
+   'repos/'+REPO+'/issues/22/comments','-f','body='+body]));
+ if(posted?.user?.login!=='jonnyt123' || posted?.body!==body ||
+    !Number.isSafeInteger(posted?.id))
+   throw Error('GitHub did not confirm the draft smoke attestation comment.');
+ return{status:'DRAFT_ASSET_UPLOAD_DOWNLOAD_VERIFIED_AND_ATTESTED',sourceSha:sha,
+   assetCount:2,tagWasNeverPublished:true,zipSHA256:zipSHA,
+   manifestSHA256:manifestSHA,attestationCommentID:posted.id};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
  const [flag,root,...extra]=process.argv.slice(2);
