@@ -326,3 +326,36 @@ test('invalid packager or delivery response never reports a published Xcode ZIP'
     }), /Packager did not confirm/);
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
+
+
+test('existing ZIP and manifest cannot be symlinks, dangling links or hard links', async () => {
+ for (const mode of ['zip-symlink', 'manifest-dangling', 'zip-hardlink', 'manifest-directory']) {
+  const f = fixture();
+  try {
+   writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+   writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+   const dest = join(f.home, 'Documents', 'MP3Shelf', 'VerifiedReleases');
+   mkdirSync(dest, { recursive: true });
+   const zip = join(dest, 'MP3-Shelf-Xcode-' + sha.slice(0, 12) + '.zip');
+   const manifest = join(dest, 'MP3-Shelf-Xcode-' + sha.slice(0, 12) + '.manifest.json');
+   const external = join(f.home, 'untrusted-artifact');
+   writeFileSync(external, 'external');
+   writeFileSync(zip, 'archive');
+   writeFileSync(manifest, '{}');
+   if (mode === 'zip-symlink') { rmSync(zip); symlinkSync(external, zip); }
+   if (mode === 'manifest-dangling') {
+    rmSync(manifest); symlinkSync(join(f.home, 'missing'), manifest);
+   }
+   if (mode === 'zip-hardlink') { rmSync(zip); linkSync(external, zip); }
+   if (mode === 'manifest-directory') { rmSync(manifest); mkdirSync(manifest); }
+   let delivered = false;
+   const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+    preflight: async () => ({ status: 'already-staged', sha }),
+    packageProject: async () => { throw Error('must not overwrite'); },
+    deliverArchive: async () => { delivered = true; throw Error('must not deliver'); }
+   });
+   assert.equal(result.packaging, 'INCOMPLETE_OUTPUT_REQUIRES_REVIEW', mode);
+   assert.equal(delivered, false, mode);
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+ }
+});
