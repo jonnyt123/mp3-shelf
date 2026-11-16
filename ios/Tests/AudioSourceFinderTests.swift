@@ -1029,6 +1029,37 @@ enum AudioSourceFinderTests {
             to: firstSource.downloadURL, from: [expiredAAC, secondSource], at: Date(timeIntervalSince1970: 100))
         verify(freshFallback?.source == secondSource && freshFallback?.remaining.isEmpty == true,
                "a signed backup that expires by the scheduled start is skipped")
+        // A restored queue can contain older, untrusted fallback URLs. Never
+        // issue a retry to local services or URLs carrying credentials, ports
+        // or fragments; keep scanning for the next valid public HTTPS file.
+        func fallback(_ raw: String) -> AudioCatalogMatch {
+            AudioCatalogMatch(downloadURL: URL(string: raw)!,
+                itemURL: firstSource.itemURL, licenseURL: nil,
+                sourceName: "Persisted fallback fixture")
+        }
+        let unsafeFallbacks = [
+            "https://localhost/song.mp3",
+            "https://printer.local/song.mp3",
+            "https://127.0.0.1/song.mp3",
+            "https://192.168.1.5/song.mp3",
+            "https://[::1]/song.mp3",
+            "https://user:pass@audio.example/song.mp3",
+            "https://audio.example:8443/song.mp3",
+            "https://audio.example/song.mp3#fragment",
+            "http://audio.example/song.mp3"
+        ].map(fallback)
+        verify(AudioSourceFinder.nextAlternative(to: firstSource.downloadURL,
+            from: unsafeFallbacks) == nil,
+            "persisted private/credentialed/redirect-prone fallback URLs are rejected")
+        let recoveredFallback = AudioSourceFinder.nextAlternative(
+            to: firstSource.downloadURL, from: unsafeFallbacks + [secondSource])
+        verify(recoveredFallback?.source.downloadURL == secondSource.downloadURL &&
+               recoveredFallback?.remaining.isEmpty == true,
+               "unsafe persisted URLs are skipped without blocking a valid fallback")
+        verify(AudioSourceFinder.nextAlternative(to: firstSource.downloadURL,
+            from: [firstSource, secondSource])?.source.downloadURL == secondSource.downloadURL,
+            "duplicate current-ticket URLs cannot be retried")
+
         let serializedSources = try? JSONEncoder().encode(deduped)
         let restoredSources = serializedSources.flatMap {
             try? JSONDecoder().decode([AudioCatalogMatch].self, from: $0)
