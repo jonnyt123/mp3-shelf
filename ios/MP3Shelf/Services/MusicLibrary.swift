@@ -446,9 +446,17 @@ final class MusicLibrary: ObservableObject {
             if needsLyrics, let lyrics = archived.lyrics {
                 do {
                     try Task.checkCancellation()
+                    let lyricBytes = Data(lyrics.utf8)
+                    // Keep restored lyrics within the same bound used when
+                    // validating existing local sidecars. A manifest may carry
+                    // much larger inline text; never publish an oversized file
+                    // that the next restore will immediately classify as broken.
+                    guard lyricBytes.count <= 500 * 1024 else {
+                        throw PortableShelfArchive.ArchiveError.invalidManifest
+                    }
                     let name = existingID.uuidString + "-" + UUID().uuidString + ".lrc"
                     let destination = lyricsDirectory.appendingPathComponent(name)
-                    try PortableShelfArchive.writeRestoredSidecar(Data(lyrics.utf8), to: destination)
+                    try PortableShelfArchive.writeRestoredSidecar(lyricBytes, to: destination)
                     created.append(destination)
                     restored.lyricsFileName = name
                 } catch {
@@ -720,9 +728,16 @@ final class MusicLibrary: ObservableObject {
                 if let lyrics = archived.lyrics, !lyrics.isEmpty {
                     do {
                         try Task.checkCancellation()
+                        let lyricBytes = Data(lyrics.utf8)
+                        // New imports and duplicate-reuse recovery must enforce
+                        // the same persisted-sidecar size limit. Oversized
+                        // optional lyrics must not invalidate recovered audio.
+                        guard lyricBytes.count <= 500 * 1024 else {
+                            throw PortableShelfArchive.ArchiveError.invalidManifest
+                        }
                         let filename = tracks[index].id.uuidString + "-" + UUID().uuidString + ".lrc"
                         let destination = lyricsDirectory.appendingPathComponent(filename)
-                        try PortableShelfArchive.writeRestoredSidecar(Data(lyrics.utf8), to: destination)
+                        try PortableShelfArchive.writeRestoredSidecar(lyricBytes, to: destination)
                         createdSidecars.append(destination)
                         try Task.checkCancellation()
                         restoredTrack.lyricsFileName = filename
