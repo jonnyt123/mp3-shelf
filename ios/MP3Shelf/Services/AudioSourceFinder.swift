@@ -747,7 +747,7 @@ extension AudioSourceFinder {
             // an independently hosted, public DNS audio source. Do not allow
             // the fallback path to bypass discovery's source restrictions.
             for blocked in ["spotify.com", "spotifycdn.com", "scdn.co",
-                            "youtube.com", "googlevideo.com"] {
+                            "youtube.com", "googlevideo.com", "jamendo.com"] {
                 if lower == blocked || lower.hasSuffix("." + blocked) { return false }
             }
             let labels = lower.split(separator: ".", omittingEmptySubsequences: false)
