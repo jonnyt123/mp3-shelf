@@ -64,6 +64,24 @@ enum BackgroundAudioURLPolicyTests {
                 fatalError("Incorrect cellular request permissions for approval=\(approved)")
             }
         }
+        // Opt-in must not cancel an active decoder or restart a recording
+        // whose staged bytes are already ready for library import.
+        for queued in [false, true] {
+            for staged in [false, true] {
+                for importing in [false, true] {
+                    for cellular in [false, true] {
+                        let expected = queued && !staged && !importing && !cellular
+                        guard BackgroundAudioDownloader.mayUpgradeToCellular(
+                            isQueued: queued, hasStagedFile: staged,
+                            isImporting: importing,
+                            taskAlreadyAllowsCellular: cellular) == expected else {
+                            fatalError("Incorrect cellular upgrade eligibility")
+                        }
+                    }
+                }
+            }
+        }
+        print("PASS: 16 cellular upgrade and in-progress import combinations")
         print("PASS: cellular, expensive and constrained network opt-in fixtures")
         print("PASS: background callback staged-file precedence fixtures")
         print("PASS: background download URL policy fixtures")
