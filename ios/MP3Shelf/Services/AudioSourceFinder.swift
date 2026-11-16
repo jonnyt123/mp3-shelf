@@ -47,7 +47,7 @@ enum AudioSourceFinder {
             let fields = try decoder.container(keyedBy: CodingKeys.self)
             metadata = try? fields.decode(ItemMetadata.self, forKey: .metadata)
             files = (try? fields.decode([LossyFile].self, forKey: .files))?
-                .compactMap(\\.value)
+                .compactMap(\.value)
         }
     }
     struct ItemMetadata: Decodable {
