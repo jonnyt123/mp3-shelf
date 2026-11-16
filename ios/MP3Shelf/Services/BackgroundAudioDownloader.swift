@@ -1087,9 +1087,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         completionHandler(request.url.map { Self.allowedDownloadURL($0) } == true ? request : nil)
     }
 
-    nonisolated static func shouldRecoverStagedAudio(isQueued: Bool,
-                                                     hasStagedFile: Bool) -> Bool {
-        isQueued && hasStagedFile
+    nonisolated static func shouldDeferCallbackFailure(isQueued: Bool,
+                                                      hasStagedFile: Bool,
+                                                      isImporting: Bool) -> Bool {
+        isQueued && (hasStagedFile || isImporting)
     }
 
     /// Prioritize a complete staged recording over late errors from duplicate
@@ -1099,9 +1100,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                                        connectivityInterruption: Bool = false,
                                        allowAlternative: Bool = true) async {
         guard tickets[id]?.status == .queued else { return }
-        if Self.shouldRecoverStagedAudio(isQueued: true,
-                                         hasStagedFile: fm.fileExists(atPath: Self.stagingURL(id).path)) {
-            await recoverStagedDownloads()
+        // The importer may already have moved the staged file into its
+        // destination while its asynchronous completion is still pending.
+        // An error callback at that instant must not retire the live ticket.
+        let importing = processing.contains(id) || conversions[id] != nil
+        if Self.shouldDeferCallbackFailure(isQueued: true,
+                                           hasStagedFile: fm.fileExists(atPath: Self.stagingURL(id).path),
+                                           isImporting: importing) {
+            if !importing { await recoverStagedDownloads() }
             return
         }
         if retryTemporary {
