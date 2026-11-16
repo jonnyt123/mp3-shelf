@@ -10,14 +10,17 @@ import { packageNativeXcode } from './package-verified-native.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 // Check ancestors too: a trusted leaf under redirected Logs is not trusted.
-function safeDirectoryChain(path) {
+function safeDirectoryChain(path, boundary = path) {
   let current = resolve(path);
+  const stop = resolve(boundary);
+  if (current !== stop && !current.startsWith(stop + '/')) return false;
   while (true) {
     if (!existsSync(current)) return false;
     const stat = lstatSync(current);
     if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    if (current === stop) return true;
     const parent = dirname(current);
-    if (parent === current) return true;
+    if (parent === current) return false;
     current = parent;
   }
 }
@@ -25,7 +28,7 @@ export function selectNativeEvidence(root, sha) {
   if (!SHA.test(sha ?? '')) return null;
   if (!safeDirectoryChain(root)) return null;
   const dir = join(root, sha);
-  if (!safeDirectoryChain(dir))
+  if (!safeDirectoryChain(dir, root))
     return null;
   const entries = readdirSync(dir, { withFileTypes: true });
   if (entries.length > 128) return null;
@@ -55,21 +58,22 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
   const shaRoot = join(evidenceRoot, sha);
   const candidateEvidence = integration.evidence ? resolve(integration.evidence) : null;
   if (candidateEvidence && (dirname(candidateEvidence) !== shaRoot ||
-      !safeDirectoryChain(shaRoot)))
+      !safeDirectoryChain(shaRoot, home)))
     throw Error('Native evidence path is not inside the exact candidate SHA directory.');
-  const selectedEvidence = selectNativeEvidence(evidenceRoot, sha);
+  const selectedEvidence = safeDirectoryChain(evidenceRoot, home) ?
+    selectNativeEvidence(evidenceRoot, sha) : null;
   // Never substitute an older complete receipt for the selected latest receipt.
   const nativeDir = candidateEvidence || selectedEvidence;
   const deviceDir = join(home, 'Library', 'Logs', 'MP3Shelf', 'DeviceAcceptance', sha);
   const deviceFiles = ['physical-inventory.json', 'hardware-acceptance.json'];
-  const deviceSafe = safeDirectoryChain(deviceDir) &&
+  const deviceSafe = safeDirectoryChain(deviceDir, home) &&
     deviceFiles.every(name => {
       const path = join(deviceDir, name);
       if (!existsSync(path)) return false;
       const meta = lstatSync(path);
       return meta.isFile() && !meta.isSymbolicLink() && meta.nlink === 1;
     });
-  const nativeSafe = nativeDir && safeDirectoryChain(nativeDir) &&
+  const nativeSafe = nativeDir && safeDirectoryChain(nativeDir, home) &&
     nativeDir === selectedEvidence &&
     ['native-baseline.json', 'native-QA_RECORD.md', 'local-evidence.json',
       'native-local-release.log', 'post-native-checkout-integrity.log'].every(name => {
