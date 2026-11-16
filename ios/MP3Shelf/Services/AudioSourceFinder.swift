@@ -155,14 +155,26 @@ enum AudioSourceFinder {
                           delegate: CatalogRedirectBlocker(), delegateQueue: nil)
     }()
 
+    static func validatedCatalogBody(_ data: Data, response: URLResponse,
+                                     maximumBytes: Int) throws -> Data {
+        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
+        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
+        guard !data.isEmpty, data.count <= maximumBytes else { throw SourceError.invalidResponse }
+        return data
+    }
+
+    private static func requestCatalogData(_ url: URL, allowsCellular: Bool,
+                                           maximumBytes: Int) async throws -> Data {
+        let request = catalogRequest(for: url, allowsCellular: allowsCellular)
+        let (data, response) = try await catalogSession.data(for: request)
+        return try validatedCatalogBody(data, response: response, maximumBytes: maximumBytes)
+    }
+
     private static func requestJSON<T: Decodable>(
         _ url: URL, allowsCellular: Bool = false
     ) async throws -> T {
-        let request = catalogRequest(for: url, allowsCellular: allowsCellular)
-        let (data, response) = try await catalogSession.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
-        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
-        guard data.count < 2_000_000 else { throw SourceError.invalidResponse }
+        let data = try await requestCatalogData(
+            url, allowsCellular: allowsCellular, maximumBytes: 1_999_999)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
@@ -1801,13 +1813,13 @@ extension AudioSourceFinder {
     static func findCCMixter(for wish: PlaylistWish,
                              allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.title.isEmpty, !wish.artist.isEmpty else { return nil }
-        let request = catalogRequest(for: ccMixterSearchURL(for: wish),
-                                     allowsCellular: allowsCellular)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
-        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
-        guard !data.isEmpty, data.count <= 1_000_000,
-              let matches = ccMixterCandidates(in: data, matching: wish)
+        // Use the same redirect-blocking ephemeral catalog transport as JSON
+        // searches. URLSession.shared can follow a cross-origin redirect,
+        // leaking a catalog lookup and bypassing the intended Wi-Fi policy.
+        let data = try await requestCatalogData(
+            ccMixterSearchURL(for: wish), allowsCellular: allowsCellular,
+            maximumBytes: 1_000_000)
+        guard let matches = ccMixterCandidates(in: data, matching: wish)
         else { throw SourceError.invalidResponse }
         // Distinct eligible uploads may be separate remixes or releases.
         // Do not treat matching RSS text as proof that versions are identical.
