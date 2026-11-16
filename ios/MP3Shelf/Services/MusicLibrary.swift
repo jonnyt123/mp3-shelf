@@ -529,6 +529,19 @@ final class MusicLibrary: ObservableObject {
                         }
                     }
                 }
+                // An existing portable identity is authoritative only while its
+                // recording still contains the archived audio. If its bytes have
+                // changed or become unreadable, importing another copy under a
+                // fresh UUID would leave the old identity bound to bad audio;
+                // subsequent restores would keep adding copies. Fail this track
+                // without touching either recording so the user can repair the
+                // conflicting library entry and safely retry the same archive.
+                if identicalRecording == nil,
+                   tracks.contains(where: {
+                       $0.portableBackupID == archived.id || $0.id.uuidString == archived.id
+                   }) {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
                 if let existing = identicalRecording {
                     // A same-sized extracted pathname can be replaced after
                     // extraction. Never bind an archive playlist ID to a local
