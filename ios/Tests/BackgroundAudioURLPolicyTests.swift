@@ -84,6 +84,26 @@ enum BackgroundAudioURLPolicyTests {
                 }
             }
         }
+        // A shared task is safe only for the exact recording and URL,
+        // while its leader remains queued in a different playlist.
+        var validSharedCases = 0
+        for sameRecording in [false, true] {
+            for sameURL in [false, true] {
+                for leaderQueued in [false, true] {
+                    for samePlaylist in [false, true] {
+                        let expected = sameRecording && sameURL && leaderQueued && !samePlaylist
+                        guard BackgroundAudioDownloader.mayShareTransfer(
+                            sameRecording: sameRecording, sameURL: sameURL,
+                            leaderQueued: leaderQueued, samePlaylist: samePlaylist) == expected else {
+                            fatalError("Shared download eligibility regression")
+                        }
+                        validSharedCases += 1
+                    }
+                }
+            }
+        }
+        guard validSharedCases == 16 else { fatalError("Incomplete sharing matrix") }
+        print("PASS: 16 cross-playlist transfer eligibility combinations")
         print("PASS: 16 cellular upgrade and in-progress import combinations")
         print("PASS: cellular, expensive and constrained network opt-in fixtures")
         print("PASS: background callback staged-file precedence fixtures")
