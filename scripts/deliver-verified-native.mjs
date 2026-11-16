@@ -147,11 +147,14 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
   if (current) {
     if (!tagPointsToCandidate(tag, sha))
       throw Error('Existing published tag does not point to the reviewed source SHA.');
-    if (current.tag_name !== tag || current.target_commitish !== sha ||
-        !releaseAssetsMatch(current, basename(zip), zipHash, basename(metadata), manifestHash))
-      throw Error('Existing GitHub release does not match source, uploaded asset hashes or manifest.');
-    if (!current.draft) return { status: 'ALREADY_DELIVERED', sha,
-      url: current.html_url, downloadURL: directZIP, sha256: zipHash };
+    if (current.tag_name !== tag || current.target_commitish !== sha)
+      throw Error('Existing GitHub release does not match the approved source.');
+    if (!current.draft) {
+      if (!releaseAssetsMatch(current, basename(zip), zipHash, basename(metadata), manifestHash))
+        throw Error('Published release assets do not match approved checksums.');
+      return { status: 'ALREADY_DELIVERED', sha,
+        url: current.html_url, downloadURL: directZIP, sha256: zipHash };
+    }
     const missing = missingDraftAssets(current, basename(zip), zipHash,
       basename(metadata), manifestHash);
     if (missing.length) {
