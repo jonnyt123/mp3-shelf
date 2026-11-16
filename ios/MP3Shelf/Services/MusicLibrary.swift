@@ -577,9 +577,11 @@ final class MusicLibrary: ObservableObject {
                     sourceURL: file, originalName: original,
                     cancellationAware: true, duplicateCandidatesAlreadyChecked: true,
                     expectedArchiveAudio: (archived.audio, archive))
-                if imported { report.imported += 1 }
-                else { report.skipped += 1 }
-
+                // Count a track only after its durable archive identity has been
+                // committed. The initial audio transaction can succeed while
+                // the subsequent metadata/catalog write fails (e.g. disk full).
+                // Reporting that partial result as imported would mislead users
+                // into believing their playlist and backup identity were restored.
                 if !imported {
                     // Names and sizes alone are not sufficient: multiple local
                     // recordings can share both while containing different audio.
@@ -637,6 +639,9 @@ final class MusicLibrary: ObservableObject {
                         }
                         try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
                         restoredIDs[archived.id] = tracks[index].id
+                        // A concurrent duplicate is a successful skip only
+                        // after verified bytes and durable identity publication.
+                        report.skipped += 1
                     } else {
                         // Never report a successful skipped restore when no
                         // verified recording can receive the archive identity.
@@ -738,6 +743,7 @@ final class MusicLibrary: ObservableObject {
                     // original recording remains safe and the next restore can
                     // reuse it by verified bytes without inventing a new ID.
                     restoredIDs[archived.id] = restoredTrack.id
+                    report.imported += 1
                 } catch {
                     // Audio was already committed by addLocalAudio. Leave its
                     // published metadata unchanged when this write fails.
