@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { executeNativePreflight } from './mac-native-candidate.mjs';
 import { packageNativeXcode } from './package-verified-native.mjs';
+import { deliverVerifiedNative } from './deliver-verified-native.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 // Check ancestors too: a trusted leaf under redirected Logs is not trusted.
@@ -68,7 +69,8 @@ export function selectNativeEvidence(root, sha) {
   }) ? path : null;
 }
 export async function runNativeReleaseCycle({ repo, preflight = executeNativePreflight,
-  packageProject = packageNativeXcode, home = homedir() } = {}) {
+  packageProject = packageNativeXcode, deliverArchive = deliverVerifiedNative,
+  home = homedir() } = {}) {
   const root = resolve(repo ?? join(dirname(fileURLToPath(import.meta.url)), '..'));
   const integration = await preflight({ repo: root, promote: true });
   if (!SHA.test(integration?.sha ?? '')) throw Error('Native staging did not return an exact commit.');
@@ -116,15 +118,39 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
     return { candidateSha: sha, integration: integration.status,
       packaging: 'BLOCKED_UNSAFE_OUTPUT_DESTINATION' };
   const name = 'MP3-Shelf-Xcode-' + sha.slice(0, 12);
-  if (existsSync(join(destination, name + '.zip')) ||
-      existsSync(join(destination, name + '.manifest.json')))
+  const zip = join(destination, name + '.zip');
+  const manifest = join(destination, name + '.manifest.json');
+  const hasZip = existsSync(zip), hasManifest = existsSync(manifest);
+  if (hasZip !== hasManifest)
     return { candidateSha: sha, integration: integration.status,
-      packaging: 'EXISTING_OUTPUT_REQUIRES_HASH_REVIEW' };
+      packaging: 'INCOMPLETE_OUTPUT_REQUIRES_REVIEW' };
+  // A correctly packaged archive may outlive a transient GitHub outage.
+  // Re-verify the already-written ZIP+manifest and hardware authorization
+  // rather than silently overwriting it or repeatedly creating archives.
+  if (hasZip) {
+    const delivery = await deliverArchive({ archive: zip, manifestPath: manifest });
+    if (!['DELIVERED_VERIFIED_XCODE_ZIP', 'ALREADY_DELIVERED'].includes(delivery.status) ||
+        delivery.sha !== sha || !/^[0-9a-f]{64}$/.test(delivery.sha256 ?? ''))
+      throw Error('Existing archive delivery did not verify exact source/hash.');
+    return { candidateSha: sha, integration: integration.status,
+      packaging: 'EXISTING_VERIFIED_ARCHIVE', delivery: delivery.status,
+      archive: zip, sha256: delivery.sha256, downloadURL: delivery.url };
+  }
   const result = await packageProject({ root, candidateSha: sha,
     nativeEvidence: nativeDir, deviceEvidence: deviceDir,
     outputDirectory: destination });
+  if (result.status !== 'PACKAGED_VERIFIED_NATIVE_SOURCE' ||
+      result.sha !== sha || !/^[0-9a-f]{64}$/.test(result.archiveSHA256 ?? '') ||
+      result.archive !== zip || result.manifest !== manifest)
+    throw Error('Packager did not confirm exact-SHA verified local ZIP and manifest.');
+  // Do not call delivery on a partial or unverified native package.
+  const delivery = await deliverArchive({ archive: zip, manifestPath: manifest });
+  if (!['DELIVERED_VERIFIED_XCODE_ZIP', 'ALREADY_DELIVERED'].includes(delivery.status) ||
+      delivery.sha !== sha || delivery.sha256 !== result.archiveSHA256)
+    throw Error('GitHub delivery did not confirm matching verified ZIP hash.');
   return { candidateSha: sha, integration: integration.status,
-    packaging: result.status, archive: result.archive, sha256: result.archiveSHA256 };
+    packaging: result.status, delivery: delivery.status,
+    archive: zip, sha256: delivery.sha256, downloadURL: delivery.url };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
