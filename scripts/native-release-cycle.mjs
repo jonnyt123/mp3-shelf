@@ -11,6 +11,7 @@ import { packageNativeXcode } from './package-verified-native.mjs';
 const SHA = /^[0-9a-f]{40}$/;
 export function selectNativeEvidence(root, sha) {
   if (!SHA.test(sha ?? '')) return null;
+  if (!existsSync(root) || !lstatSync(root).isDirectory() || lstatSync(root).isSymbolicLink()) return null;
   const dir = join(root, sha);
   if (!existsSync(dir) || !lstatSync(dir).isDirectory() || lstatSync(dir).isSymbolicLink())
     return null;
@@ -23,7 +24,8 @@ export function selectNativeEvidence(root, sha) {
       'local-evidence.json', 'native-local-release.log',
       'post-native-checkout-integrity.log'].every(name =>
       existsSync(join(path, name)) && lstatSync(join(path, name)).isFile() &&
-      !lstatSync(join(path, name)).isSymbolicLink())) return path;
+      !lstatSync(join(path, name)).isSymbolicLink() &&
+      lstatSync(join(path, name)).nlink === 1)) return path;
   }
   return null;
 }
@@ -57,7 +59,14 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
       return meta.isFile() && !meta.isSymbolicLink() && meta.nlink === 1;
     });
   const nativeSafe = nativeDir && existsSync(nativeDir) &&
-    lstatSync(nativeDir).isDirectory() && !lstatSync(nativeDir).isSymbolicLink();
+    lstatSync(nativeDir).isDirectory() && !lstatSync(nativeDir).isSymbolicLink() &&
+    selectNativeEvidence(evidenceRoot, sha) !== null &&
+    ['native-baseline.json', 'native-QA_RECORD.md', 'local-evidence.json',
+      'native-local-release.log', 'post-native-checkout-integrity.log'].every(name => {
+      const file = join(nativeDir, name);
+      return existsSync(file) && lstatSync(file).isFile() &&
+        !lstatSync(file).isSymbolicLink() && lstatSync(file).nlink === 1;
+    });
   if (!nativeSafe || !deviceSafe)
     return { candidateSha: sha, integration: integration.status,
       packaging: 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE' };
