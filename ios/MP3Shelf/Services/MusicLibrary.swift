@@ -1415,7 +1415,7 @@ final class MusicLibrary: ObservableObject {
     func hasOfflineRecording(matching wish: PlaylistWish) -> Bool {
         refreshTrackIndexIfNeeded()
         return indexedByTitle.reusableTrack(for: wish, isAvailable: {
-            self.manager.fileExists(atPath: self.fileURL(for: $0).path)
+            self.isAvailableOwnedRecording($0)
         }) != nil
     }
 
@@ -2107,7 +2107,7 @@ final class MusicLibrary: ObservableObject {
         playlist.sourceOrder = wishes
         for wish in wishes {
             if let track = indexedByTitle.reusableTrack(for: wish, isAvailable: {
-                self.manager.fileExists(atPath: self.fileURL(for: $0).path)
+                self.isAvailableOwnedRecording($0)
             }) {
                 playlist.trackIDs.append(track.id)
             } else {
@@ -2134,10 +2134,17 @@ final class MusicLibrary: ObservableObject {
         commitPlaylistEdit(candidate)
     }
 
+    // A catalog entry alone does not prove offline playback availability.
+    // Legacy and damaged catalogs may contain traversal paths or symlinks;
+    // never mark a playlist wish fulfilled by a file outside Music.
+    private func isAvailableOwnedRecording(_ track: MusicTrack) -> Bool {
+        LocalLibraryFileSafety.regularFile(named: track.fileName, in: musicDirectory) != nil
+    }
+
     private func reconciledPlaylists(using updatedTracks: [MusicTrack],
                                      from sourcePlaylists: [MusicPlaylist]? = nil) -> [MusicPlaylist] {
         let allTracksIndex = OfflineTrackIndex(tracks: updatedTracks)
-        let available = updatedTracks.filter { manager.fileExists(atPath: fileURL(for: $0).path) }
+        let available = updatedTracks.filter { isAvailableOwnedRecording($0) }
         let availableIndex = OfflineTrackIndex(tracks: available)
         var updated = sourcePlaylists ?? playlists
         for index in updated.indices where !updated[index].sourceOrder.isEmpty {
