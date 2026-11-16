@@ -67,8 +67,18 @@ export async function runDraftSmoke({root=process.cwd(),platform=process.platfor
    throw Error('Smoke test requires the clean authoritative MP3 Shelf checkout.');
  command('gh',['auth','status']);
  const tag='mp3shelf-upload-smoke-'+sha.slice(0,12)+'-'+Date.now()+'-'+randomBytes(3).toString('hex');
- const workflows=workflowContents(root,sha);
- if(workflows===null)throw Error('Workflow count was too high to audit safely.');
+ // Tag/release webhooks may be evaluated against the DEFAULT branch rather
+ // than this tools branch. Audit BOTH trees before risking paid Actions.
+ command('git',['-C',root,'fetch','--no-tags','origin','refs/heads/main']);
+ const defaultSha=command('git',['-C',root,'rev-parse','FETCH_HEAD']);
+ const advertised=command('git',['-C',root,'ls-remote','--exit-code','origin','refs/heads/main']).split(/\s+/)[0];
+ if(!SHA.test(defaultSha) || advertised!==defaultSha)
+   throw Error('Cannot verify current remote default-branch workflow triggers.');
+ const localWorkflows=workflowContents(root,sha);
+ const defaultWorkflows=workflowContents(root,defaultSha);
+ if(localWorkflows===null || defaultWorkflows===null)
+   throw Error('Workflow count was too high to audit safely.');
+ const workflows=[...localWorkflows,...defaultWorkflows];
  const issues=smokePreflight({tag,sha,existing:readSmokeRelease(tag)??releaseRef(tag),workflows});
  if(issues.length)throw Error(issues.join('; '));
  const temp=mkdtempSync(join(tmpdir(),'mp3shelf-unpublished-smoke-'));
