@@ -280,13 +280,22 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         for leader in abandoned { promoteSharedFollowers(of: leader) }
     }
 
+    nonisolated static func mayShareTransfer(sameRecording: Bool,
+                                             sameURL: Bool,
+                                             leaderQueued: Bool,
+                                             samePlaylist: Bool) -> Bool {
+        sameRecording && sameURL && leaderQueued && !samePlaylist
+    }
+
     /// Coalesce only an exact independently resolved audio URL and recording
     /// identity. A title-only match must never attach the wrong recording.
     private func sharedLeader(for wish: PlaylistWish, sourceURL: URL) -> BackgroundAudioTicket? {
         tickets.values.first { candidate in
-            candidate.status == .queued && candidate.sharedLeaderID == nil &&
-            candidate.downloadURL == sourceURL &&
-            MusicMatching.sameRequestedRecording(candidate.requested, wish)
+            candidate.sharedLeaderID == nil && Self.mayShareTransfer(
+                sameRecording: MusicMatching.sameRequestedRecording(candidate.requested, wish),
+                sameURL: candidate.downloadURL == sourceURL,
+                leaderQueued: candidate.status == .queued,
+                samePlaylist: false)
         }
     }
 
