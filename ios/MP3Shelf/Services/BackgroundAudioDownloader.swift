@@ -1047,7 +1047,24 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         if url.scheme == "http", url == DownloadPathProof.fixtureDownloadURL { return true }
         #endif
         guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
-              !host.isEmpty, url.user == nil, url.password == nil else { return false }
+              !host.isEmpty, url.user == nil, url.password == nil,
+              url.port == nil, url.fragment == nil else { return false }
+        // A restored queue is untrusted input. Never send background requests
+        // to loopback, private network names, or literal IP addresses. This
+        // also protects manual retry and orphan recovery, not just discovery.
+        let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard normalized.contains("."), !normalized.contains(":"),
+              normalized != "localhost", !normalized.hasSuffix(".localhost"),
+              !normalized.hasSuffix(".local"), !normalized.hasSuffix(".internal")
+        else { return false }
+        let labels = normalized.split(separator: ".", omittingEmptySubsequences: false)
+        guard !labels.contains(where: { $0.isEmpty }) else { return false }
+        if labels.allSatisfy({ label in
+            let value = String(label)
+            return value.allSatisfy(\.isNumber) ||
+                (value.lowercased().hasPrefix("0x") &&
+                 UInt64(value.dropFirst(2), radix: 16) != nil)
+        }) { return false }
         if host == "googlevideo.com" || host.hasSuffix(".googlevideo.com") {
             return AudioSourceLinks.isResolvedAudioURL(url)
         }
