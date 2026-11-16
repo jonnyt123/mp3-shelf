@@ -223,3 +223,36 @@ test('newest redirected native run blocks stale complete receipt fallback', () =
     assert.equal(selectNativeEvidence(root, sha), null);
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
+
+test('redirected output directory is rejected before the packager runs', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const outside = join(f.home, 'outside-output');
+    mkdirSync(outside);
+    const documents = join(f.home, 'Documents');
+    symlinkSync(outside, documents, 'dir');
+    let calls = 0;
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => { calls++; throw Error('must not package'); } });
+    assert.equal(calls, 0);
+    assert.equal(result.packaging, 'BLOCKED_UNSAFE_OUTPUT_DESTINATION');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('normal missing output directories remain eligible for packaging', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => ({
+        status: 'PACKAGED_VERIFIED_NATIVE_SOURCE',
+        archive: 'verified.zip', archiveSHA256: 'b'.repeat(64)
+      }) });
+    assert.equal(result.packaging, 'PACKAGED_VERIFIED_NATIVE_SOURCE');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
