@@ -34,7 +34,7 @@ export function selectNativeEvidence(root, sha) {
   if (entries.length > 128) return null;
   // The newest run is authoritative. Never fall back to an older successful
   // receipt when a later run failed, is incomplete, or has redirected files.
-  const runs = entries.filter(x => x.isDirectory() && !x.isSymbolicLink())
+  const runs = entries.filter(x => x.isDirectory() || x.isSymbolicLink())
     .sort((a, b) => b.name.localeCompare(a.name));
   if (runs.length === 0) return null;
   const path = join(dir, runs[0].name);
