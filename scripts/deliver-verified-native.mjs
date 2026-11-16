@@ -124,6 +124,8 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
     archiveHash: zipHash, bytes: size, deviceIssue: issue, ownerApproved: approved });
   if (errors.length) throw Error('ZIP_DELIVERY_BLOCKED: ' + errors.join('; '));
   const tag = 'mp3-shelf-ios-' + sha;
+  const directZIP = 'https://github.com/' + REPO + '/releases/download/' +
+    tag + '/' + basename(zip);
   let current = checkedRelease(tag);
   if (current) {
     if (!tagPointsToCandidate(tag, sha))
@@ -131,7 +133,8 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
     if (current.tag_name !== tag || current.target_commitish !== sha ||
         !releaseAssetsMatch(current, basename(zip), zipHash, basename(metadata), manifestHash))
       throw Error('Existing GitHub release does not match source, uploaded asset hashes or manifest.');
-    if (!current.draft) return { status: 'ALREADY_DELIVERED', sha, url: current.html_url, sha256: zipHash };
+    if (!current.draft) return { status: 'ALREADY_DELIVERED', sha,
+      url: current.html_url, downloadURL: directZIP, sha256: zipHash };
   } else {
     // Create a DRAFT first. No public artifact until downloaded assets match.
     cli('release', 'create', tag, '--repo', REPO, '--draft', '--target', sha,
@@ -158,7 +161,7 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
       !releaseAssetsMatch(published, basename(zip), zipHash, basename(metadata), manifestHash))
     throw Error('Published release asset integrity or visibility is unverified.');
   return { status: 'DELIVERED_VERIFIED_XCODE_ZIP', sha, url: published.html_url,
-    sha256: zipHash, manifest: basename(metadata) };
+    downloadURL: directZIP, sha256: zipHash, manifest: basename(metadata) };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   if (process.argv.length !== 4) {
