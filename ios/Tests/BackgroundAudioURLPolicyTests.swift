@@ -42,10 +42,13 @@ enum BackgroundAudioURLPolicyTests {
         // already imported ticket must not revive a stale staged file.
         for queued in [false, true] {
             for staged in [false, true] {
-                let expected = queued && staged
-                guard BackgroundAudioDownloader.shouldRecoverStagedAudio(
-                    isQueued: queued, hasStagedFile: staged) == expected else {
-                    fatalError("Incorrect callback precedence: queued=\(queued), staged=\(staged)")
+                for importing in [false, true] {
+                    let expected = queued && (staged || importing)
+                    guard BackgroundAudioDownloader.shouldDeferCallbackFailure(
+                        isQueued: queued, hasStagedFile: staged,
+                        isImporting: importing) == expected else {
+                        fatalError("Incorrect callback precedence: queued=\(queued), staged=\(staged), importing=\(importing)")
+                    }
                 }
             }
         }
