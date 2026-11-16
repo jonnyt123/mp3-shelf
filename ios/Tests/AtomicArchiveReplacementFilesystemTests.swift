@@ -8,6 +8,16 @@ struct ArchiveStore {
 
     func replace(with bytes: Data, failBeforePublish: Bool = false) throws {
         // Reject hostile destinations before staging or publishing an archive.
+        // The parent directory is part of the trust boundary. A symlinked
+        // archive directory can redirect staging and publication outside the
+        // app-owned container even when the destination itself is regular.
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: root.path)) != nil {
+            throw Failure.untrustedDestination
+        }
+        let parent = try FileManager.default.attributesOfItem(atPath: root.path)
+        guard parent[.type] as? FileAttributeType == .typeDirectory else {
+            throw Failure.untrustedDestination
+        }
         // Check links before following the destination: dangling links must
         // fail with the same explicit safety error as links to existing files.
         if (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) != nil {
@@ -146,3 +156,30 @@ require((try fm.contentsOfDirectory(atPath: root.path)).sorted()
         == ["library.mp3shelf", "untrusted.mp3shelf"].sorted(),
         "FIFO rejection leaked staging files")
 print("PASS: dangling symlink and FIFO destinations rejected without data loss")
+
+// A symlinked archive directory must not redirect the staging area into an
+// unrelated directory, even when the destination filename does not exist.
+let externalDirectory = fm.temporaryDirectory.appendingPathComponent("mp3-shelf-archive-external-" + UUID().uuidString)
+try fm.createDirectory(at: externalDirectory, withIntermediateDirectories: true)
+defer { try? fm.removeItem(at: externalDirectory) }
+let externalCanary = externalDirectory.appendingPathComponent("keep.bin")
+try original.write(to: externalCanary)
+let alias = fm.temporaryDirectory.appendingPathComponent("mp3-shelf-archive-alias-" + UUID().uuidString)
+try fm.createSymbolicLink(at: alias, withDestinationURL: externalDirectory)
+defer { try? fm.removeItem(at: alias) }
+let aliasedStore = ArchiveStore(root: alias)
+for attempt in 0..<32 {
+    do {
+        try aliasedStore.replace(with: payload(attempt, count: 4096), failBeforePublish: attempt.isMultiple(of: 2))
+        preconditionFailure("symlinked parent directory was accepted")
+    } catch ArchiveStore.Failure.untrustedDestination { }
+}
+try require(try Data(contentsOf: externalCanary) == original,
+            "external directory canary changed through symlinked parent")
+require(!fm.fileExists(atPath: externalDirectory.appendingPathComponent("library.mp3shelf").path),
+        "archive was published outside trusted directory")
+require((try fm.contentsOfDirectory(atPath: externalDirectory.path)) == ["keep.bin"],
+        "symlinked parent leaked temporary files")
+try require(try Data(contentsOf: store.destination) == trustedArchive,
+            "trusted archive changed during rejected alias writes")
+print("PASS: 32 symlinked-parent writes rejected; external directory and archive preserved")
