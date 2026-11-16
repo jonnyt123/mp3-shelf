@@ -1706,6 +1706,7 @@ extension AudioSourceFinder {
         var landingURL = ""
         var downloadURL = ""
         var licenseURL = ""
+        var ambiguousEnclosure = false
     }
 
     private final class CCMixterRSSReader: NSObject, XMLParserDelegate {
@@ -1724,7 +1725,13 @@ extension AudioSourceFinder {
                 let type = (attributeDict["type"] ?? "").lowercased()
                 let raw = attributeDict["url"] ?? ""
                 if type == "audio/mpeg" || URL(string: raw)?.pathExtension.lowercased() == "mp3" {
-                    current?.downloadURL = raw
+                    // A feed item with multiple distinct recordings cannot
+                    // authorize an unattended choice based on XML element order.
+                    if let previous = current?.downloadURL, !previous.isEmpty, previous != raw {
+                        current?.ambiguousEnclosure = true
+                    } else if current?.ambiguousEnclosure == false {
+                        current?.downloadURL = raw
+                    }
                 }
             } else if field == "license", current != nil {
                 if let url = attributeDict["rdf:resource"] ?? attributeDict["resource"] ??
@@ -1786,7 +1793,8 @@ extension AudioSourceFinder {
 
     static func ccMixterCandidate(_ track: CCMixterFeedTrack,
                                    for wish: PlaylistWish) -> AudioCatalogMatch? {
-        guard exactMetadataMatch(title: track.title, creator: track.creator, wish: wish),
+        guard !track.ambiguousEnclosure,
+              exactMetadataMatch(title: track.title, creator: track.creator, wish: wish),
               let page = URL(string: track.landingURL), page.scheme == "https",
               let pageHost = page.host?.lowercased(),
               (pageHost == "ccmixter.org" || pageHost == "www.ccmixter.org"),
