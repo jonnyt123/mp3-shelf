@@ -31,8 +31,8 @@ function release() {
   return {
     tag_name: 'mp3-shelf-ios-' + sha, target_commitish: sha, draft: true,
     assets: [
-      { name: zipName, digest: 'sha256:' + digest },
-      { name: jsonName, digest: 'sha256:' + binary }
+      { name: zipName, digest: 'sha256:' + digest, state: 'uploaded', size: 120000 },
+      { name: jsonName, digest: 'sha256:' + binary, state: 'uploaded', size: 1200 }
     ]
   };
 }
@@ -104,4 +104,22 @@ test('interrupted delivery refuses changed, duplicate, unknown and published ass
     assert.throws(() => missingDraftAssets(r, zipName, digest, jsonName, binary));
   }
   assert.throws(() => missingDraftAssets(release(), zipName, digest, zipName, binary));
+});
+
+test('GitHub release assets must be fully uploaded with nonzero recorded bytes', () => {
+  for (const mutate of [
+    asset => { asset.state = 'starter'; },
+    asset => { asset.state = 'new'; },
+    asset => { delete asset.state; },
+    asset => { asset.size = 0; },
+    asset => { asset.size = -1; },
+    asset => { asset.size = NaN; },
+    asset => { delete asset.size; }
+  ]) {
+    const r = release();
+    mutate(r.assets[0]);
+    assert.equal(releaseAssetsMatch(r, zipName, digest, jsonName, binary), false);
+    assert.throws(() => missingDraftAssets(r, zipName, digest, jsonName, binary));
+  }
+  assert.equal(releaseAssetsMatch(release(), zipName, digest, jsonName, binary), true);
 });
