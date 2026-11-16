@@ -126,6 +126,8 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
   const tag = 'mp3-shelf-ios-' + sha;
   let current = checkedRelease(tag);
   if (current) {
+    if (!tagPointsToCandidate(tag, sha))
+      throw Error('Existing published tag does not point to the reviewed source SHA.');
     if (current.tag_name !== tag || current.target_commitish !== sha ||
         !releaseAssetsMatch(current, basename(zip), zipHash, basename(metadata), manifestHash))
       throw Error('Existing GitHub release does not match source, uploaded asset hashes or manifest.');
