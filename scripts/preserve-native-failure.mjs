@@ -5,7 +5,7 @@
  * filesystem paths leave this Mac. This is not a passing-build receipt.
  */
 import { createHash } from 'node:crypto';
-import { copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -27,9 +27,9 @@ export function failureEvidencePlan({ runs, sourceSHA }) {
   if (plans.length > 2) throw Error('Native runner used unexpected number of attempts.');
   return plans;
 }
-function normalFile(path, max = MAX_EACH) {
+function normalFile(path) {
   const s = lstatSync(path);
-  return s.isFile() && !s.isSymbolicLink() && s.nlink === 1 && s.size >= 0 && s.size <= max;
+  return s.isFile() && !s.isSymbolicLink() && s.nlink === 1 && s.size >= 0;
 }
 function sha(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -52,15 +52,37 @@ export function preserveNativeFailure({ worktree, output, sourceSHA }) {
   const plans = failureEvidencePlan({ runs: dirs, sourceSHA });
   mkdirSync(destination, { recursive: false, mode: 0o700 });
   const copied = [];
-  let budget = MAX_TOTAL;
+  let budget = MAX_TOTAL, skipped = 0;
   function save(from, name, run) {
-    if (!ALLOWED.test(basename(from)) || !normalFile(from)) return;
+    if (!ALLOWED.test(basename(from))) return;
+    if (!normalFile(from)) { skipped++; return; }
     const size = lstatSync(from).size;
-    if (size > budget || copied.length >= MAX_FILES) return;
+    if (copied.length >= MAX_FILES || budget <= 0) { skipped++; return; }
     const target = join(destination, name);
-    copyFileSync(from, target, 0);
-    budget -= size;
-    copied.push({ file: name, sourceRun: run, bytes: size, sha256: sha(target) });
+    let persisted = Math.min(size, MAX_EACH, budget), truncated = persisted < size;
+    if (!Number.isSafeInteger(persisted) || persisted < 0) { skipped++; return; }
+    if (truncated && persisted < 64 * 1024) { skipped++; return; }
+    if (!truncated) copyFileSync(from, target);
+    else {
+      // Copy the bounded tail so the compiler's final error survives even if
+      // Xcode produced a log larger than the per-file evidence budget.
+      const descriptor = openSync(from, 'r');
+      try {
+        const tail = Buffer.alloc(persisted);
+        let position = 0;
+        while (position < persisted) {
+          const count = readSync(descriptor, tail, position, persisted - position,
+            size - persisted + position);
+          if (count <= 0) throw Error('Native failure log changed during snapshot.');
+          position += count;
+        }
+        writeFileSync(target, tail, { flag: 'wx', mode: 0o600 });
+      } finally { closeSync(descriptor); }
+    }
+    budget -= persisted;
+    if (truncated) skipped++;
+    copied.push({ file: name, sourceRun: run, bytes: persisted,
+      originalBytes: size, truncated, sha256: sha(target) });
   }
   // The latest top-level QA file points to a failed step even when Xcode
   // failed before a suite created an individual compile log.
@@ -77,7 +99,7 @@ export function preserveNativeFailure({ worktree, output, sourceSHA }) {
   }
   const status = { schema: 'mp3shelf-failed-native-evidence-v1',
     sourceSHA, result: 'FAILED_NATIVE_RUN_NOT_RELEASE_APPROVED',
-    attempts: plans.length, preserved: copied, truncated: copied.length >= MAX_FILES || budget < MAX_TOTAL };
+    attempts: plans.length, preserved: copied, truncated: skipped > 0, skipped };
   writeFileSync(join(destination, 'failure-evidence.json'),
     JSON.stringify(status, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return status;
