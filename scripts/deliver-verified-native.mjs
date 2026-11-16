@@ -35,12 +35,14 @@ export function deliveryManifestErrors({ manifest, sha, archiveName, archiveHash
       !HASH.test(manifest?.signedAppSHA256 ?? '') ||
       manifest?.hardwareIssue !== 6 || manifest?.hardwareIssueClosed !== true ||
       manifest?.buildType !== 'Xcode project sources, NOT signed IPA' ||
-      !Number.isFinite(Date.parse(manifest?.reviewedAt ?? '')))
+      !Number.isFinite(Date.parse(manifest?.reviewedAt ?? '')) ||
+      Date.parse(manifest.reviewedAt) > Date.now() + 5 * 60 * 1000)
     errors.push('ZIP and immutable manifest do not describe one verified source/hardware release.');
   if (deviceIssue?.number !== 6 || deviceIssue.state !== 'closed' ||
       typeof deviceIssue.body !== 'string' ||
-      CHECKS.some(label => !deviceIssue.body.includes('- [x] **' + label + ':**')) ||
-      /- \[ \]/.test(deviceIssue.body))
+      CHECKS.some(label => !deviceIssue.body.split(/\r?\n/).some(line =>
+        line.startsWith('- [x] **' + label + ':**'))) ||
+      /(?:^|\n)- \[ \]/.test(deviceIssue.body))
     errors.push('Physical iPhone acceptance issue #6 has not passed all nine hardware checks.');
   if (ownerApproved !== true)
     errors.push('Missing authenticated owner approval binding source, inventory and signed app.');
@@ -184,7 +186,13 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
   // revoked approval or updated candidate cannot authorize a stale release.
   if (!tagPointsToCandidate(tag, sha) ||
       JSON.parse(cli('api','repos/' + REPO + '/git/ref/heads/feat/ios-consolidated-candidate')).object?.sha !== sha ||
-      !(await ownerApproval(sha, m, ghJSON('repos/' + REPO + '/issues/6'))))
+      !(await (async () => {
+        const latestIssue = ghJSON('repos/' + REPO + '/issues/6');
+        const latestApproval = await ownerApproval(sha, m, latestIssue);
+        return deliveryManifestErrors({manifest:m, sha, archiveName:basename(zip),
+          archiveHash:zipHash, bytes:size, deviceIssue:latestIssue,
+          ownerApproved:latestApproval}).length === 0;
+      })()))
     throw Error('Release eligibility changed after artifact upload; draft remains private.');
   cli('release', 'edit', tag, '--repo', REPO, '--draft=false');
   const published = checkedRelease(tag);
