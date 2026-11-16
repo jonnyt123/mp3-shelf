@@ -164,3 +164,19 @@ test('hardware approval pagination fails closed on malformed and truncated histo
   await assert.rejects(fetchAllIssueComments('https://example.test/comments',
     async () => Array.from({length:101},()=>({}))), /Malformed/);
 });
+
+test('hardware approval pagination rejects repeated pages and forged record shapes', async () => {
+  const first = Array.from({length:100}, (_, i) => ({
+    id:i+1, user:{login:'other'}, body:'not approved'
+  }));
+  await assert.rejects(fetchAllIssueComments('https://example.test/comments',
+    async () => first), /repeated GitHub hardware approval comment/);
+  for (const bad of [
+    {id:1, user:{login:'jonnyt123'}, body:null},
+    {id:1, user:null, body:'approval'},
+    {id:'1', user:{login:'jonnyt123'}, body:'approval'}
+  ]) {
+    await assert.rejects(fetchAllIssueComments('https://example.test/comments',
+      async () => [bad]), /Malformed or repeated/);
+  }
+});
