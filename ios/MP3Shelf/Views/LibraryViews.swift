@@ -1766,25 +1766,21 @@ struct PlaylistDetailView: View {
         playlistPlaybackError = nil
         playlistPlaybackNotice = nil
         let requestedPlaylistID = playlistID
-        // Preserve the exact saved occurrence order being checked. A playlist
-        // edit during the scan must not silently play an obsolete subset.
-        let requestedTrackIDs = tracks.map(\.id)
-        // Check each distinct recording only once even when the playlist
-        // deliberately repeats a song. Preserve repetitions in the final queue.
-        let snapshots = Array(Dictionary(tracks.map { ($0.id, library.fileURL(for: $0)) },
-                                         uniquingKeysWith: { first, _ in first }))
+        // Snapshot every occurrence, including duplicates with distinct file URLs.
+        // Matching only UUIDs can incorrectly authorize a missing duplicate.
+        let snapshots = tracks.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }
         playlistPlaybackTask = Task {
-            let scan = Task.detached(priority: .userInitiated) { () -> Set<UUID> in
-                var valid = Set<UUID>()
-                for (id, url) in snapshots {
+            let scan = Task.detached(priority: .userInitiated) { () -> [Bool] in
+                var availability: [Bool] = []
+                availability.reserveCapacity(snapshots.count)
+                for location in snapshots {
                     if Task.isCancelled { break }
-                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                          values.isRegularFile == true, let size = values.fileSize, size > 0 else { continue }
-                    valid.insert(id)
+                    let values = try? location.url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                    availability.append(values?.isRegularFile == true && (values?.fileSize ?? 0) > 0)
                 }
-                return valid
+                return availability
             }
-            let validIDs = await withTaskCancellationHandler {
+            let availability = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: {
                 scan.cancel()
@@ -1795,17 +1791,15 @@ struct PlaylistDetailView: View {
             guard playlistScenePhase == .active,
                   let currentPlaylist = library.playlists.first(where: { $0.id == requestedPlaylistID }) else { return }
             let currentTracks = library.songs(in: currentPlaylist)
-            guard currentTracks.map(\.id) == requestedTrackIDs else {
-                playlistPlaybackError = "This playlist changed while recordings were being checked. Retry playback to use its latest song order."
+            let currentLocations = currentTracks.map {
+                RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0))
+            }
+            guard currentLocations == snapshots, availability.count == snapshots.count else {
+                playlistPlaybackError = "This playlist or its recording locations changed while files were checked. Retry playback to use the latest recordings."
                 return
             }
-            // A playlist may contain the same track more than once. Building a
-            // dictionary with uniqueKeysWithValues traps on duplicate IDs.
-            let originalURLs = snapshots.reduce(into: [UUID: URL]()) { result, item in
-                result[item.0] = item.1
-            }
-            let queue = currentTracks.filter { track in
-                validIDs.contains(track.id) && originalURLs[track.id] == library.fileURL(for: track)
+            let queue = currentTracks.enumerated().compactMap { index, track in
+                availability[index] ? track : nil
             }
             guard let first = shuffled ? queue.randomElement() : queue.first else {
                 playlistPlaybackError = "No playable offline recordings are available. Check Downloads or restore the missing audio files."
