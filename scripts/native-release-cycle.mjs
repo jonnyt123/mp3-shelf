@@ -32,17 +32,21 @@ export function selectNativeEvidence(root, sha) {
     return null;
   const entries = readdirSync(dir, { withFileTypes: true });
   if (entries.length > 128) return null;
-  for (const item of entries.filter(x => x.isDirectory() && !x.isSymbolicLink())
-      .sort((a, b) => b.name.localeCompare(a.name))) {
-    const path = join(dir, item.name);
-    if (['native-baseline.json', 'native-QA_RECORD.md',
-      'local-evidence.json', 'native-local-release.log',
-      'post-native-checkout-integrity.log'].every(name =>
-      existsSync(join(path, name)) && lstatSync(join(path, name)).isFile() &&
-      !lstatSync(join(path, name)).isSymbolicLink() &&
-      lstatSync(join(path, name)).nlink === 1)) return path;
-  }
-  return null;
+  // The newest run is authoritative. Never fall back to an older successful
+  // receipt when a later run failed, is incomplete, or has redirected files.
+  const runs = entries.filter(x => x.isDirectory() && !x.isSymbolicLink())
+    .sort((a, b) => b.name.localeCompare(a.name));
+  if (runs.length === 0) return null;
+  const path = join(dir, runs[0].name);
+  if (!safeDirectoryChain(path, root)) return null;
+  return ['native-baseline.json', 'native-QA_RECORD.md',
+    'local-evidence.json', 'native-local-release.log',
+    'post-native-checkout-integrity.log'].every(name => {
+    const file = join(path, name);
+    if (!existsSync(file)) return false;
+    const stat = lstatSync(file);
+    return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1;
+  }) ? path : null;
 }
 export async function runNativeReleaseCycle({ repo, preflight = executeNativePreflight,
   packageProject = packageNativeXcode, home = homedir() } = {}) {
