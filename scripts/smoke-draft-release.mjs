@@ -57,12 +57,13 @@ function releaseRef(tag){
 }
 export function verifiedDraftUpload(release, expected){
  const assets=release?.assets;
- if(release?.draft!==true || release?.tag_name!==expected.tag ||
-    release?.target_commitish!==expected.sha || !Array.isArray(assets) ||
-    assets.length!==2) return false;
+ if(release?.draft!==true || release?.published_at != null ||
+    release?.tag_name!==expected.tag || release?.target_commitish!==expected.sha ||
+    !Array.isArray(assets) || assets.length!==2) return false;
  const hashes=new Map([[expected.zip,expected.zipSHA],[expected.manifest,expected.manifestSHA]]);
  for(const asset of assets){
-   if(!hashes.has(asset.name) || asset.digest!=='sha256:'+hashes.get(asset.name))
+   if(asset.state!=='uploaded' || !Number.isSafeInteger(asset.size) || asset.size<=0 ||
+      !hashes.has(asset.name) || asset.digest!=='sha256:'+hashes.get(asset.name))
      return false;
    hashes.delete(asset.name);
  }
