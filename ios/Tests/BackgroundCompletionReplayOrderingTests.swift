@@ -230,4 +230,32 @@ try original.write(to: dest, options: .atomic)
 try complete()
 try check(try Data(contentsOf: journal) == trustedJournal, "valid journal changed during recovery")
 
+// Reject terminal-state/receipt disagreement before replay. These are realistic
+// interrupted or manually corrupted checkpoint shapes, not recoverable tickets.
+let terminalMismatchCases: [Snapshot] = [
+    Snapshot(entries: [Entry(id: "ticket", state: .imported, filename: "song.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .cancelled, filename: "song.mp3")], receipts: ["ticket"]),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3")], receipts: ["ticket"]),
+    Snapshot(entries: [Entry(id: "ticket", state: .importing, filename: "song.mp3")], receipts: ["ticket"]),
+    Snapshot(entries: [Entry(id: "ticket", state: .imported, filename: "song.mp3")], receipts: ["ticket", "ticket"]),
+    Snapshot(entries: [Entry(id: "ticket", state: .imported, filename: "song.mp3")], receipts: ["unknown"])
+]
+for (index, invalid) in terminalMismatchCases.enumerated() {
+    try JSONEncoder().encode(invalid).write(to: journal, options: .atomic)
+    let invalidBytes = try Data(contentsOf: journal)
+    do { try complete(); try check(false, "terminal mismatch \(index) accepted") }
+    catch ReplayError.corrupt {}
+    try check(try Data(contentsOf: journal) == invalidBytes,
+              "terminal mismatch \(index) rewrote corrupt journal")
+    try check(try Data(contentsOf: dest) == original,
+              "terminal mismatch \(index) changed owned recording")
+    try check(try Data(contentsOf: other) == unrelated,
+              "terminal mismatch \(index) changed unrelated recording")
+}
+try trustedJournal.write(to: journal, options: .atomic)
+try complete()
+try check(try Data(contentsOf: journal) == trustedJournal,
+          "terminal mismatch recovery did not preserve valid checkpoint")
+
+
 print("PASS: 48 crash/replay rounds (16 without staging), 48 duplicates, 24 corrupt journals, terminal receipt integrity and unsafe path rejection")
