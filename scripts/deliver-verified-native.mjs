@@ -54,6 +54,23 @@ export function releaseAssetsMatch(release, zipName, zipHash, manifestName, mani
     asset.digest === 'sha256:' + expected.get(asset.name) && expected.delete(asset.name)) &&
     expected.size === 0;
 }
+// Retry an interrupted draft upload without replacing any existing asset.
+// A mismatched existing asset is never repaired automatically: it may indicate
+// concurrent modification or an approval/release identity problem.
+export function missingDraftAssets(release, zipName, zipHash, manifestName, manifestHash) {
+  if (!release?.draft || !Array.isArray(release.assets))
+    throw Error('Only an existing draft with readable assets may be resumed.');
+  const expected = new Map([[zipName, zipHash], [manifestName, manifestHash]]);
+  if (expected.size !== 2) throw Error('Verified artifact names must be distinct.');
+  const seen = new Set();
+  for (const asset of release.assets) {
+    if (!expected.has(asset?.name) || seen.has(asset.name) ||
+        asset.digest !== 'sha256:' + expected.get(asset.name))
+      throw Error('Existing draft contains an unexpected, duplicate or corrupted asset.');
+    seen.add(asset.name);
+  }
+  return [...expected.keys()].filter(name => !seen.has(name));
+}
 async function sha256(path) {
   const hash = createHash('sha256');
   for await (const bytes of createReadStream(path, { highWaterMark: 64 * 1024 })) hash.update(bytes);
@@ -135,6 +152,15 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
       throw Error('Existing GitHub release does not match source, uploaded asset hashes or manifest.');
     if (!current.draft) return { status: 'ALREADY_DELIVERED', sha,
       url: current.html_url, downloadURL: directZIP, sha256: zipHash };
+    const missing = missingDraftAssets(current, basename(zip), zipHash,
+      basename(metadata), manifestHash);
+    if (missing.length) {
+      // Never use --clobber: an interrupted delivery can resume, but no
+      // existing GitHub-hosted asset may be silently replaced.
+      cli('release', 'upload', tag, '--repo', REPO,
+        ...missing.map(name => name === basename(zip) ? zip : metadata));
+      current = checkedRelease(tag);
+    }
   } else {
     // Create a DRAFT first. No public artifact until downloaded assets match.
     cli('release', 'create', tag, '--repo', REPO, '--draft', '--target', sha,
