@@ -41,7 +41,8 @@ export function hardwareInventoryErrors(inventory, hardware, now = Date.now()) {
       inventory.requested > 20000 ||
       !Number.isSafeInteger(inventory?.unavailable) || inventory.unavailable < 0 ||
       inventory.unavailable > inventory.requested ||
-      inventory.copiedTracks > inventory.requested ||
+      !Number.isSafeInteger(inventory?.copiedTracks) || inventory.copiedTracks < 0 ||
+      inventory.copiedTracks + inventory.unavailable !== inventory.requested ||
       !Array.isArray(inventory.files) ||
       inventory.files.some(row => !UUID.test(row?.trackID ?? '')) ||
       new Set(inventory.files.map(row => row.trackID)).size !== inventory.files.length)
