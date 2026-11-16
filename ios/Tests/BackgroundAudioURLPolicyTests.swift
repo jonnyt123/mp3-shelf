@@ -37,6 +37,19 @@ enum BackgroundAudioURLPolicyTests {
                 fatalError("Safe public HTTPS URL was rejected: \(raw)")
             }
         }
+        // A complete staged recording wins against late HTTP failures,
+        // cancellation errors and progress-limit callbacks. A cancelled or
+        // already imported ticket must not revive a stale staged file.
+        for queued in [false, true] {
+            for staged in [false, true] {
+                let expected = queued && staged
+                guard BackgroundAudioDownloader.shouldRecoverStagedAudio(
+                    isQueued: queued, hasStagedFile: staged) == expected else {
+                    fatalError("Incorrect callback precedence: queued=\(queued), staged=\(staged)")
+                }
+            }
+        }
+        print("PASS: background callback staged-file precedence fixtures")
         print("PASS: background download URL policy fixtures")
     }
 }
