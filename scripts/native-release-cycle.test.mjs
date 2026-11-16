@@ -36,23 +36,35 @@ test('automatic cycle never packages while hardware inventory/approval are absen
     assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
-test('packaging is requested only with both evidence files and correct candidate', async () => {
+test('packaging and delivering only with both verified evidence directories', async () => {
   const f = fixture();
   try {
     writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
     writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
-    let called = 0;
+    let packaged = 0, delivered = 0;
+    const dest = join(f.home, 'Documents', 'MP3Shelf', 'VerifiedReleases');
+    const zip = join(dest, 'MP3-Shelf-Xcode-' + sha.slice(0, 12) + '.zip');
+    const manifest = join(dest, 'MP3-Shelf-Xcode-' + sha.slice(0, 12) + '.manifest.json');
     const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
       preflight: async () => ({ status: 'already-staged', sha }),
       packageProject: async options => {
-        called++;
+        packaged++;
         assert.equal(options.candidateSha, sha);
         assert.equal(options.nativeEvidence, f.native);
         assert.equal(options.deviceEvidence, f.device);
-        return { status: 'PACKAGED_VERIFIED_NATIVE_SOURCE', archive: 'fixture.zip', archiveSHA256: 'c'.repeat(64) };
+        return { status: 'PACKAGED_VERIFIED_NATIVE_SOURCE', sha,
+          archive: zip, manifest, archiveSHA256: 'c'.repeat(64) };
+      },
+      deliverArchive: async options => {
+        delivered++;
+        assert.deepEqual(options, { archive: zip, manifestPath: manifest });
+        return { status: 'DELIVERED_VERIFIED_XCODE_ZIP', sha, sha256: 'c'.repeat(64),
+          url: 'https://github.com/jonnyt123/mp3-shelf/releases/tag/test-fixture' };
       } });
-    assert.equal(called, 1);
+    assert.equal(packaged, 1);
+    assert.equal(delivered, 1);
     assert.equal(result.packaging, 'PACKAGED_VERIFIED_NATIVE_SOURCE');
+    assert.equal(result.delivery, 'DELIVERED_VERIFIED_XCODE_ZIP');
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
 test('wrong SHA or an existing artifact cannot be treated as freshly packaged', async () => {
@@ -68,7 +80,7 @@ test('wrong SHA or an existing artifact cannot be treated as freshly packaged', 
     const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
       preflight: async () => ({ status: 'already-staged', sha }),
       packageProject: async () => { throw Error('must not overwrite'); } });
-    assert.equal(result.packaging, 'EXISTING_OUTPUT_REQUIRES_HASH_REVIEW');
+    assert.equal(result.packaging, 'INCOMPLETE_OUTPUT_REQUIRES_REVIEW');
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
 
@@ -270,5 +282,47 @@ test('dangling symlink output ancestor is blocked without invoking packager', as
       packageProject: async () => { calls++; throw Error('must not package'); } });
     assert.equal(calls, 0);
     assert.equal(result.packaging, 'BLOCKED_UNSAFE_OUTPUT_DESTINATION');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+
+test('existing complete verified ZIP resumes delivery without regenerating the archive', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const dest = join(f.home, 'Documents', 'MP3Shelf', 'VerifiedReleases');
+    mkdirSync(dest, { recursive: true });
+    const zip = join(dest, 'MP3-Shelf-Xcode-' + sha.slice(0, 12) + '.zip');
+    const manifest = join(dest, 'MP3-Shelf-Xcode-' + sha.slice(0, 12) + '.manifest.json');
+    writeFileSync(zip, 'synthetic only');
+    writeFileSync(manifest, '{}');
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => { throw Error('Must not rebuild ZIP'); },
+      deliverArchive: async ({ archive, manifestPath }) => {
+        assert.equal(archive, zip);
+        assert.equal(manifestPath, manifest);
+        return { status: 'ALREADY_DELIVERED', sha,
+          sha256: 'c'.repeat(64), url: 'https://github.com/jonnyt123/mp3-shelf/releases/tag/test' };
+      }
+    });
+    assert.equal(result.packaging, 'EXISTING_VERIFIED_ARCHIVE');
+    assert.equal(result.delivery, 'ALREADY_DELIVERED');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+test('invalid packager or delivery response never reports a published Xcode ZIP', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    await assert.rejects(runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => ({
+        status: 'PACKAGED_VERIFIED_NATIVE_SOURCE', sha,
+        archive: 'wrong.zip', manifest: 'wrong.json', archiveSHA256: 'c'.repeat(64)
+      }),
+      deliverArchive: async () => { throw Error('Must not upload invalid package'); }
+    }), /Packager did not confirm/);
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
