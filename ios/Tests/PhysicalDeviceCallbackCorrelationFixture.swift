@@ -19,6 +19,7 @@ struct Evidence {
         guard armed.kind == "auditArmed", armed.task == nil else { return false }
         for wake in events where wake.kind == "osBackgroundWake"
             && wake.session == armed.session && wake.process != armed.process
+            && (wake.task == nil || wake.task == task)
             && wake.time > armed.time {
             for completion in events where completion.kind == "urlSessionCompletion"
                 && completion.session == armed.session && completion.process == wake.process
@@ -47,6 +48,10 @@ let valid = [
     event("recordingStaged", 130, "task-A")
 ]
 check(Evidence(armed: arm, events: valid).hasBackgroundCompletion(task: "task-A"), "valid evidence rejected")
+// A task-scoped OS wake may carry the task identifier, or may be session-wide.
+let scopedValid = [event("osBackgroundWake", 110, "task-A"), valid[1], valid[2]]
+check(Evidence(armed: arm, events: scopedValid).hasBackgroundCompletion(task: "task-A"),
+      "task-scoped OS wake rejected")
 let invalid: [[Event]] = [
     // No OS callback or no durable staging event.
     Array(valid.dropFirst()),
@@ -54,6 +59,11 @@ let invalid: [[Event]] = [
     // A previous app process or audit session cannot supply the wake.
     [event("osBackgroundWake", 110, process: "process-old"), valid[1], valid[2]],
     [event("osBackgroundWake", 110, session: "session-old"), valid[1], valid[2]],
+    // A task-specific OS wake must never authorize a different download's callback.
+    [event("osBackgroundWake", 110, "task-B"), valid[1], valid[2]],
+    [event("osBackgroundWake", 110, "task-B"), event("urlSessionCompletion", 120, "task-A"), event("recordingStaged", 130, "task-A")],
+    // Mixed-task wakes cannot be combined with completion and staging evidence.
+    [event("osBackgroundWake", 110, "task-B"), event("osBackgroundWake", 111, "task-C"), valid[1], valid[2]],
     // A completion and staging event for different tasks are not correlated.
     [valid[0], event("urlSessionCompletion", 120, "task-B"), valid[2]],
     [valid[0], valid[1], event("recordingStaged", 130, "task-B")],
@@ -69,7 +79,9 @@ let invalid: [[Event]] = [
     [valid[0], valid[1], event("recordingStaged", 130, "task-A", process: "process-3")],
     [valid[0], event("urlSessionCompletion", 120, "task-A", process: "process-3"), valid[2]],
     [event("osBackgroundWake", 125), valid[1], valid[2]],
-    [valid[0], event("urlSessionCompletion", 120, "task-A", session: "session-old"), valid[2]]
+    [valid[0], event("urlSessionCompletion", 120, "task-A", session: "session-old"), valid[2]],
+    [event("osBackgroundWake", 110, "task-A", process: "process-1"), valid[1], valid[2]],
+    [event("osBackgroundWake", 110, "task-A", session: "session-old"), valid[1], valid[2]]
 ]
 for (index, events) in invalid.enumerated() {
     check(!Evidence(armed: arm, events: events).hasBackgroundCompletion(task: "task-A"),
@@ -80,4 +92,4 @@ let encoded = try JSONEncoder().encode(valid)
 let decoded = try JSONDecoder().decode([Event].self, from: encoded)
 check(Evidence(armed: arm, events: decoded).hasBackgroundCompletion(task: "task-A"),
       "JSON evidence round-trip failed")
-print("PASS: same-process/session/task wake-completion-staging correlation; 16 negative cases")
+print("PASS: same-process/session/task wake-completion-staging correlation; 21 negative cases")
