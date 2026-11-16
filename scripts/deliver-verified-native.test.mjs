@@ -123,3 +123,17 @@ test('GitHub release assets must be fully uploaded with nonzero recorded bytes',
   }
   assert.equal(releaseAssetsMatch(release(), zipName, digest, jsonName, binary), true);
 });
+
+test('hardware acceptance cannot be forged by inline text or stale unchecked categories', () => {
+  const inline = fixture();
+  inline.deviceIssue.body = names.map(x => 'not a checklist - [x] **' + x + ':**').join('\n');
+  assert(deliveryManifestErrors(inline).some(x => x.includes('issue #6')));
+  const missing = fixture();
+  missing.deviceIssue.body = names.slice(1).map(x => '- [x] **' + x + ':** verified').join('\n');
+  assert(deliveryManifestErrors(missing).some(x => x.includes('issue #6')));
+});
+test('future-dated independent review cannot authorize release', () => {
+  const future = fixture();
+  future.manifest.reviewedAt = new Date(Date.now() + 86400000).toISOString();
+  assert(deliveryManifestErrors(future).length > 0);
+});
