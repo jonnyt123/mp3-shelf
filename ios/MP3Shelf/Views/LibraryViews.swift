@@ -1989,21 +1989,25 @@ struct PlaylistDetailView: View {
                                 .foregroundStyle(ShelfTheme.subdued)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityAddTraits(.updatesFrequently)
-                            // A cancelled or invalidated scan must be recoverable without
-                            // finding the small header Play/Shuffle controls again.
-                            if !playlistPlaybackPending && playlistPlaybackNotice.contains("cancelled") ||
-                                (!playlistPlaybackPending && playlistPlaybackNotice.contains("changed")) {
+                            // Retry also remains available after partial playback: restoring
+                            // missing files should not require navigating away to replay them.
+                            // Only offer it for the current nonempty playlist.
+                            if !playlistPlaybackPending &&
+                                (playlistPlaybackNotice.contains("cancelled") ||
+                                 playlistPlaybackNotice.contains("changed") ||
+                                 playlistPlaybackNotice.contains("unavailable")),
+                               let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }),
+                               !library.songs(in: currentPlaylist).isEmpty {
                                 Button {
-                                    if let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }) {
-                                        startPlaylist(library.songs(in: currentPlaylist),
-                                                      shuffled: lastPlaylistPlaybackWasShuffled)
-                                    }
+                                    // Re-read the latest order and file locations on activation.
+                                    startPlaylist(library.songs(in: currentPlaylist),
+                                                  shuffled: lastPlaylistPlaybackWasShuffled)
                                 } label: {
                                     Label(lastPlaylistPlaybackWasShuffled ? "Retry Shuffle" : "Retry Play",
                                           systemImage: "arrow.clockwise")
                                         .frame(minHeight: 44, alignment: .leading)
                                 }
-                                .accessibilityHint("Checks the current playlist again without modifying saved audio")
+                                .accessibilityHint("Rechecks restored offline files in the current playlist without modifying saved audio")
                             }
                         }
                     }
