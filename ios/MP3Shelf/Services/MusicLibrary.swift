@@ -519,7 +519,14 @@ final class MusicLibrary: ObservableObject {
                             identicalRecording = candidate
                             break
                         }
-                        if identicalRecording == nil { identicalRecording = candidate }
+                        // Identical audio is not identical portable identity.
+                        // Never attach a second archive ID to a recording that
+                        // already belongs to a different portable track. Import
+                        // another local entry instead, preserving both identities.
+                        if candidate.portableBackupID == nil &&
+                            identicalRecording == nil {
+                            identicalRecording = candidate
+                        }
                     }
                 }
                 if let existing = identicalRecording {
@@ -590,7 +597,12 @@ final class MusicLibrary: ObservableObject {
                             duplicateIndex = index
                             break
                         }
-                        if duplicateIndex == nil { duplicateIndex = index }
+                        // Do not steal an existing portable ID when a concurrent
+                        // import introduced a same-byte sibling.
+                        if candidate.portableBackupID == nil &&
+                            duplicateIndex == nil {
+                            duplicateIndex = index
+                        }
                     }
                     if let index = duplicateIndex {
                         // The concurrent-import fallback also reuses an existing
