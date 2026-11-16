@@ -1,6 +1,9 @@
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { nativePackageGate, hardwareInventoryErrors, packageNativeXcode, fetchAllIssueComments } from './package-verified-native.mjs';
+import { nativePackageGate, hardwareInventoryErrors, packageNativeXcode, fetchAllIssueComments, assertSafeArchiveDestination } from './package-verified-native.mjs';
 const base = 'a'.repeat(40), sha = 'b'.repeat(40), hash = 'c'.repeat(64);
 const names = ['playback-order','playback-interruptions','downloaded-audio-signature',
   'downloaded-audio-format','playlist-parser','lyrics-parser','authorized-audio-sources',
@@ -199,4 +202,26 @@ test('full-playlist inventory rejects missing, overlapping and fractional accoun
   completeWithUnavailable.inventory.unavailable = 1;
   assert.deepEqual(hardwareInventoryErrors(
     completeWithUnavailable.inventory, completeWithUnavailable.hardware), []);
+});
+
+test('direct ZIP packager rejects redirected, dangling and file ancestors', () => {
+  const root = mkdtempSync(join(homedir(), '.mp3-release-destination-'));
+  try {
+    const actual = join(root, 'real');
+    mkdirSync(actual);
+    const link = join(root, 'linked');
+    symlinkSync(actual, link, 'dir');
+    assert.throws(() => assertSafeArchiveDestination(join(link, 'archive')), /linked or non-directory/);
+    const dangling = join(root, 'dangling');
+    symlinkSync(join(root, 'missing'), dangling, 'dir');
+    assert.throws(() => assertSafeArchiveDestination(join(dangling, 'archive')), /linked or non-directory/);
+    const file = join(root, 'ordinary-file');
+    writeFileSync(file, 'not a directory');
+    assert.throws(() => assertSafeArchiveDestination(join(file, 'archive')), /linked or non-directory/);
+    assert.equal(assertSafeArchiveDestination(join(actual, 'new', 'archive')),
+      join(actual, 'new', 'archive'));
+    assert.throws(() => assertSafeArchiveDestination('/tmp/mp3-shelf-untrusted'), /subdirectory/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

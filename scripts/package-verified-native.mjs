@@ -108,6 +108,30 @@ function boundedJSON(path, maxBytes = 1024 * 1024) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 function fingerprint(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
+// Validate the destination independently of the hourly orchestrator: the
+// packager also has a direct CLI entrypoint. Never follow redirected ancestors.
+export function assertSafeArchiveDestination(destination) {
+  const target = resolve(destination);
+  const root = resolve(homedir());
+  if (target === root || !target.startsWith(root + '/'))
+    throw Error('Archive destination must be a subdirectory of the current home.');
+  let cursor = target;
+  while (true) {
+    // lstat, not stat: dangling symlinks must also be rejected.
+    try {
+      const info = lstatSync(cursor);
+      if (info.isSymbolicLink() || !info.isDirectory())
+        throw Error('Archive destination has a linked or non-directory ancestor.');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (cursor === root) break;
+    const parent = resolve(cursor, '..');
+    if (parent === cursor) throw Error('Archive destination escaped the home directory.');
+    cursor = parent;
+  }
+  return target;
+}
 async function shaFile(path) {
   const h = createHash('sha256');
   for await (const data of createReadStream(path, { highWaterMark: 64 * 1024 })) h.update(data);
@@ -197,7 +221,10 @@ export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
   });
   if (errors.length) throw Error('NATIVE_ZIP_BLOCKED: ' + errors.join('; '));
   const dest = resolve(outputDirectory ?? join(homedir(), 'Documents', 'MP3Shelf', 'VerifiedReleases'));
+  assertSafeArchiveDestination(dest);
   mkdirSync(dest, { recursive: true, mode: 0o700 });
+  // Detect a destination swapped while the directory tree was created.
+  assertSafeArchiveDestination(dest);
   const prefix = 'MP3-Shelf-Xcode-' + sha.slice(0, 12) + '/';
   const name = 'MP3-Shelf-Xcode-' + sha.slice(0, 12);
   const archive = join(dest, name + '.zip'), manifest = join(dest, name + '.manifest.json');
