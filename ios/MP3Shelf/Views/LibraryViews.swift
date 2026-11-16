@@ -43,6 +43,7 @@ struct LibraryView: View {
     @State private var offlineCountRefreshRequest = 0
     @State private var recentPlaybackCheck: UUID?
     @State private var recentPlaybackTask: Task<Void, Never>?
+    @State private var recentPlaybackGeneration: UUID?
     @State private var missingRecentRecording = false
     @State private var recentPlaybackNotice: String?
     @State private var recentRetrySelection: (id: UUID, url: URL)?
@@ -56,6 +57,8 @@ struct LibraryView: View {
     // as a normal library row. Never perform coordinated file I/O on the UI actor.
     private func playRecentRecording(_ track: MusicTrack) {
         guard scenePhase == .active, recentPlaybackCheck == nil else { return }
+        let generation = UUID()
+        recentPlaybackGeneration = generation
         recentPlaybackCheck = track.id
         let selectedURL = library.fileURL(for: track)
         recentRetrySelection = (track.id, selectedURL)
@@ -67,7 +70,9 @@ struct LibraryView: View {
         let locations = recent.map { ($0.id, library.fileURL(for: $0)) }
         guard let selectedIndex = locations.firstIndex(where: { $0.0 == track.id && $0.1 == selectedURL }) else {
             recentPlaybackCheck = nil
+            recentPlaybackGeneration = nil
             missingRecentRecording = true
+            recentPlaybackNotice = "The selected recording changed. Choose another song or retry."
             return
         }
         recentPlaybackTask = Task {
@@ -93,12 +98,15 @@ struct LibraryView: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled, scenePhase == .active else { return }
+            guard !Task.isCancelled, scenePhase == .active,
+                  recentPlaybackGeneration == generation else { return }
+            recentPlaybackGeneration = nil
             recentPlaybackCheck = nil
             recentPlaybackTask = nil
             guard availability.count == recent.count,
                   recentlyAdded.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) } == locations.map { RecordingLocationKey(id: $0.0, url: $0.1) } else {
                 missingRecentRecording = true
+                recentPlaybackNotice = "Recently Added changed while checking local files. Retry to check the current recordings."
                 return
             }
             // Never resolve duplicates through an ID-only dictionary. Match the
@@ -114,8 +122,10 @@ struct LibraryView: View {
             guard availability[selectedIndex],
                   let selected = currentByLocation[RecordingLocationKey(id: track.id, url: selectedURL)] else {
                 missingRecentRecording = true
+                recentPlaybackNotice = "This recording is unavailable offline. Retry after restoring its local file, or choose another song."
                 return
             }
+            guard !Task.isCancelled, scenePhase == .active else { return }
             playback.play(selected, queue: queue)
             let skipped = recent.count - queue.count
             if skipped > 0 {
@@ -139,6 +149,7 @@ struct LibraryView: View {
 
     private func cancelRecentPlaybackPreparation(showFeedback: Bool) {
         if recentPlaybackCheck != nil {
+            recentPlaybackGeneration = nil
             recentPlaybackTask?.cancel()
             recentPlaybackTask = nil
             recentPlaybackCheck = nil
@@ -175,6 +186,7 @@ struct LibraryView: View {
                   $0.id == selection.id && library.fileURL(for: $0) == selection.url
               }) else {
             recentPlaybackNotice = "This song is no longer in Recently Added. Choose another recording."
+            recentRetrySelection = nil
             return
         }
         playRecentRecording(current)
