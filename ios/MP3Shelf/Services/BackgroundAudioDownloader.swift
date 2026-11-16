@@ -31,6 +31,9 @@ struct BackgroundAudioTicket: Codable, Identifiable {
     var alternativeSources: [AudioCatalogMatch]? = nil
     // False for local storage failures, which another source cannot fix.
     var mayTryAnotherSource: Bool? = nil
+    // A follower is a durable playlist request without its own URLSession task.
+    // The leader's verified library import fulfills it through reconciliation.
+    var sharedLeaderID: UUID? = nil
 }
 
 /// URLSession's background transfer daemon survives ordinary app suspension
@@ -227,6 +230,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             failedProviders: proven.failed)
     }
 
+    /// Coalesce only an exact independently resolved audio URL and recording
+    /// identity. A title-only match must never attach the wrong recording.
+    private func sharedLeader(for wish: PlaylistWish, sourceURL: URL) -> BackgroundAudioTicket? {
+        tickets.values.first { candidate in
+            candidate.status == .queued && candidate.sharedLeaderID == nil &&
+            candidate.downloadURL == sourceURL &&
+            MusicMatching.sameRequestedRecording(candidate.requested, wish)
+        }
+    }
+
     @discardableResult
     func enqueue(source: AudioCatalogMatch, requested: PlaylistWish, playlistID: UUID,
                  alternatives: [AudioCatalogMatch] = [], replacingRetry previousID: UUID? = nil) throws -> Bool {
@@ -237,14 +250,31 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // authoritative offline library can satisfy this request.
         reconcileAlreadyStoredDownloads()
         if library?.hasOfflineRecording(matching: requested) == true { return false }
-        // Resolution suspends callers, so an earlier capacity check can be
-        // stale. This MainActor check and ticket insertion have no await gap.
-        guard BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount()),
-              Self.allowedDownloadURL(source.downloadURL) else { return false }
+        guard Self.allowedDownloadURL(source.downloadURL) else { return false }
         if tickets.values.contains(where: {
             $0.status == .queued && $0.playlistID == playlistID &&
             MusicMatching.sameRequestedRecording($0.requested, requested)
         }) { return false }
+        // A follower consumes no additional network slot. Persist it before
+        // acknowledging enqueue, so process termination cannot lose the
+        // second playlist's outstanding request.
+        if let leader = sharedLeader(for: requested, sourceURL: source.downloadURL),
+           leader.playlistID != playlistID {
+            var follower = BackgroundAudioTicket(
+                id: UUID(), playlistID: playlistID, requested: requested,
+                downloadURL: source.downloadURL, sourcePage: source.itemURL,
+                licensePage: source.licenseURL, provider: source.sourceName)
+            follower.startedAt = .now
+            follower.sharedLeaderID = leader.id
+            var updated = tickets
+            updated[follower.id] = follower
+            try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            tickets = updated
+            updatePending()
+            return true
+        }
+        // Only leaders consume an OS transfer slot.
+        guard BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount()) else { return false }
         var ticket = BackgroundAudioTicket(
             id: UUID(), playlistID: playlistID, requested: requested,
             downloadURL: source.downloadURL, sourcePage: source.itemURL,
