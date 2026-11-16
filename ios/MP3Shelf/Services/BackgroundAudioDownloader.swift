@@ -1018,8 +1018,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             replacement.connectivityRetryCount = current.connectivityRetryCount
             replacement.nextRetryAt = current.nextRetryAt
             replacement.alternativeSources = current.alternativeSources
-            // Explicit cellular approval is session-only; after relaunch,
-            // replacement requests safely return to the Wi-Fi default.
+            // A restored, unexpired per-playlist approval permits cellular.
+            // startTransfer rechecks the expiry on every new request; expired
+            // or absent consent always falls back to Wi-Fi-only.
             do {
                 try startTransfer(replacement, replacing: (id, "Recovered missing background task"))
             } catch {
