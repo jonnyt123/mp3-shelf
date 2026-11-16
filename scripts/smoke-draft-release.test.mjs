@@ -1,0 +1,54 @@
+import { test } from 'node:test';
+import { strict as assert } from 'node:assert';
+import { smokePreflight, verifiedDraftUpload, runDraftSmoke }
+  from './smoke-draft-release.mjs';
+const sha='a'.repeat(40),tag='mp3shelf-upload-smoke-'+sha.slice(0,12)+'-1730000000000-abcdef';
+const zip='mp3shelf-draft-smoke-aaaaaaaaaaaa.zip';
+const json='mp3shelf-draft-smoke-aaaaaaaaaaaa.manifest.json';
+const zipSHA='b'.repeat(64),jsonSHA='c'.repeat(64);
+function draft(){
+ return {draft:true,tag_name:tag,target_commitish:sha,
+   assets:[{name:zip,digest:'sha256:'+zipSHA},{name:json,digest:'sha256:'+jsonSHA}]};
+}
+test('smoke tag is SHA-bound, unique, synthetic and never reuses existing draft/tag',()=>{
+ assert.deepEqual(smokePreflight({tag,sha,existing:null,workflows:[]}),[]);
+ assert(smokePreflight({tag,sha,existing:draft(),workflows:[]}).length);
+ assert(smokePreflight({tag:'mp3-shelf-ios-'+sha,sha,existing:null,workflows:[]}).length);
+ assert(smokePreflight({tag,sha:'wrong',existing:null,workflows:[]}).length);
+});
+test('refuses workflow configurations that could trigger paid Actions on tag or draft creation',()=>{
+ for(const workflow of [
+   'on:\n  push:\n    tags:\n     - "*"\n',
+   'on:\n  release:\n    types: [created]\n',
+   'on: [push, pull_request]\n',
+   'on:\n  create:\n']) {
+   assert(smokePreflight({tag,sha,existing:null,workflows:[workflow]}).length);
+ }
+ assert.deepEqual(smokePreflight({tag,sha,existing:null,
+   workflows:['on:\n  pull_request:\n','on:\n  workflow_dispatch:\n']}),[]);
+});
+test('only a draft with exactly two SHA-matching synthetic upload assets qualifies',()=>{
+ assert.equal(verifiedDraftUpload(draft(),{tag,sha,zip,manifest:json,zipSHA,manifestSHA:jsonSHA}),true);
+ const bad=draft();bad.draft=false;
+ assert(!verifiedDraftUpload(bad,{tag,sha,zip,manifest:json,zipSHA,manifestSHA:jsonSHA}));
+ const duplicate=draft();duplicate.assets[1].name=zip;
+ assert(!verifiedDraftUpload(duplicate,{tag,sha,zip,manifest:json,zipSHA,manifestSHA:jsonSHA}));
+});
+test('wrong source identity and missing or altered digests are rejected',()=>{
+ const args={tag,sha,zip,manifest:json,zipSHA,manifestSHA:jsonSHA};
+ for(const mutate of [
+   x=>{x.target_commitish='d'.repeat(40)},
+   x=>{x.assets[0].digest='sha256:'+'0'.repeat(64)},
+   x=>{delete x.assets[1].digest},
+   x=>{x.assets.pop()},
+   x=>{x.assets.push({name:'extra.zip',digest:'sha256:'+zipSHA})}
+ ]){
+  const x=draft();mutate(x);
+  assert(!verifiedDraftUpload(x,args));
+ }
+});
+test('remote live smoke never starts by default or from non-Mac host',async()=>{
+ await assert.rejects(runDraftSmoke({platform:'linux',allowLive:true}),/MAC_AND_GH_REQUIRED/);
+ if(process.platform!=='darwin')
+   await assert.rejects(runDraftSmoke({allowLive:false}),/MAC_AND_GH_REQUIRED/);
+});
