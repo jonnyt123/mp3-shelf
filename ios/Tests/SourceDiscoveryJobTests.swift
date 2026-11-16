@@ -9,6 +9,27 @@ private struct ClassifiedLookupFailure: SourceLookupRetryableError {
     let shouldRetrySourceLookup: Bool
 }
 
+private func verifyWrappedSourceLookupFailures() {
+    let transient = NSError(domain: NSURLErrorDomain, code: URLError.Code.timedOut.rawValue)
+    let permanent = NSError(domain: NSURLErrorDomain, code: URLError.Code.badURL.rawValue)
+    func wrapper(_ underlying: NSError) -> NSError {
+        NSError(domain: "MP3Shelf.SourceLookup", code: 1,
+                userInfo: [NSUnderlyingErrorKey: underlying])
+    }
+    verifyDiscovery(SourceLookupRetryPolicy.isTemporary(wrapper(transient)),
+                    "wrapped URL timeout remains retryable")
+    verifyDiscovery(SourceLookupRetryPolicy.isTemporary(wrapper(wrapper(transient))),
+                    "nested URL timeout remains retryable")
+    verifyDiscovery(!SourceLookupRetryPolicy.isTemporary(wrapper(permanent)),
+                    "wrapped permanent URL failure stays nonretryable")
+    verifyDiscovery(!SourceLookupRetryPolicy.isTemporary(wrapper(NSError(domain: "Disk", code: 28))),
+                    "wrapped local storage failure does not retry remote source")
+    var deep = transient
+    for _ in 0..<9 { deep = wrapper(deep) }
+    verifyDiscovery(!SourceLookupRetryPolicy.isTemporary(deep),
+                    "excessively nested errors fail closed")
+}
+
 private actor RecordingProbeLog {
     private(set) var requests: [URL] = []
     func record(_ url: URL) { requests.append(url) }
@@ -108,6 +129,7 @@ enum SourceDiscoveryJobTests {
     }
 
     @MainActor static func main() async throws {
+        verifyWrappedSourceLookupFailures()
         try await verifyRecordingStreamFallbacks()
         verifyDiscovery(AudioDownloadDiagnostics.maySearchForAnotherSource(
             reason: AudioDownloadDiagnostics.http(403), recordedAdvice: nil),
