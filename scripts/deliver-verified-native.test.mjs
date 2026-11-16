@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { deliveryManifestErrors, releaseAssetsMatch, missingDraftAssets, deliverVerifiedNative }
+import { deliveryManifestErrors, releaseAssetsMatch, missingDraftAssets,
+  smokeAttestationIsCurrent, deliverVerifiedNative }
   from './deliver-verified-native.mjs';
+import { smokeAttestationLine } from './draft-smoke-attestation.mjs';
 
 const sha = 'a'.repeat(40), digest = 'b'.repeat(64), binary = 'c'.repeat(64);
 const names = ['Signing / installation', 'Offline playback', 'Background licensed downloads',
@@ -25,7 +27,7 @@ function fixture() {
   const issue = { number: 6, state: 'closed',
     body: names.map(x => '- [x] **' + x + ':** verified at exact SHA').join('\n') };
   return { sha, manifest, archiveName: zipName, archiveHash: digest,
-    bytes: size, deviceIssue: issue, ownerApproved: true };
+    bytes: size, deviceIssue: issue, ownerApproved: true, smokeApproved: true };
 }
 function release() {
   return {
@@ -136,4 +138,25 @@ test('future-dated independent review cannot authorize release', () => {
   const future = fixture();
   future.manifest.reviewedAt = new Date(Date.now() + 86400000).toISOString();
   assert(deliveryManifestErrors(future).length > 0);
+});
+
+
+test('verified ZIP release rejects missing or expired draft-upload transport smoke',()=>{
+ const noSmoke=fixture(); noSmoke.smokeApproved=false;
+ assert(deliveryManifestErrors(noSmoke).some(x=>x.includes('draft GitHub')));
+ const omitted=fixture(); delete omitted.smokeApproved;
+ assert(deliveryManifestErrors(omitted).some(x=>x.includes('draft GitHub')));
+});
+test('only a recent owner attestation for current tooling commit with deleted tag qualifies',()=>{
+ const sha='d'.repeat(40), tag='mp3shelf-upload-smoke-'+sha.slice(0,12)+'-1763316000000-abcdef';
+ const body=smokeAttestationLine({toolingSha:sha,tag,
+   zipSHA256:'e'.repeat(64),manifestSHA256:'f'.repeat(64)});
+ const c={id:100,user:{login:'jonnyt123'},created_at:new Date().toISOString(),body};
+ assert.equal(smokeAttestationIsCurrent([c],sha,{tagAbsent:()=>true}),true);
+ assert.equal(smokeAttestationIsCurrent([c],sha,{tagAbsent:()=>false}),false);
+ assert.equal(smokeAttestationIsCurrent([c], 'a'.repeat(40),{tagAbsent:()=>true}),false);
+ assert.equal(smokeAttestationIsCurrent([{...c,user:{login:'other'}}],sha,
+   {tagAbsent:()=>true}),false);
+ assert.equal(smokeAttestationIsCurrent([{...c,created_at:'2020-01-01T00:00:00Z'}],sha,
+   {tagAbsent:()=>true}),false);
 });
