@@ -64,22 +64,27 @@ export function inspectPlaylistCatalog(library, playlistID) {
  * network path, and the production AVAudioPlayer clock advancing for each file.
  * Device logs are evidence of callback invocation, not completed HTTP identity.
  */
-export function verifyPhysicalDeviceTelemetry(proof, events, playlistID, selected) {
+export function verifyPhysicalDeviceTelemetry(proof, events, playlistID, selected, { now = Date.now() } = {}) {
   if (!proof || proof.schema !== 'mp3shelf-physical-offline-v1' ||
       proof.status !== 'OFFLINE_PLAYBACK_PASS' ||
       proof.deviceKind !== 'physical-iPhone-debug' ||
       proof.networkProof !== 'NWPATH_UNSATISFIED' ||
       proof.playlistID !== playlistID ||
-      typeof proof.processToken !== 'string' ||
-      typeof proof.armedProcessToken !== 'string' ||
+      !UUID_RE.test(proof.processToken ?? '') ||
+      !UUID_RE.test(proof.armedProcessToken ?? '') ||
       proof.processToken === proof.armedProcessToken ||
       !Array.isArray(proof.observations) ||
-      !Array.isArray(events) || !Array.isArray(selected) ||
+      !Array.isArray(events) || events.length > 4096 ||
+      !Array.isArray(selected) ||
       proof.observations.length === 0 ||
       proof.observations.length !== selected.length ||
-      proof.playbackVerified !== selected.length)
+      proof.playbackVerified !== selected.length ||
+      !Number.isFinite(now))
     throw Error('Native offline playback receipt is absent, incomplete or inconsistent');
+
   const ids = new Set(selected.map(item => item.id));
+  if (ids.size !== selected.length || selected.some(item => !UUID_RE.test(item.id ?? '')))
+    throw Error('Device catalog contains missing or duplicate track identities');
   const played = new Set();
   for (const row of proof.observations) {
     if (!row || !ids.has(row.trackID) || played.has(row.trackID) ||
@@ -88,24 +93,53 @@ export function verifyPhysicalDeviceTelemetry(proof, events, playlistID, selecte
       throw Error('Native playback sample does not prove every local recording advanced');
     played.add(row.trackID);
   }
-  const has = (name, process) => events.some(row =>
-    row?.event === name && row?.processToken === process);
-  if (!has('qa-armed', proof.armedProcessToken) ||
-      !has('offline-verification-started', proof.processToken) ||
-      !has('offline-verification-finished', proof.processToken))
-    throw Error('Device QA log does not corroborate distinct armed and offline processes');
-  // Background transfer proof requires the SAME ticket and process to
-  // receive the OS wake, delegate callback and verified staging event.
-  // A foreground download plus an unrelated old wake is NOT evidence.
+
+  // Device appends ISO-8601 event timestamps. An old, reordered, future or
+  // incomplete audit session must never approve this candidate's new build.
+  let previousTime = -Infinity;
+  for (const event of events) {
+    if (!event || typeof event.timeUTC !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(event.timeUTC) ||
+        typeof event.processToken !== 'string' || !UUID_RE.test(event.processToken))
+      throw Error('Physical device audit contains an invalid event or timestamp');
+    const when = Date.parse(event.timeUTC);
+    if (!Number.isFinite(when) || when < now - 72 * 3600_000 ||
+        when > now + 5 * 60_000 || when < previousTime)
+      throw Error('Physical device audit is stale, future dated or reordered');
+    previousTime = when;
+  }
+  const indexOf = (name, process) => events.findIndex(row =>
+    row.event === name && row.processToken === process);
+  const armed = indexOf('qa-armed', proof.armedProcessToken);
+  const began = indexOf('offline-verification-started', proof.processToken);
+  const finished = indexOf('offline-verification-finished', proof.processToken);
+  if (armed < 0 || began <= armed || finished <= began)
+    throw Error('Device QA log does not corroborate a new, distinct offline session');
+
+  const advanced = events.slice(began + 1, finished)
+    .filter(row => row.event === 'offline-local-playback-advanced' &&
+      row.processToken === proof.processToken);
+  if (advanced.length !== ids.size ||
+      new Set(advanced.map(row => row.ticketID)).size !== ids.size ||
+      advanced.some(row => !ids.has(row.ticketID)))
+    throw Error('Local playback clock samples were not corroborated by device events');
+  // Require the observations and actual app event sequence to agree.
+  if (advanced.some((row, i) => row.ticketID !== proof.observations[i].trackID))
+    throw Error('Audio track observations do not match device playback order');
+
+  // Require the SAME background process and ticket to see wake, callback,
+  // and staged bytes after arm and before switching to offline verification.
+  // This is still event evidence, not an independent source/license proof.
   const realBackground = events.some((row, i) => {
-    if (row?.event !== 'download-audio-staged' || !UUID_RE.test(row.ticketID ?? '') ||
-        typeof row.processToken !== 'string') return false;
-    const inSameProcess = e => e?.processToken === row.processToken;
-    const wake = events.findIndex((e, j) => j < i && inSameProcess(e) &&
-      e.event === 'background-session-wake');
-    const completion = events.findIndex((e, j) => j < i && inSameProcess(e) &&
-      e.event === 'download-completion-callback' && e.ticketID === row.ticketID);
-    return wake >= 0 && completion >= 0;
+    if (i <= armed || i >= began || row.event !== 'download-audio-staged' ||
+        !UUID_RE.test(row.ticketID ?? '')) return false;
+    const sameProcess = event => event.processToken === row.processToken;
+    const wake = events.findIndex((event, j) => j > armed && j < i &&
+      sameProcess(event) && event.event === 'background-session-wake');
+    const callback = events.findIndex((event, j) => j > armed && j < i &&
+      sameProcess(event) && event.event === 'download-completion-callback' &&
+      event.ticketID === row.ticketID);
+    return wake >= 0 && callback >= 0;
   });
   return {
     offlinePlaybackAfterRestart: 'APP_INSTRUMENTED_PHYSICAL_PASS',
