@@ -8,7 +8,7 @@ const json='mp3shelf-draft-smoke-aaaaaaaaaaaa.manifest.json';
 const zipSHA='b'.repeat(64),jsonSHA='c'.repeat(64);
 function draft(){
  return {draft:true,tag_name:tag,target_commitish:sha,
-   assets:[{name:zip,digest:'sha256:'+zipSHA},{name:json,digest:'sha256:'+jsonSHA}]};
+   assets:[{name:zip,digest:'sha256:'+zipSHA,state:'uploaded',size:128},{name:json,digest:'sha256:'+jsonSHA,state:'uploaded',size:256}]};
 }
 test('smoke tag is SHA-bound, unique, synthetic and never reuses existing draft/tag',()=>{
  assert.deepEqual(smokePreflight({tag,sha,existing:null,workflows:[]}),[]);
@@ -70,4 +70,17 @@ test('quoted, inline, aliased or missing workflow triggers block remote draft sm
    '"on": [workflow_dispatch, pull_request]\n',
    'on: workflow_dispatch\n'
  ]) assert.equal(workflowMayRunOnDraftTag(workflow),false,workflow);
+});
+
+test('rejects incomplete, empty or already published remote smoke assets',()=>{
+ const args={tag,sha,zip,manifest:json,zipSHA,manifestSHA:jsonSHA};
+ for(const mutate of [
+  x=>{x.published_at='2026-11-16T00:00:00Z'},
+  x=>{x.assets[0].state='starter'},
+  x=>{x.assets[1].size=0},
+  x=>{x.assets[1].size=-1},
+  x=>{x.assets[1].size=NaN},
+  x=>{delete x.assets[0].state},
+  x=>{delete x.assets[0].size}
+ ]) {const x=draft();mutate(x);assert.equal(verifiedDraftUpload(x,args),false);}
 });
