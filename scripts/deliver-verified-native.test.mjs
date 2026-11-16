@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { deliveryManifestErrors, releaseAssetsMatch, deliverVerifiedNative }
+import { deliveryManifestErrors, releaseAssetsMatch, missingDraftAssets, deliverVerifiedNative }
   from './deliver-verified-native.mjs';
 
 const sha = 'a'.repeat(40), digest = 'b'.repeat(64), binary = 'c'.repeat(64);
@@ -80,4 +80,28 @@ test('non-Mac release delivery fails before even reading archive paths', async (
   if (process.platform !== 'darwin')
     await assert.rejects(deliverVerifiedNative({ archive: '/not/a/real/zip' }),
       /VERIFIED_MAC_REQUIRED/);
+});
+
+test('interrupted draft delivery resumes only absent assets without clobber', () => {
+  const empty = release(); empty.assets = [];
+  assert.deepEqual(missingDraftAssets(empty, zipName, digest, jsonName, binary),
+    [zipName, jsonName]);
+  const partial = release(); partial.assets.pop();
+  assert.deepEqual(missingDraftAssets(partial, zipName, digest, jsonName, binary),
+    [jsonName]);
+  assert.deepEqual(missingDraftAssets(release(), zipName, digest, jsonName, binary), []);
+});
+test('interrupted delivery refuses changed, duplicate, unknown and published assets', () => {
+  const bad = [
+    r => { r.assets[0].digest = 'sha256:' + 'f'.repeat(64); },
+    r => { r.assets.push({ ...r.assets[0] }); },
+    r => { r.assets.push({ name: 'unapproved.zip', digest: 'sha256:' + digest }); },
+    r => { r.draft = false; },
+    r => { r.assets = null; }
+  ];
+  for (const mutate of bad) {
+    const r = release(); mutate(r);
+    assert.throws(() => missingDraftAssets(r, zipName, digest, jsonName, binary));
+  }
+  assert.throws(() => missingDraftAssets(release(), zipName, digest, zipName, binary));
 });
