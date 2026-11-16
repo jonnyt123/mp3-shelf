@@ -145,6 +145,22 @@ struct LibraryView: View {
         recentPlaybackNotice = "Playback preparation cancelled. Your saved recordings were not changed."
     }
 
+    // Explicit cancellation preserves the requested mode for an intentional retry.
+    // Background/navigation cancellation must not leave a stale retry affordance.
+    private func cancelBulkPlaybackPreparation(showFeedback: Bool) {
+        guard bulkPlaybackPending else { return }
+        bulkPlaybackTask?.cancel()
+        bulkPlaybackTask = nil
+        bulkPlaybackPending = false
+        if showFeedback {
+            bulkPlaybackNotice = "Playback preparation cancelled. Your saved recordings were not changed."
+            // Retry mode is set when the request begins, before any disk I/O.
+        } else {
+            bulkPlaybackNotice = nil
+            bulkRetryShuffle = nil
+        }
+    }
+
     private func retryRecentRecording() {
         guard let selection = recentRetrySelection,
               let current = recentlyAdded.first(where: {
@@ -329,9 +345,7 @@ struct LibraryView: View {
                     Spacer(minLength: 0)
                 }
                 Button("Cancel playback preparation", systemImage: "xmark.circle") {
-                    bulkPlaybackTask?.cancel()
-                    bulkPlaybackTask = nil
-                    bulkPlaybackPending = false
+                    cancelBulkPlaybackPreparation(showFeedback: true)
                 }
                 .frame(minHeight: 44, alignment: .leading)
                 .accessibilityHint("Stops checking local files without changing your music library")
@@ -372,7 +386,7 @@ struct LibraryView: View {
         let requestedSort = sortMode
         let locations = songs.map { ($0.id, library.fileURL(for: $0)) }
         bulkPlaybackNotice = nil
-        bulkRetryShuffle = nil
+        bulkRetryShuffle = shuffled
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
             // Keep one availability result per visible occurrence. An ID set can
@@ -435,6 +449,7 @@ struct LibraryView: View {
             playback.isShuffled = shuffled
             playback.play(first, queue: queue)
             bulkRetryShuffle = nil
+            bulkPlaybackNotice = nil
             let skipped = songs.count - queue.count
             if skipped > 0 {
                 bulkPlaybackNotice = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
@@ -777,16 +792,12 @@ struct LibraryView: View {
         }
         .onDisappear {
             cancelRecentPlaybackPreparation()
-            bulkPlaybackTask?.cancel()
-            bulkPlaybackTask = nil
-            bulkPlaybackPending = false
+            cancelBulkPlaybackPreparation(showFeedback: false)
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
             cancelRecentPlaybackPreparation()
-            bulkPlaybackTask?.cancel()
-            bulkPlaybackTask = nil
-            bulkPlaybackPending = false
+            cancelBulkPlaybackPreparation(showFeedback: false)
         }
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
