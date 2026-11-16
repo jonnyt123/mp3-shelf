@@ -723,8 +723,26 @@ extension AudioSourceFinder {
     static func nextAlternative(to currentURL: URL, from remaining: [AudioCatalogMatch], at date: Date = .now)
         -> (source: AudioCatalogMatch, remaining: [AudioCatalogMatch])? {
         guard let index = remaining.firstIndex(where: {
-            $0.downloadURL != currentURL && $0.downloadURL.scheme?.lowercased() == "https" &&
-                !AudioSourceLinks.hasExpired($0.downloadURL, at: date)
+            let url = $0.downloadURL
+            guard url != currentURL, url.scheme?.lowercased() == "https",
+                  let host = url.host, !host.isEmpty,
+                  url.user == nil, url.password == nil, url.port == nil,
+                  url.fragment == nil, !AudioSourceLinks.hasExpired(url, at: date)
+            else { return false }
+            // Persisted fallback URLs can outlive a provider's original
+            // validation. Never retry a private-network or loopback endpoint.
+            let lower = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            guard lower != "localhost", !lower.hasSuffix(".localhost"),
+                  !lower.hasSuffix(".local"), !lower.hasSuffix(".internal")
+            else { return false }
+            let octets = lower.split(separator: ".", omittingEmptySubsequences: false)
+            if octets.count == 4 && octets.allSatisfy({ UInt8($0) != nil }) {
+                // Public catalog files use DNS hosts. Reject literal IPs to
+                // avoid private, link-local and rebinding-prone queue entries.
+                return false
+            }
+            guard !lower.contains(":"), lower.contains(".") else { return false }
+            return true
         }) else { return nil }
         return (remaining[index], Array(remaining.dropFirst(index + 1)))
     }
