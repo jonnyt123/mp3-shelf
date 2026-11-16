@@ -1068,7 +1068,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // A restored queue is untrusted input. Never send background requests
         // to loopback, private network names, or literal IP addresses. This
         // also protects manual retry and orphan recovery, not just discovery.
-        let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        // Reject trailing-dot DNS aliases rather than stripping the dot only
+        // for the private-network check: otherwise spotify.com. bypasses the
+        // prohibited-provider suffix filter below.
+        guard !host.hasPrefix("."), !host.hasSuffix(".") else { return false }
+        let normalized = host
         guard normalized.contains("."), !normalized.contains(":"),
               normalized != "localhost", !normalized.hasSuffix(".localhost"),
               !normalized.hasSuffix(".local"), !normalized.hasSuffix(".internal")
