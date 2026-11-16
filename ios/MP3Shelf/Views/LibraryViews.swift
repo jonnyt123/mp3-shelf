@@ -983,16 +983,21 @@ struct MusicTrackRow: View {
             // queue. Validate every occurrence, not only its UUID.
             guard playable.count == queueSnapshot.count,
                   context.map(\.id) == snapshotIDs,
-                  let currentTrack = library.tracks.first(where: { $0.id == track.id }),
-                  library.fileURL(for: currentTrack) == selectedURL else {
+                  let currentTrack = library.tracks.first(where: {
+                      $0.id == track.id && library.fileURL(for: $0) == selectedURL
+                  }) else {
                 audioAvailability = false
                 recoveryReason = "The song or its location changed while checking offline audio. Retry to use the current library."
                 missingRecordingAlert = true
                 return
             }
-            var currentByID: [UUID: MusicTrack] = [:]
-            for current in library.tracks where currentByID[current.id] == nil {
-                currentByID[current.id] = current
+            // Duplicate IDs can refer to different recordings after import/restore.
+            // Resolve by both identity and exact file URL, once per validation.
+            var currentByLocation: [RecordingLocationKey: MusicTrack] = [:]
+            currentByLocation.reserveCapacity(library.tracks.count)
+            for current in library.tracks {
+                let key = RecordingLocationKey(id: current.id, url: library.fileURL(for: current))
+                if currentByLocation[key] == nil { currentByLocation[key] = current }
             }
             var queue: [MusicTrack] = []
             queue.reserveCapacity(context.count)
@@ -1000,8 +1005,9 @@ struct MusicTrackRow: View {
             for index in context.indices {
                 let entry = context[index]
                 let originalURL = queueSnapshot[index].1
-                guard let current = currentByID[entry.id],
-                      library.fileURL(for: current) == originalURL else {
+                guard let current = currentByLocation[
+                    RecordingLocationKey(id: entry.id, url: originalURL)
+                ] else {
                     changedRecording = true
                     break
                 }
