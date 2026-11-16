@@ -1983,11 +1983,29 @@ struct PlaylistDetailView: View {
                         .accessibilityHint("Stops checking local recordings without changing your playlist or audio files")
                     }
                     if let playlistPlaybackNotice {
-                        Label(playlistPlaybackNotice, systemImage: "exclamationmark.circle")
-                            .font(.callout)
-                            .foregroundStyle(ShelfTheme.subdued)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityAddTraits(.updatesFrequently)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(playlistPlaybackNotice, systemImage: "exclamationmark.circle")
+                                .font(.callout)
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityAddTraits(.updatesFrequently)
+                            // A cancelled or invalidated scan must be recoverable without
+                            // finding the small header Play/Shuffle controls again.
+                            if !playlistPlaybackPending && playlistPlaybackNotice.contains("cancelled") ||
+                                (!playlistPlaybackPending && playlistPlaybackNotice.contains("changed")) {
+                                Button {
+                                    if let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }) {
+                                        startPlaylist(library.songs(in: currentPlaylist),
+                                                      shuffled: lastPlaylistPlaybackWasShuffled)
+                                    }
+                                } label: {
+                                    Label(lastPlaylistPlaybackWasShuffled ? "Retry Shuffle" : "Retry Play",
+                                          systemImage: "arrow.clockwise")
+                                        .frame(minHeight: 44, alignment: .leading)
+                                }
+                                .accessibilityHint("Checks the current playlist again without modifying saved audio")
+                            }
+                        }
                     }
                     if playlist.appleMusicLibraryID != nil {
                         Label("Imported from your Apple Music library", systemImage: "music.note.list")
@@ -2345,6 +2363,14 @@ struct PlaylistDetailView: View {
             Button("Cancel", role: .cancel) { playlistPlaybackError = nil }
         } message: {
             Text(playlistPlaybackError ?? "")
+        }
+        .onChange(of: playlist?.trackIDs) { _, _ in
+            // A reorder or removal invalidates the requested queue immediately.
+            // Do not hold Play/Shuffle busy while the old filesystem scan finishes.
+            if playlistPlaybackPending {
+                cancelPlaylistPreparation(showFeedback: true)
+                playlistPlaybackNotice = "Playlist order or contents changed. Retry to play the current playlist."
+            }
         }
         .onChange(of: playlistScenePhase) { _, phase in
             if phase != .active { cancelPlaylistPreparation(showFeedback: false) }
