@@ -196,9 +196,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     func attach(to library: MusicLibrary) {
         self.library = library
-        recoverSharedFollowers()
         activate()
         cancelObsoleteTransfers(in: library)
+        recoverSharedFollowers()
         updatePending()
         Task { [weak self] in
             await self?.recoverStagedDownloads()
@@ -235,8 +235,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// replaced. One follower is promoted to the new leader; siblings are
     /// redirected in the same durable manifest transaction.
     private func promoteSharedFollowers(of leaderID: UUID) {
-        let followers = tickets.values.filter {
-            $0.status == .queued && $0.sharedLeaderID == leaderID
+        let followers = tickets.values.filter { ticket in
+            guard ticket.status == .queued, ticket.sharedLeaderID == leaderID else { return false }
+            // A deleted playlist must not become the new transfer owner.
+            // If playlist data has not loaded yet, preserve recovery state.
+            guard let library, library.playlists.contains(where: { $0.id == ticket.playlistID }) else {
+                return true
+            }
+            return library.hasCurrentSourceRequest(ticket.requested, for: ticket.playlistID)
         }.sorted { $0.id.uuidString < $1.id.uuidString }
         guard let first = followers.first else { return }
         if library?.hasOfflineRecording(matching: first.requested) == true {
