@@ -8,8 +8,12 @@ struct ArchiveStore {
 
     func replace(with bytes: Data, failBeforePublish: Bool = false) throws {
         // Reject hostile destinations before staging or publishing an archive.
-        if FileManager.default.fileExists(atPath: destination.path)
-            || (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) != nil {
+        // Check links before following the destination: dangling links must
+        // fail with the same explicit safety error as links to existing files.
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) != nil {
+            throw Failure.untrustedDestination
+        }
+        if FileManager.default.fileExists(atPath: destination.path) {
             let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
             guard attributes[.type] as? FileAttributeType == .typeRegular else {
                 throw Failure.untrustedDestination
@@ -102,3 +106,43 @@ let remaining = try fm.contentsOfDirectory(atPath: root.path).sorted()
 require(remaining == ["library.mp3shelf", "untrusted.mp3shelf"].sorted(),
         "failed publication leaked staging files")
 print("PASS: symlink and directory destinations rejected; external bytes and prior archive preserved")
+
+// A dangling destination link must fail closed even though fileExists is false.
+// This catches a common difference between link metadata and target metadata.
+let missingTarget = root.appendingPathComponent("missing-external-recording")
+try fm.removeItem(at: store.destination)
+try fm.createSymbolicLink(at: store.destination, withDestinationURL: missingTarget)
+require(!fm.fileExists(atPath: store.destination.path), "dangling-link fixture unexpectedly resolves")
+do {
+    try store.replace(with: protected)
+    preconditionFailure("dangling destination link was accepted")
+} catch ArchiveStore.Failure.untrustedDestination { }
+require((try? fm.destinationOfSymbolicLink(atPath: store.destination.path)) != nil,
+        "dangling destination link was replaced")
+require(!fm.fileExists(atPath: missingTarget.path), "dangling link target was created")
+try fm.removeItem(at: store.destination)
+try trustedArchive.write(to: store.destination)
+try require(try Data(contentsOf: store.destination) == trustedArchive,
+            "trusted archive was not recoverable after dangling link")
+require((try fm.contentsOfDirectory(atPath: root.path)).sorted()
+        == ["library.mp3shelf", "untrusted.mp3shelf"].sorted(),
+        "dangling-link rejection leaked staging files")
+
+// Reject a destination that is a FIFO, which cannot safely represent an
+// archive and must not cause a blocking write or alter unrelated recordings.
+let fifoPath = store.destination.path
+try fm.removeItem(at: store.destination)
+let fifoStatus = fifoPath.withCString { mkfifo($0, 0o600) }
+require(fifoStatus == 0, "failed to create FIFO fixture")
+do {
+    try store.replace(with: protected)
+    preconditionFailure("FIFO destination was accepted")
+} catch ArchiveStore.Failure.untrustedDestination { }
+try fm.removeItem(at: store.destination)
+try trustedArchive.write(to: store.destination)
+try require(try Data(contentsOf: store.destination) == trustedArchive,
+            "trusted archive was not recoverable after FIFO rejection")
+require((try fm.contentsOfDirectory(atPath: root.path)).sorted()
+        == ["library.mp3shelf", "untrusted.mp3shelf"].sorted(),
+        "FIFO rejection leaked staging files")
+print("PASS: dangling symlink and FIFO destinations rejected without data loss")
