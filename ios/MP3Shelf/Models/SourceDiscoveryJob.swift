@@ -527,10 +527,14 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
               let index = wishes.firstIndex(where: { $0.id == wishID }),
               index < nextIndex, let history = outcomes, index < history.count,
               history[index] == .queued || history[index] == .alreadyPresent,
-              (sourceRecoveryAttempts?[wishID.uuidString] ?? 0) < 3 else { return false }
+              max(0, sourceRecoveryAttempts?[wishID.uuidString] ?? 0) < 3 else { return false }
+        // Persisted per-song counters can be negative in damaged legacy
+        // checkpoints. Normalize before incrementing so the three-attempt
+        // recovery budget cannot be bypassed after repeated app restarts.
+        let previousAttempts = max(0, sourceRecoveryAttempts?[wishID.uuidString] ?? 0)
         moveProcessedWishesToPending(at: [index])
         if sourceRecoveryAttempts == nil { sourceRecoveryAttempts = [:] }
-        sourceRecoveryAttempts?[wishID.uuidString, default: 0] += 1
+        sourceRecoveryAttempts?[wishID.uuidString] = previousAttempts + 1
         if let notBefore {
             if sourceRecoveryNotBefore == nil { sourceRecoveryNotBefore = [:] }
             sourceRecoveryNotBefore?[wishID.uuidString] = notBefore
