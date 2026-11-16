@@ -18,7 +18,7 @@ export function smokePreflight({ tag, sha, existing, workflows }){
  if(!Array.isArray(workflows) ||
      workflows.some(content=>typeof content!=='string' ||
        /(?:^|\n)\s*(?:push|release|create):/m.test(content) ||
-       /(?:^|\n)\s*on\s*:\s*\[[^\]]*(?:push|release|create)/m.test(content)))
+       /(?:^|\n)\s*on\s*:\s*(?:\[[^\]]*(?:push|release|create)|\{[^}]*(?:push|release|create)|(?:push|release|create)\s*(?:#|$))/m.test(content)))
    issues.push('Workflows may trigger paid tag/release Actions; refuse remote smoke.');
  return issues;
 }
