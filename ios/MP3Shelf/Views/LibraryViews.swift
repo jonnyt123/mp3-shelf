@@ -1756,6 +1756,8 @@ struct PlaylistDetailView: View {
     @State private var reviewingRecording: PlaylistWish?
     @State private var playlistPlaybackTask: Task<Void, Never>?
     @State private var playlistPlaybackPending = false
+    // A cancelled scan cannot publish over a subsequent Play or Shuffle request.
+    @State private var playlistPlaybackGeneration: UUID?
     @State private var playlistPlaybackError: String?
     @State private var playlistPlaybackNotice: String?
     @State private var lastPlaylistPlaybackWasShuffled = false
@@ -1821,10 +1823,25 @@ struct PlaylistDetailView: View {
         return ("Awaiting MP3 source search", "magnifyingglass")
     }
 
+    private func cancelPlaylistPreparation(showFeedback: Bool) {
+        guard playlistPlaybackPending else { return }
+        playlistPlaybackGeneration = nil
+        playlistPlaybackTask?.cancel()
+        playlistPlaybackTask = nil
+        playlistPlaybackPending = false
+        if showFeedback {
+            playlistPlaybackNotice = "Playback preparation cancelled. Your playlist and saved audio were not changed."
+        } else {
+            playlistPlaybackNotice = nil
+        }
+    }
+
     // Capture file URLs on the library actor and validate them away from the UI.
     // A playlist may contain saved metadata whose audio was removed by Files.
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
-        guard !playlistPlaybackPending, !tracks.isEmpty else { return }
+        guard playlistScenePhase == .active, !playlistPlaybackPending, !tracks.isEmpty else { return }
+        let generation = UUID()
+        playlistPlaybackGeneration = generation
         playlistPlaybackPending = true
         lastPlaylistPlaybackWasShuffled = shuffled
         playlistPlaybackError = nil
@@ -1849,7 +1866,8 @@ struct PlaylistDetailView: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, playlistPlaybackGeneration == generation else { return }
+            playlistPlaybackGeneration = nil
             playlistPlaybackPending = false
             playlistPlaybackTask = nil
             guard playlistScenePhase == .active,
@@ -1946,6 +1964,23 @@ struct PlaylistDetailView: View {
                             playlistPlayButton(availableTracks)
                             playlistShuffleButton(availableTracks)
                         }
+                    }
+                    if playlistPlaybackPending {
+                        HStack(spacing: 10) {
+                            ProgressView().accessibilityHidden(true)
+                            Text("Checking playlist recordings stored on this iPhone…")
+                                .font(.subheadline)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.updatesFrequently)
+                        Button {
+                            cancelPlaylistPreparation(showFeedback: true)
+                        } label: {
+                            Label("Cancel playlist playback preparation", systemImage: "xmark.circle")
+                                .frame(minHeight: 44, alignment: .leading)
+                        }
+                        .accessibilityHint("Stops checking local recordings without changing your playlist or audio files")
                     }
                     if let playlistPlaybackNotice {
                         Label(playlistPlaybackNotice, systemImage: "exclamationmark.circle")
@@ -2312,17 +2347,9 @@ struct PlaylistDetailView: View {
             Text(playlistPlaybackError ?? "")
         }
         .onChange(of: playlistScenePhase) { _, phase in
-            if phase != .active {
-                playlistPlaybackTask?.cancel()
-                playlistPlaybackTask = nil
-                playlistPlaybackPending = false
-            }
+            if phase != .active { cancelPlaylistPreparation(showFeedback: false) }
         }
-        .onDisappear {
-            playlistPlaybackTask?.cancel()
-            playlistPlaybackTask = nil
-            playlistPlaybackPending = false
-        }
+        .onDisappear { cancelPlaylistPreparation(showFeedback: false) }
     }
 }
 
