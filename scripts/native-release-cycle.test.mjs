@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, linkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runNativeReleaseCycle, selectNativeEvidence } from './native-release-cycle.mjs';
@@ -122,6 +122,38 @@ test('symlinked hardware approval is blocked before package invocation', async (
     symlinkSync(outside, join(f.device, 'hardware-acceptance.json'));
     const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
       preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => { throw Error('packager must not run'); }
+    });
+    assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('hard-linked native evidence cannot be selected or packaged', async () => {
+  const f = fixture();
+  try {
+    const source = join(f.native, 'local-evidence.json');
+    const outside = join(f.home, 'linked-evidence.json');
+    linkSync(source, outside);
+    const root = join(f.home, 'Library/Logs/MP3Shelf/NativePreflight');
+    assert.equal(selectNativeEvidence(root, sha), null);
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha, evidence: f.native }),
+      packageProject: async () => { throw Error('packager must not run'); }
+    });
+    assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('explicit incomplete receipt cannot bypass automatic receipt selection', async () => {
+  const f = fixture();
+  try {
+    rmSync(join(f.native, 'native-local-release.log'));
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha, evidence: f.native }),
       packageProject: async () => { throw Error('packager must not run'); }
     });
     assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
