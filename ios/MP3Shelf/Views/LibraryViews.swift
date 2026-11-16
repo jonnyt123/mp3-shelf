@@ -137,12 +137,17 @@ struct LibraryView: View {
         return index
     }
 
-    private func cancelRecentPlaybackPreparation() {
+    private func cancelRecentPlaybackPreparation(showFeedback: Bool) {
         guard recentPlaybackCheck != nil else { return }
         recentPlaybackTask?.cancel()
         recentPlaybackTask = nil
         recentPlaybackCheck = nil
-        recentPlaybackNotice = "Playback preparation cancelled. Your saved recordings were not changed."
+        if showFeedback {
+            recentPlaybackNotice = "Playback preparation cancelled. Your saved recordings were not changed."
+        } else {
+            recentPlaybackNotice = nil
+            recentRetrySelection = nil
+        }
     }
 
     // Explicit cancellation preserves the requested mode for an intentional retry.
@@ -695,7 +700,7 @@ struct LibraryView: View {
                                     ProgressView("Checking local recordings…")
                                         .accessibilityLabel("Checking Recently Added for offline playback")
                                     Button {
-                                        cancelRecentPlaybackPreparation()
+                                        cancelRecentPlaybackPreparation(showFeedback: true)
                                     } label: {
                                         Label("Cancel Recently Added playback", systemImage: "xmark.circle")
                                             .frame(minHeight: 44, alignment: .leading)
@@ -705,11 +710,23 @@ struct LibraryView: View {
                                 }
                             }
                             if let recentPlaybackNotice {
-                                Text(recentPlaybackNotice)
-                                    .font(.footnote)
-                                    .foregroundStyle(ShelfTheme.subdued)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .accessibilityAddTraits(.updatesFrequently)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(recentPlaybackNotice)
+                                        .font(.footnote)
+                                        .foregroundStyle(ShelfTheme.subdued)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .accessibilityAddTraits(.updatesFrequently)
+                                    if recentRetrySelection != nil && recentPlaybackCheck == nil {
+                                        Button {
+                                            retryRecentRecording()
+                                        } label: {
+                                            Label("Retry Recently Added playback", systemImage: "arrow.clockwise")
+                                                .frame(minHeight: 44, alignment: .leading)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .accessibilityHint("Checks the same saved recording again without downloading audio")
+                                    }
+                                }
                             }
                         }
                     }
@@ -790,13 +807,13 @@ struct LibraryView: View {
         } message: {
             Text("The selected recording is unavailable or the Recently Added queue changed. Your library entry is preserved. Retry after restoring the recording.")
         }
-        .onDisappear {
-            cancelRecentPlaybackPreparation()
+         .onDisappear {
+            cancelRecentPlaybackPreparation(showFeedback: false)
             cancelBulkPlaybackPreparation(showFeedback: false)
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
-            cancelRecentPlaybackPreparation()
+            cancelRecentPlaybackPreparation(showFeedback: false)
             cancelBulkPlaybackPreparation(showFeedback: false)
         }
         .navigationTitle("MP3 Shelf")
