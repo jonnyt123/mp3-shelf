@@ -180,3 +180,23 @@ test('hardware approval pagination rejects repeated pages and forged record shap
       async () => [bad]), /Malformed or repeated/);
   }
 });
+
+test('full-playlist inventory rejects missing, overlapping and fractional accounting', () => {
+  for (const change of [
+    x => { x.inventory.unavailable = 1; },
+    x => { x.inventory.requested = 3; },
+    x => { x.inventory.copiedTracks = 1; x.inventory.files.pop(); },
+    x => { x.inventory.copiedTracks = 1.5; },
+    x => { x.inventory.copiedTracks = -1; }
+  ]) {
+    const evidence = fixture();
+    change(evidence);
+    assert(hardwareInventoryErrors(evidence.inventory, evidence.hardware).length > 0);
+    assert(nativePackageGate(evidence).length > 0);
+  }
+  const completeWithUnavailable = fixture();
+  completeWithUnavailable.inventory.requested = 3;
+  completeWithUnavailable.inventory.unavailable = 1;
+  assert.deepEqual(hardwareInventoryErrors(
+    completeWithUnavailable.inventory, completeWithUnavailable.hardware), []);
+});
