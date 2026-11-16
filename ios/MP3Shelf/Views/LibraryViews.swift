@@ -49,6 +49,8 @@ struct LibraryView: View {
     @State private var bulkPlaybackPending = false
     @State private var bulkPlaybackNotice: String?
     @State private var bulkPlaybackTask: Task<Void, Never>?
+    // Keep the user's original Play/Shuffle intent for a safe, explicit retry.
+    @State private var bulkRetryShuffle: Bool?
 
     // Recently added artwork must observe the same missing-file safety rule
     // as a normal library row. Never perform coordinated file I/O on the UI actor.
@@ -335,11 +337,23 @@ struct LibraryView: View {
                 .accessibilityHint("Stops checking local files without changing your music library")
             }
             if let bulkPlaybackNotice {
-                Text(bulkPlaybackNotice)
-                    .font(.footnote)
-                    .foregroundStyle(ShelfTheme.subdued)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.updatesFrequently)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(bulkPlaybackNotice)
+                        .font(.footnote)
+                        .foregroundStyle(ShelfTheme.subdued)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.updatesFrequently)
+                    if let retryShuffle = bulkRetryShuffle, !bulkPlaybackPending {
+                        Button {
+                            playDisplayed(shuffled: retryShuffle)
+                        } label: {
+                            Label(retryShuffle ? "Retry Shuffle" : "Retry Play", systemImage: "arrow.clockwise")
+                                .frame(minHeight: 44, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityHint("Checks the current library results again without changing saved music")
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -357,8 +371,8 @@ struct LibraryView: View {
         let requestedFavorites = favoritesOnly
         let requestedSort = sortMode
         let locations = songs.map { ($0.id, library.fileURL(for: $0)) }
-        message = nil
         bulkPlaybackNotice = nil
+        bulkRetryShuffle = nil
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
             // Keep one availability result per visible occurrence. An ID set can
@@ -392,7 +406,8 @@ struct LibraryView: View {
                   sortMode == requestedSort,
                   displayed.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) } == locations.map { RecordingLocationKey(id: $0.0, url: $0.1) },
                   availability.count == songs.count else {
-                message = "Your library results changed while checking offline recordings. Tap Play or Shuffle again to use the updated songs."
+                bulkPlaybackNotice = "Your library results changed while checking offline recordings. Retry to use the updated songs."
+                bulkRetryShuffle = shuffled
                 return
             }
             // Resolve the exact original file location, not just its ID.
@@ -404,7 +419,8 @@ struct LibraryView: View {
             for (index, song) in songs.enumerated() {
                 let originalURL = locations[index].1
                 guard let match = currentByLocation[RecordingLocationKey(id: song.id, url: originalURL)] else {
-                    message = "Some recordings changed while preparing playback. Tap Play or Shuffle again to use the current library."
+                    bulkPlaybackNotice = "Some recordings changed while preparing playback. Retry to use the current library."
+                    bulkRetryShuffle = shuffled
                     return
                 }
                 if availability[index] {
@@ -412,11 +428,13 @@ struct LibraryView: View {
                 }
             }
             guard let first = shuffled ? queue.randomElement() : queue.first else {
-                message = "No playable offline recordings were found in these results."
+                bulkPlaybackNotice = "No playable offline recordings were found in these results. Restore a recording, then retry."
+                bulkRetryShuffle = shuffled
                 return
             }
             playback.isShuffled = shuffled
             playback.play(first, queue: queue)
+            bulkRetryShuffle = nil
             let skipped = songs.count - queue.count
             if skipped > 0 {
                 bulkPlaybackNotice = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
