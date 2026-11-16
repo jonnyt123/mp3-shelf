@@ -536,10 +536,9 @@ final class MusicLibrary: ObservableObject {
                 // subsequent restores would keep adding copies. Fail this track
                 // without touching either recording so the user can repair the
                 // conflicting library entry and safely retry the same archive.
-                if identicalRecording == nil,
-                   tracks.contains(where: {
-                       $0.portableBackupID == archived.id || $0.id.uuidString == archived.id
-                   }) {
+                if let identityOwner = tracks.first(where: {
+                    $0.portableBackupID == archived.id || $0.id.uuidString == archived.id
+                }), identityOwner.id != identicalRecording?.id {
                     throw PortableShelfArchive.ArchiveError.invalidManifest
                 }
                 if let existing = identicalRecording {
