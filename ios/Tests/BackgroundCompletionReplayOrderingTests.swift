@@ -47,7 +47,10 @@ func load() throws -> Snapshot {
               entry.filename != "." && entry.filename != ".." &&
               !entry.filename.contains("/") && !entry.filename.contains("\\") &&
               !entry.filename.contains("\0") &&
-              !entry.filename.hasPrefix(".")
+              !entry.filename.hasPrefix(".") &&
+              !entry.filename.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) &&
+              !entry.filename.hasSuffix(" ") && !entry.filename.hasSuffix(".") &&
+              !["CON", "PRN", "AUX", "NUL", "COM1", "LPT1"].contains(entry.filename.split(separator: ".").first.map(String.init)?.uppercased() ?? "")
           }),
           Set(value.receipts).count == value.receipts.count,
           value.receipts.allSatisfy({ id in value.entries.contains { $0.id == id && $0.state == .imported } }),
@@ -81,10 +84,14 @@ func complete(interruptTerminal: Bool = false) throws {
     var snapshot = try load()
     guard let index = snapshot.entries.firstIndex(where: { $0.id == "ticket" }) else { throw ReplayError.corrupt }
     if snapshot.entries[index].state == .imported {
+        guard snapshot.entries[index].filename == dest.lastPathComponent else { throw ReplayError.conflict }
         guard try verifiedRecording(dest) else { throw ReplayError.missing }
         return
     }
     guard snapshot.entries[index].state == .pending || snapshot.entries[index].state == .importing else { return }
+    // The replay destination must come from the validated durable ticket, not a
+    // caller-supplied path that could disagree with the journal after restart.
+    guard snapshot.entries[index].filename == dest.lastPathComponent else { throw ReplayError.conflict }
     let stagedExists = try verifiedRecording(stage)
     let destinationExists = try verifiedRecording(dest)
     guard stagedExists || (snapshot.entries[index].state == .importing && destinationExists) else { throw ReplayError.missing }
@@ -138,7 +145,11 @@ let invalidSnapshots: [Snapshot] = [
                        Entry(id: "second", state: .pending, filename: "song.mp3")], receipts: []),
     Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3"),
                        Entry(id: "ticket", state: .pending, filename: "second.mp3")], receipts: []),
-    Snapshot(entries: [Entry(id: "", state: .pending, filename: "song.mp3")], receipts: [])
+    Snapshot(entries: [Entry(id: "", state: .pending, filename: "song.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "other.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3\\n")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3 ")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "CON.mp3")], receipts: [])
 ]
 let validBeforeCorruption = try Data(contentsOf: journal)
 let audioBeforeCorruption = try Data(contentsOf: other)
@@ -146,6 +157,7 @@ for invalid in invalidSnapshots {
     try JSONEncoder().encode(invalid).write(to: journal, options: .atomic)
     do { try complete(); try check(false, "unsafe replay metadata accepted") }
     catch ReplayError.corrupt {}
+    catch ReplayError.conflict {}
     try check(try Data(contentsOf: other) == audioBeforeCorruption,
               "unsafe journal modified unrelated audio")
     try validBeforeCorruption.write(to: journal, options: .atomic)
