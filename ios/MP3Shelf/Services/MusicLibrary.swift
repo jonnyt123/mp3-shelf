@@ -565,14 +565,18 @@ final class MusicLibrary: ObservableObject {
                     // Names and sizes alone are not sufficient: multiple local
                     // recordings can share both while containing different audio.
                     var duplicateIndex: Int?
+                    // An import may have committed the same recording under a
+                    // different original filename. Compare bytes, not names:
+                    // otherwise a retry silently loses this archive's playlist
+                    // mapping when addLocalAudio reports a duplicate.
                     for index in tracks.indices {
                         try Task.checkCancellation()
                         let candidate = tracks[index]
-                        guard candidate.originalFileName.caseInsensitiveCompare(original) == .orderedSame else {
-                            continue
-                        }
                         guard let owned = LocalLibraryFileSafety.regularFile(
-                            named: candidate.fileName, in: musicDirectory) else { continue }
+                            named: candidate.fileName, in: musicDirectory),
+                              let candidateSize = try? owned.resourceValues(
+                                forKeys: [.fileSizeKey]).fileSize,
+                              candidateSize == extractedSize else { continue }
                         let identical = PortableShelfArchive.audioFilesIdentical(
                             file, owned)
                         try Task.checkCancellation()
@@ -609,6 +613,11 @@ final class MusicLibrary: ObservableObject {
                         }
                         try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
                         restoredIDs[archived.id] = tracks[index].id
+                    } else {
+                        // Never report a successful skipped restore when no
+                        // verified recording can receive the archive identity.
+                        // Preserve the catalog and surface a retryable failure.
+                        throw PortableShelfArchive.ArchiveError.invalidManifest
                     }
                     continue
                 }
