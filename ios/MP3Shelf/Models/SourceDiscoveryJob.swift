@@ -259,9 +259,23 @@ enum SourceLookupRetryPolicy {
         if let failure = error as? any SourceLookupRetryableError {
             return failure.shouldRetrySourceLookup
         }
-        let failure = error as NSError
-        return failure.domain == NSURLErrorDomain &&
-            BackgroundTransferRetryPolicy.isTemporaryURLFailure(failure.code)
+        // URLSession and catalog adapters may wrap a transient transport error
+        // in one or more NSError layers. Keep the walk bounded: malformed
+        // persisted errors must not loop forever or turn unrelated failures
+        // into automatic source retries.
+        var current = error as NSError
+        var visited = Set<ObjectIdentifier>()
+        for _ in 0..<8 {
+            guard visited.insert(ObjectIdentifier(current)).inserted else { return false }
+            if current.domain == NSURLErrorDomain {
+                return BackgroundTransferRetryPolicy.isTemporaryURLFailure(current.code)
+            }
+            guard let underlying = current.userInfo[NSUnderlyingErrorKey] as? NSError else {
+                return false
+            }
+            current = underlying
+        }
+        return false
     }
 
     /// Empty optional catalogs cannot establish that an interrupted primary
