@@ -523,6 +523,13 @@ final class MusicLibrary: ObservableObject {
                     }
                 }
                 if let existing = identicalRecording {
+                    // A same-sized extracted pathname can be replaced after
+                    // extraction. Never bind an archive playlist ID to a local
+                    // recording until its source bytes still match the archive.
+                    // This also rejects a cancelled or modified extraction
+                    // before any durable catalog or sidecar changes.
+                    try PortableShelfArchive.verifyStagedAudio(
+                        file, part: archived.audio, from: archive)
                     try Task.checkCancellation()
                     // Byte-identical reuse must also retain the browser's
                     // portable identity for a later native re-export. Never
@@ -582,6 +589,13 @@ final class MusicLibrary: ObservableObject {
                         if duplicateIndex == nil { duplicateIndex = index }
                     }
                     if let index = duplicateIndex {
+                        // The concurrent-import fallback also reuses an existing
+                        // recording without publishing new audio. Validate the
+                        // exact archive payload before persisting its identity
+                        // or attaching restored playlist membership.
+                        try PortableShelfArchive.verifyStagedAudio(
+                            file, part: archived.audio, from: archive)
+                        try Task.checkCancellation()
                         if !tracks.contains(where: {
                             $0.id != tracks[index].id &&
                             ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
