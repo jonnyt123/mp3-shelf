@@ -1087,6 +1087,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         completionHandler(request.url.map { Self.allowedDownloadURL($0) } == true ? request : nil)
     }
 
+    nonisolated static func shouldRecoverStagedAudio(isQueued: Bool,
+                                                     hasStagedFile: Bool) -> Bool {
+        isQueued && hasStagedFile
+    }
+
     /// Prioritize a complete staged recording over late errors from duplicate
     /// or restored URLSession callbacks for the same persistent ticket.
     private func handleCallbackFailure(_ id: UUID, reason: String,
@@ -1094,7 +1099,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                                        connectivityInterruption: Bool = false,
                                        allowAlternative: Bool = true) async {
         guard tickets[id]?.status == .queued else { return }
-        if fm.fileExists(atPath: Self.stagingURL(id).path) {
+        if Self.shouldRecoverStagedAudio(isQueued: true,
+                                         hasStagedFile: fm.fileExists(atPath: Self.stagingURL(id).path)) {
             await recoverStagedDownloads()
             return
         }
