@@ -754,7 +754,7 @@ extension AudioSourceFinder {
             guard !labels.contains(where: { $0.isEmpty }) else { return false }
             if labels.allSatisfy({ label in
                 let value = String(label)
-                return value.allSatisfy(\\.isNumber) ||
+                return value.allSatisfy(\.isNumber) ||
                     value.lowercased().hasPrefix("0x") &&
                     UInt64(value.dropFirst(2), radix: 16) != nil
             }) { return false }
