@@ -612,6 +612,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             updated[retired.id] = retired
         }
         updated[ticket.id] = ticket
+        if let previous {
+            // Retarget every durable follower before the old daemon task is
+            // cancelled. Retries and source changes must not orphan siblings.
+            for (id, var follower) in updated where follower.status == .queued &&
+                follower.sharedLeaderID == previous.id {
+                follower.sharedLeaderID = ticket.id
+                updated[id] = follower
+            }
+        }
         // Save both ticket changes together before the daemon can transfer
         // bytes. A failed save leaves the previous task and manifest intact.
         try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
@@ -828,6 +837,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return false
         }
         tickets = updated
+        promoteSharedFollowers(of: id)
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         if canTryAnotherSource { library?.recoverRecordingSource(after: ticket, notBefore: earliestRecovery) }
         updatePending()
