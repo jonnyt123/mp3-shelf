@@ -1042,7 +1042,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             .appendingPathComponent(id.uuidString + ".mp3")
     }
 
-    nonisolated private static func allowedDownloadURL(_ url: URL) -> Bool {
+    nonisolated static func allowedDownloadURL(_ url: URL) -> Bool {
         #if DEBUG && targetEnvironment(simulator)
         if url.scheme == "http", url == DownloadPathProof.fixtureDownloadURL { return true }
         #endif
