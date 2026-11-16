@@ -128,7 +128,7 @@ enum SourceDiscoveryJobTests {
         let wrappedQueueWriteError = NSError(domain: BackgroundTicketManifestPolicy.writeFailureDomain,
                                              code: 1, userInfo: [:])
         verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: wrappedQueueWriteError) &&
-                        AudioDownloadDiagnostics.message(for: wrappedQueueWriteError).contains("library could not be saved"),
+                        AudioDownloadDiagnostics.message(for: wrappedQueueWriteError).contains("download queue or music library could not be saved"),
                         "queue manifest persistence failure is classified as local even without nested Cocoa error")
         verifyDiscovery(AudioDownloadDiagnostics.shouldTryAlternateSource(for: URLError(.timedOut)),
                         "a remote timeout remains eligible for a different source")
