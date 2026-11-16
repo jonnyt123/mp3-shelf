@@ -21,6 +21,8 @@ test('refuses workflow configurations that could trigger paid Actions on tag or 
    'on:\n  push:\n    tags:\n     - "*"\n',
    'on:\n  release:\n    types: [created]\n',
    'on: [push, pull_request]\n',
+   'on: push\n',
+   'on: {release: {types: [created]}}\n',
    'on:\n  create:\n']) {
    assert(smokePreflight({tag,sha,existing:null,workflows:[workflow]}).length);
  }
