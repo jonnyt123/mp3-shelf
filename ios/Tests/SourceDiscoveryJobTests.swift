@@ -405,6 +405,30 @@ enum SourceDiscoveryJobTests {
                         recovery.transientFailureCount == beforeRecovery.transientFailureCount &&
                         !beforeRecovery.isCurrent(in: [recovery], at: 0),
                         "source recovery preserves paid-search reservations and current-song backoff, invalidating stale lookups")
+        // Corrupt persisted per-song retry budgets must not allow unlimited
+        // replacement downloads. Preserve unrelated songs and the pause state.
+        var damagedBudget = beforeRecovery
+        damagedBudget.sourceRecoveryAttempts = [wishes[0].id.uuidString: -100]
+        damagedBudget.isPaused = true
+        verifyDiscovery(damagedBudget.requeueFailedSource(for: wishes[0].id) &&
+                        damagedBudget.sourceRecoveryAttempts?[wishes[0].id.uuidString] == 1 &&
+                        damagedBudget.isPaused &&
+                        damagedBudget.outcome(for: wishes[1]) == .unavailable,
+                        "negative per-song recovery budget normalizes without losing unrelated playlist state")
+        for expectedAttempt in 2...3 {
+            damagedBudget.record(.queued)
+            verifyDiscovery(damagedBudget.requeueFailedSource(for: wishes[0].id) &&
+                            damagedBudget.sourceRecoveryAttempts?[wishes[0].id.uuidString] == expectedAttempt,
+                            "recovered source increments bounded persisted retry budget")
+        }
+        damagedBudget.record(.queued)
+        verifyDiscovery(!damagedBudget.requeueFailedSource(for: wishes[0].id),
+                        "recovery budget stops after three retries even after corrupted legacy state")
+        var overflowBudget = beforeRecovery
+        overflowBudget.sourceRecoveryAttempts = [wishes[0].id.uuidString: Int.max]
+        verifyDiscovery(!overflowBudget.requeueFailedSource(for: wishes[0].id) &&
+                        overflowBudget.sourceRecoveryAttempts?[wishes[0].id.uuidString] == Int.max,
+                        "overflowing persisted recovery count fails closed without arithmetic overflow")
         let restoredRecovery = try JSONDecoder().decode(SourceDiscoveryJob.self,
             from: JSONEncoder().encode(recovery))
         verifyDiscovery(restoredRecovery.recordingCandidates?[wishes[0].id.uuidString] == [choice] &&
