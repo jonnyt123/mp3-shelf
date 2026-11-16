@@ -225,3 +225,18 @@ test('direct ZIP packager rejects redirected, dangling and file ancestors', () =
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test('partial Spotify playlist does not satisfy complete offline-archive acceptance', () => {
+  const partial = fixture();
+  partial.inventory.unavailable = 1;
+  partial.inventory.copiedTracks = 1;
+  partial.inventory.files = [partial.inventory.files[0]];
+  assert(hardwareInventoryErrors(partial.inventory, partial.hardware).length > 0);
+  assert(nativePackageGate(partial).length > 0);
+  const missing = fixture();
+  missing.inventory.unavailable = 0;
+  missing.inventory.copiedTracks = 1;
+  missing.inventory.files = [missing.inventory.files[0]];
+  assert(hardwareInventoryErrors(missing.inventory, missing.hardware).length > 0);
+});
