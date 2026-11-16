@@ -186,6 +186,15 @@ struct LibraryView: View {
         }
     }
 
+    // Invalidate an in-flight scan as soon as the user changes its scope.
+    // Waiting for disk I/O to finish leaves the old busy indicator blocking
+    // playback of the newly selected results on large libraries.
+    private func browsingScopeDidChange() {
+        guard bulkPlaybackPending else { return }
+        cancelBulkPlaybackPreparation(showFeedback: true)
+        bulkPlaybackNotice = "Your song selection changed. Retry to play the current results."
+    }
+
     private func retryRecentRecording() {
         guard let selection = recentRetrySelection,
               let current = recentlyAdded.first(where: {
@@ -847,6 +856,9 @@ struct LibraryView: View {
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
+        .onChange(of: searchText) { _, _ in browsingScopeDidChange() }
+        .onChange(of: favoritesOnly) { _, _ in browsingScopeDidChange() }
+        .onChange(of: sortMode) { _, _ in browsingScopeDidChange() }
         .onSubmit(of: .search) { submitSearch() }
         .task(id: searchText) {
             // Clearing or whitespace-only input restores the full library
