@@ -393,14 +393,37 @@ struct LibraryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.updatesFrequently)
                     if let retryShuffle = bulkRetryShuffle, !bulkPlaybackPending {
+                        // A changed search or Favorites filter can leave no
+                        // playable selection. Never offer a silent no-op Retry.
+                        let canRetry = scenePhase == .active && !isSearchUpdating && !displayed.isEmpty
+                        if canRetry {
+                            Button {
+                                playDisplayed(shuffled: retryShuffle)
+                            } label: {
+                                Label(retryShuffle ? "Retry Shuffle" : "Retry Play", systemImage: "arrow.clockwise")
+                                    .frame(minHeight: 44, alignment: .leading)
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityHint("Checks the current library results again without changing saved music")
+                        } else {
+                            Text(isSearchUpdating
+                                 ? "Finish searching before retrying playback."
+                                 : "Choose songs in your library to retry playback.")
+                                .font(.footnote)
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        // Restoring files is an explicit user action. This
+                        // opens the existing local importer; no network access.
                         Button {
-                            playDisplayed(shuffled: retryShuffle)
+                            showFilePicker = true
                         } label: {
-                            Label(retryShuffle ? "Retry Shuffle" : "Retry Play", systemImage: "arrow.clockwise")
+                            Label("Restore audio files", systemImage: "square.and.arrow.down")
                                 .frame(minHeight: 44, alignment: .leading)
                         }
                         .buttonStyle(.bordered)
-                        .accessibilityHint("Checks the current library results again without changing saved music")
+                        .disabled(library.isImporting)
+                        .accessibilityHint("Choose existing audio recordings from Files, then retry playback")
                     }
                 }
             }
