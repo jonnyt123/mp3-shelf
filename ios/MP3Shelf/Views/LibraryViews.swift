@@ -1770,6 +1770,30 @@ struct PlaylistDetailView: View {
 
     private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
 
+    // A restored or replaced file can change its URL while trackIDs stay the same.
+    // Observe the exact recording identities used by the asynchronous disk scan.
+    private var playlistRecordingLocations: [RecordingLocationKey] {
+        guard let playlist else { return [] }
+        return library.songs(in: playlist).map {
+            RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0))
+        }
+    }
+
+    private func recordingLocationsDidChange() {
+        guard playlistPlaybackPending || playlistPlaybackCanRetry else { return }
+        if playlistPlaybackPending {
+            cancelPlaylistPreparation(showFeedback: true)
+        }
+        playlistPlaybackError = nil
+        if playlistRecordingLocations.isEmpty {
+            playlistPlaybackCanRetry = false
+            playlistPlaybackNotice = "This playlist has no available recordings. Restore or add a song before playing."
+        } else {
+            playlistPlaybackCanRetry = true
+            playlistPlaybackNotice = "The playlist's local recordings changed. Retry to check the current audio files."
+        }
+    }
+
     private var jobHasNoMatches: Bool {
         guard let job = library.discoveryJob(for: playlistID) else { return false }
         return job.isComplete && job.queued == 0 && job.unavailable > 0
@@ -2403,6 +2427,14 @@ struct PlaylistDetailView: View {
                     playlistPlaybackNotice = "This playlist has no songs to play. Add a recording before retrying."
                 }
             }
+        }
+        .onChange(of: playlistRecordingLocations) { _, _ in
+            // Reimports and file replacement may leave the playlist order intact.
+            // Invalidate the old file scan immediately rather than waiting for I/O.
+            recordingLocationsDidChange()
+        }
+        .onChange(of: playlist == nil) { _, isMissing in
+            if isMissing { cancelPlaylistPreparation(showFeedback: false) }
         }
         .onChange(of: playlistScenePhase) { _, phase in
             if phase != .active { cancelPlaylistPreparation(showFeedback: false) }
