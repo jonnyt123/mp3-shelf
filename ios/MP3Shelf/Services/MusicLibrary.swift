@@ -561,17 +561,29 @@ final class MusicLibrary: ObservableObject {
                     // Byte-identical reuse must also retain the browser's
                     // portable identity for a later native re-export. Never
                     // replace an established identity or steal another song's.
-                    if let index = tracks.firstIndex(where: { $0.id == existing.id }),
-                       tracks[index].portableBackupID == nil,
-                       !tracks.contains(where: {
-                           $0.id != existing.id &&
-                           ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
-                       }) {
+                    // The first identity-owner check precedes extraction and
+                    // byte comparison. Recheck immediately before reuse: another
+                    // catalog writer may have claimed this portable identity.
+                    // A matching audio payload does not authorize stealing the
+                    // archived playlist identity from that other recording.
+                    guard let index = tracks.firstIndex(where: { $0.id == existing.id }),
+                          !tracks.contains(where: {
+                              $0.id != existing.id &&
+                              ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
+                          }) else {
+                        throw PortableShelfArchive.ArchiveError.invalidManifest
+                    }
+                    if let assignedID = tracks[index].portableBackupID {
+                        guard assignedID == archived.id else {
+                            throw PortableShelfArchive.ArchiveError.invalidManifest
+                        }
+                    } else if tracks[index].id.uuidString != archived.id {
                         var updatedTracks = tracks
                         updatedTracks[index].portableBackupID = archived.id
                         try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
                         tracks = updatedTracks
                     }
+                    try Task.checkCancellation()
                     try restoreMissingSidecars(for: archived, existingID: existing.id)
                     restoredIDs[archived.id] = existing.id
                     report.skipped += 1
