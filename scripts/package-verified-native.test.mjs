@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { nativePackageGate, packageNativeXcode } from './package-verified-native.mjs';
+import { nativePackageGate, hardwareInventoryErrors, packageNativeXcode } from './package-verified-native.mjs';
 const base = 'a'.repeat(40), sha = 'b'.repeat(40), hash = 'c'.repeat(64);
 const names = ['playback-order','playback-interruptions','downloaded-audio-signature',
   'downloaded-audio-format','playlist-parser','lyrics-parser','authorized-audio-sources',
@@ -29,16 +29,23 @@ function fixture() {
     '- GitHub Actions used: NO'
   ].join('\n');
   const inventory = { schema:'mp3shelf-physical-inventory-v1',candidateSha:sha,
-    device:{productType:'iPhone14,7'}, copiedTracks:2,
+    capturedAt:new Date(Date.now() - 60000).toISOString(),
+    device:{ productType:'iPhone14,7', osVersion:'26.0', identifierSha256:hash },
+    bundleID:'com.jonnyt.mp3shelf',
+    playlistID:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    source:'Spotify metadata only', requested:2, unavailable:0, copiedTracks:2,
     offlinePlaybackAfterRestart:'APP_INSTRUMENTED_PHYSICAL_PASS',
     backgroundTransfer:'APP_RECORDED_STAGING_AND_BACKGROUND_WAKE',
-    files:[{sha256:hash,bytes:4096},{sha256:hash,bytes:4096}] };
+    files:[
+      {trackID:'11111111-1111-1111-1111-111111111111',sha256:hash,bytes:4096},
+      {trackID:'22222222-2222-2222-2222-222222222222',sha256:hash,bytes:4096}
+    ] };
   const hardware = {
     schema:'mp3shelf-hardware-acceptance-v1',
     candidateSha:sha, installedSourceSha:sha,
     signedAppSHA256:hash, inventorySHA256:hash,
     reviewer:'jonnyt123', reviewedAt:new Date().toISOString(),
-    deviceModel:'iPhone 14', iOSVersion:'26.0',
+    deviceModel:'iPhone14,7', iOSVersion:'26.0',
     checks:Object.fromEntries(keys.map(key=>[key,'PASS']))
   };
   const issue = {number:6,state:'closed',
@@ -85,4 +92,36 @@ test('offline playback, background callback and signed binary are mandatory',()=
 test('Linux refuses any actual Xcode ZIP before device and macOS gates',async()=>{
   if (process.platform !== 'darwin')
     await assert.rejects(packageNativeXcode({candidateSha:sha}), /MAC_HARDWARE_GATE_REQUIRED/);
+});
+
+
+test('hardware reviewer must approve the same fresh captured device and exact source playlist', () => {
+  const changes = [
+    x => { x.inventory.capturedAt = new Date(Date.now() - 10 * 86400000).toISOString(); },
+    x => { x.inventory.capturedAt = new Date(Date.now() + 10 * 60000).toISOString(); },
+    x => { x.hardware.reviewedAt = new Date(Date.now() - 5 * 60000).toISOString(); },
+    x => { x.hardware.deviceModel = 'iPhone14,8'; },
+    x => { x.hardware.iOSVersion = '25.0'; },
+    x => { x.inventory.bundleID = 'com.another.app'; },
+    x => { x.inventory.source = 'not Spotify'; },
+    x => { x.inventory.playlistID = 'invalid'; },
+    x => { x.inventory.device.identifierSha256 = 'unverified'; },
+    x => { x.inventory.requested = 1; },
+    x => { x.inventory.unavailable = 4; },
+    x => { x.inventory.files[1].trackID = x.inventory.files[0].trackID; },
+    x => { x.inventory.files[1].trackID = 'invalid'; }
+  ];
+  for (const change of changes) {
+    const evidence = fixture();
+    change(evidence);
+    assert(hardwareInventoryErrors(evidence.inventory, evidence.hardware).length > 0);
+    assert(nativePackageGate(evidence).length > 0);
+  }
+});
+test('synthetic hardware approval requires full source inventory and current matching iPhone', () => {
+  const evidence = fixture();
+  assert.deepEqual(hardwareInventoryErrors(evidence.inventory, evidence.hardware), []);
+  assert.deepEqual(nativePackageGate(evidence), []);
+  evidence.inventory.copiedTracks = 3;
+  assert(nativePackageGate(evidence).length > 0);
 });
