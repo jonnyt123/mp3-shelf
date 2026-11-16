@@ -2387,11 +2387,21 @@ struct PlaylistDetailView: View {
             Text(playlistPlaybackError ?? "")
         }
         .onChange(of: playlist?.trackIDs) { _, _ in
-            // A reorder or removal invalidates the requested queue immediately.
-            // Do not hold Play/Shuffle busy while the old filesystem scan finishes.
+            // A reorder or removal invalidates both an in-flight scan and any
+            // recovery action produced by the old playlist. A later retry must
+            // resolve the latest order instead of preserving stale feedback.
             if playlistPlaybackPending {
                 cancelPlaylistPreparation(showFeedback: true)
                 playlistPlaybackNotice = "Playlist order or contents changed. Retry to play the current playlist."
+            } else if playlistPlaybackCanRetry {
+                playlistPlaybackError = nil
+                if let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }),
+                   !library.songs(in: currentPlaylist).isEmpty {
+                    playlistPlaybackNotice = "Playlist contents changed. Retry to check the current recordings."
+                } else {
+                    playlistPlaybackCanRetry = false
+                    playlistPlaybackNotice = "This playlist has no songs to play. Add a recording before retrying."
+                }
             }
         }
         .onChange(of: playlistScenePhase) { _, phase in
