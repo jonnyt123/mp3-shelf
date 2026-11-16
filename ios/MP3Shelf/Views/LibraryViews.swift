@@ -1839,6 +1839,16 @@ struct PlaylistDetailView: View {
         }
     }
 
+    // Dismissing the alert must not strand an unavailable playlist without recovery.
+    // Keep a nonmodal retry affordance for restored files and VoiceOver navigation.
+    private func dismissPlaylistPlaybackError() {
+        guard let message = playlistPlaybackError else { return }
+        playlistPlaybackError = nil
+        if playlistPlaybackCanRetry {
+            playlistPlaybackNotice = message
+        }
+    }
+
     // Capture file URLs on the library actor and validate them away from the UI.
     // A playlist may contain saved metadata whose audio was removed by Files.
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
@@ -2360,15 +2370,19 @@ struct PlaylistDetailView: View {
         }
         .alert("Playlist playback unavailable", isPresented: Binding(
             get: { playlistPlaybackError != nil },
-            set: { if !$0 { playlistPlaybackError = nil } }
+            set: { if !$0 { dismissPlaylistPlaybackError() } }
         )) {
-            Button("Retry playback") {
+            Button(lastPlaylistPlaybackWasShuffled ? "Retry Shuffle" : "Retry Play") {
                 playlistPlaybackError = nil
-                if let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }) {
+                if let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }),
+                   !library.songs(in: currentPlaylist).isEmpty {
                     startPlaylist(library.songs(in: currentPlaylist), shuffled: lastPlaylistPlaybackWasShuffled)
+                } else {
+                    playlistPlaybackCanRetry = false
+                    playlistPlaybackNotice = "This playlist has no songs to play. Add a recording before retrying."
                 }
             }
-            Button("Cancel", role: .cancel) { playlistPlaybackError = nil }
+            Button("Not now", role: .cancel) { dismissPlaylistPlaybackError() }
         } message: {
             Text(playlistPlaybackError ?? "")
         }
