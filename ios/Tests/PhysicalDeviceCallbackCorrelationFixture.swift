@@ -16,17 +16,21 @@ struct Evidence {
     func hasBackgroundCompletion(task: String) -> Bool {
         // After a process restart, an OS wake must precede a delegate completion and a
         // staged-file event for the same task in the same restarted process.
-        let matching = events.filter {
-            $0.process == armed.process && $0.session == armed.session
-        }.sorted { $0.time < $1.time }
-        guard let wake = matching.first(where: { $0.kind == "osBackgroundWake" && $0.time > armed.time }) else { return false }
-        guard let completion = matching.first(where: {
-            $0.kind == "urlSessionCompletion" && $0.task == task && $0.time > wake.time
-        }) else { return false }
-        guard matching.contains(where: {
-            $0.kind == "recordingStaged" && $0.task == task && $0.time > completion.time
-        }) else { return false }
-        return true
+        guard armed.kind == "auditArmed", armed.task == nil else { return false }
+        for wake in events where wake.kind == "osBackgroundWake"
+            && wake.session == armed.session && wake.process != armed.process
+            && wake.time > armed.time {
+            for completion in events where completion.kind == "urlSessionCompletion"
+                && completion.session == armed.session && completion.process == wake.process
+                && completion.task == task && completion.time > wake.time {
+                if events.contains(where: {
+                    $0.kind == "recordingStaged" && $0.session == armed.session
+                    && $0.process == wake.process && $0.task == task
+                    && $0.time > completion.time
+                }) { return true }
+            }
+        }
+        return false
     }
 }
 func check(_ condition: Bool, _ message: String) {
@@ -60,7 +64,12 @@ let invalid: [[Event]] = [
     // A different process cannot provide the delegate callback.
     [valid[0], event("urlSessionCompletion", 120, "task-A", process: "process-old"), valid[2]],
     // A different audit session cannot provide staging evidence.
-    [valid[0], valid[1], event("recordingStaged", 130, "task-A", session: "session-old")]
+    [valid[0], valid[1], event("recordingStaged", 130, "task-A", session: "session-old")],
+    [event("osBackgroundWake", 110, process: "process-1"), event("urlSessionCompletion", 120, "task-A", process: "process-1"), event("recordingStaged", 130, "task-A", process: "process-1")],
+    [valid[0], valid[1], event("recordingStaged", 130, "task-A", process: "process-3")],
+    [valid[0], event("urlSessionCompletion", 120, "task-A", process: "process-3"), valid[2]],
+    [event("osBackgroundWake", 125), valid[1], valid[2]],
+    [valid[0], event("urlSessionCompletion", 120, "task-A", session: "session-old"), valid[2]]
 ]
 for (index, events) in invalid.enumerated() {
     check(!Evidence(armed: arm, events: events).hasBackgroundCompletion(task: "task-A"),
@@ -71,4 +80,4 @@ let encoded = try JSONEncoder().encode(valid)
 let decoded = try JSONDecoder().decode([Event].self, from: encoded)
 check(Evidence(armed: arm, events: decoded).hasBackgroundCompletion(task: "task-A"),
       "JSON evidence round-trip failed")
-print("PASS: same-process/session/task wake-completion-staging correlation; 11 negative cases")
+print("PASS: same-process/session/task wake-completion-staging correlation; 16 negative cases")
