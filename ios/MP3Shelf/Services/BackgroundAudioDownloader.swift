@@ -289,13 +289,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
 
     /// Coalesce only an exact independently resolved audio URL and recording
     /// identity. A title-only match must never attach the wrong recording.
-    private func sharedLeader(for wish: PlaylistWish, sourceURL: URL) -> BackgroundAudioTicket? {
+    private func sharedLeader(for wish: PlaylistWish, sourceURL: URL, playlistID: UUID) -> BackgroundAudioTicket? {
         tickets.values.first { candidate in
             candidate.sharedLeaderID == nil && Self.mayShareTransfer(
                 sameRecording: MusicMatching.sameRequestedRecording(candidate.requested, wish),
                 sameURL: candidate.downloadURL == sourceURL,
                 leaderQueued: candidate.status == .queued,
-                samePlaylist: false)
+                samePlaylist: candidate.playlistID == playlistID)
         }
     }
 
@@ -317,7 +317,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // A follower consumes no additional network slot. Persist it before
         // acknowledging enqueue, so process termination cannot lose the
         // second playlist's outstanding request.
-        if let leader = sharedLeader(for: requested, sourceURL: source.downloadURL),
+        if let leader = sharedLeader(for: requested, sourceURL: source.downloadURL, playlistID: playlistID),
            leader.playlistID != playlistID {
             var follower = BackgroundAudioTicket(
                 id: UUID(), playlistID: playlistID, requested: requested,
