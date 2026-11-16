@@ -68,27 +68,12 @@ if [[ -z "$PLAYLIST" ]]; then
        --domain-type appDataContainer --domain-identifier com.jonnyt.mp3shelf \
        --source "Library/Application Support/MP3Shelf/library.json" \
        --destination "$TMP/library.json" >/dev/null 2>&1; then
-    PLAYLIST="$(python3 - "$TMP/library.json" <<'PY'
-import json, re, sys
-from urllib.parse import urlsplit
-try:
-    with open(sys.argv[1], encoding='utf-8') as f: obj=json.load(f)
-    matches=[]
-    for p in obj.get('playlists',[]):
-        parsed=urlsplit(p.get('sourceURL',''))
-        if (parsed.scheme=='https' and parsed.hostname=='open.spotify.com'
-            and not parsed.username and not parsed.password and not parsed.fragment
-            and re.fullmatch(r'/playlist/[A-Za-z0-9]{22}/?', parsed.path)
-            and p.get('trackIDs')):
-            matches.append(p.get('id',''))
-    if len(matches) == 1: print(matches[0])
-except (OSError,ValueError,TypeError): pass
-PY
-)"
+    PLAYLIST="$(node "$ROOT/scripts/choose-iphone-playlist.mjs" "$TMP/library.json")"
   fi
 fi
 if [[ -z "$PLAYLIST" ]]; then
-  PLAYLIST="$(osascript -e 'text returned of (display dialog "Enter the local Spotify playlist UUID in MP3 Shelf to test offline:" default answer "" buttons {"Cancel", "Continue"} default button "Continue")')"
+  echo "No saved Spotify playlist was accessible on the paired iPhone. Import a playlist in MP3 Shelf while connected, unlock the device and retry." >&2
+  exit 2
 fi
 if [[ ! "$PLAYLIST" =~ ^[A-Fa-f0-9]{8}-([A-Fa-f0-9]{4}-){3}[A-Fa-f0-9]{12}$ ]]; then
   echo "A local Spotify playlist UUID is required." >&2; exit 2
