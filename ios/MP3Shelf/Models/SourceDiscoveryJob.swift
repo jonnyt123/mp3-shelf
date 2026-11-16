@@ -611,9 +611,24 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         if queued != validQueued { queued = validQueued; changed = true }
         if unavailable != validUnavailable { unavailable = validUnavailable; changed = true }
         if failed != validFailed { failed = validFailed; changed = true }
-        if let savedOutcomes = outcomes, savedOutcomes.count > validIndex {
-            outcomes = Array(savedOutcomes.prefix(validIndex))
-            changed = true
+        if let savedOutcomes = outcomes {
+            if savedOutcomes.count > validIndex {
+                outcomes = Array(savedOutcomes.prefix(validIndex))
+                changed = true
+            }
+            // A crash can persist the per-song outcome history while leaving
+            // aggregate counters from an earlier checkpoint. Rebuild only when
+            // the complete processed prefix is known: legacy .previous entries
+            // represent unknown outcomes and must not erase historical totals.
+            if let history = outcomes, history.count == validIndex,
+               !history.contains(.previous) {
+                let actualQueued = history.filter { $0 == .queued }.count
+                let actualUnavailable = history.filter { $0 == .unavailable }.count
+                let actualFailed = history.filter { $0 == .failed }.count
+                if queued != actualQueued { queued = actualQueued; changed = true }
+                if unavailable != actualUnavailable { unavailable = actualUnavailable; changed = true }
+                if failed != actualFailed { failed = actualFailed; changed = true }
+            }
         }
         if let attempts = transientFailureCount {
             let clamped = min(max(0, attempts), Self.automaticRetryLimit)
