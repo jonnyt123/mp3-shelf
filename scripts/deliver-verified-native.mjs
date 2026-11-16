@@ -6,6 +6,7 @@ import { createReadStream, lstatSync, mkdtempSync, readFileSync, rmSync, statSyn
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { verifiedSmokeComment } from './draft-smoke-attestation.mjs';
 
 const REPO = 'jonnyt123/mp3-shelf';
 const SHA = /^[0-9a-f]{40}$/;
@@ -17,7 +18,7 @@ const CHECKS = ['Signing / installation', 'Offline playback', 'Background licens
   'Accessible responsive UI', 'Policy/source audit', 'Final acceptance'];
 
 export function deliveryManifestErrors({ manifest, sha, archiveName, archiveHash, bytes,
-                                         deviceIssue, ownerApproved }) {
+                                         deviceIssue, ownerApproved, smokeApproved }) {
   const errors = [];
   const tag = 'mp3-shelf-ios-' + sha;
   if (!SHA.test(sha ?? '') || !TAG.test(tag) ||
@@ -46,6 +47,8 @@ export function deliveryManifestErrors({ manifest, sha, archiveName, archiveHash
     errors.push('Physical iPhone acceptance issue #6 has not passed all nine hardware checks.');
   if (ownerApproved !== true)
     errors.push('Missing authenticated owner approval binding source, inventory and signed app.');
+  if (smokeApproved !== true)
+    errors.push('Missing recent authenticated owner proof of a completed draft GitHub ZIP upload/download smoke.');
   return errors;
 }
 export function releaseAssetsMatch(release, zipName, zipHash, manifestName, manifestHash) {
@@ -114,6 +117,36 @@ function tagPointsToCandidate(tag, sha) {
   return ref?.ref === 'refs/tags/' + tag &&
     ref?.object?.type === 'commit' && ref.object.sha === sha;
 }
+function smokeTagIsAbsent(tag) {
+  try {
+    ghJSON('repos/' + REPO + '/git/ref/tags/' + tag);
+    return false;
+  } catch (error) {
+    if (!/404|Not Found/.test(String(error.stderr ?? error.message))) throw error;
+  }
+  return checkedRelease(tag) === null;
+}
+export function smokeAttestationIsCurrent(comments, toolingSha, { now = Date.now(), tagAbsent = () => false } = {}) {
+  if (!SHA.test(toolingSha ?? '') || !Array.isArray(comments)) return false;
+  return comments.some(comment => {
+    const evidence=verifiedSmokeComment(comment, toolingSha, now);
+    return evidence !== null && tagAbsent(evidence.tag) === true;
+  });
+}
+function verifiedOwnerDraftSmoke() {
+  const ref=ghJSON('repos/' + REPO + '/git/ref/heads/agent/mp3-release-evidence-gate');
+  const toolingSha=ref?.object?.sha;
+  if (!SHA.test(toolingSha ?? '')) return false;
+  const now=Date.now();
+  for (let page=1; page<=20; page++) {
+    const comments=ghJSON('repos/' + REPO + '/issues/22/comments?per_page=100&page=' + page);
+    if (!Array.isArray(comments)) throw Error('Unable to verify the owner GitHub draft smoke comments');
+    if (smokeAttestationIsCurrent(comments,toolingSha,{now,tagAbsent:smokeTagIsAbsent}))
+      return true;
+    if (comments.length<100) break;
+  }
+  return false;
+}
 function checkedRelease(tag) {
   try { return ghJSON('repos/' + REPO + '/releases/tags/' + tag); }
   catch (error) {
@@ -141,8 +174,10 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
     throw Error('Consolidated native candidate advanced since the signed build.');
   const issue = ghJSON('repos/' + REPO + '/issues/6');
   const approved = await ownerApproval(sha, m, issue);
+  const smokeApproved = verifiedOwnerDraftSmoke();
   const errors = deliveryManifestErrors({ manifest: m, sha, archiveName: basename(zip),
-    archiveHash: zipHash, bytes: size, deviceIssue: issue, ownerApproved: approved });
+    archiveHash: zipHash, bytes: size, deviceIssue: issue, ownerApproved: approved,
+    smokeApproved });
   if (errors.length) throw Error('ZIP_DELIVERY_BLOCKED: ' + errors.join('; '));
   const tag = 'mp3-shelf-ios-' + sha;
   const directZIP = 'https://github.com/' + REPO + '/releases/download/' +
@@ -189,9 +224,10 @@ export async function deliverVerifiedNative({ archive, manifestPath, platform = 
       !(await (async () => {
         const latestIssue = ghJSON('repos/' + REPO + '/issues/6');
         const latestApproval = await ownerApproval(sha, m, latestIssue);
+        const latestSmoke = verifiedOwnerDraftSmoke();
         return deliveryManifestErrors({manifest:m, sha, archiveName:basename(zip),
           archiveHash:zipHash, bytes:size, deviceIssue:latestIssue,
-          ownerApproved:latestApproval}).length === 0;
+          ownerApproved:latestApproval, smokeApproved:latestSmoke}).length === 0;
       })()))
     throw Error('Release eligibility changed after artifact upload; draft remains private.');
   cli('release', 'edit', tag, '--repo', REPO, '--draft=false');
