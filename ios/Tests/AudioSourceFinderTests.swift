@@ -972,6 +972,28 @@ enum AudioSourceFinderTests {
             in: Data(reversedRSS.utf8), matching: rssWish)?.isEmpty == true,
             "reversing ambiguous enclosure order never changes rejection")
 
+        // Commons has no reliable per-file decoded duration. A same-named
+        // radio edit must not be selected for a timed Spotify recording.
+        let commonsTimedWish = PlaylistWish(title: "The Song", artist: "The Artist",
+            album: "", spotifyURL: nil, durationSeconds: 212)
+        let commonsUntimedWish = PlaylistWish(title: "The Song", artist: "The Artist",
+            album: "", spotifyURL: nil, durationSeconds: nil)
+        func commonsMatch(_ wish: PlaylistWish) -> AudioCatalogMatch? {
+            AudioSourceFinder.commonsCandidate(
+                fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
+                download: "https://upload.wikimedia.org/wikipedia/commons/a/a1/The_Song.mp3",
+                landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
+                license: nil, bytes: 3_000_000, wish: wish)
+        }
+        verify(commonsMatch(commonsTimedWish) == nil,
+               "Commons without duration cannot auto-match a timed Spotify recording")
+        verify(commonsMatch(commonsUntimedWish) != nil,
+               "Commons still permits metadata-only wishes without duration evidence")
+        let invalidCommonsWish = PlaylistWish(title: "The Song", artist: "The Artist",
+            album: "", spotifyURL: nil, durationSeconds: .infinity)
+        verify(commonsMatch(invalidCommonsWish) == nil,
+               "invalid Spotify runtime cannot authorize an unattended Commons match")
+
         let firstSource = AudioCatalogMatch(
             downloadURL: URL(string: "https://first.example/song.mp3")!,
             itemURL: URL(string: "https://first.example/song")!,
