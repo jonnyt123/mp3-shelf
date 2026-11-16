@@ -96,6 +96,10 @@ final class SpotifyService: NSObject, ObservableObject {
         var found: [SpotifyPlaylist] = []
         var visitedPages = Set<String>()
         while let url = next {
+            try Task.checkCancellation()
+            guard visitedPages.count < 500 else {
+                throw SpotifyError.api("Spotify returned too many pagination pages.")
+            }
             guard visitedPages.insert(url.absoluteString).inserted else {
                 throw SpotifyError.api("Spotify returned a repeated pagination URL.")
             }
@@ -127,13 +131,22 @@ final class SpotifyService: NSObject, ObservableObject {
         var wishes: [PlaylistWish] = []
         var visitedPages = Set<String>()
         while let url = next {
+            try Task.checkCancellation()
+            guard visitedPages.count < 500 else {
+                throw SpotifyError.api("Spotify returned too many pagination pages.")
+            }
             guard visitedPages.insert(url.absoluteString).inserted else {
                 throw SpotifyError.api("Spotify returned a repeated pagination URL.")
             }
             let page: SpotifyPage<SpotifyPlaylistItem> = try await request(url)
             for entry in page.items {
                 guard let track = entry.item ?? entry.track, track.type == "track" else { continue }
+                // Skip local/removed entries and unusable metadata instead of
+                // creating phantom download jobs for empty titles or artists.
                 let artist = track.artists?.map(\.name).joined(separator: ", ") ?? ""
+                guard !track.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      track.duration_ms.map({ $0 > 0 }) ?? true else { continue }
                 wishes.append(PlaylistWish(title: track.name, artist: artist,
                     album: track.album?.name ?? "", spotifyURL: track.external_urls?.spotify,
                     durationSeconds: track.duration_ms.map { Double($0) / 1000.0 },
@@ -258,6 +271,10 @@ final class SpotifyService: NSObject, ObservableObject {
               scheme == "https", host == "api.spotify.com",
               resolved.port == nil,
               resolved.path.hasPrefix("/v1/"),
+              // A pagination link must remain on the same collection. Otherwise
+              // a malformed or compromised next link could mix unrelated data
+              // into the playlist while carrying the user\'s bearer token.
+              resolved.path == currentPage.path,
               !resolved.path.contains("/../"),
               !resolved.path.contains("/./")
         else {
