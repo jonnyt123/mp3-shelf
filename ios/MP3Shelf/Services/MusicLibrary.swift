@@ -633,11 +633,18 @@ final class MusicLibrary: ObservableObject {
                     }
                     continue
                 }
-                guard let index = tracks.indices.last else { continue }
+                guard let index = tracks.indices.last else {
+                    // A successful import must have published a catalog entry.
+                    // Do not silently lose this archive identity or playlist link.
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
                 if extractedSize >= 0 {
                     recordingsBySize[Int64(extractedSize), default: []].append(tracks[index])
                 }
-                restoredIDs[archived.id] = tracks[index].id
+                // The initial audio import is durable, but the archive identity
+                // and metadata are not. Do not expose this track to playlist
+                // restoration until the metadata catalog commit succeeds.
+                // A failed write leaves the audio intact for a safe retry.
                 // Keep archive metadata private until its catalog write succeeds.
                 // Published tracks must never expose references to uncommitted sidecars.
                 var restoredTrack = tracks[index]
@@ -714,9 +721,16 @@ final class MusicLibrary: ObservableObject {
                     candidateTracks[index] = restoredTrack
                     try PersistedLibrary(tracks: candidateTracks, playlists: playlists).write(to: databaseURL)
                     tracks = candidateTracks
+                    // Only a durable archive-identity commit may contribute
+                    // membership to the restored playlists. On failure the
+                    // original recording remains safe and the next restore can
+                    // reuse it by verified bytes without inventing a new ID.
+                    restoredIDs[archived.id] = restoredTrack.id
                 } catch {
                     // Audio was already committed by addLocalAudio. Leave its
                     // published metadata unchanged when this write fails.
+                    // In particular, never attach a playlist to an identity
+                    // whose metadata write did not commit.
                     throw error
                 }
             } catch is CancellationError {
