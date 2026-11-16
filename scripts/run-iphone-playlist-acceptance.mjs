@@ -53,6 +53,45 @@ function signedInstall(root, deviceID, expectedSha) {
   const record = readFileSync(join(root, 'ios/build/iphone-device/QA_RECORD.md'), 'utf8');
   return validateSignedInstallRecord(record, expectedSha);
 }
+export function playlistProgressFromCatalog(catalog, playlistID) {
+  if (!UUID.test(playlistID ?? '') || !Array.isArray(catalog?.playlists) ||
+      !Array.isArray(catalog?.tracks))
+    return { status: 'WAITING' };
+  const p=catalog.playlists.find(item=>item?.id===playlistID);
+  if (!p || typeof p.sourceURL!=='string' ||
+      !/^https:\/\/open\.spotify\.com\/playlist\/[A-Za-z0-9]{22}\/?$/.test(p.sourceURL) ||
+      !Array.isArray(p.sourceOrder) || p.sourceOrder.length<2 ||
+      !Array.isArray(p.trackIDs) || !Array.isArray(p.missingTracks))
+    return { status:'WAITING' };
+  const total=p.sourceOrder.length;
+  const imported=p.trackIDs.length,unavailable=p.missingTracks.length;
+  if (total>20000 || imported>total || unavailable>total ||
+      new Set(p.trackIDs).size!==imported)
+    return { status:'INVALID', total, imported, unavailable };
+  if (unavailable>0) return { status:'UNAVAILABLE', total, imported, unavailable };
+  if (imported!==total) return { status:'WAITING',total,imported,unavailable };
+  const found=new Set(catalog.tracks.map(t=>t.id));
+  if (p.trackIDs.some(id=>!found.has(id)))
+    return { status:'INVALID',total,imported,unavailable };
+  return { status:'COMPLETE',total,imported,unavailable };
+}
+function copyPlaylistProgress(deviceID, playlistID) {
+  const root=mkdtempSync(join(tmpdir(),'mp3shelf-playlist-progress-'));
+  try{
+    const file=join(root,'catalog.json');
+    const result=spawnSync('xcrun',[
+      'devicectl','device','copy','from','--device',deviceID,
+      '--domain-type','appDataContainer','--domain-identifier',BUNDLE,
+      '--source','Library/Application Support/MP3Shelf/library.json',
+      '--destination',file
+    ],{timeout:30000,stdio:'ignore'});
+    if(result.status!==0)return{status:'WAITING'};
+    const contents=readFileSync(file,'utf8');
+    if(contents.length>16*1024*1024)return{status:'INVALID'};
+    return playlistProgressFromCatalog(JSON.parse(contents),playlistID);
+  }catch{return{status:'WAITING'};}
+  finally{rmSync(root,{recursive:true,force:true});}
+}
 function copyOfflineProof(deviceID) {
   const root = mkdtempSync(join(tmpdir(), 'mp3shelf-offline-poll-'));
   try {
@@ -83,7 +122,8 @@ const delay = ms => new Promise(resolvePromise => setTimeout(resolvePromise,ms))
 export async function runCompleteIPhoneJourney({
   deviceID, playlistID, sha, cwd=process.cwd(), platform=process.platform,
   install=signedInstall, phase=runIPhonePhase, offlinePrompt=confirmOfflinePrompt,
-  offlineStatus=copyOfflineProof, sleep=delay, maxChecks=180
+  offlineStatus=copyOfflineProof, playlistStatus=copyPlaylistProgress,
+  sleep=delay, maxChecks=180
 }={}) {
   if (platform !== 'darwin') throw Error('REAL_IPHONE_REQUIRED: Mac, signed app and physical iPhone needed');
   if (!DEVICE.test(deviceID ?? '') || !UUID.test(playlistID ?? '') || !SHA.test(sha ?? ''))
@@ -97,6 +137,22 @@ export async function runCompleteIPhoneJourney({
     throw Error('Signed install did not confirm exact source and binary digest');
 
   await phase({phase:'arm',deviceID,bundleID:BUNDLE,playlistID,sha,cwd:root,platform});
+  // A playlist must finish saving its downloaded recordings before we
+  // request an actual radio-disabled test. Catalog rows are NOT playback
+  // proof: the collector later hashes and plays every local audio file.
+  let complete=false,lastCount=-1;
+  for(let i=0;i<maxChecks;i++){
+    const progress=await playlistStatus(deviceID,playlistID);
+    if(progress?.status==='INVALID'||progress?.status==='UNAVAILABLE')
+      throw Error('Spotify playlist has invalid or unavailable recordings; cannot claim complete offline library.');
+    if(Number.isSafeInteger(progress?.imported) && progress.imported!==lastCount){
+      console.log('Local Spotify playlist recordings '+progress.imported+'/'+(progress.total??'?'));
+      lastCount=progress.imported;
+    }
+    if(progress?.status==='COMPLETE'){complete=true;break;}
+    await sleep(5000);
+  }
+  if(!complete)throw Error('Timed out before the entire playlist was downloaded locally.');
   await offlinePrompt();
   await phase({phase:'offline',deviceID,bundleID:BUNDLE,playlistID,sha,cwd:root,platform});
   let observed = 'WAITING';
