@@ -38,7 +38,18 @@ func load() throws -> Snapshot {
     guard safeJournal() else { throw ReplayError.corrupt }
     guard let value = try? JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: journal)) else { throw ReplayError.corrupt }
     let ids = value.entries.map(\.id)
-    guard Set(ids).count == ids.count, Set(value.receipts).count == value.receipts.count,
+    // Reject ambiguous or escaping destinations before any replay operation.
+    // A corrupt journal must not turn an unrelated file into a ticket's audio.
+    let names = value.entries.map(\.filename)
+    guard Set(ids).count == ids.count, Set(names).count == names.count,
+          value.entries.allSatisfy({ entry in
+              !entry.id.isEmpty && !entry.filename.isEmpty &&
+              entry.filename != "." && entry.filename != ".." &&
+              !entry.filename.contains("/") && !entry.filename.contains("\\") &&
+              !entry.filename.contains("\0") &&
+              !entry.filename.hasPrefix(".")
+          }),
+          Set(value.receipts).count == value.receipts.count,
           value.receipts.allSatisfy({ id in value.entries.contains { $0.id == id && $0.state == .imported } }),
           value.entries.allSatisfy({ $0.state != .imported || value.receipts.contains($0.id) }) else { throw ReplayError.corrupt }
     return value
@@ -115,6 +126,33 @@ for round in 0..<48 {
         try valid.write(to: journal, options: .atomic)
     }
 }
+// Corrupt replay metadata must not redirect a ticket to another recording,
+// collapse two tickets onto one destination, or escape the audio directory.
+// Each rejected journal is restored without modifying any existing media.
+let invalidSnapshots: [Snapshot] = [
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "../other.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "/tmp/other.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "..\\other.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: ".hidden.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3"),
+                       Entry(id: "second", state: .pending, filename: "song.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "ticket", state: .pending, filename: "song.mp3"),
+                       Entry(id: "ticket", state: .pending, filename: "second.mp3")], receipts: []),
+    Snapshot(entries: [Entry(id: "", state: .pending, filename: "song.mp3")], receipts: [])
+]
+let validBeforeCorruption = try Data(contentsOf: journal)
+let audioBeforeCorruption = try Data(contentsOf: other)
+for invalid in invalidSnapshots {
+    try JSONEncoder().encode(invalid).write(to: journal, options: .atomic)
+    do { try complete(); try check(false, "unsafe replay metadata accepted") }
+    catch ReplayError.corrupt {}
+    try check(try Data(contentsOf: other) == audioBeforeCorruption,
+              "unsafe journal modified unrelated audio")
+    try validBeforeCorruption.write(to: journal, options: .atomic)
+}
+try check(try Data(contentsOf: journal) == validBeforeCorruption,
+          "valid replay checkpoint not restored")
+
 // A persisted terminal receipt must not mask deletion, substitution, or a
 // symlink introduced between launches. Invalid files must remain untouched.
 try save(Snapshot(entries: [Entry(id: "ticket", state: .imported, filename: "song.mp3")],
