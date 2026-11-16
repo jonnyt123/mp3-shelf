@@ -470,15 +470,16 @@ struct LibraryView: View {
             var queue: [MusicTrack] = []
             queue.reserveCapacity(songs.count)
             for (index, song) in songs.enumerated() {
+                // A missing file is deliberately excluded from the queue. It must
+                // not prevent otherwise playable results from starting.
+                guard availability[index] else { continue }
                 let originalURL = locations[index].1
                 guard let match = currentByLocation[RecordingLocationKey(id: song.id, url: originalURL)] else {
                     bulkPlaybackNotice = "Some recordings changed while preparing playback. Retry to use the current library."
                     bulkRetryShuffle = shuffled
                     return
                 }
-                if availability[index] {
-                    queue.append(match)
-                }
+                queue.append(match)
             }
             guard let first = shuffled ? queue.randomElement() : queue.first else {
                 bulkPlaybackNotice = "No playable offline recordings were found in these results. Restore a recording, then retry."
