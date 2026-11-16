@@ -67,11 +67,17 @@ if [[ -z "$PLAYLIST" ]]; then
        --destination "$TMP/library.json" >/dev/null 2>&1; then
     PLAYLIST="$(python3 - "$TMP/library.json" <<'PY'
 import json, re, sys
+from urllib.parse import urlsplit
 try:
     with open(sys.argv[1], encoding='utf-8') as f: obj=json.load(f)
-    matches=[p.get('id','') for p in obj.get('playlists',[])
-      if re.fullmatch(r'https://open\.spotify\.com/playlist/[A-Za-z0-9]{22}/?',
-        p.get('sourceURL','')) and p.get('trackIDs')]
+    matches=[]
+    for p in obj.get('playlists',[]):
+        parsed=urlsplit(p.get('sourceURL',''))
+        if (parsed.scheme=='https' and parsed.hostname=='open.spotify.com'
+            and not parsed.username and not parsed.password and not parsed.fragment
+            and re.fullmatch(r'/playlist/[A-Za-z0-9]{22}/?', parsed.path)
+            and p.get('trackIDs')):
+            matches.append(p.get('id',''))
     if len(matches) == 1: print(matches[0])
 except (OSError,ValueError,TypeError): pass
 PY
@@ -88,6 +94,9 @@ echo "Preparing an isolated exact-GitHub-source build…"
 git -C "$ROOT" fetch --no-tags origin refs/heads/agent/mp3-native-integration-preflight
 SOURCE_SHA="$(git -C "$ROOT" ls-remote --exit-code origin refs/heads/agent/mp3-native-integration-preflight | awk '{print $1}')"
 [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid preflight Git SHA" >&2; exit 2; }
+git -C "$ROOT" cat-file -e "$SOURCE_SHA^{commit}" || {
+  echo "The preflight branch advanced during fetch. Retry the exact current SHA." >&2; exit 2;
+}
 git -C "$ROOT" worktree add --detach "$WORKTREE" "$SOURCE_SHA"
 echo "Building, installing and verifying candidate $SOURCE_SHA."
 echo "Airplane Mode with Wi-Fi off is the only physical network action required when prompted."
