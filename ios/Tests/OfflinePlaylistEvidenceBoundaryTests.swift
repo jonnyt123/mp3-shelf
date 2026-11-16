@@ -4,7 +4,7 @@ import Foundation
 struct Proof {
     struct Song: Hashable { let id: String; let artist: String; let title: String; let edition: String; let duration: Int }
     struct Match { let requested: Song; let saved: Song?; let source: String?; let decoded: Bool }
-    struct Event { let kind: String; let session: String; let process: String; let task: String?; let time: Int; let offline: Bool }
+    struct Event { let kind: String; let session: String; let process: String; let task: String?; let time: Int; let offline: Bool; let recordingID: String? }
     var expectedSHA: String
     var installedSHA: String
     var catalog: [Song]
@@ -39,9 +39,9 @@ func assess(_ p: Proof) -> Verdict {
         guard let restart = p.events.first(where: { $0.kind == "offlineRelaunch" &&
                 $0.session == wake.session && $0.process != wake.process &&
                 $0.time > staged.time && $0.offline }),
-              p.events.contains(where: { $0.kind == "localPlaybackAdvanced" &&
+              p.catalog.allSatisfy({ song in p.events.contains(where: { $0.kind == "localPlaybackAdvanced" &&
                 $0.session == wake.session && $0.process == restart.process &&
-                $0.time > restart.time && $0.offline }) else { return .badOffline }
+                $0.time > restart.time && $0.offline && $0.recordingID == song.id }) }) else { return .badOffline }
         return .accepted
     }
     return .badCallback
@@ -52,11 +52,11 @@ func check(_ proof: Proof, _ verdict: Verdict, _ name: String) {
 let song = Proof.Song(id: "track-1", artist: "Artist", title: "Track", edition: "Album", duration: 203)
 let match = Proof.Match(requested: song, saved: song, source: "https://files.example.org/audio.mp3", decoded: true)
 let events = [
-    Proof.Event(kind: "osBackgroundWake", session: "s", process: "download", task: "t", time: 10, offline: false),
-    Proof.Event(kind: "urlSessionCompletion", session: "s", process: "download", task: "t", time: 20, offline: false),
-    Proof.Event(kind: "durableStaging", session: "s", process: "download", task: "t", time: 30, offline: false),
-    Proof.Event(kind: "offlineRelaunch", session: "s", process: "restart", task: nil, time: 40, offline: true),
-    Proof.Event(kind: "localPlaybackAdvanced", session: "s", process: "restart", task: nil, time: 50, offline: true)
+    Proof.Event(kind: "osBackgroundWake", session: "s", process: "download", task: "t", time: 10, offline: false, recordingID: nil),
+    Proof.Event(kind: "urlSessionCompletion", session: "s", process: "download", task: "t", time: 20, offline: false, recordingID: nil),
+    Proof.Event(kind: "durableStaging", session: "s", process: "download", task: "t", time: 30, offline: false, recordingID: nil),
+    Proof.Event(kind: "offlineRelaunch", session: "s", process: "restart", task: nil, time: 40, offline: true, recordingID: nil),
+    Proof.Event(kind: "localPlaybackAdvanced", session: "s", process: "restart", task: nil, time: 50, offline: true, recordingID: "track-1")
 ]
 let good = Proof(expectedSHA: String(repeating: "a", count: 40), installedSHA: String(repeating: "a", count: 40),
                  catalog: [song], matches: [match], events: events)
@@ -68,14 +68,21 @@ check(mutant { $0.catalog.append(.init(id: "2", artist: "A", title: "B", edition
 check(mutant { $0.matches[0] = .init(requested: song, saved: .init(id: song.id, artist: "Artist", title: "Wrong", edition: "Album", duration: 203), source: match.source, decoded: true) }, .badCatalog, "wrong edition")
 check(mutant { $0.matches[0] = .init(requested: song, saved: song, source: "https://open.spotify.com/track/1", decoded: true) }, .badSource, "Spotify stream")
 check(mutant { $0.matches[0] = .init(requested: song, saved: song, source: match.source, decoded: false) }, .badSource, "undecoded bytes")
-check(mutant { $0.events[1] = .init(kind: "urlSessionCompletion", session: "s", process: "other", task: "t", time: 20, offline: false) }, .badCallback, "cross-process callback")
+check(mutant { $0.events[1] = .init(kind: "urlSessionCompletion", session: "s", process: "other", task: "t", time: 20, offline: false, recordingID: nil) }, .badCallback, "cross-process callback")
 check(mutant { $0.events[2] = .init(kind: "durableStaging", session: "s", process: "download", task: "other", time: 30, offline: false) }, .badCallback, "cross-task stage")
-check(mutant { $0.events[3] = .init(kind: "offlineRelaunch", session: "s", process: "restart", task: nil, time: 40, offline: false) }, .badOffline, "online restart")
+check(mutant { $0.events[3] = .init(kind: "offlineRelaunch", session: "s", process: "restart", task: nil, time: 40, offline: false, recordingID: nil) }, .badOffline, "online restart")
 check(mutant { $0.events[4] = .init(kind: "localPlaybackAdvanced", session: "s", process: "restart", task: nil, time: 50, offline: false) }, .badOffline, "online playback")
-check(mutant { $0.events[4] = .init(kind: "localPlaybackAdvanced", session: "s", process: "download", task: nil, time: 50, offline: true) }, .badOffline, "wrong playback process")
+check(mutant { $0.events[4] = .init(kind: "localPlaybackAdvanced", session: "s", process: "download", task: nil, time: 50, offline: true, recordingID: "track-1") }, .badOffline, "wrong playback process")
 check(mutant { $0.events[4] = .init(kind: "localPlaybackAdvanced", session: "s", process: "restart", task: nil, time: 35, offline: true) }, .badOffline, "playback before restart")
+// Offline playback evidence must identify every imported recording, not merely any audio clock.
+check(mutant { $0.events[4] = .init(kind: "localPlaybackAdvanced", session: "s", process: "restart", task: nil, time: 50, offline: true, recordingID: "unrelated") }, .badOffline, "unrelated audio cannot prove imported track")
+check(mutant { $0.events[4] = .init(kind: "localPlaybackAdvanced", session: "s", process: "restart", task: nil, time: 50, offline: true, recordingID: nil) }, .badOffline, "missing recording identity")
+let second = Proof.Song(id: "track-2", artist: "Second", title: "Other", edition: "Album", duration: 180)
+let secondMatch = Proof.Match(requested: second, saved: second, source: "https://files.example.org/other.mp3", decoded: true)
+check(mutant { $0.catalog.append(second); $0.matches.append(secondMatch) }, .badOffline, "one offline clock cannot prove two tracks")
+check(mutant { $0.catalog.append(second); $0.matches.append(secondMatch); $0.events.append(.init(kind: "localPlaybackAdvanced", session: "s", process: "restart", task: nil, time: 60, offline: true, recordingID: second.id)) }, .accepted, "every imported recording independently played offline")
 for i in 0..<200 {
-    let noise = Proof.Event(kind: "durableStaging", session: "old", process: "p\(i)", task: "t\(i)", time: 60 + i, offline: false)
+    let noise = Proof.Event(kind: "durableStaging", session: "old", process: "p\(i)", task: "t\(i)", time: 60 + i, offline: false, recordingID: nil)
     check(mutant { $0.events.append(noise) }, .accepted, "unrelated session noise \(i)")
 }
-print("PASS: 13 deterministic acceptance cases and 200 noise cases; fixture only")
+print("PASS: 17 deterministic acceptance cases and 200 noise cases; fixture only")
