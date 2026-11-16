@@ -1087,21 +1087,44 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         completionHandler(request.url.map { Self.allowedDownloadURL($0) } == true ? request : nil)
     }
 
+    /// Prioritize a complete staged recording over late errors from duplicate
+    /// or restored URLSession callbacks for the same persistent ticket.
+    private func handleCallbackFailure(_ id: UUID, reason: String,
+                                       retryTemporary: Bool = false,
+                                       connectivityInterruption: Bool = false,
+                                       allowAlternative: Bool = true) async {
+        guard tickets[id]?.status == .queued else { return }
+        if fm.fileExists(atPath: Self.stagingURL(id).path) {
+            await recoverStagedDownloads()
+            return
+        }
+        if retryTemporary {
+            retryTemporaryTransfer(id, reason: reason,
+                                   connectivityInterruption: connectivityInterruption)
+        } else {
+            setFailed(id, reason: reason, allowAlternative: allowAlternative)
+        }
+    }
+
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didFinishDownloadingTo location: URL) {
         guard let id = UUID(uuidString: downloadTask.taskDescription ?? "") else { return }
         guard let http = downloadTask.response as? HTTPURLResponse,
               http.url.map({ Self.allowedDownloadURL($0) }) == true else {
-            Task { @MainActor in self.setFailed(id, reason: "Invalid download response or destination") }
+            Task { @MainActor in
+                await self.handleCallbackFailure(id, reason: "Invalid download response or destination")
+            }
             return
         }
         guard (200...299).contains(http.statusCode) else {
             if BackgroundTransferRetryPolicy.isTemporaryHTTP(http.statusCode) {
                 Task { @MainActor in
-                    self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.http(http.statusCode))
+                    await self.handleCallbackFailure(id, reason: AudioDownloadDiagnostics.http(http.statusCode), retryTemporary: true)
                 }
             } else {
-                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.http(http.statusCode)) }
+                Task { @MainActor in
+                    await self.handleCallbackFailure(id, reason: AudioDownloadDiagnostics.http(http.statusCode))
+                }
             }
             return
         }
@@ -1113,11 +1136,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 throw CocoaError(.fileReadUnknown)
             }
             guard bytes > 0 else {
-                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.emptyResponse) }
+                Task { @MainActor in await self.handleCallbackFailure(id, reason: AudioDownloadDiagnostics.emptyResponse) }
                 return
             }
             guard DownloadedAudioContentType.allows(http.mimeType) else {
-                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.contentType(http.mimeType)) }
+                Task { @MainActor in await self.handleCallbackFailure(id, reason: AudioDownloadDiagnostics.contentType(http.mimeType)) }
                 return
             }
             guard bytes <= BackgroundTransferProgressPolicy.maxBytes else {
@@ -1125,7 +1148,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             guard DownloadedAudioRange.coversCompleteFile(status: http.statusCode,
                 contentRange: http.value(forHTTPHeaderField: "Content-Range"), downloadedBytes: bytes) else {
-                Task { @MainActor in self.setFailed(id, reason: DownloadedAudioRange.incompleteMessage) }
+                Task { @MainActor in await self.handleCallbackFailure(id, reason: DownloadedAudioRange.incompleteMessage) }
                 return
             }
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
@@ -1153,8 +1176,8 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
         } catch {
             Task { @MainActor in
-                self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
-                               allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
+                await self.handleCallbackFailure(id, reason: AudioDownloadDiagnostics.message(for: error),
+                    allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
             }
         }
     }
@@ -1169,7 +1192,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // A queued alternative can take over after the failure is recorded.
             downloadTask.cancel()
             Task { @MainActor in
-                self.setFailed(id, reason: "Source exceeds the 100 MB download limit")
+                await self.handleCallbackFailure(id, reason: "Source exceeds the 100 MB download limit")
             }
             return
         }
@@ -1191,18 +1214,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // A later error callback from a duplicate/retired daemon task must not
             // replace the queued ticket or discard a complete file awaiting import.
             // Staging is created only after HTTP, size, type and range checks.
-            guard self.tickets[id]?.status == .queued else { return }
-            if self.fm.fileExists(atPath: Self.stagingURL(id).path) {
-                await self.recoverStagedDownloads()
-                return
-            }
-            if shouldRetry {
-                self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.message(for: error),
-                                            connectivityInterruption: connectionLost)
-            } else {
-                self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
-                               allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
-            }
+            await self.handleCallbackFailure(id,
+                reason: AudioDownloadDiagnostics.message(for: error),
+                retryTemporary: shouldRetry,
+                connectivityInterruption: connectionLost,
+                allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
         }
     }
 
