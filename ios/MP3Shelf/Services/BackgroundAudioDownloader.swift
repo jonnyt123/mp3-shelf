@@ -629,10 +629,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         if let previous {
             // Retarget every durable follower before the old daemon task is
             // cancelled. Retries and source changes must not orphan siblings.
-            for (id, var follower) in updated where follower.status == .queued &&
+            for (id, follower) in updated where follower.status == .queued &&
                 follower.sharedLeaderID == previous.id {
-                follower.sharedLeaderID = ticket.id
-                updated[id] = follower
+                var redirected = follower
+                redirected.sharedLeaderID = ticket.id
+                updated[id] = redirected
             }
         }
         // Save both ticket changes together before the daemon can transfer
