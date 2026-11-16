@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { completedOfflineStatus, validateSignedInstallRecord,
-  runCompleteIPhoneJourney } from './run-iphone-playlist-acceptance.mjs';
+  playlistProgressFromCatalog, runCompleteIPhoneJourney } from './run-iphone-playlist-acceptance.mjs';
 const id='12345678-1234-1234-1234-123456789012';
 const playlist='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const hash='b'.repeat(64);
@@ -54,12 +54,15 @@ test('single guided run installs, arms, restarts offline, and collects without c
           physicalAcceptance:'INCOMPLETE',output:'/tmp/fixture-private-report'
         }: {physicalAcceptance:'INCOMPLETE'}
       },
+      playlistStatus:async()=>{events.push('playlist');return events.filter(e=>e==='playlist').length<2
+        ?{status:'WAITING',total:2,imported:1}:{status:'COMPLETE',total:2,imported:2};},
       offlinePrompt:async()=>{events.push('airplane-confirmation');},
       offlineStatus:async()=>{events.push('poll');return events.filter(e=>e==='poll').length<2?'WAITING':'PASS'},
       sleep:async()=>{events.push('sleep')}
     });
     assert.deepEqual(phases,['arm','offline','collect']);
-    assert.deepEqual(events,['install','arm','airplane-confirmation','offline','poll','sleep','poll','collect']);
+    assert.deepEqual(events,['install','arm','playlist','sleep','playlist',
+      'airplane-confirmation','offline','poll','sleep','poll','collect']);
     assert.equal(result.status,'OFFLINE_AND_CALLBACK_EVIDENCE_COLLECTED_NOT_APPROVED');
     assert.equal(result.physicalAcceptance,'INCOMPLETE');
     assert.equal(result.signedAppSHA256,hash);
@@ -77,7 +80,8 @@ test('missing real playback or no background callback never yields false complet
       return phase==='collect'?{offlinePlayback:'APP_INSTRUMENTED_PHYSICAL_PASS',
         backgroundTransfer:'NOT_VERIFIED',physicalAcceptance:'INCOMPLETE'}:{}
     },
-    offlinePrompt:async()=>{},sleep:async()=>{}
+    offlinePrompt:async()=>{},sleep:async()=>{},
+    playlistStatus:async()=>({status:'COMPLETE',total:2,imported:2})
   };
   await assert.rejects(runCompleteIPhoneJourney({...common,offlineStatus:async()=> 'FAILED'}),/not verified/);
   assert(!calls.includes('collect'));
@@ -101,4 +105,40 @@ test('reject dirty checkout, Linux simulator mode and forged app identity',async
     cwd:x.root,platform:'darwin',install:async()=>({sha:x.sha,signedAppSHA256:'NOT_VERIFIED'})}),
     /Signed install did not confirm/);
  }finally{rmSync(x.root,{recursive:true,force:true})}
+});
+
+
+test('playlist completion tracks all Spotify recordings without accepting unavailable entries',()=>{
+  const p={id:playlist,sourceURL:'https://open.spotify.com/playlist/'+ 'A'.repeat(22)+'?si=share',
+    sourceOrder:[{title:'One'},{title:'Two'}],
+    trackIDs:['one','two'],missingTracks:[]};
+  const library={playlists:[p],tracks:[{id:'one'},{id:'two'}]};
+  assert.equal(playlistProgressFromCatalog(library,playlist).status,'COMPLETE');
+  const downloading={...p,trackIDs:['one']};
+  assert.equal(playlistProgressFromCatalog({...library,playlists:[downloading]},playlist).status,'WAITING');
+  const unavailable={...p,missingTracks:['second']};
+  assert.equal(playlistProgressFromCatalog({...library,playlists:[unavailable]},playlist).status,'UNAVAILABLE');
+  const duplicate={...p,trackIDs:['one','one']};
+  assert.equal(playlistProgressFromCatalog({...library,playlists:[duplicate]},playlist).status,'INVALID');
+  const ghost={...p,trackIDs:['one','ghost']};
+  assert.equal(playlistProgressFromCatalog({...library,playlists:[ghost]},playlist).status,'INVALID');
+  const other={...p,sourceURL:'https://spotify-example.evil/playlist/'+ 'A'.repeat(22)};
+  assert.equal(playlistProgressFromCatalog({...library,playlists:[other]},playlist).status,'WAITING');
+});
+test('no airplane-mode transition is requested for unavailable or incomplete playlist',async()=>{
+  const x=repo(),events=[];
+  try {
+    const params={deviceID:id,playlistID:playlist,sha:x.sha,cwd:x.root,platform:'darwin',
+      install:async()=>({sha:x.sha,signedAppSHA256:hash}),
+      phase:async({phase})=>{events.push(phase);return{};},
+      offlinePrompt:async()=>{throw Error('offline prompt must not appear');},
+      sleep:async()=>{},maxChecks:2};
+    await assert.rejects(runCompleteIPhoneJourney({...params,
+      playlistStatus:async()=>({status:'UNAVAILABLE',total:2,imported:1,unavailable:1})}),/unavailable/);
+    assert.deepEqual(events,['arm']);
+    events.length=0;
+    await assert.rejects(runCompleteIPhoneJourney({...params,
+      playlistStatus:async()=>({status:'WAITING',total:2,imported:1})}),/Timed out/);
+    assert.deepEqual(events,['arm']);
+  } finally {rmSync(x.root,{recursive:true,force:true});}
 });
