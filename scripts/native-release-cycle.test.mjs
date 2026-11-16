@@ -159,3 +159,37 @@ test('explicit incomplete receipt cannot bypass automatic receipt selection', as
     assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
+
+test('an explicitly supplied older receipt cannot replace the latest selected receipt', async () => {
+  const f = fixture();
+  try {
+    const older = join(f.home, 'Library/Logs/MP3Shelf/NativePreflight', sha, '2026-11-14T120000Z');
+    mkdirSync(older);
+    for (const file of ['native-baseline.json', 'native-QA_RECORD.md',
+      'local-evidence.json', 'native-local-release.log',
+      'post-native-checkout-integrity.log']) writeFileSync(join(older, file), 'old fixture');
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha, evidence: older }),
+      packageProject: async () => { throw Error('stale receipt must not package'); } });
+    assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('symlinked DeviceAcceptance ancestor cannot authorize packaging', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.device, 'physical-inventory.json'), '{}');
+    writeFileSync(join(f.device, 'hardware-acceptance.json'), '{}');
+    const parent = join(f.home, 'Library/Logs/MP3Shelf/DeviceAcceptance');
+    const outside = join(f.home, 'relocated-device-acceptance');
+    const { renameSync } = await import('node:fs');
+    renameSync(parent, outside);
+    symlinkSync(outside, parent, 'dir');
+    const result = await runNativeReleaseCycle({ home: f.home, repo: f.home,
+      preflight: async () => ({ status: 'already-staged', sha }),
+      packageProject: async () => { throw Error('redirected ancestor must not package'); } });
+    assert.equal(result.packaging, 'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
