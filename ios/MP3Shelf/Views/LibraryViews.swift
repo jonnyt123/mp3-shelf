@@ -129,6 +129,9 @@ struct LibraryView: View {
             }
             guard !Task.isCancelled, scenePhase == .active else { return }
             playback.play(selected, queue: queue)
+            // A successful start is not a failed attempt: never offer a stale
+            // Retry action beside the partial-queue playback notice.
+            recentRetrySelection = nil
             let skipped = recent.count - queue.count
             if skipped > 0 {
                 recentPlaybackNotice = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
@@ -684,7 +687,10 @@ struct LibraryView: View {
                                                   detail: "FRESH ON YOUR SHELF")
                             ScrollView(.horizontal) {
                                 LazyHStack(alignment: .top, spacing: 14) {
-                                    ForEach(recentlyAdded) { track in
+                                    // Imported/restored recordings may share UUIDs.
+                                    // Use stable occurrence offsets for this bounded
+                                    // eight-item snapshot instead of duplicate SwiftUI IDs.
+                                    ForEach(Array(recentlyAdded.enumerated()), id: \.offset) { _, track in
                                         Button {
                                             playRecentRecording(track)
                                         } label: {
