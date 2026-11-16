@@ -1064,6 +1064,25 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.nextAlternative(to: firstSource.downloadURL,
             from: [firstSource, secondSource])?.source.downloadURL == secondSource.downloadURL,
             "duplicate current-ticket URLs cannot be retried")
+        // A resumed queue must discard every invalid/expired/duplicate source,
+        // including those AFTER the first usable candidate. Otherwise the
+        // next retry persists and re-examines unsafe old queue entries.
+        let thirdSource = fallback("https://third.example/recording.mp3")
+        let prunedFallback = AudioSourceFinder.nextAlternative(
+            to: firstSource.downloadURL,
+            from: unsafeFallbacks + [secondSource, secondSource,
+                fallback("https://jamendo.com/track/fixture.mp3"),
+                fallback("https://open.spotify.com/track/fixture"),
+                thirdSource, firstSource])
+        verify(prunedFallback?.source.downloadURL == secondSource.downloadURL &&
+               prunedFallback?.remaining.map(\.downloadURL) == [thirdSource.downloadURL],
+               "recovered queue prunes all unsafe and duplicate later alternatives")
+        let secondRecovery = AudioSourceFinder.nextAlternative(
+            to: secondSource.downloadURL, from: prunedFallback?.remaining ?? [])
+        verify(secondRecovery?.source.downloadURL == thirdSource.downloadURL &&
+               secondRecovery?.remaining.isEmpty == true,
+               "subsequent recovery deterministically advances to the last valid file")
+
 
         let serializedSources = try? JSONEncoder().encode(deduped)
         let restoredSources = serializedSources.flatMap {
