@@ -1046,6 +1046,11 @@ enum AudioSourceFinderTests {
             "https://user:pass@audio.example/song.mp3",
             "https://audio.example:8443/song.mp3",
             "https://audio.example/song.mp3#fragment",
+            "https://open.spotify.com/track/fixture",
+            "https://audio.spotifycdn.com/song.mp3",
+            "https://r1.googlevideo.com/videoplayback?mime=audio%2Fmp4",
+            "https://0x7f.0x0.0x0.0x1/song.mp3",
+            "https://0177.0.0.1/song.mp3",
             "http://audio.example/song.mp3"
         ].map(fallback)
         verify(AudioSourceFinder.nextAlternative(to: firstSource.downloadURL,
