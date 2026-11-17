@@ -162,3 +162,46 @@ try assertQA(try readJournal().receiptCount == 0, "destination symlink changed j
 try assertQA(try Data(contentsOf: foreignURL) == foreign, "destination symlink followed")
 
 print("PASS: \(scenarios) crash/restart combinations and 8 adversarial filesystem cases")
+
+
+func expectCorruptJournal(_ label: String, _ data: Data) throws {
+    try resetPending()
+    try audio.write(to: stagedURL)
+    try data.write(to: journalURL, options: .atomic)
+    let original = try Data(contentsOf: journalURL)
+    do { try replay(); try assertQA(false, "\(label): malformed journal accepted") }
+    catch TicketError.corruptJournal {}
+    try assertQA(try Data(contentsOf: journalURL) == original,
+                 "\(label): malformed journal was rewritten")
+    try assertQA(!fm.fileExists(atPath: finalURL.path),
+                 "\(label): malformed journal created audio")
+    try assertQA(try Data(contentsOf: foreignURL) == foreign,
+                 "\(label): unrelated audio changed")
+}
+try expectCorruptJournal("pending with receipt", Data(#"{"state":"pending","receiptCount":1}"#.utf8))
+try expectCorruptJournal("copying with receipt", Data(#"{"state":"copying","receiptCount":1}"#.utf8))
+try expectCorruptJournal("complete without receipt", Data(#"{"state":"complete","receiptCount":0}"#.utf8))
+try expectCorruptJournal("negative receipt", Data(#"{"state":"pending","receiptCount":-1}"#.utf8))
+try expectCorruptJournal("duplicate receipt", Data(#"{"state":"complete","receiptCount":2}"#.utf8))
+try expectCorruptJournal("unknown state", Data(#"{"state":"published","receiptCount":0}"#.utf8))
+try expectCorruptJournal("oversized journal", Data(repeating: 0x20, count: 4097))
+
+try resetPending()
+try audio.write(to: stagedURL)
+try fm.createDirectory(at: finalURL, withIntermediateDirectories: false)
+try expectInvalid("destination directory") { try replay() }
+try assertQA(try readJournal() == TicketJournal(state: .pending, receiptCount: 0),
+             "destination directory advanced receipt")
+try assertQA(try fm.attributesOfItem(atPath: finalURL.path)[.type] as? FileAttributeType == .typeDirectory,
+             "destination directory replaced")
+
+try resetPending()
+try audio.write(to: stagedURL)
+try fm.linkItem(at: foreignURL, to: finalURL)
+try expectInvalid("destination hardlink") { try replay() }
+try assertQA(try readJournal() == TicketJournal(state: .pending, receiptCount: 0),
+             "destination hardlink advanced receipt")
+try assertQA(try Data(contentsOf: foreignURL) == foreign,
+             "destination hardlink modified unrelated recording")
+
+print("PASS: 7 malformed journal cases and 2 destination filesystem adversaries")
