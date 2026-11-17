@@ -4,7 +4,7 @@
  * report NEVER grants authorization to publish an archive.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -233,6 +233,33 @@ function gitHubLive(now){
  return{candidateSha,toolingSha,issue,ownerComments,smoke,
    release:SHA.test(candidateSha??'')?ghJSON('releases/tags/mp3-shelf-ios-'+candidateSha):null};
 }
+// The dashboard is not a release gate, but its output is still written by a
+// background agent. Refuse redirected parent directories and hard-linked
+// destinations so untrusted local paths cannot overwrite unrelated files.
+export function ensureReadinessDestination(home) {
+ const parts=[join(home,'Library'),join(home,'Library','Logs'),
+   join(home,'Library','Logs','MP3Shelf'),
+   join(home,'Library','Logs','MP3Shelf','ReleaseReadiness')];
+ for(const dir of parts){
+   try{
+     const stat=lstatSync(dir);
+     if(!stat.isDirectory()||stat.isSymbolicLink())
+       throw Error('Unsafe release readiness directory');
+   }catch(error){
+     if(error.code!=='ENOENT')throw error;
+     mkdirSync(dir,{mode:0o700});
+   }
+ }
+ const dir=parts.at(-1);
+ for(const ext of ['json','md','html']){
+   try{
+     const stat=lstatSync(join(dir,'latest.'+ext));
+     if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1)
+       throw Error('Unsafe release readiness destination');
+   }catch(error){if(error.code!=='ENOENT')throw error;}
+ }
+ return dir;
+}
 export function writeReadiness({home=homedir(),now=Date.now(),github=gitHubLive}={}){
  const live=github(now);
  const sha=live.candidateSha;
@@ -253,13 +280,24 @@ export function writeReadiness({home=homedir(),now=Date.now(),github=gitHubLive}
      createHash('sha256').update(rawInventory).digest('hex'):null,
    hardware:SHA.test(sha??'')?json(join(logs,'DeviceAcceptance',sha,'hardware-acceptance.json')):null,
    review:getLatestReview(home,sha)});
- const dir=join(logs,'ReleaseReadiness');
- mkdirSync(dir,{recursive:true,mode:0o700});
+ const dir=ensureReadinessDestination(home);
  const body={json:JSON.stringify(result,null,2)+'\n',md:readinessMarkdown(result),html:readinessHTML(result)};
- for(const [ext,text] of Object.entries(body)){
-  const target=join(dir,'latest.'+ext),temp=join(dir,'.writing-'+randomUUID()+'.tmp');
-  writeFileSync(temp,text,{flag:'wx',mode:0o600});
-  renameSync(temp,target);
+ const pending=[];
+ try{
+  for(const [ext,text] of Object.entries(body)){
+   const target=join(dir,'latest.'+ext),temp=join(dir,'.writing-'+randomUUID()+'.tmp');
+   pending.push(temp);
+   writeFileSync(temp,text,{flag:'wx',mode:0o600});
+  }
+  // Recheck the targets immediately before replacing them. Each staged file
+  // is private and complete; interrupted runs never leave partial JSON/HTML.
+  ensureReadinessDestination(home);
+  for(let i=0;i<pending.length;i++)
+   renameSync(pending[i],join(dir,'latest.'+Object.keys(body)[i]));
+ }finally{
+  for(const temp of pending){
+   try{unlinkSync(temp);}catch(error){if(error.code!=='ENOENT')throw error;}
+  }
  }
  return {status:result.status,blocking:result.blocking,
    html:join(dir,'latest.html'),markdown:join(dir,'latest.md'),json:join(dir,'latest.json')};
