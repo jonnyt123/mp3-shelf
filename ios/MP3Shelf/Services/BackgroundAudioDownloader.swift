@@ -203,6 +203,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         Task { [weak self] in
             await self?.recoverStagedDownloads()
             self?.reconcileAlreadyStoredDownloads()
+            self?.recoverSharedFollowers()
             // Two delayed URLSession inventory checks avoid treating a file
             // whose completion callback is still arriving as abandoned.
             await self?.recoverAbandonedBackgroundTasks()
@@ -260,6 +261,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     }
 
     private func promoteSharedFollowers(of leaderID: UUID) {
+        // The old owner may have completed its URLSession callback and left
+        // validated bytes in staging immediately before the app was killed.
+        // Recover those bytes before scheduling another physical transfer.
+        // This also protects cancelled leaders whose decoder has not started.
+        guard !fm.fileExists(atPath: Self.stagingURL(leaderID).path) else { return }
         guard Self.mayPromoteAfterImport(
             isProcessing: processing.contains(leaderID),
             hasConversion: conversions[leaderID] != nil) else { return }
