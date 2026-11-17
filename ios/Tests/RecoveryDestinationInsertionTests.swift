@@ -25,13 +25,20 @@ func clear() throws {
     }
     try audio.write(to: staged)
 }
-func publish(afterSourceValidation mutation: () throws -> Void) throws {
+func sourceIsValid() -> Bool {
     guard (try? fm.destinationOfSymbolicLink(atPath: staged.path)) == nil,
           let attributes = try? fm.attributesOfItem(atPath: staged.path),
           attributes[.type] as? FileAttributeType == .typeRegular,
           (attributes[.referenceCount] as? NSNumber)?.intValue == 1,
-          try Data(contentsOf: staged) == audio else { throw InsertionError.invalidSource }
+          let bytes = try? Data(contentsOf: staged) else { return false }
+    return bytes == audio
+}
+func publish(afterSourceValidation mutation: () throws -> Void) throws {
+    guard sourceIsValid() else { throw InsertionError.invalidSource }
     try mutation()
+    // Source may be replaced after initial validation, before the destination
+    // is created. A stale validation must never authorize publication.
+    guard sourceIsValid() else { throw InsertionError.invalidSource }
     // Recheck immediately before publication: an existing file, symlink,
     // hardlink or directory must never be overwritten or counted as success.
     guard !fm.fileExists(atPath: final.path),
@@ -60,10 +67,30 @@ for kind in ["foreign", "symlink", "dangling", "hardlink", "directory", "partial
     try assertSafe(try Data(contentsOf: staged) == audio, "\(kind): staged audio consumed")
     count += 1
 }
+for kind in ["symlink", "dangling", "hardlink", "directory", "partial", "missing"] {
+    try clear()
+    do {
+        try publish {
+            try fm.removeItem(at: staged)
+            switch kind {
+            case "symlink": try fm.createSymbolicLink(at: staged, withDestinationURL: unrelated)
+            case "dangling": try fm.createSymbolicLink(at: staged, withDestinationURL: root.appendingPathComponent("missing"))
+            case "hardlink": try fm.linkItem(at: unrelated, to: staged)
+            case "directory": try fm.createDirectory(at: staged, withIntermediateDirectories: false)
+            case "partial": try audio.prefix(128).write(to: staged)
+            default: break
+            }
+        }
+        try assertSafe(false, "\(kind): replaced source accepted")
+    } catch InsertionError.invalidSource {}
+    try assertSafe(!fm.fileExists(atPath: final.path), "\(kind): destination published from replaced source")
+    try assertSafe(try Data(contentsOf: unrelated) == foreign, "\(kind): unrelated audio modified")
+    count += 1
+}
 try clear()
 try publish {}
 try assertSafe(try Data(contentsOf: final) == audio, "valid publish failed")
 do { try publish {}; try assertSafe(false, "duplicate callback republished") }
 catch InsertionError.unsafeDestination {}
 try assertSafe(try Data(contentsOf: final) == audio, "duplicate callback changed audio")
-print("PASS: \(count) destination insertion cases, valid publication, duplicate callback")
+print("PASS: \(count) destination/source substitution cases, valid publication, duplicate callback")
