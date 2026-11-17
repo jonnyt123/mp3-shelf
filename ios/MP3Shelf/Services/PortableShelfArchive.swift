@@ -638,6 +638,22 @@ enum PortableShelfArchive {
             if code == EEXIST { throw CocoaError(.fileWriteFileExists) }
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
         }
+        // The link operation is atomic for the destination name, but an
+        // adversarial replacement of the staging pathname immediately before
+        // link(2) could publish an inode other than the validated archive.
+        // Check the published name against the still-open validated descriptor
+        // before reporting success. Never unlink the destination on failure:
+        // it may have been replaced by another process and is user-owned.
+        let publishedIdentity = try archiveIdentity(of: publicationHandle, at: destination)
+        guard publishedIdentity.device == publicationIdentity.device,
+              publishedIdentity.inode == publicationIdentity.inode,
+              publishedIdentity.size == publicationIdentity.size,
+              publishedIdentity.modifiedSeconds == publicationIdentity.modifiedSeconds,
+              publishedIdentity.modifiedNanoseconds == publicationIdentity.modifiedNanoseconds,
+              publishedIdentity.changedSeconds == publicationIdentity.changedSeconds,
+              publishedIdentity.changedNanoseconds == publicationIdentity.changedNanoseconds else {
+            throw ArchiveError.invalidFile
+        }
         // The final name is already complete. Failure to unlink staging is
         // harmless to the published archive; the outer catch cleans it up.
         try? manager.removeItem(at: staging)
