@@ -252,13 +252,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             loadedIDs.contains($0.playlistID) &&
                 !library.hasCurrentSourceRequest($0.requested, for: $0.playlistID)
         }
-        // Persist obsolete terminal states before promoting a valid sibling.
-        // Do not notify the library until the manifest write succeeds.
+        // A missing playlist may still be loading; never promote a ticket
+        // whose request has not been positively confirmed as current.
+        // Retire obsolete siblings in the same durable transaction.
         guard let first = valid.first else {
             for item in obsolete { cancelTransfer(item.id, reason: Self.obsoleteRequestReason) }
             return
         }
-        if library?.hasOfflineRecording(matching: first.requested) == true {
+        if library.hasOfflineRecording(matching: first.requested) {
             reconcileAlreadyStoredDownloads()
             return
         }
@@ -268,6 +269,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         promoted.startedAt = .now
         var updated = tickets
         updated[promoted.id] = promoted
+        for item in obsolete {
+            var retired = item
+            retired.status = .cancelled
+            retired.failureReason = Self.obsoleteRequestReason
+            updated[item.id] = retired
+        }
         for follower in valid.dropFirst() {
             var redirected = follower
             redirected.sharedLeaderID = promoted.id
@@ -280,6 +287,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return
         }
         tickets = updated
+        for item in obsolete {
+            library.finishedBackgroundDownload(for: item.playlistID, succeeded: false)
+        }
         let task = session.downloadTask(with: downloadRequest(for: promoted.downloadURL,
                                                                playlistID: promoted.playlistID))
         task.taskDescription = promoted.id.uuidString
