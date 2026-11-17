@@ -55,11 +55,22 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
  add('source','Exact consolidated native source',!!sha,
    sha?sha:'The authoritative native branch SHA has not been verified.',
    'Refresh the current GitHub consolidated candidate branch.');
- add('agent','Mac hourly agent',agent?.status==='COMPLETED'?true:
+ // A successful invocation from an older source revision must not appear
+ // current after the candidate moves. Also reject malformed/future/stale
+ // timestamps and untrusted receipt schemas instead of granting a PASS.
+ const agentTimestamp=Date.parse(agent?.finishedAt??'');
+ const agentCurrent=!!sha&&agent?.schema==='mp3shelf-native-agent-run-v1'&&
+   agent.candidateSha===sha&&agent.status==='COMPLETED'&&
+   Number.isFinite(agentTimestamp)&&now>=agentTimestamp&&
+   now-agentTimestamp<=24*60*60*1000&&
+   Number.isFinite(Date.parse(agent.startedAt??''))&&
+   Date.parse(agent.startedAt)<=agentTimestamp;
+ add('agent','Mac hourly agent',agentCurrent?true:
    agent?.status==='FAILED'?false:null,
-   agent?.status==='COMPLETED'?'Last Mac agent invocation completed; this does not prove all native gates.':
-   agent?.failureReason??'No verified hourly Mac run record available.',
-   'Install or inspect the user-level Mac LaunchAgent and its latest-run.json.');
+   agentCurrent?'A recent matching-source Mac invocation completed; this does not prove native compilation.':
+   agent?.status==='FAILED'?'Mac invocation failed; inspect the private local diagnostics.':
+   'No recent, schema-valid completed Mac invocation matches the current candidate SHA.',
+   'Run the Mac agent against the current candidate and inspect its exact-SHA receipt.');
  // Local metadata is not an independently verified 17-step Xcode receipt.
  // The authoritative native stage verifier validates hashed logs and QA records.
  // Never turn a two-step wrapper summary into a dashboard PASS.
