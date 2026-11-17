@@ -25,7 +25,7 @@ export function spotifyPlaylistChoices(catalog) {
         item.sourceOrder.length > 20000) continue;
     seen.add(item.id);
     const name = String(item.name ?? 'Unnamed Spotify playlist')
-      .replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim().slice(0, 64) || 'Unnamed Spotify playlist';
+      .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').trim().slice(0, 64) || 'Unnamed Spotify playlist';
     const available = Array.isArray(item.trackIDs) ? item.trackIDs.length : 0;
     const label = name + ' (' + available + '/' + item.sourceOrder.length +
       ' downloaded) [' + item.id + ']';
