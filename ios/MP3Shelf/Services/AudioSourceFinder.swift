@@ -322,6 +322,10 @@ enum AudioSourceFinder {
         // different recording hidden in the uninspected results.
         var searchIncomplete = false
         var uniqueCandidates: [URL: AudioCatalogMatch] = [:]
+        // Archive can repeat an identifier within and across search pages.
+        // A duplicate is not another recording and must not consume a scarce
+        // metadata request or conceal a distinct result behind the budget.
+        var inspectedIdentifiers: Set<String> = []
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
             guard ArchiveLookupBudget.stillWithinWindow(
@@ -344,19 +348,18 @@ enum AudioSourceFinder {
             var detailRequests = 0
             for entry in ranked {
                 try Task.checkCancellation()
+                let result = entry.element
+                guard safeIdentifier(result.identifier),
+                      !inspectedIdentifiers.contains(result.identifier) else { continue }
                 guard ArchiveLookupBudget.canRequestDetails(
                     completed: detailRequests, startedAt: lookupStartedAt,
                     now: Date()) else {
-                    // Only count truncation if there are valid, uninspected
-                    // entries; malformed identifiers cannot hide a match.
-                    if ranked.drop(while: { $0.offset != entry.offset })
-                        .contains(where: { safeIdentifier($0.element.identifier) }) {
-                        searchIncomplete = true
-                    }
+                    // A valid, previously unseen identifier remains uninspected.
+                    // Duplicates and malformed rows cannot invalidate coverage.
+                    searchIncomplete = true
                     break
                 }
-                let result = entry.element
-                guard safeIdentifier(result.identifier) else { continue }
+                inspectedIdentifiers.insert(result.identifier)
                 detailRequests += 1
                 let metadataURL = URL(string: "https://archive.org/metadata/")!
                     .appendingPathComponent(result.identifier)
