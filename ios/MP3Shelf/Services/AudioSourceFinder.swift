@@ -1630,16 +1630,27 @@ enum AutomaticWebAudioFinder {
         let seconds: Double
         if let number = value as? Double { seconds = number }
         else if let raw = value as? String {
-            let pattern = #"^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$"#
-            guard let regex = try? NSRegularExpression(pattern: pattern),
-                  let match = regex.firstMatch(in: raw.uppercased(),
-                    range: NSRange(location: 0, length: (raw as NSString).length)) else { return false }
-            let string = raw as NSString
-            func number(_ index: Int) -> Double {
-                let range = match.range(at: index)
-                return range.location == NSNotFound ? 0 : Double(string.substring(with: range)) ?? 0
+            // Publishers emit either ISO-8601 durations or numeric seconds.
+            // Reject partial matches, whitespace, signs and non-finite values:
+            // an incorrect duration must never authorize automatic selection.
+            if raw.range(of: #"^[0-9]+(?:\.[0-9]+)?$"#,
+                         options: .regularExpression) != nil {
+                guard let parsed = Double(raw) else { return false }
+                seconds = parsed
+            } else {
+                let pattern = #"^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$"#
+                let normalized = raw.uppercased()
+                guard let regex = try? NSRegularExpression(pattern: pattern),
+                      let match = regex.firstMatch(in: normalized,
+                        range: NSRange(location: 0, length: (normalized as NSString).length))
+                else { return false }
+                let string = normalized as NSString
+                func number(_ index: Int) -> Double {
+                    let range = match.range(at: index)
+                    return range.location == NSNotFound ? 0 : Double(string.substring(with: range)) ?? 0
+                }
+                seconds = number(1) * 3600 + number(2) * 60 + number(3)
             }
-            seconds = number(1) * 3600 + number(2) * 60 + number(3)
         } else { return false }
         guard seconds.isFinite, seconds > 0 else { return false }
         return wish.durationSeconds.map { abs($0 - seconds) <= 4 } ?? true
