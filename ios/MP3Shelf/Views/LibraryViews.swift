@@ -4,11 +4,14 @@ import UniformTypeIdentifiers
 // A single cancellable SwiftUI task owns each refresh. Returning to the foreground
 // triggers a fresh scan even when the library's track identifiers are unchanged.
 private struct OfflineCountRefreshKey: Equatable {
-    let trackIDs: [UUID]
+    // A restored recording can retain its ID but move to a new file URL.
+    // Snapshot both so an older scan cannot publish an obsolete offline count.
+    let recordingLocations: [RecordingLocationKey]
     let scenePhase: ScenePhase
     let manualRefresh: Int
-    // Reconcile existing track IDs after a file import replaces missing audio.
     let isImporting: Bool
+    let isPickingFiles: Bool
+    let isLocalImportPending: Bool
 }
 
 // A recording ID alone is not a stable identity during restore/import:
@@ -881,15 +884,18 @@ struct LibraryView: View {
         .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
         .task(id: OfflineCountRefreshKey(
-            trackIDs: library.tracks.map(\.id),
+            recordingLocations: library.tracks.map {
+                RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0))
+            },
             scenePhase: scenePhase,
             manualRefresh: offlineCountRefreshRequest,
-            isImporting: library.isImporting
+            isImporting: library.isImporting,
+            isPickingFiles: showFilePicker,
+            isLocalImportPending: importInProgress
         )) {
-            guard scenePhase == .active else { return }
-            // A completed import can restore bytes for an existing track ID.
-            // Do not race the import's file writes or publish partial counts.
-            guard !library.isImporting else {
+            // Picker and local-import state must invalidate an in-flight scan
+            // even before MusicLibrary publishes its own isImporting flag.
+            guard scenePhase == .active, !audioImportBusy else {
                 offlineRecordingCount = nil
                 return
             }
