@@ -412,8 +412,25 @@ final class PlaybackController: NSObject, ObservableObject {
         var failedToOpenRecording = false
         while let id = candidateID, attempted.insert(id).inserted {
             if id == currentTrackID {
-                // Only the current entry remains (for example repeat-all with
-                // a single song). Do not consume shuffle history.
+                // The queue has wrapped to the recording that just completed.
+                // Once a successor failed, reopening the finished recording
+                // would mask an exhausted/corrupt queue and could loop forever.
+                // Keep the failed candidate available for explicit retry.
+                if automatically && !crossfading && failedToOpenRecording {
+                    positionTimer?.invalidate()
+                    positionTimer = nil
+                    cancelFade()
+                    audioPlayer?.stop()
+                    audioPlayer = nil
+                    isPlaying = false
+                    interruptionState.cancelResume()
+                    updateNowPlaying()
+                    return
+                }
+                // A healthy single-entry repeat-all queue may replay itself.
+                // A speculative crossfade or manual Next must not restart the
+                // outgoing recording while it remains audible.
+                if !automatically || crossfading { return }
                 seek(to: 0)
                 resume()
                 return
