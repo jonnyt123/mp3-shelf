@@ -278,6 +278,24 @@ enum SourceLookupRetryPolicy {
         return false
     }
 
+    /// Cancellation can arrive wrapped by a catalog adapter. Never treat it as
+    /// an ordinary source failure and continue probing other hosts.
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        var current = error as NSError
+        var visited = Set<ObjectIdentifier>()
+        for _ in 0..<8 {
+            guard visited.insert(ObjectIdentifier(current)).inserted else { return false }
+            if current.domain == NSURLErrorDomain &&
+                current.code == URLError.Code.cancelled.rawValue { return true }
+            guard let underlying = current.userInfo[NSUnderlyingErrorKey] as? NSError else {
+                return false
+            }
+            current = underlying
+        }
+        return false
+    }
+
     /// Empty optional catalogs cannot establish that an interrupted primary
     /// lookup has no recording. A usable fallback still takes precedence.
     static func failureToRetry(_ recordingFailure: Error?, hasCandidates: Bool) -> Error? {
@@ -328,8 +346,7 @@ enum RecordingStreamProbe {
             } catch is CancellationError { throw CancellationError() }
             catch {
                 try Task.checkCancellation()
-                let failure = error as NSError
-                if failure.domain == NSURLErrorDomain && failure.code == URLError.Code.cancelled.rawValue { throw error }
+                if SourceLookupRetryPolicy.isCancellation(error) { throw error }
                 if SourceLookupRetryPolicy.isTemporary(error), temporaryFailure == nil { temporaryFailure = error }
                 lastFailure = error
             }
