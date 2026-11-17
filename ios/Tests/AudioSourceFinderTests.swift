@@ -211,6 +211,28 @@ enum AudioSourceFinderTests {
             for: wish, page: 99), resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "page" })?.value == "2",
                "Internet Archive pagination clamps to the documented 2-page budget")
+        // Spotify metadata is untrusted query text. Lucene punctuation must
+        // never escape quoted title/creator terms or add new search clauses.
+        let hostileWish = PlaylistWish(
+            title: #"Song") OR mediatype:movies OR title:("*"#,
+            artist: #"Artist" AND identifier:private*"#,
+            album: nil, spotifyURL: nil, durationSeconds: 212)
+        let hostileSearch = URLComponents(url: AudioSourceFinder.archiveSearchURL(
+            for: hostileWish, page: 1), resolvingAgainstBaseURL: false)!
+        let hostileQuery = hostileSearch.queryItems?.first(where: { $0.name == "q" })?.value ?? ""
+        verify(hostileQuery.contains(#"title:("Song OR mediatype movies OR title")"#) &&
+               !hostileQuery.contains("mediatype:movies") &&
+               !hostileQuery.contains("identifier:private") &&
+               !hostileQuery.contains("*") &&
+               hostileSearch.url?.host == "archive.org",
+               "Archive search removes injected field operators and wildcards")
+        let unicodeWish = PlaylistWish(title: "Beyoncé – Déjà Vu",
+            artist: "Beyoncé", album: nil, spotifyURL: nil, durationSeconds: nil)
+        let unicodeQuery = URLComponents(url: AudioSourceFinder.archiveSearchURL(
+            for: unicodeWish, page: 1), resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "q" })?.value ?? ""
+        verify(unicodeQuery.contains("Beyoncé") && unicodeQuery.contains("Déjà Vu"),
+               "Archive query sanitization retains Unicode recording metadata")
         let archiveFields = archiveSearch.queryItems?.filter { $0.name == "fl[]" }
             .compactMap(\.value) ?? []
         verify(archiveFields.contains("title") && archiveFields.contains("creator"),
