@@ -280,6 +280,22 @@ enum AudioSourceFinderTests {
         let archiveJSON = #"{"metadata":{"title":"The Song","creator":"The Artist"},"files":[{"name":"song.mp3","source":"original","length":"212.43","size":"8419768"}]}"#
         let archiveItem = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
                                                    from: Data(archiveJSON.utf8))
+        // An Archive single-song upload may repeat the identical MP3 row.
+        // It must still use exact item metadata even if its filename is opaque.
+        let repeatedSingleJSON = #"{\"metadata\":{\"title\":\"The Song\",\"creator\":\"The Artist\"},\"files\":[{\"name\":\"opaque.mp3\",\"source\":\"original\",\"length\":\"212\",\"size\":\"5000000\"},{\"name\":\"opaque.mp3\",\"source\":\"original\",\"length\":\"212\",\"size\":\"5000000\"}]}"#
+        let repeatedSingle = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+            from: Data(repeatedSingleJSON.utf8))
+        verify(AudioSourceFinder.archiveCandidate(repeatedSingle,
+            identifier: "single-repeated", for: wish) != nil,
+            "identical duplicate rows retain single-track exact metadata matching")
+        let conflictingSingleJSON = repeatedSingleJSON.replacingOccurrences(
+            of: #"\"length\":\"212\",\"size\":\"5000000\"}]}"#,
+            with: #"\"length\":\"190\",\"size\":\"5000000\"}]}"#)
+        let conflictingSingle = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+            from: Data(conflictingSingleJSON.utf8))
+        verify(AudioSourceFinder.archiveCandidate(conflictingSingle,
+            identifier: "single-conflict", for: wish) == nil,
+            "conflicting duplicate rows cannot choose an arbitrary recording")
         let publicMatch = AudioSourceFinder.archiveCandidate(archiveItem,
             identifier: "public-recording", for: wish)
         verify(publicMatch?.downloadURL.lastPathComponent == "song.mp3" &&
