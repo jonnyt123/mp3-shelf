@@ -151,6 +151,19 @@ enum BackgroundAudioURLPolicyTests {
         guard importRaceCases == 4 else { fatalError("Incomplete import race matrix") }
         print("PASS: 4 cancellation/import race promotion combinations")
         print("PASS: 8 orphan follower promotion eligibility combinations")
+        // A leader may retire while a sibling playlist is still loading.
+        // Retargeting it is mandatory: dropping it would create a second
+        // orphaned leader on the next process launch.
+        for promoted in [false, true] {
+            for obsolete in [false, true] {
+                let expected = !promoted && !obsolete
+                guard BackgroundAudioDownloader.shouldRetargetFollower(
+                    isPromoted: promoted, isConfirmedObsolete: obsolete) == expected else {
+                    fatalError("Shared follower retargeting regression")
+                }
+            }
+        }
+        print("PASS: 4 shared-follower promotion and orphan-retarget cases")
         print("PASS: 16 cross-playlist transfer eligibility combinations")
         print("PASS: 16 cellular upgrade and in-progress import combinations")
         print("PASS: cellular, expensive and constrained network opt-in fixtures")
