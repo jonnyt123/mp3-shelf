@@ -99,4 +99,66 @@ try Data("{invalid".utf8).write(to: journalURL, options: .atomic)
 do { try replay(); try assertQA(false, "corrupt journal accepted") }
 catch TicketError.corruptJournal {}
 try assertQA(try Data(contentsOf: finalURL) == foreign, "corrupt journal changed recording")
-print("PASS: \(scenarios) crash/restart combinations, duplicate callbacks, foreign audio and corrupt journal")
+
+func expectInvalid(_ label: String, _ action: () throws -> Void) throws {
+    do { try action(); try assertQA(false, "\(label): unsafe file accepted") }
+    catch TicketError.invalidAudio {}
+}
+func resetPending() throws {
+    if fm.fileExists(atPath: stagedURL.path) { try fm.removeItem(at: stagedURL) }
+    if fm.fileExists(atPath: finalURL.path) { try fm.removeItem(at: finalURL) }
+    try writeJournal(TicketJournal(state: .pending, receiptCount: 0))
+}
+func verifyNoMutation(_ label: String, _ expectedFinal: Data? = nil) throws {
+    try assertQA(try readJournal() == TicketJournal(state: .pending, receiptCount: 0),
+                 "\(label): journal mutated on rejected input")
+    if let expectedFinal {
+        try assertQA(try Data(contentsOf: finalURL) == expectedFinal,
+                     "\(label): existing destination overwritten")
+    } else {
+        try assertQA(!fm.fileExists(atPath: finalURL.path),
+                     "\(label): unexpected destination created")
+    }
+    try assertQA(try Data(contentsOf: foreignURL) == foreign,
+                 "\(label): unrelated recording changed")
+}
+// Filesystem adversaries: the journal must never authorize a symlink, hardlink,
+// directory, empty/truncated payload or pre-existing different destination.
+try resetPending()
+try fm.createSymbolicLink(at: stagedURL, withDestinationURL: foreignURL)
+try expectInvalid("staged symlink") { try replay() }
+try verifyNoMutation("staged symlink")
+try resetPending()
+try fm.linkItem(at: foreignURL, to: stagedURL)
+try expectInvalid("staged hardlink") { try replay() }
+try verifyNoMutation("staged hardlink")
+try resetPending()
+try fm.createDirectory(at: stagedURL, withIntermediateDirectories: false)
+try expectInvalid("staged directory") { try replay() }
+try verifyNoMutation("staged directory")
+try resetPending()
+try Data().write(to: stagedURL)
+try expectInvalid("empty staging") { try replay() }
+try verifyNoMutation("empty staging")
+try resetPending()
+try audio.prefix(audio.count / 2).write(to: stagedURL)
+try expectInvalid("truncated staging") { try replay() }
+try verifyNoMutation("truncated staging")
+try resetPending()
+try audio.write(to: stagedURL)
+try foreign.write(to: finalURL)
+try expectInvalid("foreign destination") { try replay() }
+try verifyNoMutation("foreign destination", foreign)
+try resetPending()
+try audio.write(to: stagedURL)
+try audio.prefix(audio.count / 2).write(to: finalURL)
+try expectInvalid("partial destination") { try replay() }
+try verifyNoMutation("partial destination", Data(audio.prefix(audio.count / 2)))
+try resetPending()
+try audio.write(to: stagedURL)
+try fm.createSymbolicLink(at: finalURL, withDestinationURL: foreignURL)
+try expectInvalid("destination symlink") { try replay() }
+try assertQA(try readJournal().receiptCount == 0, "destination symlink changed journal")
+try assertQA(try Data(contentsOf: foreignURL) == foreign, "destination symlink followed")
+
+print("PASS: \(scenarios) crash/restart combinations and 8 adversarial filesystem cases")
