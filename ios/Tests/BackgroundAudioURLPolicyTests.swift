@@ -103,6 +103,23 @@ enum BackgroundAudioURLPolicyTests {
             }
         }
         guard validSharedCases == 16 else { fatalError("Incomplete sharing matrix") }
+        // Ten playlists following one leader must not exhaust the same
+        // network concurrency slots as eleven physical transfers. Retry
+        // capacity must use this same physical count as initial enqueue.
+        for leaders in 0...4 {
+            for searches in 0...4 {
+                let physical = BackgroundAudioDownloader.physicalTransferCount(
+                    queuedLeaderCount: leaders, sourceSearchCount: searches)
+                guard physical == leaders + searches else {
+                    fatalError("Shared follower incorrectly consumed network capacity")
+                }
+            }
+        }
+        guard BackgroundAudioDownloader.physicalTransferCount(
+            queuedLeaderCount: -1, sourceSearchCount: -1) == 0 else {
+            fatalError("Invalid capacity count must not become negative")
+        }
+        print("PASS: 26 physical-transfer capacity combinations")
         print("PASS: 16 cross-playlist transfer eligibility combinations")
         print("PASS: 16 cellular upgrade and in-progress import combinations")
         print("PASS: cellular, expensive and constrained network opt-in fixtures")
