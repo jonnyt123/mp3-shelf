@@ -121,3 +121,21 @@ test('existing lock refuses execution without clobbering the prior receipt',asyn
   assert.equal(readFileSync(join(dir,'latest-run.json'),'utf8'),'prior receipt');
  }finally{rmSync(home,{recursive:true,force:true});}
 });
+
+test('delivery and packaging claims require a recognized integration and exact candidate SHA',()=>{
+ const base={startedAt:'2026-11-17T00:00:00Z',finishedAt:'2026-11-17T00:01:00Z'};
+ const forged=nativeAgentRunRecord({...base,result:{
+   status:'blocked',candidateSha:sha,delivery:'DELIVERED_VERIFIED_XCODE_ZIP',
+   packaging:'READY_FOR_PUBLIC_RELEASE'}});
+ assert.equal(forged.delivery,'NOT_VERIFIED');
+ assert.equal(forged.packaging,'NOT_VERIFIED');
+ const missingSha=nativeAgentRunRecord({...base,result:{
+   status:'already-staged',delivery:'ALREADY_DELIVERED'}});
+ assert.equal(missingSha.delivery,'NOT_VERIFIED');
+ const failed=nativeAgentRunRecord({...base,error:Error('release failed'),result:{
+   status:'already-staged',candidateSha:sha,delivery:'ALREADY_DELIVERED'}});
+ assert.equal(failed.delivery,'NOT_VERIFIED');
+ const eligible=nativeAgentRunRecord({...base,result:{
+   status:'already-staged',candidateSha:sha,delivery:'ALREADY_DELIVERED'}});
+ assert.equal(eligible.delivery,'ALREADY_DELIVERED');
+});
