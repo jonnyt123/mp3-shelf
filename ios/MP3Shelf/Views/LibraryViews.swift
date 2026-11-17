@@ -36,6 +36,8 @@ struct LibraryView: View {
     @AccessibilityFocusState private var searchResultsFocused: Bool
     @State private var sortMode: LibraryTrackSort = .title
     @State private var message: String?
+    // The file picker closes before asynchronous file copying finishes.
+    @State private var importInProgress = false
     @State private var renaming: MusicTrack?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
@@ -173,7 +175,7 @@ struct LibraryView: View {
     // preparation before presenting it: a slow disk scan must not start audio
     // behind the picker while the user is choosing a replacement recording.
     private func presentAudioImporter() {
-        guard !library.isImporting, !showFilePicker else { return }
+        guard !library.isImporting, !importInProgress, !showFilePicker else { return }
         cancelRecentPlaybackPreparation(showFeedback: true)
         cancelBulkPlaybackPreparation(showFeedback: true)
         showFilePicker = true
@@ -927,16 +929,22 @@ struct LibraryView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { presentAudioImporter() } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(ShelfTheme.accent)
+                if importInProgress || library.isImporting {
+                    ProgressView()
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityLabel("Importing local audio files")
+                        .accessibilityAddTraits(.updatesFrequently)
+                } else {
+                    Button { presentAudioImporter() } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(ShelfTheme.accent)
+                    }
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityLabel("Import audio files")
+                    .accessibilityHint("Choose audio files stored on your iPhone")
                 }
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-                .accessibilityLabel("Import audio files")
-                .accessibilityHint("Choose audio files stored on your iPhone")
-                .disabled(library.isImporting)
             }
         }
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.audio],
@@ -947,9 +955,20 @@ struct LibraryView: View {
             cancelBulkPlaybackPreparation(showFeedback: true)
             switch result {
             case .success(let urls):
-                Task { message = await library.importAudio(urls: urls).description }
+                guard !urls.isEmpty, !importInProgress else { return }
+                importInProgress = true
+                Task { @MainActor in
+                    let outcome = await library.importAudio(urls: urls)
+                    importInProgress = false
+                    message = outcome.description
+                }
             case .failure(let error):
-                message = error.localizedDescription
+                // Dismissing Files is not an import failure.
+                let nsError = error as NSError
+                if nsError.domain != NSCocoaErrorDomain ||
+                    nsError.code != CocoaError.userCancelled.rawValue {
+                    message = error.localizedDescription
+                }
             }
         }
         .alert("Import Result", isPresented: Binding(
