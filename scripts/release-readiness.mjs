@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { selectNativeEvidence } from './native-release-cycle.mjs';
 import { verifiedSmokeComment } from './draft-smoke-attestation.mjs';
@@ -46,8 +46,8 @@ function definite404(path){
  }
 }
 export function readinessModel({candidateSha=null,toolingSha=null,agent=null,native=null,
-  inventory=null,review=null,hardware=null,issue=null,smoke=null,
-  release=null,now=Date.now()}={}){
+  inventory=null,inventorySHA256=null,review=null,hardware=null,issue=null,
+  ownerComments=null,smoke=null,release=null,now=Date.now()}={}){
  const gates=[],add=(key,label,ok,details,action)=>gates.push({
    key,label,status:ok===true?'PASS':ok===null?'UNVERIFIED':'BLOCKED',
    details,action:ok===true?null:action});
@@ -94,7 +94,15 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
    reviewed?'Automated evidence triage passed; manual hardware acceptance remains separate.':
      'No complete independent review for the currently selected native candidate.',
    'Run the iPhone evidence reviewer after collecting signed and downloaded-audio records.');
- const hardwareApproved=!!sha&&issue?.number===6&&issue?.state==='closed'&&
+ const ownerMarker='MP3SHELF_DEVICE_GATE_APPROVED SHA='+(sha??'')+
+   ' INVENTORY_SHA256='+(inventorySHA256??'')+
+   ' SIGNED_APP_SHA256='+(hardware?.signedAppSHA256??'');
+ const ownerApproved=HASH.test(inventorySHA256??'')&&
+   hardware?.inventorySHA256===inventorySHA256&&
+   Array.isArray(ownerComments)&&ownerComments.some(comment=>
+     comment?.user?.login==='jonnyt123'&&typeof comment.body==='string'&&
+     comment.body.split(/\r?\n/).some(line=>line.trim()===ownerMarker));
+ const hardwareApproved=ownerApproved&&!!sha&&issue?.number===6&&issue?.state==='closed'&&
    typeof issue.body==='string'&&CATEGORIES.every(label=>
      issue.body.split(/\r?\n/).some(line=>line.startsWith('- [x] **'+label+':**')))&&
    hardware?.schema==='mp3shelf-hardware-acceptance-v1'&&
@@ -196,6 +204,16 @@ function gitHubLive(now){
  const candidateSha=branch('feat/ios-consolidated-candidate');
  const toolingSha=branch('agent/mp3-release-evidence-gate');
  const issue=ghJSON('issues/6');
+ let ownerComments=null;
+ if(issue?.state==='closed'){
+  ownerComments=[];
+  for(let page=1;page<=20;page++){
+   const items=ghJSON('issues/6/comments?per_page=100&page='+page);
+   if(!Array.isArray(items)){ownerComments=null;break;}
+   ownerComments.push(...items);
+   if(items.length<100)break;
+  }
+ }
  let smoke=null;
  if(SHA.test(toolingSha??'')){
   for(let page=1;page<=20;page++){
@@ -212,7 +230,7 @@ function gitHubLive(now){
    if(comments.length<100)break;
   }
  }
- return{candidateSha,toolingSha,issue,smoke,
+ return{candidateSha,toolingSha,issue,ownerComments,smoke,
    release:SHA.test(candidateSha??'')?ghJSON('releases/tags/mp3-shelf-ios-'+candidateSha):null};
 }
 export function writeReadiness({home=homedir(),now=Date.now(),github=gitHubLive}={}){
@@ -220,10 +238,15 @@ export function writeReadiness({home=homedir(),now=Date.now(),github=gitHubLive}
  const sha=live.candidateSha;
  const logs=join(home,'Library','Logs','MP3Shelf');
  const nativeDir=SHA.test(sha??'')?selectNativeEvidence(join(logs,'NativePreflight'),sha):null;
+ const inventoryPath=SHA.test(sha??'')?
+   join(logs,'DeviceAcceptance',sha,'physical-inventory.json'):null;
+ const rawInventory=inventoryPath?readSafe(inventoryPath,16*1024*1024):null;
  const result=readinessModel({...live,now,
    agent:json(join(logs,'NativeAgent','latest-run.json')),
    native:nativeDir?json(join(nativeDir,'local-evidence.json')):null,
-   inventory:SHA.test(sha??'')?json(join(logs,'DeviceAcceptance',sha,'physical-inventory.json')):null,
+   inventory:rawInventory?JSON.parse(rawInventory):null,
+   inventorySHA256:rawInventory?
+     createHash('sha256').update(rawInventory).digest('hex'):null,
    hardware:SHA.test(sha??'')?json(join(logs,'DeviceAcceptance',sha,'hardware-acceptance.json')):null,
    review:getLatestReview(home,sha)});
  const dir=join(logs,'ReleaseReadiness');
