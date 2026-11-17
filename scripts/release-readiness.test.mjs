@@ -117,3 +117,23 @@ test('self-reported review and playlist metadata remain advisory without byte an
   assert.equal(model.gates.find(g=>g.key===key).status,'UNVERIFIED');
  assert.equal(model.status,'NOT_RELEASE_READY');
 });
+
+test('ZIP indicator rejects unrelated, duplicate, empty and malformed release assets',()=>{
+ const archive='MP3-Shelf-Xcode-'+sha.slice(0,12)+'.zip';
+ const manifest='MP3-Shelf-Xcode-'+sha.slice(0,12)+'.manifest.json';
+ const asset=(name,size=1024)=>({name,size,state:'uploaded',digest:'sha256:'+hash});
+ const base={draft:false,tag_name:'mp3-shelf-ios-'+sha};
+ const state=assets=>readinessModel({candidateSha:sha,release:{...base,assets}})
+   .gates.find(g=>g.key==='zip').status;
+ assert.equal(state([asset(archive),asset(manifest)]),'UNVERIFIED',
+   'even correctly named assets are not independently downloaded or rehashed');
+ for(const assets of [
+   [asset('unrelated.zip'),asset(manifest)],
+   [asset(archive),asset(archive)],
+   [asset(archive,0),asset(manifest)],
+   [asset(archive),asset(manifest,-1)],
+   [asset(archive),{...asset(manifest),digest:'sha256:invalid'}],
+   [asset(archive),{...asset(manifest),state:'starter'}],
+   [asset(archive),asset(manifest),asset('extra.txt')]
+ ]) assert.equal(state(assets),'BLOCKED');
+});
