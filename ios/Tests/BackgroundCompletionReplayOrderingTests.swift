@@ -36,7 +36,12 @@ func safeJournal() -> Bool {
 }
 func load() throws -> Snapshot {
     guard safeJournal() else { throw ReplayError.corrupt }
+    // A hostile or damaged manifest must not allocate unbounded memory on relaunch.
+    let attributes = try fm.attributesOfItem(atPath: journal.path)
+    guard let bytes = (attributes[.size] as? NSNumber)?.int64Value,
+          bytes > 0 && bytes <= 1_048_576 else { throw ReplayError.corrupt }
     guard let value = try? JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: journal)) else { throw ReplayError.corrupt }
+    guard value.entries.count <= 256, value.receipts.count <= 256 else { throw ReplayError.corrupt }
     let ids = value.entries.map(\.id)
     // Reject ambiguous or escaping destinations before any replay operation.
     // A corrupt journal must not turn an unrelated file into a ticket's audio.
@@ -175,6 +180,26 @@ for invalid in invalidSnapshots {
 }
 try check(try Data(contentsOf: journal) == validBeforeCorruption,
           "valid replay checkpoint not restored")
+
+// A corrupt or adversarially large checkpoint must fail before replay or
+// terminal-state publication, without touching any audio or replacing the
+// previous valid checkpoint. These cases are deliberately much larger than
+// the ordinary two-ticket fixture and exercise bounded parsing.
+let sizeCheckpoint = try Data(contentsOf: journal)
+let sizeAudioCheckpoint = try Data(contentsOf: other)
+let oversizedPayload = Data(repeating: 0x20, count: 1_048_577)
+try oversizedPayload.write(to: journal, options: .atomic)
+do { try complete(); try check(false, "oversized manifest accepted") }
+catch ReplayError.corrupt {}
+try check(try Data(contentsOf: other) == sizeAudioCheckpoint, "oversized manifest touched audio")
+let excessiveEntries = Snapshot(entries: (0..<257).map { Entry(id: "ticket-\($0)", state: .pending, filename: "file-\($0).mp3") }, receipts: [])
+try JSONEncoder().encode(excessiveEntries).write(to: journal, options: .atomic)
+do { try complete(); try check(false, "excessive ticket count accepted") }
+catch ReplayError.corrupt {}
+try check(try Data(contentsOf: other) == sizeAudioCheckpoint, "excessive tickets touched audio")
+try sizeCheckpoint.write(to: journal, options: .atomic)
+try complete()
+try check(try Data(contentsOf: journal) == sizeCheckpoint, "size rejection lost valid checkpoint")
 
 // A persisted terminal receipt must not mask deletion, substitution, or a
 // symlink introduced between launches. Invalid files must remain untouched.
