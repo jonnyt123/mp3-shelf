@@ -41,8 +41,16 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
   const status = error ? 'FAILED' : verifiedIntegration ? 'COMPLETED' : 'BLOCKED';
   const categories = ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
     'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
-  const packaging = categories.includes(result?.packaging)
-    ? result.packaging : 'NOT_VERIFIED';
+  const verifiedArchiveStates = ['EXISTING_VERIFIED_ARCHIVE',
+    'PACKAGED_VERIFIED_NATIVE_SOURCE'];
+  const verifiedDelivery = verifiedIntegration &&
+    verifiedArchiveStates.includes(result?.packaging) &&
+    ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(result?.delivery) &&
+    /^[0-9a-f]{64}$/.test(result?.sha256 ?? '') &&
+    typeof result?.downloadURL === 'string' &&
+    /^https:\/\/github\\.com\/jonnyt123\/mp3-shelf\/releases\/download\//.test(result.downloadURL);
+  const packaging = verifiedDelivery ? result.packaging :
+    categories.includes(result?.packaging) ? result.packaging : 'NOT_VERIFIED';
   // Arbitrary compiler/CLI errors may contain credentials, paths or user data.
   // Persist only a bounded, fixed category; raw diagnostics remain local.
   const reason = error ? 'NATIVE_CYCLE_FAILED_REVIEW_LOCAL_LOGS' : null;
@@ -54,9 +62,7 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
     integration: verifiedIntegration
       ? (result?.integration ?? result?.status) : 'NOT_VERIFIED',
     packaging,
-    delivery: verifiedIntegration &&
-      ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(result?.delivery)
-      ? result.delivery : 'NOT_VERIFIED',
+    delivery: verifiedDelivery ? result.delivery : 'NOT_VERIFIED',
     failureReason: reason,
     // Staging metadata is not a cryptographically verified native receipt.
     // The independent native evidence verifier owns the COMPILED verdict.
