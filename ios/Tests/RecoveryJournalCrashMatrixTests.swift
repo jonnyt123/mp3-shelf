@@ -41,7 +41,7 @@ func regular(_ url: URL) -> Bool {
           (attrs[.referenceCount] as? NSNumber)?.intValue == 1 else { return false }
     return true
 }
-func recover() throws {
+func recover(beforePublication: () throws -> Void = {}) throws {
     guard regular(journal), let data = try? Data(contentsOf: journal),
           let saved = try? JSONDecoder().decode(Journal.self, from: data),
           saved.ticket == entry.ticket, saved.stagedName == entry.stagedName,
@@ -55,7 +55,11 @@ func recover() throws {
           (try? fm.destinationOfSymbolicLink(atPath: destination.path)) == nil else {
         throw RecoveryError.occupied
     }
-    try fm.copyItem(at: staged, to: destination)
+    try beforePublication()
+    // The no-replace link operation must reject a destination introduced after
+    // preflight. A copy operation would overwrite nothing on Darwin, but a
+    // hard link models the actual production publication primitive.
+    try fm.linkItem(at: staged, to: destination)
     // Simulated crash before cleanup: staged bytes and journal remain for retry.
 }
 var cases = 0
@@ -198,3 +202,50 @@ for scenario in ["stage-replaced-after-publish", "stage-removed-after-publish",
     cases += 1
 }
 print("PASS: \(cases) crash/replay filesystem scenarios total")
+
+
+// Inject a second writer *after* the destination absence check, at the exact
+// publication boundary. This models two imports/recovery callbacks racing for
+// one filename; the losing writer must not replace or unlink the winner.
+for scenario in ["foreign-writer", "identical-writer", "directory-writer",
+                 "symlink-writer", "dangling-symlink-writer", "hardlink-writer"] {
+    try reset()
+    var injected = false
+    var rejected = false
+    do {
+        try recover(beforePublication: {
+            injected = true
+            switch scenario {
+            case "foreign-writer": try foreign.write(to: destination)
+            case "identical-writer": try audio.write(to: destination)
+            case "directory-writer":
+                try fm.createDirectory(at: destination, withIntermediateDirectories: false)
+            case "symlink-writer":
+                try fm.createSymbolicLink(at: destination, withDestinationURL: other)
+            case "dangling-symlink-writer":
+                try fm.createSymbolicLink(at: destination,
+                    withDestinationURL: root.appendingPathComponent("missing-winner"))
+            default: try fm.linkItem(at: other, to: destination)
+            }
+        })
+    } catch { rejected = true }
+    try assertSafe(injected && rejected, "\\(scenario): racing publication accepted")
+    try assertSafe(fm.fileExists(atPath: destination.path) ||
+                   (try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil,
+                   "\\(scenario): winning destination removed")
+    if scenario == "foreign-writer" || scenario == "hardlink-writer" {
+        try assertSafe(try Data(contentsOf: destination) == foreign,
+                       "\\(scenario): winner bytes changed")
+    } else if scenario == "identical-writer" {
+        try assertSafe(try Data(contentsOf: destination) == audio,
+                       "identical winner bytes changed")
+    }
+    try assertSafe(try Data(contentsOf: staged) == audio,
+                   "\\(scenario): losing staged bytes consumed")
+    try assertSafe(try Data(contentsOf: other) == foreign,
+                   "\\(scenario): unrelated audio modified")
+    try assertSafe(fm.fileExists(atPath: journal.path),
+                   "\\(scenario): recovery intent removed")
+    cases += 1
+}
+print("PASS: \\(cases) filesystem recovery and publication-race scenarios total")
