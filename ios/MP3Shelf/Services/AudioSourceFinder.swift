@@ -262,9 +262,19 @@ enum AudioSourceFinder {
     }
 
     static func archiveSearchURL(for wish: PlaylistWish, page: Int) -> URL {
+        // Archive advanced-search treats punctuation as query syntax even inside
+        // quoted values. Keep human-readable recording terms, but never allow
+        // playlist metadata to inject fields, boolean operators or wildcards.
         func escaped(_ value: String) -> String {
-            value.replacingOccurrences(of: "\"", with: " ")
-                 .replacingOccurrences(of: "\n", with: " ")
+            let words = value.unicodeScalars.map { scalar -> String in
+                if CharacterSet.alphanumerics.contains(scalar) ||
+                   scalar == " " || scalar == "-" || scalar == "'" {
+                    return String(scalar)
+                }
+                return " "
+            }.joined()
+            return words.split(whereSeparator: { $0.isWhitespace })
+                .joined(separator: " ")
         }
         var query = URLComponents(string: "https://archive.org/advancedsearch.php")!
         query.queryItems = [
