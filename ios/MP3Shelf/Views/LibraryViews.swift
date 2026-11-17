@@ -1432,6 +1432,8 @@ struct RenameTrackView: View {
     @State private var title = ""
     @State private var artist = ""
     @State private var editError: String?
+    @State private var originalRecordingURL: URL?
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState private var titleFocused: Bool
 
     private var cleanTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1452,12 +1454,13 @@ struct RenameTrackView: View {
         // The editor owns a snapshot, not the current library revision. A
         // restore, import, or second editor may replace it while this sheet is
         // open. Never overwrite that newer recording or its metadata.
-        guard !library.isImporting else {
-            editError = "Wait for the audio import to finish, then reopen this song to review its details."
+        guard !library.isImporting, scenePhase == .active else {
+            editError = "Return to MP3 Shelf after the audio import finishes, then reopen this song to review its details."
             return
         }
         guard current.title == track.title,
-              current.artist == track.artist else {
+              current.artist == track.artist,
+              originalRecordingURL == library.fileURL(for: current) else {
             editError = "This song changed while you were editing. Close this screen and reopen the latest version. Nothing was overwritten."
             return
         }
@@ -1494,7 +1497,7 @@ struct RenameTrackView: View {
                             .accessibilityAddTraits(.updatesFrequently)
                             .accessibilityIdentifier("edit-song-error")
                         Button("Try saving again", action: saveEdit)
-                            .disabled(cleanTitle.isEmpty)
+                            .disabled(cleanTitle.isEmpty || library.isImporting || scenePhase != .active)
                             .frame(minHeight: 44)
                     }
                 }
@@ -1513,11 +1516,15 @@ struct RenameTrackView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save", action: saveEdit)
-                        .disabled(cleanTitle.isEmpty)
+                        .disabled(cleanTitle.isEmpty || library.isImporting || scenePhase != .active)
                         .frame(minWidth: 44, minHeight: 44)
                 }
             }
-            .onAppear { title = track.title; artist = track.artist }
+            .onAppear {
+                title = track.title
+                artist = track.artist
+                originalRecordingURL = library.fileURL(for: track)
+            }
             .onChange(of: title) { _, _ in editError = nil }
             .onChange(of: artist) { _, _ in editError = nil }
         }
