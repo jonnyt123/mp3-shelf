@@ -17,7 +17,7 @@ enum AudioSourceFinder {
             else { value = "" }
         }
     }
-    private struct SearchResponse: Decodable { let response: SearchBody }
+    struct SearchResponse: Decodable { let response: SearchBody }
     // Archive indexes occasionally include null or malformed records. Preserve
     // valid siblings, but retain the raw page count for pagination and budget
     // accounting: silently shrinking the page could authorize a false unique
