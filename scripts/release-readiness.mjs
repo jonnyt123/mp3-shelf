@@ -60,17 +60,19 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
    agent?.status==='COMPLETED'?'Last Mac agent invocation completed; this does not prove all native gates.':
    agent?.failureReason??'No verified hourly Mac run record available.',
    'Install or inspect the user-level Mac LaunchAgent and its latest-run.json.');
- const nativeOK=!!sha&&native?.schemaVersion===1&&native?.mode==='native'&&
+ // Local metadata is not an independently verified 17-step Xcode receipt.
+ // The authoritative native stage verifier validates hashed logs and QA records.
+ // Never turn a two-step wrapper summary into a dashboard PASS.
+ const nativeSummaryMatches=!!sha&&native?.schemaVersion===1&&native?.mode==='native'&&
    native?.candidateSha===sha&&native?.status==='local-checks-passed'&&
    native?.exitCode===0&&native?.cleanCheckout===true&&
    Array.isArray(native?.steps)&&native.steps.length===2&&
    native.steps.every(step=>step?.success===true);
- // This dashboard recognizes local metadata only; the release stage hashes
- // and independently verifies all native logs before promotion.
- add('native','Xcode and Swift regression receipt',nativeOK?true:false,
-   nativeOK?'Recorded local receipt matches candidate; release tool verifies logs separately.':
-     'No complete native receipt matches the exact candidate SHA.',
-   'Run the full native verification on your Mac against this exact source SHA.');
+ add('native','Xcode and Swift regression receipt',null,
+   nativeSummaryMatches?
+     'A matching local wrapper summary exists, but its 17-step logs and QA hashes have not been independently verified here.':
+     'No complete native wrapper summary matches the exact candidate SHA.',
+   'Verify the 17 native steps, exact source SHA, hashed logs and independent QA record with verify-native-stage.mjs.');
  const full=!!sha&&inventory?.schema==='mp3shelf-physical-inventory-v1'&&
    inventory.candidateSha===sha&&Number.isSafeInteger(inventory.requested)&&
    inventory.requested>=2&&inventory.copiedTracks===inventory.requested&&
