@@ -1022,7 +1022,7 @@ struct LibraryView: View {
 struct MusicTrackRow: View {
     let track: MusicTrack
     let context: [MusicTrack]
-    let importBlocked: Bool = false
+    var importBlocked: Bool = false
     @Binding var renaming: MusicTrack?
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
