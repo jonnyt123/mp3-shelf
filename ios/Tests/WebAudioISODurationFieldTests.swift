@@ -24,7 +24,7 @@ check(implementation.contains("abs($0 - seconds) <= 4"),
 
 func isoDuration(_ text: String) -> Double? {
     let regex = try! NSRegularExpression(pattern:
-        #"^PT(?:(\\d+(?:\\.\\d+)?)H)?(?:(\\d+(?:\\.\\d+)?)M)?(?:(\\d+(?:\\.\\d+)?)S)?$"#)
+        #"^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$"#)
     let upper = text.uppercased()
     let ns = upper as NSString
     guard let match = regex.firstMatch(in: upper, range: NSRange(location: 0, length: ns.length)) else { return nil }
