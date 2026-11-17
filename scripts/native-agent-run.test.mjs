@@ -136,8 +136,11 @@ test('delivery and packaging claims require a recognized integration and exact c
    status:'already-staged',candidateSha:sha,delivery:'ALREADY_DELIVERED'}});
  assert.equal(failed.delivery,'NOT_VERIFIED');
  const eligible=nativeAgentRunRecord({...base,result:{
-   status:'already-staged',candidateSha:sha,delivery:'ALREADY_DELIVERED'}});
+   status:'already-staged',candidateSha:sha,delivery:'ALREADY_DELIVERED',
+   packaging:'EXISTING_VERIFIED_ARCHIVE',sha256:'b'.repeat(64),
+   downloadURL:'https://github.com/jonnyt123/mp3-shelf/releases/download/mp3-shelf-ios-'+sha+'/MP3-Shelf.zip'}});
  assert.equal(eligible.delivery,'ALREADY_DELIVERED');
+ assert.equal(eligible.packaging,'EXISTING_VERIFIED_ARCHIVE');
 });
 
 test('agent rejects conflicting exact source identities rather than claiming staging or delivery',()=>{
@@ -158,7 +161,9 @@ test('agent rejects conflicting exact source identities rather than claiming sta
  assert.equal(missing.status,'BLOCKED');
  assert.equal(missing.integration,'NOT_VERIFIED');
  const consistent=nativeAgentRunRecord({...base,result:{
-   status:'already-staged',candidateSha:sha,sha,delivery:'ALREADY_DELIVERED'}});
+   status:'already-staged',candidateSha:sha,sha,delivery:'ALREADY_DELIVERED',
+   packaging:'EXISTING_VERIFIED_ARCHIVE',sha256:'b'.repeat(64),
+   downloadURL:'https://github.com/jonnyt123/mp3-shelf/releases/download/tag/MP3-Shelf.zip'}});
  assert.equal(consistent.status,'COMPLETED');
  assert.equal(consistent.delivery,'ALREADY_DELIVERED');
 });
@@ -187,5 +192,26 @@ test('malformed or reversed run timestamps cannot claim fresh integration',()=>{
   assert.equal(record.status,'BLOCKED');
   assert.equal(record.candidateSha,null);
   assert.equal(record.delivery,'NOT_VERIFIED');
+ }
+});
+
+test('published ZIP receipts require consistent packaging, hash and canonical download URL',()=>{
+ const base={startedAt:'2026-11-17T00:00:00Z',finishedAt:'2026-11-17T00:01:00Z'};
+ const valid={status:'already-staged',candidateSha:sha,
+  packaging:'EXISTING_VERIFIED_ARCHIVE',delivery:'ALREADY_DELIVERED',
+  sha256:'c'.repeat(64),
+  downloadURL:'https://github.com/jonnyt123/mp3-shelf/releases/download/tag/MP3-Shelf.zip'};
+ assert.equal(nativeAgentRunRecord({...base,result:valid}).delivery,'ALREADY_DELIVERED');
+ for(const changes of [
+  {packaging:'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE'},
+  {packaging:'NOT_VERIFIED'},
+  {sha256:'invalid'},
+  {downloadURL:'https://attacker.example/MP3-Shelf.zip'},
+  {downloadURL:'https://github.com/jonnyt123/mp3-shelf/releases/download/tag/file.zip?token=private'},
+  {downloadURL:'https://github.com/jonnyt123/mp3-shelf/releases/download/tag/file.zip#fragment'},
+  {delivery:'PUBLISHED'}]){
+  const record=nativeAgentRunRecord({...base,result:{...valid,...changes}});
+  assert.equal(record.delivery,'NOT_VERIFIED',JSON.stringify(changes));
+  assert.equal(record.xcodeVerification,'NOT_VERIFIED');
  }
 });
