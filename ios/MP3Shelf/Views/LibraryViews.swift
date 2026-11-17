@@ -169,6 +169,16 @@ struct LibraryView: View {
         }
     }
 
+    // Opening the Files picker is itself a navigation transition. Invalidate
+    // preparation before presenting it: a slow disk scan must not start audio
+    // behind the picker while the user is choosing a replacement recording.
+    private func presentAudioImporter() {
+        guard !library.isImporting, !showFilePicker else { return }
+        cancelRecentPlaybackPreparation(showFeedback: true)
+        cancelBulkPlaybackPreparation(showFeedback: true)
+        showFilePicker = true
+    }
+
     // Explicit cancellation preserves the requested mode for an intentional retry.
     // Background/navigation cancellation must not leave a stale retry affordance.
     private func cancelBulkPlaybackPreparation(showFeedback: Bool) {
@@ -422,7 +432,7 @@ struct LibraryView: View {
                         // Restoring files is an explicit user action. This
                         // opens the existing local importer; no network access.
                         Button {
-                            showFilePicker = true
+                            presentAudioImporter()
                         } label: {
                             Label("Restore audio files", systemImage: "square.and.arrow.down")
                                 .frame(minHeight: 44, alignment: .leading)
@@ -667,7 +677,7 @@ struct LibraryView: View {
                     }
                     if library.tracks.isEmpty {
                         Button {
-                            showFilePicker = true
+                            presentAudioImporter()
                         } label: {
                             HStack(spacing: 9) {
                                 Image(systemName: "plus.circle.fill")
@@ -795,7 +805,7 @@ struct LibraryView: View {
                                     }
                                     if recentRetrySelection != nil && recentPlaybackCheck == nil {
                                         Button {
-                                            showFilePicker = true
+                                            presentAudioImporter()
                                         } label: {
                                             Label("Restore Recently Added audio", systemImage: "square.and.arrow.down")
                                                 .frame(minHeight: 44, alignment: .leading)
@@ -917,7 +927,7 @@ struct LibraryView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { showFilePicker = true } label: {
+                Button { presentAudioImporter() } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(ShelfTheme.accent)
