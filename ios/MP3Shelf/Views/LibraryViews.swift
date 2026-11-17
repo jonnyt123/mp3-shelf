@@ -912,6 +912,13 @@ struct LibraryView: View {
             cancelRecentPlaybackPreparation(showFeedback: false)
             cancelBulkPlaybackPreparation(showFeedback: false)
         }
+        .onChange(of: library.isImporting) { _, importing in
+            // Imports can start from another screen. Invalidate outstanding
+            // file snapshots before a replacement recording is written.
+            guard importing else { return }
+            cancelRecentPlaybackPreparation(showFeedback: true)
+            cancelBulkPlaybackPreparation(showFeedback: true)
+        }
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
