@@ -235,16 +235,29 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// replaced. One follower is promoted to the new leader; siblings are
     /// redirected in the same durable manifest transaction.
     private func promoteSharedFollowers(of leaderID: UUID) {
-        let followers = tickets.values.filter { ticket in
-            guard ticket.status == .queued, ticket.sharedLeaderID == leaderID else { return false }
-            // A deleted playlist must not become the new transfer owner.
-            // If playlist data has not loaded yet, preserve recovery state.
-            guard let library, library.playlists.contains(where: { $0.id == ticket.playlistID }) else {
-                return true
-            }
-            return library.hasCurrentSourceRequest(ticket.requested, for: ticket.playlistID)
+        let followers = tickets.values.filter {
+            $0.status == .queued && $0.sharedLeaderID == leaderID
         }.sorted { $0.id.uuidString < $1.id.uuidString }
-        guard let first = followers.first else { return }
+        guard !followers.isEmpty else { return }
+        // Do not promote until the library is attached and the playlist
+        // inventory is known. An orphaned ticket from a deleted playlist must
+        // never restart network traffic after a relaunch.
+        guard let library else { return }
+        let loadedIDs = Set(library.playlists.map(\.id))
+        let valid = followers.filter {
+            loadedIDs.contains($0.playlistID) &&
+                library.hasCurrentSourceRequest($0.requested, for: $0.playlistID)
+        }
+        let obsolete = followers.filter {
+            loadedIDs.contains($0.playlistID) &&
+                !library.hasCurrentSourceRequest($0.requested, for: $0.playlistID)
+        }
+        // Persist obsolete terminal states before promoting a valid sibling.
+        // Do not notify the library until the manifest write succeeds.
+        guard let first = valid.first else {
+            for item in obsolete { cancelTransfer(item.id, reason: Self.obsoleteRequestReason) }
+            return
+        }
         if library?.hasOfflineRecording(matching: first.requested) == true {
             reconcileAlreadyStoredDownloads()
             return
@@ -255,7 +268,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         promoted.startedAt = .now
         var updated = tickets
         updated[promoted.id] = promoted
-        for follower in followers.dropFirst() {
+        for follower in valid.dropFirst() {
             var redirected = follower
             redirected.sharedLeaderID = promoted.id
             updated[follower.id] = redirected
