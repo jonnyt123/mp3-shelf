@@ -331,6 +331,22 @@ enum PortableShelfArchive {
         return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
+    /// Remove only the partial archive this export created. A pathname can be
+    /// replaced while a long export runs; never unlink another writer's file.
+    /// This is a best-effort cleanup, not a publication or validation step.
+    private static func removeOwnedStaging(_ url: URL,
+                                           identity: ArchiveSourceIdentity) {
+        var named = stat()
+        guard lstat(url.path, &named) == 0,
+              identity.matches(named) else { return }
+        // A second pathname check narrows the replacement window. A fully
+        // race-free unlink would require descriptor-relative filesystem APIs.
+        var confirmed = stat()
+        guard lstat(url.path, &confirmed) == 0,
+              identity.matches(confirmed) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
     static func export(_ inputs: [MediaInput], playlists: [MusicPlaylist], to destination: URL) throws {
         var parts: [(url: URL?, bytes: Data?, expectedLength: Int64, sourceIdentity: ArchiveSourceIdentity?)] = []
         var offset: Int64 = 0
@@ -464,6 +480,15 @@ enum PortableShelfArchive {
         // names: createFile may truncate an existing file after a collision or
         // malicious pathname substitution. Never destroy unrelated bytes.
         let output = try createExclusiveOutput(at: staging)
+        // Capture the owned inode immediately after exclusive creation. All
+        // cleanup paths must refuse to delete a substituted partial file.
+        let ownedStagingIdentity: ArchiveSourceIdentity
+        do {
+            ownedStagingIdentity = try archiveIdentity(of: output, at: staging)
+        } catch {
+            try? output.close()
+            throw error
+        }
         do {
         defer { try? output.close() }
         try output.write(contentsOf: magic)
@@ -656,9 +681,9 @@ enum PortableShelfArchive {
         }
         // The final name is already complete. Failure to unlink staging is
         // harmless to the published archive; the outer catch cleans it up.
-        try? manager.removeItem(at: staging)
+        removeOwnedStaging(staging, identity: ownedStagingIdentity)
         } catch {
-            try? manager.removeItem(at: staging)
+            removeOwnedStaging(staging, identity: ownedStagingIdentity)
             throw error
         }
     }
