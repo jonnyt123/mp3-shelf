@@ -231,6 +231,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             failedProviders: proven.failed)
     }
 
+    /// Never promote an orphaned shared ticket until its playlist is loaded
+    /// and its exact request still exists. Unknown playlists remain pending
+    /// rather than being mistaken for valid transfer owners.
+    nonisolated static func mayPromoteSharedFollower(playlistLoaded: Bool,
+                                                      requestCurrent: Bool,
+                                                      alreadyStored: Bool) -> Bool {
+        playlistLoaded && requestCurrent && !alreadyStored
+    }
+
     /// Resolve follower tickets after a leader is cancelled, fails, or is
     /// replaced. One follower is promoted to the new leader; siblings are
     /// redirected in the same durable manifest transaction.
@@ -245,8 +254,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         guard let library else { return }
         let loadedIDs = Set(library.playlists.map(\.id))
         let valid = followers.filter {
-            loadedIDs.contains($0.playlistID) &&
-                library.hasCurrentSourceRequest($0.requested, for: $0.playlistID)
+            Self.mayPromoteSharedFollower(
+                playlistLoaded: loadedIDs.contains($0.playlistID),
+                requestCurrent: library.hasCurrentSourceRequest($0.requested, for: $0.playlistID),
+                alreadyStored: library.hasOfflineRecording(matching: $0.requested))
         }
         let obsolete = followers.filter {
             loadedIDs.contains($0.playlistID) &&
