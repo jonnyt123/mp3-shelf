@@ -1619,12 +1619,19 @@ struct PlaylistsView: View {
         case .create:
             showCreate = true
         case .rename(let id):
-            guard let playlist = library.playlists.first(where: { $0.id == id }) else {
+            guard let playlist = uniquePlaylist(withID: id) else {
                 playlistActionFeedback = "This playlist is no longer available to rename."
                 return
             }
             pendingRename = playlist
         }
+    }
+
+    // A restored archive may contain duplicate playlist IDs. Never route a
+    // destructive or mutating action to an arbitrary first match.
+    private func uniquePlaylist(withID id: UUID) -> MusicPlaylist? {
+        let matches = library.playlists.filter { $0.id == id }
+        return matches.count == 1 ? matches[0] : nil
     }
 
     // Adapt to the available width: compact iPhones must not squeeze playlist
@@ -1649,7 +1656,7 @@ struct PlaylistsView: View {
             playlistActionFeedback = "Finish importing audio before copying this playlist."
             return
         }
-        guard let current = library.playlists.first(where: { $0.id == playlist.id }),
+        guard let current = uniquePlaylist(withID: playlist.id),
               current.name == playlist.name,
               current.trackIDs == playlist.trackIDs,
               current.missingTracks == playlist.missingTracks else {
@@ -1678,7 +1685,7 @@ struct PlaylistsView: View {
             playlistActionFeedback = "Finish importing audio, then review this playlist before deleting it. Nothing was deleted."
             return
         }
-        guard let current = library.playlists.first(where: { $0.id == requested.id }) else {
+        guard let current = uniquePlaylist(withID: requested.id) else {
             playlistActionFeedback = "This playlist is no longer available. Nothing was deleted."
             return
         }
@@ -1836,7 +1843,7 @@ struct PlaylistsView: View {
                         pendingRename = nil
                         return
                     }
-                    guard let current = library.playlists.first(where: { $0.id == playlist.id }) else {
+                    guard let current = uniquePlaylist(withID: playlist.id) else {
                         playlistActionFeedback = "This playlist was removed while editing. Nothing was renamed."
                         pendingRename = nil
                         return
@@ -1854,7 +1861,7 @@ struct PlaylistsView: View {
                         playlistActionFeedback = "Playlist name is already up to date."
                     } else {
                         library.renamePlaylist(current.id, to: name)
-                        if library.playlists.first(where: { $0.id == current.id })?.name == name {
+                        if uniquePlaylist(withID: current.id)?.name == name {
                             revealPlaylists()
                             failedPlaylistEdit = nil
                             playlistActionFeedback = "Renamed playlist to \(name)."
