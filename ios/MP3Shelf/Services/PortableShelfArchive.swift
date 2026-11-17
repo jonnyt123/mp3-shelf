@@ -367,6 +367,19 @@ enum PortableShelfArchive {
         guard inputs.count <= 20_000, playlists.count <= 2_000 else {
             throw ArchiveError.invalidManifest
         }
+        // A duplicated local playlist UUID is a damaged catalog, not two
+        // independent playlists. Giving the second row a synthetic portable
+        // ID would conceal the collision and duplicate collections on restore.
+        // Reject before reading audio or creating an export staging file.
+        guard Set(playlists.map(\.id)).count == playlists.count else {
+            throw ArchiveError.invalidManifest
+        }
+        // Validate source identities before scanning potentially gigabytes of
+        // audio. Otherwise a duplicate track UUID is only rejected after all
+        // media preflight has completed, delaying an actionable catalog error.
+        guard Set(inputs.map { $0.track.id }).count == inputs.count else {
+            throw ArchiveError.invalidManifest
+        }
         for item in inputs {
             try Task.checkCancellation()
             try validateAudioSource(item.audioURL)
@@ -423,11 +436,6 @@ enum PortableShelfArchive {
                 importedAt: item.track.addedAt.timeIntervalSince1970 * 1000,
                 audio: audio, artwork: artwork
             ))
-        }
-        // Local UUIDs must be unique because playlist links use them. An
-        // ambiguous source catalog cannot be exported without losing links.
-        guard Set(inputs.map { $0.track.id }).count == inputs.count else {
-            throw ArchiveError.invalidManifest
         }
         // Reserve all explicit portable IDs before assigning local-UUID
         // fallbacks. Input order must not steal a later browser identity.
