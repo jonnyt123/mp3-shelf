@@ -119,6 +119,22 @@ enum BackgroundAudioURLPolicyTests {
             queuedLeaderCount: -1, sourceSearchCount: -1) == 0 else {
             fatalError("Invalid capacity count must not become negative")
         }
+        // Retrying another playlist's identical recording can attach to a
+        // running leader even when the physical transfer budget is full.
+        // Without either an existing leader or capacity, retry must defer.
+        var retryCapacityCases = 0
+        for leader in [false, true] {
+            for freeSlot in [false, true] {
+                guard BackgroundAudioDownloader.mayRetryWithSharedCapacity(
+                    hasQueuedLeader: leader, hasFreeTransferSlot: freeSlot) ==
+                    (leader || freeSlot) else {
+                    fatalError("Shared retry capacity regression")
+                }
+                retryCapacityCases += 1
+            }
+        }
+        guard retryCapacityCases == 4 else { fatalError("Incomplete shared retry capacity matrix") }
+        print("PASS: 4 shared retry capacity combinations")
         print("PASS: 26 physical-transfer capacity combinations")
         var promotionCases = 0
         for loaded in [false, true] {
