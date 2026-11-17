@@ -13,11 +13,18 @@ import { writeReadiness } from './release-readiness.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
-  const status = error ? 'FAILED' :
-    ['already-staged','staged-draft-only'].includes(result?.integration) ||
-    ['already-staged','staged-draft-only'].includes(result?.status)
-      ? 'COMPLETED' : 'BLOCKED';
-  const candidateSha = result?.candidateSha ?? result?.sha ?? null;
+  // The cycle may report both the source selected for verification and the
+  // source ultimately staged. A disagreement is a provenance failure, not
+  // evidence of a successful integration or a deliverable archive.
+  const reportedCandidate = result?.candidateSha;
+  const reportedSource = result?.sha;
+  const conflictingSource = reportedCandidate != null && reportedSource != null &&
+    (reportedCandidate !== reportedSource || !SHA.test(reportedCandidate));
+  const candidateSha = conflictingSource ? null : (reportedCandidate ?? reportedSource ?? null);
+  const validSource = SHA.test(candidateSha ?? '');
+  const verifiedIntegration = !error && !conflictingSource && validSource &&
+    ['already-staged','staged-draft-only'].includes(result?.integration ?? result?.status);
+  const status = error ? 'FAILED' : verifiedIntegration ? 'COMPLETED' : 'BLOCKED';
   const categories = ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
     'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
   const packaging = categories.includes(result?.packaging)
@@ -29,12 +36,11 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
     schema: 'mp3shelf-native-agent-run-v1',
     startedAt, finishedAt,
     status,
-    candidateSha: SHA.test(candidateSha ?? '') ? candidateSha : null,
-    integration: ['already-staged','staged-draft-only'].includes(result?.integration ?? result?.status)
+    candidateSha: validSource ? candidateSha : null,
+    integration: verifiedIntegration
       ? (result?.integration ?? result?.status) : 'NOT_VERIFIED',
     packaging,
-    delivery: !error && SHA.test(candidateSha ?? '') &&
-      ['already-staged','staged-draft-only'].includes(result?.integration ?? result?.status) &&
+    delivery: verifiedIntegration &&
       ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(result?.delivery)
       ? result.delivery : 'NOT_VERIFIED',
     failureReason: reason,
