@@ -1216,7 +1216,7 @@ struct MusicTrackRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .disabled(isCheckingPlayback || library.isImporting || importBlocked)
+            .disabled(isCheckingPlayback || library.isImporting || importBlocked || scenePhase != .active)
             .accessibilityLabel(library.isImporting || importBlocked
                                 ? "Importing audio: \(track.title) by \(track.artist)"
                                 : isCheckingPlayback
@@ -1246,6 +1246,7 @@ struct MusicTrackRow: View {
                 renaming = track
             }
             .accessibilityAction(named: "Delete download") {
+                guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
                 confirmDelete = true
             }
             Menu {
@@ -1280,13 +1281,17 @@ struct MusicTrackRow: View {
                     }
                 }
                 Divider()
-                Button("Delete Download", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                Button("Delete Download", systemImage: "trash", role: .destructive) {
+                    guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
+                    confirmDelete = true
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .foregroundStyle(ShelfTheme.subdued)
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
+            .disabled(library.isImporting || importBlocked || scenePhase != .active)
             .accessibilityLabel("More options for \(track.title) by \(track.artist)")
             .accessibilityHint("Favorite, add to playlist, edit, share or delete this download")
         }
@@ -1361,6 +1366,10 @@ struct MusicTrackRow: View {
         }
         .confirmationDialog("Delete downloaded song?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Song", role: .destructive) {
+                // The confirmation can outlive the menu that opened it. An import
+                // may have started while this dialog was visible; never delete
+                // a recording that the importer could be replacing on disk.
+                guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
                 if playback.currentTrackID == track.id { playback.stop() }
                 library.removeTrack(track.id)
             }
