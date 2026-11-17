@@ -662,15 +662,17 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
     var nextLookupAt: Date? {
         guard let wish = currentWish, let deadlines = sourceRecoveryNotBefore,
               let recovery = deadlines[wish.id.uuidString] else { return nextRetryAt }
-        // A provider retry belongs to the current lookup. A recovered link
-        // has its own deadline, so other pending songs can use that time.
-        if let nextRetryAt { return max(recovery, nextRetryAt) }
+        // Global transient backoff blocks all lookups, but a source-link
+        // recovery deadline belongs only to its own wish. A later ready song
+        // can run as soon as the global backoff expires.
         var earliest = recovery
         for pending in wishes.dropFirst(nextIndex + 1) {
-            guard let deadline = deadlines[pending.id.uuidString] else { return nil }
+            guard let deadline = deadlines[pending.id.uuidString] else {
+                return nextRetryAt
+            }
             earliest = min(earliest, deadline)
         }
-        return earliest
+        return nextRetryAt.map { max($0, earliest) } ?? earliest
     }
 
     func canAttemptLookup(at date: Date) -> Bool {
