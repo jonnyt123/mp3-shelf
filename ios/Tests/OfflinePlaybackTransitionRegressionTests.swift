@@ -22,13 +22,23 @@ func evaluate(_ events: [OfflineEvent], session: String, recordings: [String]) -
     var foundPath = false
     for launch in launches {
         guard scoped.contains(where: { $0.kind == .exit && $0.process != launch.process && $0.time < launch.time }) else { continue }
-        let end = scoped.first(where: { $0.kind == .exit && $0.process == launch.process && $0.time > launch.time })?.time ?? Int.max
+        // A process identity must identify one launch epoch. Never join clocks from a later
+        // relaunch or a prior launch that reused the same process label.
+        let end = scoped.filter {
+            $0.process == launch.process && $0.time > launch.time &&
+            ($0.kind == .exit || $0.kind == .launch)
+        }.map(\.time).min() ?? Int.max
+        guard !scoped.contains(where: {
+            $0.kind == .launch && $0.process == launch.process && $0.time < launch.time
+        }) else { continue }
         let paths = scoped.filter { $0.kind == .network && $0.process == launch.process && $0.time >= launch.time && $0.time < end }
         guard let offlinePath = paths.first(where: { $0.offline == true }) else { continue }
         foundPath = true
-        let online = paths.first(where: { $0.offline == false && $0.time >= offlinePath.time })?.time ?? Int.max
+        // An online transition at any point after launch invalidates this offline epoch,
+        // even if NWPath later becomes unsatisfied again.
+        let online = paths.first(where: { $0.offline == false && $0.time >= launch.time })?.time ?? Int.max
         let clocks = scoped.filter { $0.kind == .clock && $0.process == launch.process &&
-            $0.time > offlinePath.time && $0.time < min(end, online) && ($0.position ?? -1) >= 0 }
+            $0.time > offlinePath.time && $0.time < min(end, online) && ($0.position ?? -1) >= 0 && $0.time < online }
         if recordings.allSatisfy({ id in
             let samples = clocks.filter { $0.recording == id }
             return samples.contains { a in samples.contains { b in b.time > a.time && b.position! > a.position! } }
@@ -61,6 +71,10 @@ check(good.map { $0.time == 50 ? ev(.clock, "other", 50, recording: "a", positio
 check(good.map { $0.time == 50 ? ev(.clock, "after", 50, recording: "a", position: 1100, session: "old") : $0 }, .missingAdvance, "cross-session clock")
 check(good + [ev(.network, "after", 45, offline: false)], .missingAdvance, "network reconnected")
 check(good + [ev(.exit, "after", 45)], .missingAdvance, "clock after exit")
+check(good + [ev(.launch, "after", 55, offline: true)], .missingAdvance, "second launch splits playback epoch")
+check(good + [ev(.network, "after", 25, offline: false)], .missingAdvance, "online after launch before offline path")
+check(good + [ev(.launch, "after", 15, offline: false)], .missingPath, "reused process label before launch")
+check(good + [ev(.exit, "after", 55), ev(.launch, "after", 56, offline: true)], .missingAdvance, "relaunch cannot join earlier clock")
 check(good, .invalidIdentity, "duplicate catalog", ids: ["a", "a"])
 check(good, .invalidIdentity, "empty catalog", ids: [])
 check(good + [ev(.clock, "", 80, recording: "a", position: 999)], .invalidIdentity, "empty process")
@@ -69,4 +83,4 @@ for i in 0..<128 {
     check(good + [noise], .accepted, "old-session noise \(i)")
     check(good.filter { $0.time != 50 } + [noise], .missingAdvance, "old session cannot repair clock \(i)")
 }
-print("PASS: 15 acceptance mutations and 256 noise assertions; policy fixture only")
+print("PASS: 19 acceptance mutations and 256 noise assertions; policy fixture only")
