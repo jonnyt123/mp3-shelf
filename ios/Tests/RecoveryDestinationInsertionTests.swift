@@ -67,7 +67,7 @@ for kind in ["foreign", "symlink", "dangling", "hardlink", "directory", "partial
     try assertSafe(try Data(contentsOf: staged) == audio, "\(kind): staged audio consumed")
     count += 1
 }
-for kind in ["symlink", "dangling", "hardlink", "directory", "partial", "missing"] {
+for kind in ["symlink", "dangling", "hardlink", "directory", "partial", "same-size-foreign", "in-place-corruption", "missing"] {
     try clear()
     do {
         try publish {
@@ -78,6 +78,11 @@ for kind in ["symlink", "dangling", "hardlink", "directory", "partial", "missing
             case "hardlink": try fm.linkItem(at: unrelated, to: staged)
             case "directory": try fm.createDirectory(at: staged, withIntermediateDirectories: false)
             case "partial": try audio.prefix(128).write(to: staged)
+            case "same-size-foreign": try foreign.write(to: staged)
+            case "in-place-corruption":
+                var corrupted = audio
+                corrupted[corrupted.count / 2] ^= 0xFF
+                try corrupted.write(to: staged)
             default: break
             }
         }
@@ -88,9 +93,23 @@ for kind in ["symlink", "dangling", "hardlink", "directory", "partial", "missing
     count += 1
 }
 try clear()
+do {
+    try publish { try audio.write(to: final) }
+    try assertSafe(false, "identical existing destination accepted")
+} catch InsertionError.unsafeDestination {}
+try assertSafe(try Data(contentsOf: final) == audio, "identical destination modified")
+try assertSafe(try Data(contentsOf: staged) == audio, "staged source consumed by collision")
+count += 1
+
+try clear()
 try publish {}
 try assertSafe(try Data(contentsOf: final) == audio, "valid publish failed")
 do { try publish {}; try assertSafe(false, "duplicate callback republished") }
 catch InsertionError.unsafeDestination {}
 try assertSafe(try Data(contentsOf: final) == audio, "duplicate callback changed audio")
+try foreign.write(to: final)
+do { try publish {}; try assertSafe(false, "duplicate callback replaced modified destination") }
+catch InsertionError.unsafeDestination {}
+try assertSafe(try Data(contentsOf: final) == foreign, "modified destination overwritten")
+try assertSafe(try Data(contentsOf: staged) == audio, "staged audio lost on duplicate callback")
 print("PASS: \(count) destination/source substitution cases, valid publication, duplicate callback")
