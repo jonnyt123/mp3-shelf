@@ -260,13 +260,20 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         !isProcessing && !hasConversion
     }
 
+    nonisolated static func mayPromoteAfterStagingRecovery(hasPredecessorStaging: Bool,
+                                                            isProcessing: Bool,
+                                                            hasConversion: Bool) -> Bool {
+        !hasPredecessorStaging && mayPromoteAfterImport(
+            isProcessing: isProcessing, hasConversion: hasConversion)
+    }
+
     private func promoteSharedFollowers(of leaderID: UUID) {
         // The old owner may have completed its URLSession callback and left
         // validated bytes in staging immediately before the app was killed.
         // Recover those bytes before scheduling another physical transfer.
         // This also protects cancelled leaders whose decoder has not started.
-        guard !fm.fileExists(atPath: Self.stagingURL(leaderID).path) else { return }
-        guard Self.mayPromoteAfterImport(
+        guard Self.mayPromoteAfterStagingRecovery(
+            hasPredecessorStaging: fm.fileExists(atPath: Self.stagingURL(leaderID).path),
             isProcessing: processing.contains(leaderID),
             hasConversion: conversions[leaderID] != nil) else { return }
         let followers = tickets.values.filter {
