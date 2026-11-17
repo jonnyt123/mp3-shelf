@@ -1094,14 +1094,27 @@ enum PortableShelfArchive {
         // Claim the staging name exclusively: atomic Data.write can replace
         // an unrelated file if the randomly chosen name is concurrently taken.
         let output = try createExclusiveOutput(at: staging)
+        // Retain ownership from the exclusive creation descriptor, before any
+        // write can change the file size or timestamps. Every exit path must
+        // release only this inode, never an unrelated replacement pathname.
+        // In particular, a failed write/sync must not accumulate large orphan
+        // sidecars on repeated low-storage restore attempts.
+        var createdInfo = stat()
+        guard fstat(output.fileDescriptor, &createdInfo) == 0,
+              (createdInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+            try? output.close()
+            throw ArchiveError.invalidFile
+        }
+        let ownedIdentity = ArchiveSourceIdentity(createdInfo)
+        defer { removeOwnedStaging(staging, identity: ownedIdentity) }
         do {
             try output.write(contentsOf: bytes)
             try output.synchronize()
             try output.close()
         } catch {
             try? output.close()
-            // Do not unlink by pathname: a concurrent writer may already have
-            // replaced it. Unreferenced temporary bytes are recoverable.
+            // The deferred inode-checked cleanup releases only the staging
+            // file we created, including after disk-full and sync failures.
             throw error
         }
         try Task.checkCancellation()
@@ -1172,9 +1185,8 @@ enum PortableShelfArchive {
               linkedIdentity.changedNanoseconds == expected.changedNanoseconds else {
             throw ArchiveError.invalidFile
         }
-        // Cleanup must never unlink a substituted staging pathname. A failed
-        // cleanup is nonfatal; an orphan is preferable to losing another file.
-        removeOwnedStaging(staging, identity: expected)
+        // The deferred ownership-checked cleanup also runs after successful
+        // publication and after caller validation throws.
         // Validate the published destination against the retained descriptor.
         // Never unlink the destination on cancellation or validation failure.
         try validate()
