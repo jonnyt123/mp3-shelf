@@ -1046,6 +1046,9 @@ struct MusicTrackRow: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
     @State private var confirmDelete = false
+    // Bind destructive confirmation to the exact recording visible when opened.
+    // A restore can replace the file URL while the dialog is on screen.
+    @State private var pendingDeleteURL: URL?
     @State private var missingRecordingAlert = false
     @State private var playbackNotice: String?
     @State private var recoveryReason = "The local recording is unavailable."
@@ -1063,6 +1066,31 @@ struct MusicTrackRow: View {
               values.isRegularFile == true,
               let size = values.fileSize else { return false }
         return size > 0
+    }
+
+    private func requestDeleteConfirmation() {
+        guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
+        // Never authorize a stale row that has already been removed or replaced.
+        let current = library.tracks.filter { $0.id == track.id }
+        guard current.count == 1 else {
+            playbackNotice = "This song changed in your library. Reopen it before deleting."
+            return
+        }
+        pendingDeleteURL = library.fileURL(for: current[0])
+        confirmDelete = true
+    }
+
+    private func confirmExactRecordingDeletion() {
+        defer { pendingDeleteURL = nil }
+        guard !library.isImporting, !importBlocked, scenePhase == .active,
+              let expectedURL = pendingDeleteURL else { return }
+        let current = library.tracks.filter { $0.id == track.id }
+        guard current.count == 1, library.fileURL(for: current[0]) == expectedURL else {
+            playbackNotice = "The recording changed while confirming deletion. Nothing was deleted."
+            return
+        }
+        if playback.currentTrackID == track.id { playback.stop() }
+        library.removeTrack(track.id)
     }
 
     private var availabilityRefreshKey: String {
@@ -1246,8 +1274,7 @@ struct MusicTrackRow: View {
                 renaming = track
             }
             .accessibilityAction(named: "Delete download") {
-                guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
-                confirmDelete = true
+                requestDeleteConfirmation()
             }
             Menu {
                 Button { library.toggleFavorite(track.id) } label: {
@@ -1282,8 +1309,7 @@ struct MusicTrackRow: View {
                 }
                 Divider()
                 Button("Delete Download", systemImage: "trash", role: .destructive) {
-                    guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
-                    confirmDelete = true
+                    requestDeleteConfirmation()
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -1366,14 +1392,9 @@ struct MusicTrackRow: View {
         }
         .confirmationDialog("Delete downloaded song?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Song", role: .destructive) {
-                // The confirmation can outlive the menu that opened it. An import
-                // may have started while this dialog was visible; never delete
-                // a recording that the importer could be replacing on disk.
-                guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
-                if playback.currentTrackID == track.id { playback.stop() }
-                library.removeTrack(track.id)
+                confirmExactRecordingDeletion()
             }
-        } message: { Text("This removes the local audio file and its entries from playlists.") }
+        } message: { Text("This removes the local audio file and its entries from playlists. If the recording changes before confirmation, nothing will be deleted.") }
     }
 }
 
