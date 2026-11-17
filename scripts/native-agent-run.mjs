@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { runNativeReleaseCycle } from './native-release-cycle.mjs';
+import { writeReadiness } from './release-readiness.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
@@ -63,6 +64,12 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
     if(failure) throw new AggregateError([failure,error],
       'Native run failed and status receipt was not saved');
     throw error;
+  }
+  // Update the locally viewable readiness dashboard at every execution,
+  // including failed Xcode runs. Its absence is NOT a release authorization.
+  try {writeReadiness({home});}
+  catch(error){
+    console.error('RELEASE_READINESS_UNVERIFIED: '+String(error.message).slice(0,240));
   }
   if(failure)throw failure;
   return record;
