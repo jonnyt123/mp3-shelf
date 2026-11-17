@@ -10,7 +10,7 @@ test('real native integration remains distinct from hardware approval',()=>{
    result:{candidateSha:sha,integration:'staged-draft-only',packaging:'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE'}});
  assert.equal(record.status,'COMPLETED');
  assert.equal(record.candidateSha,sha);
- assert.equal(record.xcodeVerification,'LOCAL_NATIVE_RECEIPT_RECORDED');
+ assert.equal(record.xcodeVerification,'NOT_VERIFIED');
  assert.equal(record.physicalIPhoneAcceptance,'REQUIRES_SEPARATE_REAL_DEVICE_REVIEW');
 });
 test('error statuses never claim native Xcode or iPhone passed',()=>{
@@ -18,6 +18,7 @@ test('error statuses never claim native Xcode or iPhone passed',()=>{
    error:new Error('/Users/Private/Xcode/secret failure')});
  assert.equal(record.status,'FAILED');
  assert.equal(record.xcodeVerification,'NOT_VERIFIED');
+ assert.equal(record.failureReason,'NATIVE_CYCLE_FAILED_REVIEW_LOCAL_LOGS');
  assert(!record.failureReason.includes('/Users/'));
 });
 test('runner writes atomically updated local success and failure receipts without touching GitHub Actions',async()=>{
@@ -50,4 +51,19 @@ test('native run status cannot be written through symlinked latest receipt',asyn
      run:async()=>({status:'already-staged',sha})}),/redirected/);
    assert.equal(readFileSync(outside,'utf8'),'private data');
  }finally{rmSync(home,{recursive:true,force:true});}
+});
+
+test('untrusted cycle metadata cannot forge native receipt, delivery or leak secrets',()=>{
+ const record=nativeAgentRunRecord({startedAt:'2026-11-16T00:00:00Z',finishedAt:'2026-11-16T00:01:00Z',
+   result:{status:'verified-not-staged',candidateSha:sha,delivery:'PUBLISHED',
+     integration:'unexpected-success',packaging:'unsafe private message'}});
+ assert.equal(record.status,'BLOCKED');
+ assert.equal(record.xcodeVerification,'NOT_VERIFIED');
+ assert.equal(record.integration,'NOT_VERIFIED');
+ assert.equal(record.delivery,'NOT_VERIFIED');
+ assert.equal(record.packaging,'NOT_VERIFIED');
+ const failed=nativeAgentRunRecord({startedAt:'2026-11-16T00:00:00Z',finishedAt:'2026-11-16T00:01:00Z',
+   error:Error('token=ghp_SECRET /Users/private/playlist.mp3')});
+ assert(!JSON.stringify(failed).includes('ghp_SECRET'));
+ assert(!JSON.stringify(failed).includes('playlist.mp3'));
 });
