@@ -1049,6 +1049,21 @@ struct MusicTrackRow: View {
     // Bind destructive confirmation to the exact recording visible when opened.
     // A restore can replace the file URL while the dialog is on screen.
     @State private var pendingDeleteURL: URL?
+    // A restore may replace the bytes at the SAME URL. Preserve file metadata
+    // as well as the location before offering a destructive confirmation.
+    @State private var pendingDeleteFingerprint: RecordingFingerprint?
+
+    private struct RecordingFingerprint: Equatable {
+        let size: Int
+        let modified: Date?
+
+        init?(url: URL) {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
+                  values.isRegularFile == true, let size = values.fileSize, size > 0 else { return nil }
+            self.size = size
+            self.modified = values.contentModificationDate
+        }
+    }
     @State private var missingRecordingAlert = false
     @State private var playbackNotice: String?
     @State private var recoveryReason = "The local recording is unavailable."
@@ -1076,16 +1091,28 @@ struct MusicTrackRow: View {
             playbackNotice = "This song changed in your library. Reopen it before deleting."
             return
         }
-        pendingDeleteURL = library.fileURL(for: current[0])
+        let url = library.fileURL(for: current[0])
+        guard let fingerprint = RecordingFingerprint(url: url) else {
+            playbackNotice = "The local audio file is unavailable. Nothing was deleted."
+            return
+        }
+        pendingDeleteURL = url
+        pendingDeleteFingerprint = fingerprint
         confirmDelete = true
     }
 
     private func confirmExactRecordingDeletion() {
-        defer { pendingDeleteURL = nil }
+        defer {
+            pendingDeleteURL = nil
+            pendingDeleteFingerprint = nil
+        }
         guard !library.isImporting, !importBlocked, scenePhase == .active,
-              let expectedURL = pendingDeleteURL else { return }
+              let expectedURL = pendingDeleteURL,
+              let expectedFingerprint = pendingDeleteFingerprint else { return }
         let current = library.tracks.filter { $0.id == track.id }
-        guard current.count == 1, library.fileURL(for: current[0]) == expectedURL else {
+        guard current.count == 1,
+              library.fileURL(for: current[0]) == expectedURL,
+              RecordingFingerprint(url: expectedURL) == expectedFingerprint else {
             playbackNotice = "The recording changed while confirming deletion. Nothing was deleted."
             return
         }
@@ -1394,7 +1421,7 @@ struct MusicTrackRow: View {
             Button("Delete Song", role: .destructive) {
                 confirmExactRecordingDeletion()
             }
-        } message: { Text("This removes the local audio file and its entries from playlists. If the recording changes before confirmation, nothing will be deleted.") }
+        } message: { Text("This removes the local audio file and its entries from playlists. If the file is replaced or changes before confirmation, nothing will be deleted.") }
     }
 }
 
