@@ -66,3 +66,20 @@ test('review writes a unique private file and leaves signed record and inventory
   assert.equal(saved.inventorySHA256.length,64);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('duplicate signed QA fields cannot override a failing real receipt',()=>{
+ const cases=[
+   '- Result: FAIL\\n'+receipt,
+   receipt+'\\n- Result: FAIL',
+   '- Checked commit: '+'c'.repeat(40)+'\\n'+receipt,
+   receipt+'\\n- Signed app executable SHA256: '+'c'.repeat(64),
+   receipt.replace('- Device app installation: PASS',''),
+   receipt+'\\n- Mode: install'
+ ];
+ for(const signedRecord of cases){
+   const review=independentlyReviewDevice({inventory:data(),signedRecord,
+     inventorySHA256:hash,expectedSha:sha});
+   assert(review.failures.includes('signedMacBuild'),signedRecord);
+   assert.equal(review.physicalAcceptance,'INCOMPLETE');
+ }
+});
