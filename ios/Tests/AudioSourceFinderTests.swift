@@ -1156,6 +1156,25 @@ enum AudioSourceFinderTests {
         verify(ambiguousArchive.flatMap {
             AudioSourceFinder.archiveCandidate($0, identifier: "exact-song", for: archiveWish)
         } == nil, "distinct exact-looking files remain ambiguous")
+        // JSON-LD publishers may encode duration as numeric seconds rather than
+        // ISO-8601. Accept only complete, finite numeric values matching Spotify.
+        let numericWish = PlaylistWish(title: "Exact Song", artist: "Exact Artist",
+            album: "", spotifyURL: nil, durationSeconds: 180)
+        verify(AutomaticWebAudioFinder.recordingDurationEvidenceMatches(
+            recording: "180", audio: nil, wish: numericWish),
+            "numeric JSON-LD duration in seconds identifies the expected recording")
+        verify(AutomaticWebAudioFinder.recordingDurationEvidenceMatches(
+            recording: "180.5", audio: "PT3M", wish: numericWish),
+            "numeric and ISO duration evidence can agree")
+        for invalid in ["180seconds", "180 ", "-180", "NaN", "Infinity", "1e2",
+                        "PT3Mgarbage", "PT", "300"] {
+            verify(!AutomaticWebAudioFinder.recordingDurationEvidenceMatches(
+                recording: invalid, audio: nil, wish: numericWish),
+                "invalid or conflicting JSON-LD duration must not auto-match: \\(invalid)")
+        }
+        verify(!AutomaticWebAudioFinder.recordingDurationEvidenceMatches(
+            recording: "180", audio: "PT2M", wish: numericWish),
+            "conflicting recording and audio duration claims fail closed")
         print("Audio source discovery validation tests passed")
     }
 }
