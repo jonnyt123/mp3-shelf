@@ -21,7 +21,7 @@ test('a successful Mac agent process does not clear hardware and ZIP gates',()=>
  const model=readinessModel({candidateSha:sha,agent:{status:'COMPLETED'},toolingSha:tooling,
    inventory:{schema:'mp3shelf-physical-inventory-v1',candidateSha:sha,
      requested:2,copiedTracks:1,unavailable:1,files:[]}});
- assert.equal(model.gates.find(x=>x.key==='agent').status,'PASS');
+ assert.equal(model.gates.find(x=>x.key==='agent').status,'UNVERIFIED');
  assert.equal(model.gates.find(x=>x.key==='playlist').status,'BLOCKED');
  assert.equal(model.gates.find(x=>x.key==='hardware').status,'BLOCKED');
 });
@@ -33,8 +33,8 @@ test('reports do not interpret self-reported offline playback as signed hardware
   backgroundTransfer:'APP_RECORDED_STAGING_AND_BACKGROUND_WAKE'};
  const model=readinessModel({candidateSha:sha,toolingSha:tooling,inventory,
    issue:{number:6,state:'open'}});
- assert.equal(model.gates.find(x=>x.key==='playlist').status,'PASS');
- assert.equal(model.gates.find(x=>x.key==='playback').status,'PASS');
+ assert.equal(model.gates.find(x=>x.key==='playlist').status,'UNVERIFIED');
+ assert.equal(model.gates.find(x=>x.key==='playback').status,'UNVERIFIED');
  assert.equal(model.gates.find(x=>x.key==='hardware').status,'BLOCKED');
  assert(model.blocking.includes('hardware'));
 });
@@ -66,10 +66,10 @@ test('real native schemaVersion 1 receipt with two completed steps is recognized
    status:'local-checks-passed',cleanCheckout:true,exitCode:0,
    steps:[{name:'native-local-release',success:true},{name:'post-native-checkout-integrity',success:true}]};
  const model=readinessModel({candidateSha:sha,native:receipt});
- assert.equal(model.gates.find(x=>x.key==='native').status,'PASS');
+ assert.equal(model.gates.find(x=>x.key==='native').status,'UNVERIFIED');
  assert.equal(model.gates.find(x=>x.key==='hardware').status,'BLOCKED');
  receipt.steps[1].success=false;
- assert.equal(readinessModel({candidateSha:sha,native:receipt}).gates.find(x=>x.key==='native').status,'BLOCKED');
+ assert.equal(readinessModel({candidateSha:sha,native:receipt}).gates.find(x=>x.key==='native').status,'UNVERIFIED');
 });
 test('closed GitHub hardware issue alone is insufficient without matching owner SHA-256 approval marker',()=>{
  const labels=['Signing / installation','Offline playback','Background licensed downloads',
@@ -89,4 +89,31 @@ test('closed GitHub hardware issue alone is insufficient without matching owner 
    gates.find(g=>g.key==='hardware').status,'PASS');
  assert.equal(readinessModel({...args,ownerComments:[{user:{login:'unknown'},body:marker}]}).
    gates.find(g=>g.key==='hardware').status,'BLOCKED');
+});
+
+test('plausible local metadata cannot authorize ZIP or draft-smoke transport',()=>{
+ const now=Date.parse('2026-11-17T12:00:00Z');
+ const release={draft:false,tag_name:'mp3-shelf-ios-'+sha,assets:[
+  {state:'uploaded',digest:'sha256:'+hash},
+  {state:'uploaded',digest:'sha256:'+hash}]};
+ const smoke={toolingSha:tooling,deleted:true,createdAt:'2026-11-17T11:00:00Z'};
+ const model=readinessModel({candidateSha:sha,toolingSha:tooling,release,smoke,now});
+ assert.equal(model.gates.find(g=>g.key==='smoke').status,'UNVERIFIED');
+ assert.equal(model.gates.find(g=>g.key==='zip').status,'UNVERIFIED');
+ assert.equal(model.status,'NOT_RELEASE_READY');
+ assert(model.blocking.includes('zip'));
+ assert(model.blocking.includes('smoke'));
+});
+test('self-reported review and playlist metadata remain advisory without byte and device proof',()=>{
+ const inventory={schema:'mp3shelf-physical-inventory-v1',candidateSha:sha,
+  requested:2,copiedTracks:2,unavailable:0,
+  files:[{sha256:hash,bytes:4000},{sha256:hash,bytes:5000}],
+  offlinePlaybackAfterRestart:'APP_INSTRUMENTED_PHYSICAL_PASS',
+  backgroundTransfer:'APP_RECORDED_STAGING_AND_BACKGROUND_WAKE'};
+ const review={schema:'mp3shelf-independent-device-review-v1',sourceSha:sha,
+  result:'EVIDENCE_CHECKS_PASSED_NOT_HARDWARE_APPROVED',physicalAcceptance:'INCOMPLETE',failures:[]};
+ const model=readinessModel({candidateSha:sha,inventory,review});
+ for(const key of ['playlist','playback','review'])
+  assert.equal(model.gates.find(g=>g.key===key).status,'UNVERIFIED');
+ assert.equal(model.status,'NOT_RELEASE_READY');
 });
