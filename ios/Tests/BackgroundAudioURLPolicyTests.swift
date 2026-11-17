@@ -164,6 +164,21 @@ enum BackgroundAudioURLPolicyTests {
             }
         }
         print("PASS: 4 shared-follower promotion and orphan-retarget cases")
+        // Exhausted shared sources must fail all attached requests together,
+        // rather than promoting each follower to redownload known-bad bytes.
+        var terminalCases = 0
+        for queued in [false, true] {
+            for matches in [false, true] {
+                let expected = queued && matches
+                guard BackgroundAudioDownloader.shouldFailSharedFollower(
+                    isQueued: queued, leaderMatches: matches) == expected else {
+                    fatalError("Shared source terminal failure fanout regression")
+                }
+                terminalCases += 1
+            }
+        }
+        guard terminalCases == 4 else { fatalError("Incomplete shared failure matrix") }
+        print("PASS: 4 shared source terminal failure eligibility cases")
         print("PASS: 16 cross-playlist transfer eligibility combinations")
         print("PASS: 16 cellular upgrade and in-progress import combinations")
         print("PASS: cellular, expensive and constrained network opt-in fixtures")
