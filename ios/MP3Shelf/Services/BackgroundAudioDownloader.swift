@@ -240,6 +240,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         playlistLoaded && requestCurrent && !alreadyStored
     }
 
+    /// A follower with an unloaded playlist must retain the promoted leader
+    /// until its own playlist can be checked. Only a confirmed obsolete
+    /// request may be dropped from the shared transfer chain.
+    nonisolated static func shouldRetargetFollower(isPromoted: Bool,
+                                                   isConfirmedObsolete: Bool) -> Bool {
+        !isPromoted && !isConfirmedObsolete
+    }
+
     /// Resolve follower tickets after a leader is cancelled, fails, or is
     /// replaced. One follower is promoted to the new leader; siblings are
     /// redirected in the same durable manifest transaction.
@@ -309,8 +317,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // obsolete requests are retired; all other queued siblings follow
         // the newly selected leader in the same manifest transaction.
         let obsoleteIDs = Set(obsolete.map(\.id))
-        for follower in followers where follower.id != promoted.id &&
-            !obsoleteIDs.contains(follower.id) {
+        for follower in followers where Self.shouldRetargetFollower(
+            isPromoted: follower.id == promoted.id,
+            isConfirmedObsolete: obsoleteIDs.contains(follower.id)) {
             var redirected = follower
             redirected.sharedLeaderID = promoted.id
             updated[follower.id] = redirected
