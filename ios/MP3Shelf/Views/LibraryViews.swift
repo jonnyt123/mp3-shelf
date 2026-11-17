@@ -1433,6 +1433,7 @@ struct RenameTrackView: View {
     @State private var artist = ""
     @State private var editError: String?
     @State private var showReloadConfirmation = false
+    @State private var showCancelConfirmation = false
     @State private var originalRecordingURL: URL?
     @State private var originalTitle = ""
     @State private var originalArtist = ""
@@ -1441,6 +1442,17 @@ struct RenameTrackView: View {
 
     private var cleanTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var cleanArtist: String { artist.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var hasUnsavedChanges: Bool { title != originalTitle || artist != originalArtist }
+
+    // Keep drafts safe when the user leaves the editor via the toolbar.
+    // Cancelling is never a metadata or audio write.
+    private func requestDismissal() {
+        if hasUnsavedChanges {
+            showCancelConfirmation = true
+        } else {
+            dismiss()
+        }
+    }
 
     // A track can disappear while this sheet is open (for example after a
     // library restore). Never silently dismiss an edit that did not apply.
@@ -1556,8 +1568,9 @@ struct RenameTrackView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel", action: requestDismissal)
                         .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityHint(hasUnsavedChanges ? "Review before discarding your unsaved song details" : "Close song editing")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save", action: saveEdit)
@@ -1574,6 +1587,12 @@ struct RenameTrackView: View {
             }
             .onChange(of: title) { _, _ in editError = nil }
             .onChange(of: artist) { _, _ in editError = nil }
+            .alert("Discard changes to this song?", isPresented: $showCancelConfirmation) {
+                Button("Keep editing", role: .cancel) {}
+                Button("Discard changes", role: .destructive) { dismiss() }
+            } message: {
+                Text("Your edited title and artist have not been saved. Keep editing to preserve your draft; discarding will not delete or modify the audio recording.")
+            }
             .confirmationDialog(
                 "Discard your unsaved song edits?",
                 isPresented: $showReloadConfirmation,
