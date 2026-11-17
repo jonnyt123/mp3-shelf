@@ -138,10 +138,12 @@ export async function runCompleteIPhoneJourney({
   if (git(root,'rev-parse','HEAD') !== sha ||
       git(root,'status','--porcelain','--untracked-files=all') !== '')
     throw Error('Refusing to test a dirty or stale native source checkout');
+  console.log('[MP3 Shelf QA] Building and installing the exact source commit '+sha.slice(0,12)+' on the paired iPhone.');
   const signed = await install(root,deviceID,sha);
   if (signed?.sha !== sha || !HASH.test(signed?.signedAppSHA256 ?? ''))
     throw Error('Signed install did not confirm exact source and binary digest');
 
+  console.log('[MP3 Shelf QA] Signed iPhone installation verified; arming the native callback recorder.');
   await phase({phase:'arm',deviceID,bundleID:BUNDLE,playlistID,sha,cwd:root,platform});
   // A playlist must finish saving its downloaded recordings before we
   // request an actual radio-disabled test. Catalog rows are NOT playback
@@ -156,18 +158,25 @@ export async function runCompleteIPhoneJourney({
       lastCount=progress.imported;
     }
     if(progress?.status==='COMPLETE'){complete=true;break;}
+    if(i>0 && i%12===0)
+      console.log('[MP3 Shelf QA] Waiting for complete local Spotify audio ('+(progress?.imported??'?')+'/'+(progress?.total??'?')+'); no offline claim yet.');
     await sleep(5000);
   }
   if(!complete)throw Error('Timed out before the entire playlist was downloaded locally.');
+  console.log('[MP3 Shelf QA] All '+lastCount+' playlist entries have matching catalog records; device audio integrity still needs verification.');
   await offlinePrompt();
+  console.log('[MP3 Shelf QA] Launching a separate real-iPhone process for offline playback.');
   await phase({phase:'offline',deviceID,bundleID:BUNDLE,playlistID,sha,cwd:root,platform});
   let observed = 'WAITING';
   for (let i=0;i<maxChecks;i++) {
     observed=await offlineStatus(deviceID);
     if (observed==='PASS'||observed==='FAILED') break;
+    if(i>0 && i%12===0)
+      console.log('[MP3 Shelf QA] Still checking the on-device playback report; NOT_VERIFIED.');
     await sleep(5000);
   }
   if (observed!=='PASS') throw Error('Physical offline playback was not verified by the app: '+observed);
+  console.log('[MP3 Shelf QA] Offline playback reported success; copying the native evidence and hashing local recordings.');
   const inventory=await phase({phase:'collect',deviceID,bundleID:BUNDLE,playlistID,sha,cwd:root,platform});
   if (inventory?.offlinePlayback!=='APP_INSTRUMENTED_PHYSICAL_PASS' ||
       inventory?.physicalAcceptance!=='INCOMPLETE')
