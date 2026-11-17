@@ -81,3 +81,43 @@ test('status directory symlinks fail closed without modifying outside files',asy
   assert.equal(readFileSync(join(outside,'sentinel'),'utf8'),'preserve');
  }finally{rmSync(home,{recursive:true,force:true});}
 });
+
+test('overlapping hourly invocations cannot execute the native cycle twice',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'mp3-agent-overlap-'));
+ let started=0, release;
+ try{
+  const hold=new Promise(resolve=>{release=resolve});
+  const first=executeNativeAgent({home,root:home,run:async()=>{
+   started++;await hold;return {status:'already-staged',sha};
+  }});
+  // The first invocation synchronously creates its exclusive lock before
+  // yielding to the injected asynchronous native runner.
+  await assert.rejects(executeNativeAgent({home,root:home,run:async()=>{
+   started++;return {status:'already-staged',sha};
+  }}),/NATIVE_CYCLE_ALREADY_RUNNING/);
+  assert.equal(started,1);
+  release();
+  await first;
+  assert.equal(started,1);
+  const next=await executeNativeAgent({home,root:home,run:async()=>{
+   started++;return {status:'already-staged',sha};
+  }});
+  assert.equal(next.status,'COMPLETED');
+  assert.equal(started,2);
+ }finally{release?.();rmSync(home,{recursive:true,force:true});}
+});
+test('existing lock refuses execution without clobbering the prior receipt',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'mp3-agent-lock-'));
+ try{
+  const dir=join(home,'Library','Logs','MP3Shelf','NativeAgent');
+  mkdirSync(dir,{recursive:true});
+  writeFileSync(join(dir,'native-cycle.lock'),'prior process');
+  writeFileSync(join(dir,'latest-run.json'),'prior receipt');
+  let ran=false;
+  await assert.rejects(executeNativeAgent({home,root:home,run:async()=>{
+   ran=true;return {status:'already-staged',sha};
+  }}),/NATIVE_CYCLE_ALREADY_RUNNING/);
+  assert.equal(ran,false);
+  assert.equal(readFileSync(join(dir,'latest-run.json'),'utf8'),'prior receipt');
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
