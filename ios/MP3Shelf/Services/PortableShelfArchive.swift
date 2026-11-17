@@ -593,11 +593,35 @@ enum PortableShelfArchive {
             // Validate the same staged inode after the entire payload pass.
             // Detect concurrent replacement, truncation or metadata changes
             // before linking this archive into the user's backup destination.
-            _ = try archiveIdentity(of: stagedInput, at: staging)
+            let checked = try archiveIdentity(of: stagedInput, at: staging)
+            guard checked.device == staged.sourceIdentity.device,
+                  checked.inode == staged.sourceIdentity.inode,
+                  checked.size == staged.sourceIdentity.size,
+                  checked.modifiedSeconds == staged.sourceIdentity.modifiedSeconds,
+                  checked.modifiedNanoseconds == staged.sourceIdentity.modifiedNanoseconds,
+                  checked.changedSeconds == staged.sourceIdentity.changedSeconds,
+                  checked.changedNanoseconds == staged.sourceIdentity.changedNanoseconds else {
+                throw ArchiveError.invalidFile
+            }
             try stagedInput.close()
         } catch {
             try? stagedInput.close()
             throw error
+        }
+        // Bind the final publication to the exact archive inode validated above.
+        // A pathname replacement between the streaming check and link(2) must
+        // not publish a different backup under the user's chosen filename.
+        let publicationHandle = try FileHandle(forReadingFrom: staging)
+        defer { try? publicationHandle.close() }
+        let publicationIdentity = try archiveIdentity(of: publicationHandle, at: staging)
+        guard publicationIdentity.device == staged.sourceIdentity.device,
+              publicationIdentity.inode == staged.sourceIdentity.inode,
+              publicationIdentity.size == staged.sourceIdentity.size,
+              publicationIdentity.modifiedSeconds == staged.sourceIdentity.modifiedSeconds,
+              publicationIdentity.modifiedNanoseconds == staged.sourceIdentity.modifiedNanoseconds,
+              publicationIdentity.changedSeconds == staged.sourceIdentity.changedSeconds,
+              publicationIdentity.changedNanoseconds == staged.sourceIdentity.changedNanoseconds else {
+            throw ArchiveError.invalidFile
         }
         // Publish without replacing an existing user backup. A fileExists
         // check followed by rename/move is not atomic: another export can
