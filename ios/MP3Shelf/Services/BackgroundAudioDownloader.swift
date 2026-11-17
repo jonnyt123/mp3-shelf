@@ -474,6 +474,11 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
     }
 
+    nonisolated static func mayRetryWithSharedCapacity(hasQueuedLeader: Bool,
+                                                        hasFreeTransferSlot: Bool) -> Bool {
+        hasQueuedLeader || hasFreeTransferSlot
+    }
+
     func canRetry(_ id: UUID) -> Bool {
         guard sourceResolutionTasks[id] == nil, let ticket = tickets[id], let library,
               ticket.status == .failed || ticket.status == .cancelled,
@@ -487,9 +492,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         guard Self.allowedDownloadURL(ticket.downloadURL),
               !isQueued(ticket.requested, for: ticket.playlistID) else { return false }
         // Rejoining an existing transfer consumes no physical download slot.
-        if sharedLeader(for: ticket.requested, sourceURL: ticket.downloadURL,
-                        playlistID: ticket.playlistID) != nil { return true }
-        return BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: activeTransferCount())
+        return Self.mayRetryWithSharedCapacity(
+            hasQueuedLeader: sharedLeader(for: ticket.requested,
+                                          sourceURL: ticket.downloadURL,
+                                          playlistID: ticket.playlistID) != nil,
+            hasFreeTransferSlot: BackgroundDownloadBackpressure.mayEnqueue(
+                outstandingTransfers: activeTransferCount()))
     }
 
     var canRetryFailedDownloads: Bool {
