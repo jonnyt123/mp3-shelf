@@ -1271,6 +1271,30 @@ struct MusicTrackRow: View {
             .accessibilityLabel("More options for \(track.title) by \(track.artist)")
             .accessibilityHint("Favorite, add to playlist, edit, share or delete this download")
         }
+        if isCheckingPlayback {
+            HStack(spacing: 10) {
+                ProgressView()
+                    .accessibilityHidden(true)
+                Text("Checking local recordings…")
+                    .font(.caption)
+                    .foregroundStyle(ShelfTheme.subdued)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button {
+                    playbackCheckTask?.cancel()
+                    playbackCheckTask = nil
+                    isCheckingPlayback = false
+                    playbackNotice = "Playback check cancelled. Your recordings are unchanged."
+                } label: {
+                    Label("Cancel check", systemImage: "xmark.circle")
+                        .font(.caption.weight(.semibold))
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint("Stop checking local recordings without changing saved audio")
+            }
+            .accessibilityElement(children: .contain)
+        }
         if let playbackNotice {
             Text(playbackNotice)
                 .font(.caption)
