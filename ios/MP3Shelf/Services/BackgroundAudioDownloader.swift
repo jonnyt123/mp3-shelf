@@ -904,6 +904,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return true
     }
 
+    /// A terminal failure of the shared source applies to every follower
+    /// using that exact URL. Retrying the same known-bad URL once per playlist
+    /// wastes bandwidth and can repeatedly surface the same invalid bytes.
+    nonisolated static func shouldFailSharedFollower(isQueued: Bool,
+                                                      leaderMatches: Bool) -> Bool {
+        isQueued && leaderMatches
+    }
+
     @discardableResult
     private func setFailed(_ id: UUID, reason: String = "Download or validation failed",
                            allowAlternative: Bool = true, earliestRecovery: Date? = nil) -> Bool {
@@ -928,6 +936,18 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // Keep the original ticket in memory and on disk if persistence fails.
         var updated = tickets
         updated[id] = ticket
+        var failedFollowers: [BackgroundAudioTicket] = []
+        for follower in tickets.values where Self.shouldFailSharedFollower(
+            isQueued: follower.status == .queued,
+            leaderMatches: follower.sharedLeaderID == id) {
+            var failed = follower
+            failed.status = .failed
+            failed.failureReason = failure
+            failed.mayTryAnotherSource = canTryAnotherSource
+            failed.nextRetryAt = earliestRecovery
+            updated[failed.id] = failed
+            failedFollowers.append(failed)
+        }
         do {
             try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
         } catch {
@@ -935,9 +955,15 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return false
         }
         tickets = updated
-        promoteSharedFollowers(of: id)
-        library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
-        if canTryAnotherSource { library?.recoverRecordingSource(after: ticket, notBefore: earliestRecovery) }
+        // Notify each playlist only after the shared terminal transition is
+        // durable. Source discovery may then choose a DIFFERENT URL; no follower
+        // is promoted into another attempt against this known-failed source.
+        for failed in [ticket] + failedFollowers {
+            library?.finishedBackgroundDownload(for: failed.playlistID, succeeded: false)
+            if canTryAnotherSource {
+                library?.recoverRecordingSource(after: failed, notBefore: earliestRecovery)
+            }
+        }
         updatePending()
         return true
     }
