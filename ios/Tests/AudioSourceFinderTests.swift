@@ -1091,6 +1091,33 @@ enum AudioSourceFinderTests {
         verify(restoredSources?.map(\.downloadURL) == deduped.map(\.downloadURL) &&
                restoredSources?.map(\.sourceName) == deduped.map(\.sourceName),
                "verified fallback source URLs and attribution survive app restart")
+        // Replayed Archive metadata rows must not suppress an otherwise exact
+        // original recording, while contradictory evidence must fail closed.
+        let archiveWish = PlaylistWish(title: "Exact Song", artist: "Exact Artist",
+            album: "", spotifyURL: nil, durationSeconds: 180)
+        func archiveFixture(_ rows: String) -> AudioSourceFinder.ArchiveItem? {
+            let json = """
+            {"metadata":{"title":"Exact Song","creator":"Exact Artist"},
+             "files":[\(rows)]}
+            """
+            return try? JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                              from: Data(json.utf8))
+        }
+        let originalRow = #"{"name":"Exact Song.mp3","source":"original","size":"3000000","length":"180"}"#
+        let duplicateArchive = archiveFixture(originalRow + "," + originalRow)
+        verify(duplicateArchive.flatMap {
+            AudioSourceFinder.archiveCandidate($0, identifier: "exact-song", for: archiveWish)
+        } != nil, "identical Archive file rows identify one recording")
+        let conflictingRow = #"{"name":"Exact Song.mp3","source":"original","size":"3000000","length":"120"}"#
+        let contradictoryArchive = archiveFixture(originalRow + "," + conflictingRow)
+        verify(contradictoryArchive.flatMap {
+            AudioSourceFinder.archiveCandidate($0, identifier: "exact-song", for: archiveWish)
+        } == nil, "conflicting duplicate duration evidence cannot auto-select")
+        let differentFile = #"{"name":"Exact Artist - Exact Song.mp3","source":"original","size":"3000000","length":"180"}"#
+        let ambiguousArchive = archiveFixture(originalRow + "," + differentFile)
+        verify(ambiguousArchive.flatMap {
+            AudioSourceFinder.archiveCandidate($0, identifier: "exact-song", for: archiveWish)
+        } == nil, "distinct exact-looking files remain ambiguous")
         print("Audio source discovery validation tests passed")
     }
 }
