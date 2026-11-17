@@ -201,6 +201,39 @@ try sizeCheckpoint.write(to: journal, options: .atomic)
 try complete()
 try check(try Data(contentsOf: journal) == sizeCheckpoint, "size rejection lost valid checkpoint")
 
+// Boundary and hostile-structure checks: a bounded journal may contain a
+// legitimate maximum-sized queue, but must not permit an oversized receipt
+// array, zero-length input, or malformed/truncated JSON to publish a ticket.
+let boundaryEntries = (0..<256).map {
+    Entry(id: "boundary-\($0)", state: .pending, filename: "boundary-\($0).mp3")
+}
+let boundaryReceipts: [String] = []
+try save(Snapshot(entries: boundaryEntries, receipts: boundaryReceipts))
+try check(try load().entries.count == 256, "maximum valid queue rejected")
+let boundaryJournal = try Data(contentsOf: journal)
+let boundaryAudio = try Data(contentsOf: other)
+func expectCorruptJournal(_ bytes: Data, _ reason: String) throws {
+    try bytes.write(to: journal, options: .atomic)
+    do { _ = try load(); try check(false, reason) }
+    catch ReplayError.corrupt {}
+    try check(try Data(contentsOf: other) == boundaryAudio, "invalid journal changed unrelated audio")
+    try check(try Data(contentsOf: dest) == original, "invalid journal changed saved recording")
+    try boundaryJournal.write(to: journal, options: .atomic)
+    try check(try load().entries.count == 256, "invalid journal damaged recoverable queue")
+}
+try expectCorruptJournal(Data(), "empty journal accepted")
+try expectCorruptJournal(Data("{".utf8), "truncated journal accepted")
+try expectCorruptJournal(Data(repeating: 0x20, count: 1_048_576), "maximum-size malformed journal accepted")
+let excessiveReceipts = Snapshot(entries: boundaryEntries, receipts: (0..<257).map { "boundary-\($0)" })
+try expectCorruptJournal(try JSONEncoder().encode(excessiveReceipts), "excessive receipts accepted")
+let duplicateReceipts = Snapshot(entries: [Entry(id: "ticket", state: .imported, filename: "song.mp3")], receipts: ["ticket", "ticket"])
+try expectCorruptJournal(try JSONEncoder().encode(duplicateReceipts), "duplicate receipts accepted")
+let orphanReceipts = Snapshot(entries: boundaryEntries, receipts: ["missing-ticket"])
+try expectCorruptJournal(try JSONEncoder().encode(orphanReceipts), "orphan receipt accepted")
+try sizeCheckpoint.write(to: journal, options: .atomic)
+try complete()
+try check(try Data(contentsOf: journal) == sizeCheckpoint, "boundary test changed prior durable checkpoint")
+
 // A persisted terminal receipt must not mask deletion, substitution, or a
 // symlink introduced between launches. Invalid files must remain untouched.
 try save(Snapshot(entries: [Entry(id: "ticket", state: .imported, filename: "song.mp3")],
