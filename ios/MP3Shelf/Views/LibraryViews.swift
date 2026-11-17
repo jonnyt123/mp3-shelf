@@ -1567,6 +1567,17 @@ struct PlaylistsView: View {
     // A duplicate must be discoverable even when the source was found through
     // a search that excludes the generated copy's name. Keep audio untouched.
     private func copyPlaylist(_ playlist: MusicPlaylist) {
+        guard !library.isImporting else {
+            playlistActionFeedback = "Finish importing audio before copying this playlist."
+            return
+        }
+        guard let current = library.playlists.first(where: { $0.id == playlist.id }),
+              current.name == playlist.name,
+              current.trackIDs == playlist.trackIDs,
+              current.missingTracks == playlist.missingTracks else {
+            playlistActionFeedback = "This playlist changed. Review its latest songs before copying it."
+            return
+        }
         let existingIDs = Set(library.playlists.map(\.id))
         library.duplicatePlaylist(playlist.id)
         if let copy = library.playlists.first(where: { !existingIDs.contains($0.id) }) {
@@ -1583,6 +1594,12 @@ struct PlaylistsView: View {
     private func deleteConfirmedPlaylist() {
         guard let requested = pendingDelete else { return }
         pendingDelete = nil
+        // A confirmation can survive the start of an asynchronous import.
+        // Reject destructive writes until the library has settled.
+        guard !library.isImporting else {
+            playlistActionFeedback = "Finish importing audio, then review this playlist before deleting it. Nothing was deleted."
+            return
+        }
         guard let current = library.playlists.first(where: { $0.id == requested.id }) else {
             playlistActionFeedback = "This playlist is no longer available. Nothing was deleted."
             return
