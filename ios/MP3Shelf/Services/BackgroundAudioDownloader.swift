@@ -243,7 +243,18 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
     /// Resolve follower tickets after a leader is cancelled, fails, or is
     /// replaced. One follower is promoted to the new leader; siblings are
     /// redirected in the same durable manifest transaction.
+    /// Promotion must wait until the previous owner's decoder has released
+    /// its staged file. A cancellation can race a successful library import;
+    /// starting the follower immediately would download the same audio twice.
+    nonisolated static func mayPromoteAfterImport(isProcessing: Bool,
+                                                   hasConversion: Bool) -> Bool {
+        !isProcessing && !hasConversion
+    }
+
     private func promoteSharedFollowers(of leaderID: UUID) {
+        guard Self.mayPromoteAfterImport(
+            isProcessing: processing.contains(leaderID),
+            hasConversion: conversions[leaderID] != nil) else { return }
         let followers = tickets.values.filter {
             $0.status == .queued && $0.sharedLeaderID == leaderID
         }.sorted { $0.id.uuidString < $1.id.uuidString }
@@ -1002,6 +1013,13 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             defer {
                 processing.remove(ticket.id)
                 conversions.removeValue(forKey: ticket.id)
+                // Cancellation may have retired the leader while this import
+                // was still running. Reconcile any successful import first;
+                // only then may an orphaned follower start its own transfer.
+                if tickets[ticket.id]?.status != .queued {
+                    reconcileAlreadyStoredDownloads()
+                    promoteSharedFollowers(of: ticket.id)
+                }
                 revision += 1
             }
             let stagedURL = Self.stagingURL(ticket.id)
