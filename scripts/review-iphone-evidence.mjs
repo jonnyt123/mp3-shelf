@@ -44,10 +44,17 @@ export function independentlyReviewDevice({inventory, signedRecord, inventorySHA
    'Physical iPhone DEBUG player clock advanced after an offline app restart.');
  fail('backgroundCallbacks',inventory?.backgroundTransfer==='APP_RECORDED_STAGING_AND_BACKGROUND_WAKE',
    'Genuine background URLSession staging/wake callback events were correlated.');
- const fields=typeof signedRecord==='string'?Object.fromEntries(
-   [...signedRecord.matchAll(/^- ([\w /-]+): ([^\n\r]+)$/gm)].map(x=>[x[1],x[2].trim()])
- ):{};
- fail('signedMacBuild',fields['Result']==='PASS'&&fields['Mode']==='install'&&
+ // Reject ambiguous QA receipts: duplicate fields could otherwise overwrite a
+ // real FAIL with a forged later PASS when converted with Object.fromEntries.
+ const entries=typeof signedRecord==='string'?
+   [...signedRecord.matchAll(/^- ([\\w /-]+): ([^\\n\\r]+)$/gm)].map(x=>[x[1],x[2].trim()]):[];
+ const required=['Result','Mode','Checked commit','Signed app executable SHA256',
+   'Signature verification','Device app installation','Process launch request'];
+ const fields=Object.fromEntries(entries);
+ const unambiguous=typeof signedRecord==='string'&&
+   entries.length===new Set(entries.map(([key])=>key)).size&&
+   required.every(key=>entries.filter(([name])=>name===key).length===1);
+ fail('signedMacBuild',unambiguous&&fields['Result']==='PASS'&&fields['Mode']==='install'&&
    fields['Checked commit']===expectedSha&&HASH.test(fields['Signed app executable SHA256']??'')&&
    fields['Signature verification']==='PASS'&&fields['Device app installation']==='PASS'&&
    fields['Process launch request']==='PASS',
