@@ -22,8 +22,22 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
     (reportedCandidate !== reportedSource || !SHA.test(reportedCandidate));
   const candidateSha = conflictingSource ? null : (reportedCandidate ?? reportedSource ?? null);
   const validSource = SHA.test(candidateSha ?? '');
-  const verifiedIntegration = !error && !conflictingSource && validSource &&
-    ['already-staged','staged-draft-only'].includes(result?.integration ?? result?.status);
+  // A cycle that reports contradictory integration outcomes is not a
+  // completed release. Reject malformed or inverted clock intervals as well:
+  // the dashboard uses these timestamps to determine evidence freshness.
+  const integrationStates = ['already-staged', 'staged-draft-only'];
+  const declaredIntegration = result?.integration;
+  const declaredStatus = result?.status;
+  const conflictingIntegration = declaredIntegration != null && declaredStatus != null &&
+    declaredIntegration !== declaredStatus &&
+    !(declaredStatus === 'already-staged' && declaredIntegration === 'staged-draft-only');
+  const startTime = Date.parse(startedAt);
+  const finishTime = Date.parse(finishedAt);
+  const validInterval = Number.isFinite(startTime) && Number.isFinite(finishTime) &&
+    finishTime >= startTime;
+  const verifiedIntegration = !error && !conflictingSource && !conflictingIntegration &&
+    validInterval && validSource &&
+    integrationStates.includes(declaredIntegration ?? declaredStatus);
   const status = error ? 'FAILED' : verifiedIntegration ? 'COMPLETED' : 'BLOCKED';
   const categories = ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
     'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
@@ -36,7 +50,7 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
     schema: 'mp3shelf-native-agent-run-v1',
     startedAt, finishedAt,
     status,
-    candidateSha: validSource ? candidateSha : null,
+    candidateSha: validSource && !conflictingIntegration && validInterval ? candidateSha : null,
     integration: verifiedIntegration
       ? (result?.integration ?? result?.status) : 'NOT_VERIFIED',
     packaging,
