@@ -18,11 +18,31 @@ enum AudioSourceFinder {
         }
     }
     private struct SearchResponse: Decodable { let response: SearchBody }
-    private struct SearchBody: Decodable {
+    // Archive indexes occasionally include null or malformed records. Preserve
+    // valid siblings, but retain the raw page count for pagination and budget
+    // accounting: silently shrinking the page could authorize a false unique
+    // automatic match when an uninspected recording was present.
+    struct SearchBody: Decodable {
         let docs: [SearchItem]
         let numFound: Int?
+        let rawItemCount: Int
+
+        private enum CodingKeys: String, CodingKey { case docs, numFound }
+        private struct LossyItem: Decodable {
+            let value: SearchItem?
+            init(from decoder: Decoder) throws {
+                value = try? SearchItem(from: decoder)
+            }
+        }
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            let entries = try fields.decode([LossyItem].self, forKey: .docs)
+            rawItemCount = entries.count
+            docs = entries.compactMap(\.value)
+            numFound = try? fields.decode(Int.self, forKey: .numFound)
+        }
     }
-    private struct SearchItem: Decodable {
+    struct SearchItem: Decodable {
         let identifier: String
         let title: FlexibleText?
         let creator: FlexibleText?
@@ -312,7 +332,7 @@ enum AudioSourceFinder {
             let search: SearchResponse = try await requestJSON(
                 archiveSearchURL(for: wish, page: page),
                 allowsCellular: allowsCellular)
-            let ranked = search.response.docs.prefix(20).enumerated().sorted { left, right in
+            let ranked = search.response.docs.enumerated().sorted { left, right in
                 let l = archiveIndexRelevance(
                     title: left.element.title?.value ?? "",
                     creator: left.element.creator?.value ?? "", for: wish)
@@ -368,7 +388,7 @@ enum AudioSourceFinder {
             // a full page rather than silently authorizing a false match.
             let inspectedThrough = page * 20
             let hasMorePages = search.response.numFound.map { inspectedThrough < $0 }
-                ?? (search.response.docs.count >= 20)
+                ?? (search.response.rawItemCount >= 20)
             if !hasMorePages { break }
             if page == maxArchiveSearchPages {
                 searchIncomplete = true
