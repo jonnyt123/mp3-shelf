@@ -216,7 +216,7 @@ enum AudioSourceFinderTests {
         let hostileWish = PlaylistWish(
             title: #"Song") OR mediatype:movies OR title:("*"#,
             artist: #"Artist" AND identifier:private*"#,
-            album: nil, spotifyURL: nil, durationSeconds: 212)
+            album: "", spotifyURL: nil, durationSeconds: 212)
         let hostileSearch = URLComponents(url: AudioSourceFinder.archiveSearchURL(
             for: hostileWish, page: 1), resolvingAgainstBaseURL: false)!
         let hostileQuery = hostileSearch.queryItems?.first(where: { $0.name == "q" })?.value ?? ""
@@ -227,7 +227,7 @@ enum AudioSourceFinderTests {
                hostileSearch.url?.host == "archive.org",
                "Archive search removes injected field operators and wildcards")
         let unicodeWish = PlaylistWish(title: "Beyoncé – Déjà Vu",
-            artist: "Beyoncé", album: nil, spotifyURL: nil, durationSeconds: nil)
+            artist: "Beyoncé", album: "", spotifyURL: nil, durationSeconds: nil)
         let unicodeQuery = URLComponents(url: AudioSourceFinder.archiveSearchURL(
             for: unicodeWish, page: 1), resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "q" })?.value ?? ""
