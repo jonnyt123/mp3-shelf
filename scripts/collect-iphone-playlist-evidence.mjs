@@ -167,6 +167,12 @@ function runGit(cwd, ...args) {
   return execFileSync('git', ['-C', cwd, ...args],
     { encoding: 'utf8', timeout: 10000, maxBuffer: 100000 }).trim();
 }
+export function exactCleanDeviceSource(cwd, expectedSha, gitReader = runGit) {
+  if (!sha40.test(expectedSha ?? '') || typeof cwd !== 'string' || !cwd)
+    return false;
+  return gitReader(cwd, 'rev-parse', 'HEAD') === expectedSha &&
+    gitReader(cwd, 'status', '--porcelain', '--untracked-files=all') === '';
+}
 function runDeviceJSON(args, root, filename) {
   const destination = join(root, filename);
   execFileSync('xcrun', ['devicectl', ...args, '--json-output', destination],
@@ -179,8 +185,7 @@ export async function captureDevicePlaylist({ deviceID, bundleID, playlistID, ex
   if (platform !== 'darwin') throw Error('REAL_DEVICE_NOT_TESTED: macOS and paired iPhone required');
   if (!safeID.test(deviceID) || !safeBundle.test(bundleID) || !safeID.test(playlistID) ||
       !sha40.test(expectedSha)) throw Error('Invalid device, bundle, playlist or commit identifier');
-  if (runGit(cwd, 'rev-parse', 'HEAD') !== expectedSha ||
-      runGit(cwd, 'status', '--porcelain', '--untracked-files=all') !== '')
+  if (!exactCleanDeviceSource(cwd, expectedSha))
     throw Error('Refusing unclean or wrong-SHA local checkout');
   const temp = mkdtempSync(join(tmpdir(), 'mp3shelf-device-proof-'));
   try {
