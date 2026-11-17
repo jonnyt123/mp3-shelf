@@ -978,6 +978,17 @@ enum PortableShelfArchive {
         // An extraction must never truncate a pre-existing file, including
         // when another writer claims the otherwise random destination name.
         let output = try createExclusiveOutput(at: target)
+        // A failed extraction must not accumulate large orphaned audio files
+        // during disk-full, cancellation, or corrupted-archive retries. Capture
+        // the exclusive output's inode before writing; cleanup must never
+        // unlink a different file substituted at this pathname.
+        let extractionIdentity: ArchiveSourceIdentity
+        do {
+            extractionIdentity = try archiveIdentity(of: output, at: target)
+        } catch {
+            try? output.close()
+            throw error
+        }
         do {
             // A successful write is not a successful extraction until the
             // destination has been flushed and closed. In particular, do not
@@ -1069,12 +1080,11 @@ enum PortableShelfArchive {
             }
             return target
         } catch {
-            // Never unlink by pathname after releasing the descriptor. A
-            // concurrent importer can replace the temporary name while this
-            // task is unwinding; deleting that replacement loses its bytes.
-            // An orphaned UUID-named partial is safer than deleting data we
-            // no longer own. Recovery can reclaim abandoned temporary files
-            // only after establishing their provenance and age.
+            // Close before cleanup so no descriptor keeps the failed output
+            // writable. The ownership check refuses a substituted symlink,
+            // directory, or different inode, preserving unrelated user files.
+            try? output.close()
+            removeOwnedStaging(target, identity: extractionIdentity)
             throw error
         }
     }
