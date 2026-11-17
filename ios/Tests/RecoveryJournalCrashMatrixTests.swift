@@ -160,3 +160,41 @@ for scenario in ["empty-stage", "empty-journal", "symlink-journal", "hardlink-jo
     cases += 1
 }
 print("PASS: \(cases) unsafe recovery scenarios total")
+
+ 
+// Crash replay must not overwrite an already-published recording even when
+// staging changes after publication or an attacker replaces the journal.
+// Preserve the published bytes, foreign bytes, and the recovery evidence.
+for scenario in ["stage-replaced-after-publish", "stage-removed-after-publish",
+                 "journal-replaced-after-publish", "destination-hardlinked-after-publish"] {
+    try reset()
+    try recover()
+    let published = try Data(contentsOf: destination)
+    switch scenario {
+    case "stage-replaced-after-publish":
+        try foreign.write(to: staged)
+    case "stage-removed-after-publish":
+        try fm.removeItem(at: staged)
+    case "journal-replaced-after-publish":
+        let changed = Journal(ticket: "foreign-ticket", stagedName: entry.stagedName,
+                              destinationName: entry.destinationName, length: entry.length)
+        try JSONEncoder().encode(changed).write(to: journal, options: .atomic)
+    default:
+        // A second hardlink to the destination must not permit a replay.
+        let alias = root.appendingPathComponent("published-alias.mp3")
+        try remove(alias)
+        try fm.linkItem(at: destination, to: alias)
+        defer { try? remove(alias) }
+    }
+    var rejected = false
+    do { try recover() } catch { rejected = true }
+    try assertSafe(rejected, "\(scenario): replay accepted")
+    try assertSafe(try Data(contentsOf: destination) == published,
+                   "\(scenario): published audio overwritten")
+    try assertSafe(try Data(contentsOf: other) == foreign,
+                   "\(scenario): foreign audio modified")
+    try assertSafe(fm.fileExists(atPath: journal.path),
+                   "\(scenario): recovery evidence discarded")
+    cases += 1
+}
+print("PASS: \(cases) crash/replay filesystem scenarios total")
