@@ -1457,8 +1457,7 @@ struct RenameTrackView: View {
             return
         }
         guard current.title == track.title,
-              current.artist == track.artist,
-              current.localFileURL == track.localFileURL else {
+              current.artist == track.artist else {
             editError = "This song changed while you were editing. Close this screen and reopen the latest version. Nothing was overwritten."
             return
         }
