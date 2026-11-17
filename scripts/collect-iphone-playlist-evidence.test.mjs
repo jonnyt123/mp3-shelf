@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { physicalIPhone, inspectPlaylistCatalog, installedApp, captureDevicePlaylist, verifyPhysicalDeviceTelemetry } from './collect-iphone-playlist-evidence.mjs';
+import { physicalIPhone, inspectPlaylistCatalog, installedApp, captureDevicePlaylist, verifyPhysicalDeviceTelemetry, exactCleanDeviceSource } from './collect-iphone-playlist-evidence.mjs';
 const id = '12345678-1234-1234-1234-123456789012';
 const playlistID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const playlist = 'https://open.spotify.com/playlist/' + 'A'.repeat(22);
@@ -213,4 +213,23 @@ test('native playback progression event must match the actual observed audio tra
     assert.throws(() => verifyPhysicalDeviceTelemetry(item.proof, item.events,
       playlistID, item.selected), /session|playback|clock|events/);
   }
+});
+
+
+test('native physical evidence uses explicit detached worktree SHA and cleanliness, not tooling cwd', () => {
+  const head='a'.repeat(40);
+  const requests=[];
+  const gitReader=(cwd,...args)=>{
+    requests.push([cwd,...args]);
+    if(args[0]==='rev-parse')return head;
+    if(args[0]==='status')return '';
+    throw Error('Unexpected command');
+  };
+  assert.equal(exactCleanDeviceSource('/isolated/native-candidate',head,gitReader),true);
+  assert.deepEqual(requests.map(args=>args[0]),
+    ['/isolated/native-candidate','/isolated/native-candidate']);
+  assert.equal(exactCleanDeviceSource('/isolated/native-candidate','b'.repeat(40),gitReader),false);
+  assert.equal(exactCleanDeviceSource('/isolated/native-candidate',head,
+    (cwd,cmd)=>cmd==='rev-parse'?head:' M ios/MP3Shelf/MP3ShelfApp.swift'),false);
+  assert.equal(exactCleanDeviceSource('/isolated/native-candidate','bad',gitReader),false);
 });
