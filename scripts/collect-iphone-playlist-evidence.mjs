@@ -163,8 +163,9 @@ async function hashFile(path) {
   for await (const bytes of createReadStream(path, { highWaterMark: 64 * 1024 })) hash.update(bytes);
   return { bytes: stat.size, sha256: hash.digest('hex') };
 }
-function runGit(...args) {
-  return execFileSync('git', args, { encoding: 'utf8', timeout: 10000, maxBuffer: 100000 }).trim();
+function runGit(cwd, ...args) {
+  return execFileSync('git', ['-C', cwd, ...args],
+    { encoding: 'utf8', timeout: 10000, maxBuffer: 100000 }).trim();
 }
 function runDeviceJSON(args, root, filename) {
   const destination = join(root, filename);
@@ -173,12 +174,13 @@ function runDeviceJSON(args, root, filename) {
   if (statSync(destination).size > 2 * 1024 * 1024) throw Error('Device metadata exceeds bounded JSON limit');
   return JSON.parse(readFileSync(destination, 'utf8'));
 }
-export async function captureDevicePlaylist({ deviceID, bundleID, playlistID, expectedSha, output, platform = process.platform }) {
+export async function captureDevicePlaylist({ deviceID, bundleID, playlistID, expectedSha, output,
+  cwd = process.cwd(), platform = process.platform }) {
   if (platform !== 'darwin') throw Error('REAL_DEVICE_NOT_TESTED: macOS and paired iPhone required');
   if (!safeID.test(deviceID) || !safeBundle.test(bundleID) || !safeID.test(playlistID) ||
       !sha40.test(expectedSha)) throw Error('Invalid device, bundle, playlist or commit identifier');
-  if (runGit('rev-parse', 'HEAD') !== expectedSha ||
-      runGit('status', '--porcelain', '--untracked-files=all') !== '')
+  if (runGit(cwd, 'rev-parse', 'HEAD') !== expectedSha ||
+      runGit(cwd, 'status', '--porcelain', '--untracked-files=all') !== '')
     throw Error('Refusing unclean or wrong-SHA local checkout');
   const temp = mkdtempSync(join(tmpdir(), 'mp3shelf-device-proof-'));
   try {
