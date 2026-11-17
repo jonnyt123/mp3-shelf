@@ -150,6 +150,27 @@ enum BackgroundAudioURLPolicyTests {
         }
         guard importRaceCases == 4 else { fatalError("Incomplete import race matrix") }
         print("PASS: 4 cancellation/import race promotion combinations")
+        // On relaunch, a completed URLSession task may have left audio bytes
+        // in staging even though its ticket was cancelled or retired. Do not
+        // promote a follower until staging recovery has inspected those bytes.
+        var stagedRecoveryCases = 0
+        for staged in [false, true] {
+            for processing in [false, true] {
+                for converting in [false, true] {
+                    let expected = !staged && !processing && !converting
+                    guard BackgroundAudioDownloader.mayPromoteAfterStagingRecovery(
+                        hasPredecessorStaging: staged,
+                        isProcessing: processing,
+                        hasConversion: converting) == expected else {
+                        fatalError("Staged predecessor duplicate-transfer regression")
+                    }
+                    stagedRecoveryCases += 1
+                }
+            }
+        }
+        guard stagedRecoveryCases == 8 else { fatalError("Incomplete staging recovery matrix") }
+        print("PASS: 8 staged predecessor promotion safety combinations")
+
         print("PASS: 8 orphan follower promotion eligibility combinations")
         // A leader may retire while a sibling playlist is still loading.
         // Retargeting it is mandatory: dropping it would create a second
