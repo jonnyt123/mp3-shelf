@@ -338,10 +338,25 @@ final class PlaybackController: NSObject, ObservableObject {
         guard let library else { return }
         var nextOrder = playbackOrder
         nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
-        guard let id = nextOrder.previous(loop: loopMode),
-              let target = library.song(with: id) else { return }
-        if id == currentTrackID { seek(to: 0); return }
-        beginPlayback(target, using: nextOrder)
+        // A stale queue entry or a damaged local recording must not strand
+        // Previous. Probe at most one cycle, committing order only when audio
+        // starts; a failed candidate cannot consume shuffle history or stop
+        // the currently audible recording.
+        var attempted: Set<UUID> = []
+        while attempted.count < nextOrder.queueIDs.count {
+            guard let id = nextOrder.previous(loop: loopMode),
+                  attempted.insert(id).inserted else { return }
+            if id == currentTrackID {
+                // No earlier playable entry: restart the current recording
+                // without altering its queue position.
+                seek(to: 0)
+                return
+            }
+            guard let target = library.song(with: id) else { continue }
+            if beginPlayback(target, using: nextOrder) { return }
+        }
+        // Leave the current recording and its playback order intact when
+        // every previous candidate is unavailable.
     }
 
     private func advance(automatically: Bool, crossfading: Bool = false) {
