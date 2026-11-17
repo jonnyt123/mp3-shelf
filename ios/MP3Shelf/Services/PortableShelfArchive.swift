@@ -337,13 +337,23 @@ enum PortableShelfArchive {
     private static func removeOwnedStaging(_ url: URL,
                                            identity: ArchiveSourceIdentity) {
         var named = stat()
+        // The staging identity is captured immediately after O_EXCL creation,
+        // before archive bytes are written. Writing changes size and timestamps,
+        // so comparing the complete snapshot would prevent cleanup of our own
+        // partial file after every successful export and on disk-full failures.
+        // Ownership for cleanup is the original regular-file inode on its
+        // original device; never follow a replacement symlink.
         guard lstat(url.path, &named) == 0,
-              identity.matches(named) else { return }
-        // A second pathname check narrows the replacement window. A fully
-        // race-free unlink would require descriptor-relative filesystem APIs.
+              (named.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              named.st_dev == identity.device,
+              named.st_ino == identity.inode else { return }
+        // Recheck the same inode immediately before best-effort unlink. This
+        // narrows but cannot eliminate a concurrent pathname replacement race.
         var confirmed = stat()
         guard lstat(url.path, &confirmed) == 0,
-              identity.matches(confirmed) else { return }
+              (confirmed.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              confirmed.st_dev == identity.device,
+              confirmed.st_ino == identity.inode else { return }
         try? FileManager.default.removeItem(at: url)
     }
 
