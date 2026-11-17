@@ -484,9 +484,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 MusicMatching.sameRequestedRecording(resolving.requested, ticket.requested)
         }) else { return false }
         if library.hasOfflineRecording(matching: ticket.requested) { return true }
-        return Self.allowedDownloadURL(ticket.downloadURL) &&
-            !isQueued(ticket.requested, for: ticket.playlistID) &&
-            BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: activeTransferCount())
+        guard Self.allowedDownloadURL(ticket.downloadURL),
+              !isQueued(ticket.requested, for: ticket.playlistID) else { return false }
+        // Rejoining an existing transfer consumes no physical download slot.
+        if sharedLeader(for: ticket.requested, sourceURL: ticket.downloadURL,
+                        playlistID: ticket.playlistID) != nil { return true }
+        return BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: activeTransferCount())
     }
 
     var canRetryFailedDownloads: Bool {
@@ -528,6 +531,34 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
         guard Self.allowedDownloadURL(previous.downloadURL),
               !isQueued(previous.requested, for: previous.playlistID) else { return }
+        // Batch retry must reattach a playlist to an identical queued leader
+        // instead of scheduling a second physical download for the same URL.
+        if let leader = sharedLeader(for: previous.requested,
+                                     sourceURL: previous.downloadURL,
+                                     playlistID: previous.playlistID) {
+            var follower = BackgroundAudioTicket(
+                id: UUID(), playlistID: previous.playlistID,
+                requested: previous.requested, downloadURL: previous.downloadURL,
+                sourcePage: previous.sourcePage, licensePage: previous.licensePage,
+                provider: previous.provider)
+            follower.startedAt = .now
+            follower.sharedLeaderID = leader.id
+            var retired = previous
+            retired.status = .cancelled
+            retired.failureReason = "Replaced by shared transfer"
+            var updated = tickets
+            updated[id] = retired
+            updated[follower.id] = follower
+            do {
+                try BackgroundTicketManifestPolicy.write(Array(updated.values), to: manifestURL)
+            } catch {
+                noteQueueWriteFailure(error, for: id)
+                return
+            }
+            tickets = updated
+            updatePending()
+            return
+        }
         if let videoID = AudioSourceLinks.youtubeVideoID(previous.sourcePage) {
             retryResolvedRecording(previous, videoID: videoID)
             return
