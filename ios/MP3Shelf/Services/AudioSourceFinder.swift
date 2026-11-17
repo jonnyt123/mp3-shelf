@@ -336,6 +336,13 @@ enum AudioSourceFinder {
             let search: SearchResponse = try await requestJSON(
                 archiveSearchURL(for: wish, page: page),
                 allowsCellular: allowsCellular)
+            // A malformed search row can conceal another exact recording. Do not
+            // turn a lossy page into a falsely unique automatic selection.
+            // Preserve a retryable incomplete-search result even when a valid
+            // candidate appears in the remaining rows.
+            if search.response.docs.count != search.response.rawItemCount {
+                searchIncomplete = true
+            }
             let ranked = search.response.docs.enumerated().sorted { left, right in
                 let l = archiveIndexRelevance(
                     title: left.element.title?.value ?? "",
