@@ -361,10 +361,22 @@ final class PlaybackController: NSObject, ObservableObject {
             return
         }
         guard let target = library.song(with: nextID) else {
-            // A track can disappear from the library after the queue snapshot.
-            // A speculative crossfade must never silence its playable source.
-            // Likewise a manual Next must not erase the listener's position.
-            if automatically && !crossfading { stop() }
+            // A track can disappear after the queue snapshot. Preserve the
+            // outgoing source for manual Next and speculative crossfades.
+            // At natural completion, continue to later available recordings.
+            guard automatically && !crossfading else { return }
+            var attempted: Set<UUID> = [nextID]
+            while attempted.count < nextOrder.queueIDs.count {
+                guard let candidateID = nextOrder.next(automatic: true, loop: loopMode),
+                      !attempted.contains(candidateID) else { break }
+                attempted.insert(candidateID)
+                guard let candidate = library.song(with: candidateID) else { continue }
+                if beginPlayback(candidate, using: nextOrder,
+                                 preserveExistingOnFailure: false) { return }
+            }
+            // A disappeared entry cannot be retried until it returns to the
+            // library; end the session if no playable successor was found.
+            if failedTrackID == nil { stop() }
             return
         }
         if nextID == currentTrackID { seek(to: 0); resume(); return }
