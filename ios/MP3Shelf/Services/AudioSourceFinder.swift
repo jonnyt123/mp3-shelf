@@ -400,7 +400,19 @@ enum AudioSourceFinder {
         guard safeIdentifier(identifier), let metadata = item.metadata else { return nil }
         let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
         let originals = audioFiles.filter { $0.source == "original" }
-        let eligible = originals.isEmpty ? audioFiles : originals
+        let rawEligible = originals.isEmpty ? audioFiles : originals
+        // Duplicate catalog rows do not create additional recordings. Count
+        // distinct physical filenames before applying single-track metadata
+        // rules, but reject conflicting evidence rather than trusting row order.
+        let grouped = Dictionary(grouping: rawEligible, by: { $0.name })
+        guard grouped.values.allSatisfy({ rows in
+            guard let first = rows.first else { return false }
+            return rows.allSatisfy {
+                $0.source == first.source && $0.size == first.size &&
+                $0.length == first.length
+            }
+        }) else { return nil }
+        let eligible = grouped.keys.sorted().compactMap { grouped[$0]?.first }
         let matches = eligible.filter { file in
             archiveFileCandidate(name: file.name, source: file.source, sizeBytes: file.size,
                                  itemTitle: metadata.title?.value ?? "",
