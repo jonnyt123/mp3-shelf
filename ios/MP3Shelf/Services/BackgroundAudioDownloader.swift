@@ -396,7 +396,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         if library.hasOfflineRecording(matching: ticket.requested) { return true }
         return Self.allowedDownloadURL(ticket.downloadURL) &&
             !isQueued(ticket.requested, for: ticket.playlistID) &&
-            BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: pendingCount())
+            BackgroundDownloadBackpressure.mayEnqueue(outstandingTransfers: activeTransferCount())
     }
 
     var canRetryFailedDownloads: Bool {
@@ -526,9 +526,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
     }
 
+    /// Only daemon-owning leaders and unresolved source searches occupy
+    /// transfer capacity. Follower requests still count toward UI progress.
+    nonisolated static func physicalTransferCount(queuedLeaderCount: Int,
+                                                   sourceSearchCount: Int) -> Int {
+        max(0, queuedLeaderCount) + max(0, sourceSearchCount)
+    }
+
     private func activeTransferCount() -> Int {
-        tickets.values.filter { $0.status == .queued && $0.sharedLeaderID == nil }.count
-            + sourceResolutionTasks.count
+        Self.physicalTransferCount(
+            queuedLeaderCount: tickets.values.filter {
+                $0.status == .queued && $0.sharedLeaderID == nil
+            }.count,
+            sourceSearchCount: sourceResolutionTasks.count)
     }
 
     func pendingCount(for playlistID: UUID? = nil) -> Int {
