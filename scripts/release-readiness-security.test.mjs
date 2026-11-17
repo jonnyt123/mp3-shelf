@@ -64,3 +64,21 @@ test('missing or mismatched native wrapper remains unverified',()=>{
   assert.match(gate.details,/No complete native wrapper summary/);
  }
 });
+
+test('Mac agent completion is current only for exact SHA, valid schema and fresh chronology',()=>{
+ const sha='a'.repeat(40), now=Date.parse('2026-11-17T05:00:00Z');
+ const valid={schema:'mp3shelf-native-agent-run-v1',candidateSha:sha,
+   status:'COMPLETED',startedAt:'2026-11-17T04:58:00Z',finishedAt:'2026-11-17T04:59:00Z'};
+ const state=agent=>readinessModel({candidateSha:sha,agent,now}).gates.find(g=>g.key==='agent').status;
+ assert.equal(state(valid),'PASS');
+ for(const agent of [
+   {...valid,candidateSha:'b'.repeat(40)},
+   {...valid,schema:'untrusted'},
+   {...valid,finishedAt:'2026-11-18T05:00:00Z'},
+   {...valid,finishedAt:'2026-11-16T04:59:00Z'},
+   {...valid,startedAt:'2026-11-17T05:01:00Z'},
+   {...valid,finishedAt:'not-a-date'},
+   {...valid,status:'BLOCKED'}
+ ])assert.equal(state(agent),'UNVERIFIED');
+ assert.equal(state({...valid,status:'FAILED'}),'BLOCKED');
+});
