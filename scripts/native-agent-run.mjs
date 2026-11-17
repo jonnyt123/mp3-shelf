@@ -20,8 +20,7 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
   const candidateSha = result?.candidateSha ?? result?.sha ?? null;
   const categories = ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
     'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
-  const packaging = typeof result?.packaging === 'string' &&
-    (categories.includes(result.packaging) || /^[A-Z_]+$/.test(result.packaging))
+  const packaging = categories.includes(result?.packaging)
     ? result.packaging : 'NOT_VERIFIED';
   // Arbitrary compiler/CLI errors may contain credentials, paths or user data.
   // Persist only a bounded, fixed category; raw diagnostics remain local.
@@ -34,7 +33,9 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
     integration: ['already-staged','staged-draft-only'].includes(result?.integration ?? result?.status)
       ? (result?.integration ?? result?.status) : 'NOT_VERIFIED',
     packaging,
-    delivery: ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(result?.delivery)
+    delivery: !error && SHA.test(candidateSha ?? '') &&
+      ['already-staged','staged-draft-only'].includes(result?.integration ?? result?.status) &&
+      ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(result?.delivery)
       ? result.delivery : 'NOT_VERIFIED',
     failureReason: reason,
     // Staging metadata is not a cryptographically verified native receipt.
