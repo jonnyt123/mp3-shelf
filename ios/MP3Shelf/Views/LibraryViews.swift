@@ -57,10 +57,16 @@ struct LibraryView: View {
     // Keep the user's original Play/Shuffle intent for a safe, explicit retry.
     @State private var bulkRetryShuffle: Bool?
 
+    // Import completion is asynchronous: never scan or queue a file while the
+    // importer may still be replacing it on disk.
+    private var audioImportBusy: Bool {
+        importInProgress || library.isImporting || showFilePicker
+    }
+
     // Recently added artwork must observe the same missing-file safety rule
     // as a normal library row. Never perform coordinated file I/O on the UI actor.
     private func playRecentRecording(_ track: MusicTrack) {
-        guard scenePhase == .active, recentPlaybackCheck == nil else { return }
+        guard scenePhase == .active, !audioImportBusy, recentPlaybackCheck == nil else { return }
         let generation = UUID()
         recentPlaybackGeneration = generation
         recentPlaybackCheck = track.id
@@ -102,7 +108,7 @@ struct LibraryView: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled, scenePhase == .active,
+            guard !Task.isCancelled, scenePhase == .active, !audioImportBusy,
                   recentPlaybackGeneration == generation else { return }
             recentPlaybackGeneration = nil
             recentPlaybackCheck = nil
@@ -175,7 +181,7 @@ struct LibraryView: View {
     // preparation before presenting it: a slow disk scan must not start audio
     // behind the picker while the user is choosing a replacement recording.
     private func presentAudioImporter() {
-        guard !library.isImporting, !importInProgress, !showFilePicker else { return }
+        guard !audioImportBusy else { return }
         cancelRecentPlaybackPreparation(showFeedback: true)
         cancelBulkPlaybackPreparation(showFeedback: true)
         showFilePicker = true
@@ -208,7 +214,7 @@ struct LibraryView: View {
     }
 
     private func retryRecentRecording() {
-        guard let selection = recentRetrySelection else { return }
+        guard !audioImportBusy, let selection = recentRetrySelection else { return }
         let candidates = recentlyAdded.filter { $0.id == selection.id }
         // Prefer the exact recording originally selected. After a successful
         // reimport, its URL may change; accept that replacement only if the ID
@@ -375,7 +381,7 @@ struct LibraryView: View {
         }
         .buttonStyle(.bordered)
         .tint(ShelfTheme.accent)
-        .disabled(!hasResults || isSearchUpdating || bulkPlaybackPending)
+        .disabled(!hasResults || isSearchUpdating || bulkPlaybackPending || audioImportBusy)
     }
 
     @ViewBuilder private var browsingActions: some View {
@@ -413,7 +419,7 @@ struct LibraryView: View {
                     if let retryShuffle = bulkRetryShuffle, !bulkPlaybackPending {
                         // A changed search or Favorites filter can leave no
                         // playable selection. Never offer a silent no-op Retry.
-                        let canRetry = scenePhase == .active && !isSearchUpdating && !displayed.isEmpty
+                        let canRetry = scenePhase == .active && !audioImportBusy && !isSearchUpdating && !displayed.isEmpty
                         if canRetry {
                             Button {
                                 playDisplayed(shuffled: retryShuffle)
@@ -440,7 +446,7 @@ struct LibraryView: View {
                                 .frame(minHeight: 44, alignment: .leading)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(library.isImporting)
+                        .disabled(audioImportBusy)
                         .accessibilityHint("Choose existing audio recordings from Files, then retry playback")
                     }
                 }
@@ -452,7 +458,7 @@ struct LibraryView: View {
     // Validate the whole playback queue off the main actor. A missing local
     // recording must not be selected by Play results or Shuffle results.
     private func playDisplayed(shuffled: Bool) {
-        guard scenePhase == .active, !isSearchUpdating, !bulkPlaybackPending else { return }
+        guard scenePhase == .active, !audioImportBusy, !isSearchUpdating, !bulkPlaybackPending else { return }
         let songs = displayed
         guard !songs.isEmpty else { return }
         // A search, filter, sort or library edit during disk I/O invalidates
@@ -489,7 +495,7 @@ struct LibraryView: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled, scenePhase == .active,
+            guard !Task.isCancelled, scenePhase == .active, !audioImportBusy,
                   bulkPlaybackGeneration == generation else { return }
             bulkPlaybackGeneration = nil
             bulkPlaybackPending = false
@@ -813,7 +819,7 @@ struct LibraryView: View {
                                                 .frame(minHeight: 44, alignment: .leading)
                                         }
                                         .buttonStyle(.bordered)
-                                        .disabled(library.isImporting)
+                                        .disabled(audioImportBusy)
                                         .accessibilityHint("Choose a replacement audio file from Files, then retry the recording")
                                     }
                                 }
