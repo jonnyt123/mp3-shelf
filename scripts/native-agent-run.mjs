@@ -1,0 +1,76 @@
+#!/usr/bin/env node
+/**
+ * LaunchAgent entrypoint: execute the existing exact-SHA native release cycle
+ * and atomically publish honest last-run diagnostics. No GitHub Actions.
+ */
+import { mkdirSync, writeFileSync, renameSync, lstatSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import { runNativeReleaseCycle } from './native-release-cycle.mjs';
+
+const SHA = /^[0-9a-f]{40}$/;
+export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
+  const status = error ? 'FAILED' :
+    ['already-staged','staged-draft-only'].includes(result?.integration) ||
+    ['already-staged','staged-draft-only'].includes(result?.status)
+      ? 'COMPLETED' : 'BLOCKED';
+  const candidateSha = result?.candidateSha ?? result?.sha ?? null;
+  const categories = ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
+    'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
+  const packaging = typeof result?.packaging === 'string' &&
+    (categories.includes(result.packaging) || /^[A-Z_]+$/.test(result.packaging))
+    ? result.packaging : 'NOT_VERIFIED';
+  const reason = error ? String(error.message || error).slice(0, 450)
+    .replace(/(?:\/Users\/|\/private\/|\/tmp\/)[^\s;]*/g, '[private path]') : null;
+  return {
+    schema: 'mp3shelf-native-agent-run-v1',
+    startedAt, finishedAt,
+    status,
+    candidateSha: SHA.test(candidateSha ?? '') ? candidateSha : null,
+    integration: result?.integration ?? result?.status ?? 'NOT_VERIFIED',
+    packaging,
+    delivery: result?.delivery ?? 'NOT_VERIFIED',
+    failureReason: reason,
+    xcodeVerification: result?.status === 'staged-draft-only' ||
+      result?.status === 'verified-not-staged' ||
+      result?.integration === 'staged-draft-only' ? 'LOCAL_NATIVE_RECEIPT_RECORDED'
+      : 'NOT_VERIFIED',
+    physicalIPhoneAcceptance: 'REQUIRES_SEPARATE_REAL_DEVICE_REVIEW',
+    githubActions: 'NOT_INVOKED'
+  };
+}
+export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
+  run=runNativeReleaseCycle, now=()=>new Date() } = {}) {
+  const startedAt=now().toISOString();
+  let result=null, failure=null;
+  try { result=await run({repo:resolve(root),home}); }
+  catch(error){ failure=error; }
+  const record=nativeAgentRunRecord({startedAt,finishedAt:now().toISOString(),result,error:failure});
+  const destination=join(home,'Library','Logs','MP3Shelf','NativeAgent');
+  try {
+    mkdirSync(destination,{recursive:true,mode:0o700});
+    const state=join(destination,'latest-run.json');
+    let old=null;
+    try {old=lstatSync(state);}catch(e){if(e.code!=='ENOENT')throw e;}
+    if(old && (!old.isFile() || old.isSymbolicLink() || old.nlink!==1))
+      throw Error('Native agent status destination was redirected');
+    const temp=join(destination,'.latest-run-'+randomUUID()+'.tmp');
+    writeFileSync(temp,JSON.stringify(record,null,2)+'\n',{flag:'wx',mode:0o600});
+    renameSync(temp,state);
+  } catch(error) {
+    if(failure) throw new AggregateError([failure,error],
+      'Native run failed and status receipt was not saved');
+    throw error;
+  }
+  if(failure)throw failure;
+  return record;
+}
+if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
+  const [root,...rest]=process.argv.slice(2);
+  if(rest.length){console.error('Usage: node scripts/native-agent-run.mjs [REPOSITORY]');process.exitCode=2;}
+  else executeNativeAgent({root})
+    .then(record=>console.log(JSON.stringify(record,null,2)))
+    .catch(error=>{console.error('MP3_SHELF_NATIVE_AGENT_BLOCKED: '+error.message);process.exitCode=1;});
+}
