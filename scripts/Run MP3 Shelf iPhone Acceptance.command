@@ -89,4 +89,8 @@ git -C "$ROOT" worktree add --detach "$WORKTREE" "$SOURCE_SHA"
 echo "Building, installing and verifying candidate $SOURCE_SHA."
 echo "Airplane Mode with Wi-Fi off is the only physical network action required when prompted."
 node "$ROOT/scripts/run-iphone-playlist-acceptance.mjs" "$DEVICE_ID" "$PLAYLIST" "$SOURCE_SHA" "$WORKTREE"
-echo "Read-only physical QA finished. Issue #6 still requires independent hardware review."
+echo "Reviewing collected iPhone audio hashes and signed-build evidence. This is not hardware approval."
+node "$ROOT/scripts/review-iphone-evidence.mjs" \
+  "$HOME/Library/Logs/MP3Shelf/DeviceAcceptance/$SOURCE_SHA/physical-inventory.json" \
+  "$WORKTREE/ios/build/iphone-device/QA_RECORD.md" "$SOURCE_SHA"
+echo "Independent automated evidence review recorded. Issue #6 still requires owner hardware acceptance."
