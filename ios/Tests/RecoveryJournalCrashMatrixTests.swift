@@ -98,3 +98,55 @@ try assertSafe(replayRejected, "crash replay overwrote published destination")
 try assertSafe(try Data(contentsOf: destination) == audio, "replay modified published audio")
 try assertSafe(fm.fileExists(atPath: journal.path), "replay discarded journal")
 print("PASS: \(cases) unsafe recovery cases, successful copy, crash replay protection")
+
+ 
+// Additional independent fail-closed publication matrix. These scenarios are
+// deliberately filesystem-backed, not a substitute for URLSession integration.
+for scenario in ["empty-stage", "empty-journal", "symlink-journal", "hardlink-journal",
+                 "directory-journal", "directory-destination", "hardlink-destination",
+                 "wrong-ticket", "wrong-length", "absolute-stage", "nested-destination"] {
+    try reset()
+    switch scenario {
+    case "empty-stage": try Data().write(to: staged)
+    case "empty-journal": try Data().write(to: journal)
+    case "symlink-journal":
+        try remove(journal)
+        try fm.createSymbolicLink(at: journal, withDestinationURL: other)
+    case "hardlink-journal":
+        try remove(journal)
+        try fm.linkItem(at: other, to: journal)
+    case "directory-journal":
+        try remove(journal)
+        try fm.createDirectory(at: journal, withIntermediateDirectories: false)
+    case "directory-destination":
+        try fm.createDirectory(at: destination, withIntermediateDirectories: false)
+    case "hardlink-destination":
+        try fm.linkItem(at: other, to: destination)
+    default:
+        let changed: Journal
+        switch scenario {
+        case "wrong-ticket":
+            changed = Journal(ticket: "ticket-2", stagedName: entry.stagedName,
+                              destinationName: entry.destinationName, length: entry.length)
+        case "wrong-length":
+            changed = Journal(ticket: entry.ticket, stagedName: entry.stagedName,
+                              destinationName: entry.destinationName, length: entry.length + 1)
+        case "absolute-stage":
+            changed = Journal(ticket: entry.ticket, stagedName: "/tmp/staged.mp3",
+                              destinationName: entry.destinationName, length: entry.length)
+        default:
+            changed = Journal(ticket: entry.ticket, stagedName: entry.stagedName,
+                              destinationName: "nested/destination.mp3", length: entry.length)
+        }
+        try JSONEncoder().encode(changed).write(to: journal, options: .atomic)
+    }
+    var rejected = false
+    do { try recover() } catch { rejected = true }
+    try assertSafe(rejected, "\(scenario): invalid recovery accepted")
+    try assertSafe(try Data(contentsOf: other) == foreign,
+                   "\(scenario): unrelated bytes modified")
+    try assertSafe(try Data(contentsOf: staged) == audio,
+                   "\(scenario): staged bytes consumed or modified")
+    cases += 1
+}
+print("PASS: \(cases) unsafe recovery scenarios total")
