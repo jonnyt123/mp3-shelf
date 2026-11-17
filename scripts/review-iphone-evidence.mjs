@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 const SHA=/^[0-9a-f]{40}$/;
 const HASH=/^[0-9a-f]{64}$/;
 const UUID=/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
-function safeFile(path,max=2*1024*1024) {
+function safeFile(path,max=16*1024*1024) {
  const s=lstatSync(path);
  if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size<1||s.size>max)
    throw Error('Unsafe or oversized device evidence file');
