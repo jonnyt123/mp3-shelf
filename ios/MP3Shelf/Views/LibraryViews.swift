@@ -217,7 +217,10 @@ struct LibraryView: View {
     }
 
     private func retryRecentRecording() {
-        guard !audioImportBusy, let selection = recentRetrySelection else { return }
+        // The retry button must not silently do nothing while the app is
+        // backgrounded or another file scan is still preparing playback.
+        guard scenePhase == .active, !audioImportBusy,
+              recentPlaybackCheck == nil, let selection = recentRetrySelection else { return }
         let candidates = recentlyAdded.filter { $0.id == selection.id }
         // Prefer the exact recording originally selected. After a successful
         // reimport, its URL may change; accept that replacement only if the ID
@@ -809,6 +812,13 @@ struct LibraryView: View {
                                         .fixedSize(horizontal: false, vertical: true)
                                         .accessibilityAddTraits(.updatesFrequently)
                                     if recentRetrySelection != nil && recentPlaybackCheck == nil {
+                                        if audioImportBusy {
+                                            Label("Finish importing audio before retrying playback.", systemImage: "clock")
+                                                .font(.footnote)
+                                                .foregroundStyle(ShelfTheme.subdued)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                                .accessibilityAddTraits(.updatesFrequently)
+                                        }
                                         Button {
                                             retryRecentRecording()
                                         } label: {
@@ -816,9 +826,10 @@ struct LibraryView: View {
                                                 .frame(minHeight: 44, alignment: .leading)
                                         }
                                         .buttonStyle(.bordered)
-                                        .accessibilityHint("Rechecks the current local recording, including a restored file, without downloading audio")
-                                    }
-                                    if recentRetrySelection != nil && recentPlaybackCheck == nil {
+                                        .disabled(audioImportBusy || scenePhase != .active)
+                                        .accessibilityHint(audioImportBusy
+                                            ? "Wait for the local audio import to finish"
+                                            : "Recheck the restored local recording without downloading audio")
                                         Button {
                                             presentAudioImporter()
                                         } label: {
@@ -826,8 +837,10 @@ struct LibraryView: View {
                                                 .frame(minHeight: 44, alignment: .leading)
                                         }
                                         .buttonStyle(.bordered)
-                                        .disabled(audioImportBusy)
-                                        .accessibilityHint("Choose a replacement audio file from Files, then retry the recording")
+                                        .disabled(audioImportBusy || scenePhase != .active)
+                                        .accessibilityHint(audioImportBusy
+                                            ? "Wait for the current import to finish"
+                                            : "Choose a replacement audio file from Files, then retry the recording")
                                     }
                                 }
                             }
