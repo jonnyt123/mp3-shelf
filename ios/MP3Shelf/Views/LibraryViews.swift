@@ -1432,6 +1432,7 @@ struct RenameTrackView: View {
     @State private var title = ""
     @State private var artist = ""
     @State private var editError: String?
+    @State private var showReloadConfirmation = false
     @State private var originalRecordingURL: URL?
     @State private var originalTitle = ""
     @State private var originalArtist = ""
@@ -1532,10 +1533,16 @@ struct RenameTrackView: View {
                         Button("Try saving again", action: saveEdit)
                             .disabled(cleanTitle.isEmpty || library.isImporting || scenePhase != .active)
                             .frame(minHeight: 44)
-                        Button("Reload latest song details", action: reloadCurrentSong)
+                        Button("Reload latest song details") {
+                            if title != originalTitle || artist != originalArtist {
+                                showReloadConfirmation = true
+                            } else {
+                                reloadCurrentSong()
+                            }
+                        }
                             .disabled(library.isImporting || scenePhase != .active)
                             .frame(minHeight: 44)
-                            .accessibilityHint("Discard this draft and load the current title and artist from your library")
+                            .accessibilityHint("Review the latest library metadata; unsaved edits require confirmation")
                             .accessibilityIdentifier("edit-song-reload-latest")
                     }
                 }
@@ -1567,6 +1574,18 @@ struct RenameTrackView: View {
             }
             .onChange(of: title) { _, _ in editError = nil }
             .onChange(of: artist) { _, _ in editError = nil }
+            .confirmationDialog(
+                "Discard your unsaved song edits?",
+                isPresented: $showReloadConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Discard edits and reload", role: .destructive) {
+                    reloadCurrentSong()
+                }
+                Button("Keep editing", role: .cancel) {}
+            } message: {
+                Text("Reloading replaces your draft title and artist with the latest library details. Your audio recording will not be changed.")
+            }
         }
     }
 }
