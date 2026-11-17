@@ -342,13 +342,31 @@ final class PlaybackController: NSObject, ObservableObject {
         // Previous. Probe at most one cycle, committing order only when audio
         // starts; a failed candidate cannot consume shuffle history or stop
         // the currently audible recording.
+        // Failed candidates must not replace the retry identity or error of
+        // an already audible recording. Preserve the original state until a
+        // candidate actually starts; successful beginPlayback clears it.
+        let originalError = playbackError
+        let originalFailedTrackID = failedTrackID
+        let originalFailedOrder = failedPlaybackOrder
+        let originalWasAudible = audioPlayer?.isPlaying == true
+        func restoreAudibleState() {
+            guard originalWasAudible, audioPlayer?.isPlaying == true else { return }
+            playbackError = originalError
+            failedTrackID = originalFailedTrackID
+            failedPlaybackOrder = originalFailedOrder
+            updateNowPlaying()
+        }
         var attempted: Set<UUID> = []
         while attempted.count < nextOrder.queueIDs.count {
             guard let id = nextOrder.previous(loop: loopMode),
-                  attempted.insert(id).inserted else { return }
+                  attempted.insert(id).inserted else {
+                restoreAudibleState()
+                return
+            }
             if id == currentTrackID {
                 // No earlier playable entry: restart the current recording
                 // without altering its queue position.
+                restoreAudibleState()
                 seek(to: 0)
                 return
             }
@@ -357,6 +375,7 @@ final class PlaybackController: NSObject, ObservableObject {
         }
         // Leave the current recording and its playback order intact when
         // every previous candidate is unavailable.
+        restoreAudibleState()
     }
 
     private func advance(automatically: Bool, crossfading: Bool = false) {
