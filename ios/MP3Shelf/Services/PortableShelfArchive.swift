@@ -1106,12 +1106,37 @@ enum PortableShelfArchive {
               expected.changedNanoseconds == prepublication.changedNanoseconds else {
             throw ArchiveError.invalidFile
         }
+        // A concurrent rename can substitute the staging pathname after byte
+        // verification. Refuse to publish a different inode, even when its
+        // length and timestamps happen to match the verified sidecar.
+        let linkingIdentity = try archiveIdentity(of: published, at: staging)
+        guard linkingIdentity.device == expected.device,
+              linkingIdentity.inode == expected.inode,
+              linkingIdentity.size == expected.size,
+              linkingIdentity.modifiedSeconds == expected.modifiedSeconds,
+              linkingIdentity.modifiedNanoseconds == expected.modifiedNanoseconds,
+              linkingIdentity.changedSeconds == expected.changedSeconds,
+              linkingIdentity.changedNanoseconds == expected.changedNanoseconds else {
+            throw ArchiveError.invalidFile
+        }
         // link(2) publishes without replacing existing destinations.
         try manager.linkItem(at: staging, to: destination)
-        // Release the staging directory entry before executing the callback,
-        // avoiding a late defer that could delete another writer's replacement.
-        // A failed unlink is deliberately nonfatal: preserving bytes is safer.
-        try? manager.removeItem(at: staging)
+        // The new destination must still refer to the verified inode before
+        // any caller-supplied validation or catalog publication is attempted.
+        // Do not delete a destination on mismatch: it may belong to a writer.
+        let linkedIdentity = try archiveIdentity(of: published, at: destination)
+        guard linkedIdentity.device == expected.device,
+              linkedIdentity.inode == expected.inode,
+              linkedIdentity.size == expected.size,
+              linkedIdentity.modifiedSeconds == expected.modifiedSeconds,
+              linkedIdentity.modifiedNanoseconds == expected.modifiedNanoseconds,
+              linkedIdentity.changedSeconds == expected.changedSeconds,
+              linkedIdentity.changedNanoseconds == expected.changedNanoseconds else {
+            throw ArchiveError.invalidFile
+        }
+        // Cleanup must never unlink a substituted staging pathname. A failed
+        // cleanup is nonfatal; an orphan is preferable to losing another file.
+        removeOwnedStaging(staging, identity: expected)
         // Validate the published destination against the retained descriptor.
         // Never unlink the destination on cancellation or validation failure.
         try validate()
