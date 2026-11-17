@@ -99,7 +99,7 @@ test('plausible local metadata cannot authorize ZIP or draft-smoke transport',()
  const smoke={toolingSha:tooling,deleted:true,createdAt:'2026-11-17T11:00:00Z'};
  const model=readinessModel({candidateSha:sha,toolingSha:tooling,release,smoke,now});
  assert.equal(model.gates.find(g=>g.key==='smoke').status,'UNVERIFIED');
- assert.equal(model.gates.find(g=>g.key==='zip').status,'UNVERIFIED');
+ assert.equal(model.gates.find(g=>g.key==='zip').status,'BLOCKED');
  assert.equal(model.status,'NOT_RELEASE_READY');
  assert(model.blocking.includes('zip'));
  assert(model.blocking.includes('smoke'));
