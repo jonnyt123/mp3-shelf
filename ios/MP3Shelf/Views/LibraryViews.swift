@@ -1734,15 +1734,40 @@ struct PlaylistsView: View {
                 let name = renamedName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return }
                 if let playlist = pendingRename {
-                    library.renamePlaylist(playlist.id, to: name)
-                    if library.playlists.first(where: { $0.id == playlist.id })?.name == name {
+                    // A rename sheet can remain open while an import or another
+                    // editor changes the playlist. Do not overwrite newer work.
+                    guard !library.isImporting else {
+                        playlistActionFeedback = "Wait for the audio import to finish, then review this playlist before renaming."
+                        pendingRename = nil
+                        return
+                    }
+                    guard let current = library.playlists.first(where: { $0.id == playlist.id }) else {
+                        playlistActionFeedback = "This playlist was removed while editing. Nothing was renamed."
+                        pendingRename = nil
+                        return
+                    }
+                    guard current.name == playlist.name,
+                          current.trackIDs == playlist.trackIDs,
+                          current.missingTracks == playlist.missingTracks else {
+                        playlistActionFeedback = "This playlist changed while editing. Open it again to review the latest songs before renaming."
+                        pendingRename = nil
+                        return
+                    }
+                    if current.name == name {
                         revealPlaylists()
                         failedPlaylistEdit = nil
-                        playlistActionFeedback = "Renamed playlist to \(name)."
+                        playlistActionFeedback = "Playlist name is already up to date."
                     } else {
-                        failedPlaylistEdit = .rename(id: playlist.id)
-                        playlistActionFeedback = library.libraryStorageError
-                            ?? "Could not rename this playlist. Its previous name was preserved."
+                        library.renamePlaylist(current.id, to: name)
+                        if library.playlists.first(where: { $0.id == current.id })?.name == name {
+                            revealPlaylists()
+                            failedPlaylistEdit = nil
+                            playlistActionFeedback = "Renamed playlist to \(name)."
+                        } else {
+                            failedPlaylistEdit = .rename(id: current.id)
+                            playlistActionFeedback = library.libraryStorageError
+                                ?? "Could not rename this playlist. Its previous name was preserved."
+                        }
                     }
                 }
                 pendingRename = nil
