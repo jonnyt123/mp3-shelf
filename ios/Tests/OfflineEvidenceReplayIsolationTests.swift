@@ -79,7 +79,7 @@ for index in 0..<128 {
     let historical = chain.map { Event(kind: $0.kind, run: "old-\(index)", process: $0.process,
                                       task: $0.task, recording: $0.recording, sequence: $0.sequence, offline: $0.offline) }
     check(changed { $0 = Evidence(sourceSHA: sha, selectedRun: "current", installedSHA: sha, catalog: $0.catalog,
-                                  events: Array($0.events.dropFirst()) + historical) }, .missingTransfer,
+                                  events: Array($0.events.dropFirst()) + historical) }, .missingPlayback,
           "historic wake cannot repair current chain \(index)")
     check(changed { $0 = Evidence(sourceSHA: sha, selectedRun: "current", installedSHA: sha, catalog: $0.catalog,
                                   events: $0.events.filter { $0.recording != "song-b" } + historical.filter { $0.recording == "song-b" }) }, .missingPlayback,
