@@ -587,7 +587,6 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             return
         }
         tickets = updated
-        promoteSharedFollowers(of: id)
         conversions[id]?.cancel()
         // An active import owns its staged file until its cancellation
         // check finishes; never remove the file underneath conversion.
@@ -595,8 +594,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // processing. Its completion handler is responsible for cleanup;
         // deleting the input here races the decoder and can corrupt imports.
         if !processing.contains(id) && conversions[id] == nil {
+            // Retire an unused staging file before promoting siblings. The
+            // promotion guard intentionally refuses to race staged bytes, so
+            // calling it before cleanup could strand followers indefinitely.
             try? fm.removeItem(at: Self.stagingURL(id))
+            promoteSharedFollowers(of: id)
         }
+        // If an import is still active, its defer block reconciles the
+        // finished recording and promotes followers after conversion ends.
         library?.finishedBackgroundDownload(for: ticket.playlistID, succeeded: false)
         updatePending()
         session.getAllTasks { tasks in
