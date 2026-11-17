@@ -170,6 +170,26 @@ enum BackgroundAudioURLPolicyTests {
         }
         guard stagedRecoveryCases == 8 else { fatalError("Incomplete staging recovery matrix") }
         print("PASS: 8 staged predecessor promotion safety combinations")
+        // Cancellation must not strand followers after removing an unused
+        // staged file, and must not race a decoder or a failed cleanup.
+        var cancellationCases = 0
+        for processing in [false, true] {
+            for converting in [false, true] {
+                for stagedAfterCleanup in [false, true] {
+                    let expected = !processing && !converting && !stagedAfterCleanup
+                    guard BackgroundAudioDownloader.mayPromoteAfterCancellation(
+                        isProcessing: processing,
+                        hasConversion: converting,
+                        hasStagedFile: stagedAfterCleanup) == expected else {
+                        fatalError("Cancelled leader follower promotion regression")
+                    }
+                    cancellationCases += 1
+                }
+            }
+        }
+        guard cancellationCases == 8 else { fatalError("Incomplete cancellation cleanup matrix") }
+        print("PASS: 8 cancellation cleanup and follower promotion combinations")
+
 
         print("PASS: 8 orphan follower promotion eligibility combinations")
         // A leader may retire while a sibling playlist is still loading.
