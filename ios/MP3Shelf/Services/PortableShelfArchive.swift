@@ -1033,6 +1033,36 @@ enum PortableShelfArchive {
         guard expected.size == off_t(bytes.count) else {
             throw ArchiveError.invalidFile
         }
+        // A staged pathname may be modified after the initial write and
+        // before publication. Validate the actual descriptor bytes before
+        // making the file visible under the user's destination name. This
+        // avoids publishing a known-corrupt orphan when a concurrent writer
+        // changes the staging inode without changing its length.
+        try published.seek(toOffset: 0)
+        var preflightOffset = 0
+        while preflightOffset < bytes.count {
+            try Task.checkCancellation()
+            let count = min(64 * 1024, bytes.count - preflightOffset)
+            let actual = try readExactly(count, from: published)
+            guard actual.count == count,
+                  actual.elementsEqual(bytes[preflightOffset..<(preflightOffset + count)]) else {
+                throw ArchiveError.invalidFile
+            }
+            preflightOffset += count
+        }
+        guard (try published.read(upToCount: 1) ?? Data()).isEmpty else {
+            throw ArchiveError.invalidFile
+        }
+        let prepublication = try archiveIdentity(of: published, at: staging)
+        guard expected.device == prepublication.device,
+              expected.inode == prepublication.inode,
+              expected.size == prepublication.size,
+              expected.modifiedSeconds == prepublication.modifiedSeconds,
+              expected.modifiedNanoseconds == prepublication.modifiedNanoseconds,
+              expected.changedSeconds == prepublication.changedSeconds,
+              expected.changedNanoseconds == prepublication.changedNanoseconds else {
+            throw ArchiveError.invalidFile
+        }
         // link(2) publishes without replacing existing destinations.
         try manager.linkItem(at: staging, to: destination)
         // Release the staging directory entry before executing the callback,
