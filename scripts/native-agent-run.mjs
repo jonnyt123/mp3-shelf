@@ -69,15 +69,11 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
     if(error.code==='EEXIST')throw Error('NATIVE_CYCLE_ALREADY_RUNNING: exclusive lock exists; inspect the active Mac process before removing a stale lock');
     throw error;
   }
+  try {
   const startedAt=now().toISOString();
   let result=null, failure=null;
   try { result=await run({repo:resolve(root),home}); }
   catch(error){ failure=error; }
-  finally {
-    // Do not allow lock cleanup to hide the native failure.
-    try { closeSync(lock); unlinkSync(lockPath); }
-    catch(error) { failure ??= error; }
-  }
   const record=nativeAgentRunRecord({startedAt,finishedAt:now().toISOString(),result,error:failure});
   const destination=join(home,'Library','Logs','MP3Shelf','NativeAgent');
   try {
@@ -113,6 +109,11 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
   }
   if(failure)throw failure;
   return record;
+  } finally {
+    // Retain ownership through receipt and dashboard writes, including errors.
+    closeSync(lock);
+    unlinkSync(lockPath);
+  }
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   const [root,...rest]=process.argv.slice(2);
