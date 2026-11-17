@@ -23,21 +23,23 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
   const packaging = typeof result?.packaging === 'string' &&
     (categories.includes(result.packaging) || /^[A-Z_]+$/.test(result.packaging))
     ? result.packaging : 'NOT_VERIFIED';
-  const reason = error ? String(error.message || error).slice(0, 450)
-    .replace(/(?:\/Users\/|\/private\/|\/tmp\/)[^\s;]*/g, '[private path]') : null;
+  // Arbitrary compiler/CLI errors may contain credentials, paths or user data.
+  // Persist only a bounded, fixed category; raw diagnostics remain local.
+  const reason = error ? 'NATIVE_CYCLE_FAILED_REVIEW_LOCAL_LOGS' : null;
   return {
     schema: 'mp3shelf-native-agent-run-v1',
     startedAt, finishedAt,
     status,
     candidateSha: SHA.test(candidateSha ?? '') ? candidateSha : null,
-    integration: result?.integration ?? result?.status ?? 'NOT_VERIFIED',
+    integration: ['already-staged','staged-draft-only'].includes(result?.integration ?? result?.status)
+      ? (result?.integration ?? result?.status) : 'NOT_VERIFIED',
     packaging,
-    delivery: result?.delivery ?? 'NOT_VERIFIED',
+    delivery: ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(result?.delivery)
+      ? result.delivery : 'NOT_VERIFIED',
     failureReason: reason,
-    xcodeVerification: result?.status === 'staged-draft-only' ||
-      result?.status === 'verified-not-staged' ||
-      result?.integration === 'staged-draft-only' ? 'LOCAL_NATIVE_RECEIPT_RECORDED'
-      : 'NOT_VERIFIED',
+    // Staging metadata is not a cryptographically verified native receipt.
+    // The independent native evidence verifier owns the COMPILED verdict.
+    xcodeVerification: 'NOT_VERIFIED',
     physicalIPhoneAcceptance: 'REQUIRES_SEPARATE_REAL_DEVICE_REVIEW',
     githubActions: 'NOT_INVOKED'
   };
