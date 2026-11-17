@@ -308,3 +308,81 @@ for scenario in ["replace-stage-with-foreign", "replace-stage-with-identical",
     cases += 1
 }
 print("PASS: \(cases) filesystem recovery, publication and stage-identity scenarios total")
+
+
+// A journal is also mutable between validation and publication. A recovery
+// callback must not publish audio under a replaced, deleted, or relinked
+// recovery intent, even when the replacement has the same serialized bytes.
+// These tests use a guarded reference publisher, not production service code.
+func guardedJournalRecover(beforePublication: () throws -> Void) throws {
+    guard regular(journal), let original = try? Data(contentsOf: journal),
+          let decoded = try? JSONDecoder().decode(Journal.self, from: original),
+          decoded.ticket == entry.ticket, decoded.stagedName == entry.stagedName,
+          decoded.destinationName == entry.destinationName, decoded.length == audio.count,
+          regular(staged), try Data(contentsOf: staged) == audio else {
+        throw RecoveryError.invalidJournal
+    }
+    let journalIdentity = try identity(journal)
+    let stageIdentity = try identity(staged)
+    try beforePublication()
+    guard regular(journal), regular(staged),
+          try identity(journal) == journalIdentity,
+          try identity(staged) == stageIdentity,
+          try Data(contentsOf: journal) == original,
+          try Data(contentsOf: staged) == audio else {
+        throw RecoveryError.invalidJournal
+    }
+    try fm.linkItem(at: staged, to: destination)
+}
+for scenario in ["journal-removed", "journal-replaced-identical",
+                 "journal-replaced-foreign-ticket", "journal-replaced-symlink",
+                 "journal-replaced-hardlink", "journal-replaced-directory",
+                 "journal-mutated-in-place", "stage-mutated-in-place"] {
+    try reset()
+    var injected = false
+    var rejected = false
+    do {
+        try guardedJournalRecover(beforePublication: {
+            injected = true
+            switch scenario {
+            case "journal-removed":
+                try fm.removeItem(at: journal)
+            case "journal-replaced-identical":
+                let bytes = try Data(contentsOf: journal)
+                try fm.removeItem(at: journal)
+                try bytes.write(to: journal)
+            case "journal-replaced-foreign-ticket":
+                try fm.removeItem(at: journal)
+                let changed = Journal(ticket: "foreign", stagedName: entry.stagedName,
+                                      destinationName: entry.destinationName, length: entry.length)
+                try JSONEncoder().encode(changed).write(to: journal)
+            case "journal-replaced-symlink":
+                try fm.removeItem(at: journal)
+                try fm.createSymbolicLink(at: journal, withDestinationURL: other)
+            case "journal-replaced-hardlink":
+                try fm.removeItem(at: journal)
+                try fm.linkItem(at: other, to: journal)
+            case "journal-replaced-directory":
+                try fm.removeItem(at: journal)
+                try fm.createDirectory(at: journal, withIntermediateDirectories: false)
+            case "journal-mutated-in-place":
+                let handle = try FileHandle(forWritingTo: journal)
+                defer { try? handle.close() }
+                try handle.seek(toOffset: 0)
+                try handle.write(contentsOf: Data("X".utf8))
+            default:
+                let handle = try FileHandle(forWritingTo: staged)
+                defer { try? handle.close() }
+                try handle.seek(toOffset: 0)
+                try handle.write(contentsOf: Data("X".utf8))
+            }
+        })
+    } catch { rejected = true }
+    try assertSafe(injected && rejected, "\(scenario): changed recovery intent accepted")
+    try assertSafe(!fm.fileExists(atPath: destination.path),
+                   "\(scenario): unvalidated bytes published")
+    try assertSafe(try Data(contentsOf: other) == foreign,
+                   "\(scenario): unrelated audio modified")
+    cases += 1
+}
+print("PASS: \(cases) filesystem recovery, publication and identity scenarios total")
