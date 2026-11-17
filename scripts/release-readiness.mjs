@@ -60,9 +60,11 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
    agent?.status==='COMPLETED'?'Last Mac agent invocation completed; this does not prove all native gates.':
    agent?.failureReason??'No verified hourly Mac run record available.',
    'Install or inspect the user-level Mac LaunchAgent and its latest-run.json.');
- const nativeOK=!!sha&&native?.schema==='mp3shelf-local-evidence-v1'&&
+ const nativeOK=!!sha&&native?.schemaVersion===1&&native?.mode==='native'&&
    native?.candidateSha===sha&&native?.status==='local-checks-passed'&&
-   native?.exitCode===0&&native?.cleanCheckout===true;
+   native?.exitCode===0&&native?.cleanCheckout===true&&
+   Array.isArray(native?.steps)&&native.steps.length===2&&
+   native.steps.every(step=>step?.success===true);
  // This dashboard recognizes local metadata only; the release stage hashes
  // and independently verifies all native logs before promotion.
  add('native','Xcode and Swift regression receipt',nativeOK?true:false,
