@@ -241,10 +241,14 @@ export function writeReadiness({home=homedir(),now=Date.now(),github=gitHubLive}
  const inventoryPath=SHA.test(sha??'')?
    join(logs,'DeviceAcceptance',sha,'physical-inventory.json'):null;
  const rawInventory=inventoryPath?readSafe(inventoryPath,16*1024*1024):null;
+ let parsedInventory=null;
+ try{if(rawInventory)parsedInventory=JSON.parse(rawInventory);}catch{
+   // Corrupt or partial device evidence is a BLOCKER, not a broken dashboard.
+ }
  const result=readinessModel({...live,now,
    agent:json(join(logs,'NativeAgent','latest-run.json')),
    native:nativeDir?json(join(nativeDir,'local-evidence.json')):null,
-   inventory:rawInventory?JSON.parse(rawInventory):null,
+   inventory:parsedInventory,
    inventorySHA256:rawInventory?
      createHash('sha256').update(rawInventory).digest('hex'):null,
    hardware:SHA.test(sha??'')?json(join(logs,'DeviceAcceptance',sha,'hardware-acceptance.json')):null,
