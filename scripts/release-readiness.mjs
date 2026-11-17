@@ -1,0 +1,232 @@
+#!/usr/bin/env node
+/**
+ * Read-only release readiness. Shows observable evidence and blockers; this
+ * report NEVER grants authorization to publish an archive.
+ */
+import { execFileSync } from 'node:child_process';
+import { readFileSync, lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+import { selectNativeEvidence } from './native-release-cycle.mjs';
+import { verifiedSmokeComment } from './draft-smoke-attestation.mjs';
+
+const SHA=/^[0-9a-f]{40}$/;
+const HASH=/^[0-9a-f]{64}$/;
+const REPO='jonnyt123/mp3-shelf';
+const CATEGORIES=['Signing / installation','Offline playback','Background licensed downloads',
+  'Failure handling','Spotify metadata integration','Portable backup interoperability',
+  'Accessible responsive UI','Policy/source audit','Final acceptance'];
+function readSafe(path,max=1024*1024){
+ try{
+  const info=lstatSync(path);
+  if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.size<1||info.size>max)return null;
+  return readFileSync(path,'utf8');
+ }catch{return null;}
+}
+function json(path,max){try{const text=readSafe(path,max);return text?JSON.parse(text):null;}catch{return null;}}
+function ghJSON(path){
+ try{
+  return JSON.parse(execFileSync('gh',['api','-H','Accept: application/vnd.github+json',
+    'repos/'+REPO+'/'+path],{encoding:'utf8',timeout:15000,
+      maxBuffer:2*1024*1024,stdio:['ignore','pipe','ignore']}));
+ }catch{return null;}
+}
+function exactTagAbsent(tag){
+ return ghJSON('git/ref/tags/'+tag)===null && ghJSON('releases/tags/'+tag)===null;
+}
+export function readinessModel({candidateSha=null,toolingSha=null,agent=null,native=null,
+  inventory=null,review=null,hardware=null,issue=null,smoke=null,
+  release=null,now=Date.now()}={}){
+ const gates=[],add=(key,label,ok,details,action)=>gates.push({
+   key,label,status:ok===true?'PASS':ok===null?'UNVERIFIED':'BLOCKED',
+   details,action:ok===true?null:action});
+ const sha=SHA.test(candidateSha??'')?candidateSha:null;
+ add('source','Exact consolidated native source',!!sha,
+   sha?sha:'The authoritative native branch SHA has not been verified.',
+   'Refresh the current GitHub consolidated candidate branch.');
+ add('agent','Mac hourly agent',agent?.status==='COMPLETED'?true:
+   agent?.status==='FAILED'?false:null,
+   agent?.status==='COMPLETED'?'Last Mac agent invocation completed; this does not prove all native gates.':
+   agent?.failureReason??'No verified hourly Mac run record available.',
+   'Install or inspect the user-level Mac LaunchAgent and its latest-run.json.');
+ const nativeOK=!!sha&&native?.schema==='mp3shelf-local-evidence-v1'&&
+   native?.candidateSha===sha&&native?.status==='local-checks-passed'&&
+   native?.exitCode===0&&native?.cleanCheckout===true;
+ // This dashboard recognizes local metadata only; the release stage hashes
+ // and independently verifies all native logs before promotion.
+ add('native','Xcode and Swift regression receipt',nativeOK?true:false,
+   nativeOK?'Recorded local receipt matches candidate; release tool verifies logs separately.':
+     'No complete native receipt matches the exact candidate SHA.',
+   'Run the full native verification on your Mac against this exact source SHA.');
+ const full=!!sha&&inventory?.schema==='mp3shelf-physical-inventory-v1'&&
+   inventory.candidateSha===sha&&Number.isSafeInteger(inventory.requested)&&
+   inventory.requested>=2&&inventory.copiedTracks===inventory.requested&&
+   inventory.unavailable===0&&Array.isArray(inventory.files)&&
+   inventory.files.length===inventory.requested&&
+   inventory.files.every(f=>HASH.test(f?.sha256??'')&&Number.isSafeInteger(f.bytes)&&f.bytes>=1024);
+ add('playlist','Full physical Spotify playlist and audio hashes',full,
+   full?inventory.requested+' recorded local audio files with SHA-256 receipts.':
+     'Missing exact-SHA full playlist audio inventory, or some recordings are unavailable.',
+   'Run the paired-iPhone playlist acceptance and copy every recording for hashing.');
+ const playback=full&&inventory.offlinePlaybackAfterRestart==='APP_INSTRUMENTED_PHYSICAL_PASS'&&
+   inventory.backgroundTransfer==='APP_RECORDED_STAGING_AND_BACKGROUND_WAKE';
+ add('playback','Real offline playback and URLSession callbacks',playback,
+   playback?'App-reported offline playback and background callback evidence exists.':
+     'No corroborated real-iPhone offline restart plus background callback evidence.',
+   'Complete the on-device radios-off playback and background-transfer test.');
+ const reviewed=!!sha&&review?.schema==='mp3shelf-independent-device-review-v1'&&
+   review.sourceSha===sha&&review.result==='EVIDENCE_CHECKS_PASSED_NOT_HARDWARE_APPROVED'&&
+   review.physicalAcceptance==='INCOMPLETE'&&Array.isArray(review.failures)&&review.failures.length===0;
+ add('review','Independent collected-device evidence review',reviewed,
+   reviewed?'Automated evidence triage passed; manual hardware acceptance remains separate.':
+     'No complete independent review for the currently selected native candidate.',
+   'Run the iPhone evidence reviewer after collecting signed and downloaded-audio records.');
+ const hardwareApproved=!!sha&&issue?.number===6&&issue?.state==='closed'&&
+   typeof issue.body==='string'&&CATEGORIES.every(label=>
+     issue.body.split(/\r?\n/).some(line=>line.startsWith('- [x] **'+label+':**')))&&
+   hardware?.schema==='mp3shelf-hardware-acceptance-v1'&&
+   hardware.candidateSha===sha&&hardware.installedSourceSha===sha&&
+   HASH.test(hardware.signedAppSHA256??'')&&hardware.reviewer==='jonnyt123'&&
+   CATEGORIES.length===9&&Array.isArray(hardwareChecks(hardware))&&
+   hardwareChecks(hardware).every(value=>value==='PASS');
+ add('hardware','Owner-approved physical-iPhone release gate #6',
+   hardwareApproved?true:false,
+   hardwareApproved?'Checklist closed with matching owner-reviewed hardware JSON; final publish independently verifies owner comments.':
+     'Issue #6 is open/unapproved, or signed-device checklist is incomplete.',
+   'Independently inspect the real iPhone, approve its signed SHA-256 and close issue #6.');
+ const smokeOK=!!toolingSha&&SHA.test(toolingSha)&&smoke?.toolingSha===toolingSha&&
+   smoke?.deleted===true&&Number.isFinite(Date.parse(smoke.createdAt??''))&&
+   now-Date.parse(smoke.createdAt)>=0&&now-Date.parse(smoke.createdAt)<7*86400000;
+ add('smoke','Verified draft GitHub ZIP transport',smokeOK,
+   smokeOK?'Owner-attested synthetic upload/download passed for the current tooling commit.':
+    'No recent owner-attested, checksum-matched and deleted draft upload for the current tooling SHA.',
+   'Run the one-time draft upload smoke on Mac and verify its GitHub owner attestation.');
+ const released=!!sha&&release?.draft===false&&
+   release?.tag_name==='mp3-shelf-ios-'+sha&&
+   Array.isArray(release?.assets)&&release.assets.length===2&&
+   release.assets.every(asset=>asset.state==='uploaded'&&
+     /^sha256:[a-f0-9]{64}$/.test(asset.digest??''));
+ add('zip','Published verified Xcode project ZIP',released,
+   released?'A matching source release with two uploaded SHA-256 assets is visible; delivery tool revalidates exact digests.':
+     'No published GitHub Xcode project ZIP for the verified candidate.',
+   'Complete all native, hardware and draft-smoke gates before publishing.');
+ return {schema:'mp3shelf-release-readiness-v1',
+   generatedAt:new Date(now).toISOString(),candidateSha:sha,toolingSha:SHA.test(toolingSha??'')?toolingSha:null,
+   status:released&&gates.every(g=>g.status==='PASS')?'RELEASE_VISIBLE':'NOT_RELEASE_READY',
+   gates,blocking:gates.filter(g=>g.status!=='PASS').map(g=>g.key),
+   disclaimer:'Read-only dashboard. It does not authorize ZIP publication or replace release verification.'};
+}
+function hardwareChecks(hardware){
+ const keys=['signingInstallation','offlinePlayback','backgroundDownloads','failureHandling',
+ 'spotifyMetadata','backupInterop','accessibility','sourcePolicy','finalAcceptance'];
+ return keys.map(k=>hardware?.checks?.[k]);
+}
+export function readinessMarkdown(model) {
+ const lines=['# MP3 Shelf — Native Release Readiness','',
+   'Generated: '+model.generatedAt,
+   'Candidate: '+(model.candidateSha??'NOT_VERIFIED'),
+   'Release tooling: '+(model.toolingSha??'NOT_VERIFIED'),
+   'Overall: **'+model.status+'**','',
+   '| Gate | State | Evidence |','|---|---|---|'];
+ for(const g of model.gates)
+   lines.push('| '+g.label.replace(/\|/g,'/')+' | '+g.status+
+     ' | '+g.details.replace(/[|\n\r]/g,' ').slice(0,200)+' |');
+ lines.push('','## Next actions');
+ const blocked=model.gates.filter(g=>g.status!=='PASS');
+ if(!blocked.length)lines.push('All dashboard indicators are present; the authoritative release gate still applies.');
+ else blocked.forEach(g=>lines.push('- **'+g.label+':** '+g.action));
+ lines.push('','This dashboard never substitutes for a real iPhone or exact-SHA native release verification.');
+ return lines.join('\n')+'\n';
+}
+function htmlEscape(s){return String(s).replace(/[&<>"']/g,c=>({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+export function readinessHTML(model){
+ const cards=model.gates.map(g=>'<article class="gate"><div class="head"><strong>'+
+   htmlEscape(g.label)+'</strong><span class="status '+g.status.toLowerCase()+'">'+
+   htmlEscape(g.status)+'</span></div><p>'+htmlEscape(g.details)+'</p>'+
+   (g.action?'<div class="action">'+htmlEscape(g.action)+'</div>':'')+'</article>').join('\n');
+ const done=model.gates.filter(g=>g.status==='PASS').length;
+ return '<!doctype html><html lang="en"><head><meta charset="utf-8">'+
+ '<meta name="viewport" content="width=device-width, initial-scale=1">'+
+ '<meta name="color-scheme" content="dark light"><title>MP3 Shelf — Release Readiness</title>'+
+ '<style>:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'+
+ 'color-scheme:dark;background:#10131b;color:#eef1f8}body{max-width:980px;margin:auto;padding:30px 18px 50px}'+
+ 'h1{font-size:clamp(27px,4vw,40px);letter-spacing:-.04em;margin:10px 0}'+
+ 'p{color:#aab4c6;line-height:1.5}.sub{font-size:13px}.meta{margin:20px 0 26px;'+
+ 'padding:16px;border:1px solid #30394a;border-radius:18px;background:#181d29}'+
+ '.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}'+
+ '.gate{padding:18px;border-radius:18px;border:1px solid #30394a;background:#191f2d}'+
+ '.head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}'+
+ '.head strong{font-size:15px}.status{font-size:10px;letter-spacing:.08em;padding:6px 8px;'+
+ 'border:1px solid #4d5566;border-radius:99px;white-space:nowrap}.pass{color:#63dba6;border-color:#28684e}'+
+ '.blocked{color:#ffb879;border-color:#87572c}.unverified{color:#d1d7e2}'+
+ '.action{padding-top:12px;border-top:1px solid #353b4a;color:#c6d1e8;font-size:13px;line-height:1.45}'+
+ '.gate p{font-size:13px}.foot{margin-top:30px;color:#8f9aaf;font-size:12px}</style></head><body>'+
+ '<div class="sub">MP3 SHELF · NATIVE IOS</div><h1>Release readiness</h1>'+
+ '<p>Read-only evidence dashboard. No synthetic results, no automatic hardware approval.</p>'+
+ '<div class="meta"><strong>'+done+' / '+model.gates.length+' evidence gates recorded</strong>'+
+ '<p class="sub">Overall: '+htmlEscape(model.status)+' · Source '+htmlEscape(model.candidateSha??'UNVERIFIED')+
+ ' · Tooling '+htmlEscape(model.toolingSha??'UNVERIFIED')+'</p>'+
+ '<p class="sub">Updated '+htmlEscape(model.generatedAt)+'</p></div>'+
+ '<div class="grid">'+cards+'</div><p class="foot">'+htmlEscape(model.disclaimer)+'</p></body></html>';
+}
+function getLatestReview(home,sha){
+ if(!SHA.test(sha??''))return null;
+ const dir=join(home,'Library','Logs','MP3Shelf','DeviceAcceptance',sha,'reviews');
+ try{
+  const names=readdirSync(dir).filter(n=>/^review-[0-9TZ-]+-[0-9a-f-]{36}\.json$/.test(n)).sort().reverse();
+  return names.length?json(join(dir,names[0])):null;
+ }catch{return null;}
+}
+function gitHubLive(now){
+ const branch=n=>ghJSON('git/ref/heads/'+n)?.object?.sha??null;
+ const candidateSha=branch('feat/ios-consolidated-candidate');
+ const toolingSha=branch('agent/mp3-release-evidence-gate');
+ const issue=ghJSON('issues/6');
+ let smoke=null;
+ if(SHA.test(toolingSha??'')){
+  for(let page=1;page<=20;page++){
+   const comments=ghJSON('issues/22/comments?per_page=100&page='+page);
+   if(!Array.isArray(comments))break;
+   for(const c of comments){
+    const item=verifiedSmokeComment(c,toolingSha,now);
+    if(item){
+      const tag=ghJSON('git/ref/tags/'+item.tag);
+      const rel=ghJSON('releases/tags/'+item.tag);
+      if(tag===null&&rel===null)smoke={...item,deleted:true};
+    }
+   }
+   if(comments.length<100)break;
+  }
+ }
+ return{candidateSha,toolingSha,issue,smoke,
+   release:SHA.test(candidateSha??'')?ghJSON('releases/tags/mp3-shelf-ios-'+candidateSha):null};
+}
+export function writeReadiness({home=homedir(),now=Date.now(),github=gitHubLive}={}){
+ const live=github(now);
+ const sha=live.candidateSha;
+ const logs=join(home,'Library','Logs','MP3Shelf');
+ const nativeDir=SHA.test(sha??'')?selectNativeEvidence(join(logs,'NativePreflight'),sha):null;
+ const result=readinessModel({...live,now,
+   agent:json(join(logs,'NativeAgent','latest-run.json')),
+   native:nativeDir?json(join(nativeDir,'local-evidence.json')):null,
+   inventory:SHA.test(sha??'')?json(join(logs,'DeviceAcceptance',sha,'physical-inventory.json')):null,
+   hardware:SHA.test(sha??'')?json(join(logs,'DeviceAcceptance',sha,'hardware-acceptance.json')):null,
+   review:getLatestReview(home,sha)});
+ const dir=join(logs,'ReleaseReadiness');
+ mkdirSync(dir,{recursive:true,mode:0o700});
+ const body={json:JSON.stringify(result,null,2)+'\n',md:readinessMarkdown(result),html:readinessHTML(result)};
+ for(const [ext,text] of Object.entries(body)){
+  const target=join(dir,'latest.'+ext),temp=join(dir,'.writing-'+randomUUID()+'.tmp');
+  writeFileSync(temp,text,{flag:'wx',mode:0o600});
+  renameSync(temp,target);
+ }
+ return {status:result.status,blocking:result.blocking,
+   html:join(dir,'latest.html'),markdown:join(dir,'latest.md'),json:join(dir,'latest.json')};
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
+ try{console.log(JSON.stringify(writeReadiness(),null,2));}
+ catch(e){console.error('READINESS_UNVERIFIED: '+e.message);process.exitCode=1;}
+}
