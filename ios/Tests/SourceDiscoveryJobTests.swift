@@ -107,6 +107,35 @@ enum SourceDiscoveryJobTests {
             verifyDiscovery((error as NSError).code == URLError.Code.cancelled.rawValue,
                             "request cancellation propagates instead of switching formats")
         }
+        let wrappedCancelledLog = RecordingProbeLog()
+        do {
+            _ = try await RecordingStreamProbe.resolve([high, low], at: clock) { url, _ in
+                await wrappedCancelledLog.record(url)
+                throw NSError(domain: "MP3Shelf.CatalogAdapter", code: 1, userInfo: [
+                    NSUnderlyingErrorKey: URLError(.cancelled) as NSError
+                ])
+            }
+            fatalError("A wrapped cancellation must stop probing")
+        } catch {
+            verifyDiscovery(SourceLookupRetryPolicy.isCancellation(error),
+                            "wrapped URLSession cancellation remains a cancellation")
+        }
+        let wrappedCancelledCalls = await wrappedCancelledLog.requests
+        verifyDiscovery(wrappedCancelledCalls == [high.url],
+                        "wrapped cancellation does not probe a backup host")
+        let ordinaryFailure = NSError(domain: "MP3Shelf.CatalogAdapter", code: 1, userInfo: [
+            NSUnderlyingErrorKey: URLError(.timedOut) as NSError
+        ])
+        verifyDiscovery(!SourceLookupRetryPolicy.isCancellation(ordinaryFailure),
+                        "wrapped timeout is not misclassified as cancellation")
+        var deeplyWrapped: NSError = URLError(.cancelled) as NSError
+        for _ in 0..<9 {
+            deeplyWrapped = NSError(domain: "MP3Shelf.CatalogAdapter", code: 1,
+                                    userInfo: [NSUnderlyingErrorKey: deeplyWrapped])
+        }
+        verifyDiscovery(!SourceLookupRetryPolicy.isCancellation(deeplyWrapped),
+                        "excessively nested cancellation chains fail closed")
+
         let cancelledCalls = await cancelledLog.requests
         verifyDiscovery(cancelledCalls == [high.url], "cancellation never probes the next AAC format")
 
