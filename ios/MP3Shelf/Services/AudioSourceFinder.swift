@@ -1686,7 +1686,16 @@ enum AutomaticWebAudioFinder {
                     let range = match.range(at: index)
                     return range.location == NSNotFound ? 0 : Double(string.substring(with: range)) ?? 0
                 }
-                seconds = number(1) * 3600 + number(2) * 60 + number(3)
+                // ISO-8601 clock fields must be well-formed. A value such as
+                // PT1M90S or PT2H75M must not be normalized into a plausible
+                // Spotify runtime and silently authorize the wrong recording.
+                let hours = number(1)
+                let minutes = number(2)
+                let secondsField = number(3)
+                guard hours.isFinite, minutes.isFinite, secondsField.isFinite,
+                      hours >= 0, minutes >= 0, secondsField >= 0,
+                      minutes < 60, secondsField < 60 else { return false }
+                seconds = hours * 3600 + minutes * 60 + secondsField
             }
         } else { return false }
         guard seconds.isFinite, seconds > 0 else { return false }
