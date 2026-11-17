@@ -615,7 +615,7 @@ struct LibraryView: View {
                         } else {
                             LazyVStack(spacing: 9) {
                                 ForEach(visibleTracks) { track in
-                                    MusicTrackRow(track: track, context: visibleTracks,
+                                    MusicTrackRow(track: track, context: visibleTracks, importBlocked: audioImportBusy,
                                                   renaming: $renaming)
                                 }
                             }
@@ -869,7 +869,7 @@ struct LibraryView: View {
                         } else {
                             LazyVStack(spacing: 9) {
                                 ForEach(visibleTracks) { track in
-                                    MusicTrackRow(track: track, context: visibleTracks,
+                                    MusicTrackRow(track: track, context: visibleTracks, importBlocked: audioImportBusy,
                                                   renaming: $renaming)
                                 }
                             }
@@ -1022,6 +1022,7 @@ struct LibraryView: View {
 struct MusicTrackRow: View {
     let track: MusicTrack
     let context: [MusicTrack]
+    let importBlocked: Bool = false
     @Binding var renaming: MusicTrack?
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
@@ -1045,11 +1046,12 @@ struct MusicTrackRow: View {
     }
 
     private var availabilityRefreshKey: String {
-        "\(library.fileURL(for: track).path)|\(scenePhase)"
+        "\(library.fileURL(for: track).path)|\(scenePhase)|\(library.isImporting)|\(importBlocked)"
     }
 
     private func refreshAudioAvailability() async {
         audioAvailability = nil
+        guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
         let url = library.fileURL(for: track)
         let scan = Task.detached(priority: .utility) {
             Self.isUsableRecording(at: url)
@@ -1059,14 +1061,14 @@ struct MusicTrackRow: View {
         } onCancel: {
             scan.cancel()
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !library.isImporting, !importBlocked, scenePhase == .active else { return }
         audioAvailability = available
     }
 
     private func playOrExplainMissingAudio() {
         // A duplicated track ID must not allow one usable file to make a
         // different, missing occurrence appear playable.
-        guard !isCheckingPlayback, scenePhase == .active else { return }
+        guard !isCheckingPlayback, !library.isImporting, !importBlocked, scenePhase == .active else { return }
         isCheckingPlayback = true
         playbackNotice = nil
         let selectedURL = library.fileURL(for: track)
@@ -1087,7 +1089,7 @@ struct MusicTrackRow: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled, scenePhase == .active else { return }
+            guard !Task.isCancelled, !library.isImporting, !importBlocked, scenePhase == .active else { return }
             isCheckingPlayback = false
             playbackCheckTask = nil
             // A restore, deletion, or playlist edit invalidates the requested
@@ -1189,8 +1191,10 @@ struct MusicTrackRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .disabled(isCheckingPlayback)
-            .accessibilityLabel(isCheckingPlayback
+            .disabled(isCheckingPlayback || library.isImporting || importBlocked)
+            .accessibilityLabel(library.isImporting || importBlocked
+                                ? "Importing audio: \(track.title) by \(track.artist)"
+                                : isCheckingPlayback
                                 ? "Checking recording: \(track.title) by \(track.artist)"
                                 : audioAvailability == false
                                 ? "Audio missing: \(track.title) by \(track.artist)"
@@ -1198,7 +1202,9 @@ struct MusicTrackRow: View {
                                 ? "Now playing: \(track.title) by \(track.artist)"
                                 : "Play \(track.title) by \(track.artist)")
             .accessibilityValue(track.duration.shelfClock)
-            .accessibilityHint(isCheckingPlayback
+            .accessibilityHint(library.isImporting || importBlocked
+                               ? "Wait until audio import finishes before playing this recording"
+                               : isCheckingPlayback
                                ? "Checking that the local audio file is ready to play"
                                : audioAvailability == false
                                ? "The local recording is unavailable. Double tap for recovery information."
