@@ -48,7 +48,8 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
     ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(result?.delivery) &&
     /^[0-9a-f]{64}$/.test(result?.sha256 ?? '') &&
     typeof result?.downloadURL === 'string' &&
-    /^https:\/\/github\\.com\/jonnyt123\/mp3-shelf\/releases\/download\//.test(result.downloadURL);
+    result.downloadURL.startsWith('https://github.com/jonnyt123/mp3-shelf/releases/download/') &&
+    !/[?#\\s]/.test(result.downloadURL);
   const packaging = verifiedDelivery ? result.packaging :
     categories.includes(result?.packaging) ? result.packaging : 'NOT_VERIFIED';
   // Arbitrary compiler/CLI errors may contain credentials, paths or user data.
