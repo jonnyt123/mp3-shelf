@@ -47,7 +47,7 @@ export function independentlyReviewDevice({inventory, signedRecord, inventorySHA
  // Reject ambiguous QA receipts: duplicate fields could otherwise overwrite a
  // real FAIL with a forged later PASS when converted with Object.fromEntries.
  const entries=typeof signedRecord==='string'?
-   [...signedRecord.matchAll(/^- ([\\w /-]+): ([^\\n\\r]+)$/gm)].map(x=>[x[1],x[2].trim()]):[];
+   [...signedRecord.matchAll(/^- ([\w /-]+): ([^\n\r]+)$/gm)].map(x=>[x[1],x[2].trim()]):[];
  const required=['Result','Mode','Checked commit','Signed app executable SHA256',
    'Signature verification','Device app installation','Process launch request'];
  const fields=Object.fromEntries(entries);
