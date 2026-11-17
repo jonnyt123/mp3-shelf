@@ -90,20 +90,20 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
    inventory.unavailable===0&&Array.isArray(inventory.files)&&
    inventory.files.length===inventory.requested&&
    inventory.files.every(f=>HASH.test(f?.sha256??'')&&Number.isSafeInteger(f.bytes)&&f.bytes>=1024);
- add('playlist','Full physical Spotify playlist and audio hashes',full,
-   full?inventory.requested+' recorded local audio files with SHA-256 receipts.':
+ add('playlist','Full physical Spotify playlist and audio hashes',full?null:false,
+   full?inventory.requested+' audio files reported with SHA-256 values; bytes have not been independently rehashed by this dashboard.':
      'Missing exact-SHA full playlist audio inventory, or some recordings are unavailable.',
    'Run the paired-iPhone playlist acceptance and copy every recording for hashing.');
  const playback=full&&inventory.offlinePlaybackAfterRestart==='APP_INSTRUMENTED_PHYSICAL_PASS'&&
    inventory.backgroundTransfer==='APP_RECORDED_STAGING_AND_BACKGROUND_WAKE';
- add('playback','Real offline playback and URLSession callbacks',playback,
-   playback?'App-reported offline playback and background callback evidence exists.':
+ add('playback','Real offline playback and URLSession callbacks',playback?null:false,
+   playback?'App-reported offline playback and background callbacks exist; independent on-device verification is still required.':
      'No corroborated real-iPhone offline restart plus background callback evidence.',
    'Complete the on-device radios-off playback and background-transfer test.');
  const reviewed=!!sha&&review?.schema==='mp3shelf-independent-device-review-v1'&&
    review.sourceSha===sha&&review.result==='EVIDENCE_CHECKS_PASSED_NOT_HARDWARE_APPROVED'&&
    review.physicalAcceptance==='INCOMPLETE'&&Array.isArray(review.failures)&&review.failures.length===0;
- add('review','Independent collected-device evidence review',reviewed,
+ add('review','Independent collected-device evidence review',reviewed?null:false,
    reviewed?'Automated evidence triage passed; manual hardware acceptance remains separate.':
      'No complete independent review for the currently selected native candidate.',
    'Run the iPhone evidence reviewer after collecting signed and downloaded-audio records.');
@@ -131,8 +131,8 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
  const smokeOK=!!toolingSha&&SHA.test(toolingSha)&&smoke?.toolingSha===toolingSha&&
    smoke?.deleted===true&&Number.isFinite(Date.parse(smoke.createdAt??''))&&
    now-Date.parse(smoke.createdAt)>=0&&now-Date.parse(smoke.createdAt)<7*86400000;
- add('smoke','Verified draft GitHub ZIP transport',smokeOK,
-   smokeOK?'Owner-attested synthetic upload/download passed for the current tooling commit.':
+ add('smoke','Verified draft GitHub ZIP transport',smokeOK?null:false,
+   smokeOK?'A recent local deletion record exists; this dashboard has not independently verified the owner attestation or remote asset digests.':
     'No recent owner-attested, checksum-matched and deleted draft upload for the current tooling SHA.',
    'Run the one-time draft upload smoke on Mac and verify its GitHub owner attestation.');
  const released=!!sha&&release?.draft===false&&
@@ -140,13 +140,13 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
    Array.isArray(release?.assets)&&release.assets.length===2&&
    release.assets.every(asset=>asset.state==='uploaded'&&
      /^sha256:[a-f0-9]{64}$/.test(asset.digest??''));
- add('zip','Published verified Xcode project ZIP',released,
-   released?'A matching source release with two uploaded SHA-256 assets is visible; delivery tool revalidates exact digests.':
+ add('zip','Published verified Xcode project ZIP',released?null:false,
+   released?'A matching source release advertises two SHA-256 digests; actual downloaded bytes and release authorization remain unverified here.':
      'No published GitHub Xcode project ZIP for the verified candidate.',
    'Complete all native, hardware and draft-smoke gates before publishing.');
  return {schema:'mp3shelf-release-readiness-v1',
    generatedAt:new Date(now).toISOString(),candidateSha:sha,toolingSha:SHA.test(toolingSha??'')?toolingSha:null,
-   status:released&&gates.every(g=>g.status==='PASS')?'RELEASE_VISIBLE':'NOT_RELEASE_READY',
+   status:'NOT_RELEASE_READY',
    gates,blocking:gates.filter(g=>g.status!=='PASS').map(g=>g.key),
    disclaimer:'Read-only dashboard. It does not authorize ZIP publication or replace release verification.'};
 }
