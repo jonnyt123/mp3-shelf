@@ -1201,6 +1201,40 @@ enum AudioSourceFinderTests {
         verify(!AutomaticWebAudioFinder.recordingDurationEvidenceMatches(
             recording: "180", audio: "PT2M", wish: numericWish),
             "conflicting recording and audio duration claims fail closed")
+        // A duplicate URL with changed attribution is not independent
+        // corroboration of the same recording. Do not silently overwrite it.
+        let openverseFile = URL(string: "https://upload.wikimedia.org/audio/exact.mp3")!
+        let originalOpenverse = AudioCatalogMatch(
+            downloadURL: openverseFile,
+            itemURL: URL(string: "https://commons.wikimedia.org/wiki/File:Exact.mp3")!,
+            licenseURL: nil, sourceName: "Openverse: wikimedia")
+        let repeatedOpenverse = AudioCatalogMatch(
+            downloadURL: openverseFile,
+            itemURL: originalOpenverse.itemURL,
+            licenseURL: nil, sourceName: "Openverse: wikimedia")
+        let conflictingLanding = AudioCatalogMatch(
+            downloadURL: openverseFile,
+            itemURL: URL(string: "https://commons.wikimedia.org/wiki/File:Other.mp3")!,
+            licenseURL: nil, sourceName: "Openverse: wikimedia")
+        let conflictingPublisher = AudioCatalogMatch(
+            downloadURL: openverseFile,
+            itemURL: originalOpenverse.itemURL,
+            licenseURL: nil, sourceName: "Openverse: fma")
+        verify(AudioSourceFinder.consistentOpenverseDuplicate(
+            originalOpenverse, repeatedOpenverse),
+            "identical Openverse duplicate URL and provenance are safe to collapse")
+        verify(!AudioSourceFinder.consistentOpenverseDuplicate(
+            originalOpenverse, conflictingLanding),
+            "same URL with conflicting landing evidence is not safe to auto-select")
+        verify(!AudioSourceFinder.consistentOpenverseDuplicate(
+            originalOpenverse, conflictingPublisher),
+            "same URL with conflicting publisher is not safe to auto-select")
+        verify(!AudioSourceFinder.consistentOpenverseDuplicate(
+            originalOpenverse, AudioCatalogMatch(
+                downloadURL: URL(string: "https://upload.wikimedia.org/audio/other.mp3")!,
+                itemURL: originalOpenverse.itemURL,
+                licenseURL: nil, sourceName: "Openverse: wikimedia")),
+            "different recording URLs are not duplicate evidence")
         print("Audio source discovery validation tests passed")
     }
 }
