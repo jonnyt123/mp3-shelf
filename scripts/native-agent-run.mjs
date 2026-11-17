@@ -53,7 +53,17 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
   const record=nativeAgentRunRecord({startedAt,finishedAt:now().toISOString(),result,error:failure});
   const destination=join(home,'Library','Logs','MP3Shelf','NativeAgent');
   try {
-    mkdirSync(destination,{recursive:true,mode:0o700});
+    // Refuse symlinked or non-directory parents before writing any status receipt.
+    for(const directory of [join(home,'Library'),join(home,'Library','Logs'),join(home,'Library','Logs','MP3Shelf'),destination]) {
+      try {
+        const info=lstatSync(directory);
+        if(!info.isDirectory() || info.isSymbolicLink())
+          throw Error('Native agent status directory was redirected');
+      } catch(error) {
+        if(error.code!=='ENOENT') throw error;
+        mkdirSync(directory,{mode:0o700});
+      }
+    }
     const state=join(destination,'latest-run.json');
     let old=null;
     try {old=lstatSync(state);}catch(e){if(e.code!=='ENOENT')throw e;}
@@ -71,7 +81,7 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
   // including failed Xcode runs. Its absence is NOT a release authorization.
   try {writeReadiness({home});}
   catch(error){
-    console.error('RELEASE_READINESS_UNVERIFIED: '+String(error.message).slice(0,240));
+    console.error('RELEASE_READINESS_UNVERIFIED: inspect private local diagnostics');
   }
   if(failure)throw failure;
   return record;
@@ -81,5 +91,5 @@ if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).
   if(rest.length){console.error('Usage: node scripts/native-agent-run.mjs [REPOSITORY]');process.exitCode=2;}
   else executeNativeAgent({root})
     .then(record=>console.log(JSON.stringify(record,null,2)))
-    .catch(error=>{console.error('MP3_SHELF_NATIVE_AGENT_BLOCKED: '+error.message);process.exitCode=1;});
+    .catch(error=>{console.error('MP3_SHELF_NATIVE_AGENT_BLOCKED: inspect private local diagnostics');process.exitCode=1;});
 }
