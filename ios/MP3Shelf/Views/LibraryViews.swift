@@ -1449,6 +1449,19 @@ struct RenameTrackView: View {
             editError = "This song is no longer in your library. Your changes were not saved."
             return
         }
+        // The editor owns a snapshot, not the current library revision. A
+        // restore, import, or second editor may replace it while this sheet is
+        // open. Never overwrite that newer recording or its metadata.
+        guard !library.isImporting else {
+            editError = "Wait for the audio import to finish, then reopen this song to review its details."
+            return
+        }
+        guard current.title == track.title,
+              current.artist == track.artist,
+              current.localFileURL == track.localFileURL else {
+            editError = "This song changed while you were editing. Close this screen and reopen the latest version. Nothing was overwritten."
+            return
+        }
         if current.title == cleanTitle && current.artist == cleanArtist {
             dismiss()
             return
