@@ -38,6 +38,32 @@ enum AudioSourceFinderTests {
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
         // Archive may contain one broken file entry among usable recordings.
         // Preserve the valid original instead of discarding the whole item.
+        // One invalid search row must not abort a whole playlist lookup.
+        // Keep the raw count so an incomplete full page cannot look final.
+        let mixedSearch = #"""
+        {"response":{"numFound":20,"docs":[
+          {"identifier":"valid-one","title":"The Song","creator":"The Artist"},
+          null, {"identifier":42,"title":"Broken"},
+          {"identifier":"valid-two","title":["The Song"],"creator":["The Artist"]}
+        ]}}
+        """#.data(using: .utf8)!
+        let decodedSearch = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: mixedSearch)
+        verify(decodedSearch.response.docs.map(\.identifier) == ["valid-one", "valid-two"] &&
+               decodedSearch.response.rawItemCount == 4 &&
+               decodedSearch.response.numFound == 20,
+               "malformed Archive index rows preserve valid siblings and raw pagination count")
+        let fullPage = #"""
+        {"response":{"docs":[{"identifier":"valid-one"},
+          null,null,null,null,null,null,null,null,null,
+          null,null,null,null,null,null,null,null,null,null]}}
+        """#.data(using: .utf8)!
+        let decodedFullPage = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: fullPage)
+        verify(decodedFullPage.response.docs.count == 1 &&
+               decodedFullPage.response.rawItemCount == 20 &&
+               decodedFullPage.response.numFound == nil,
+               "a malformed full Archive page still requires continuation")
         let mixedArchive = #"""
         {"metadata":{"title":"The Song","creator":"The Artist"},"files":[
           {"name":17,"source":"original","length":"212"},
