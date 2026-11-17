@@ -145,8 +145,18 @@ for scenario in ["empty-stage", "empty-journal", "symlink-journal", "hardlink-jo
     try assertSafe(rejected, "\(scenario): invalid recovery accepted")
     try assertSafe(try Data(contentsOf: other) == foreign,
                    "\(scenario): unrelated bytes modified")
-    try assertSafe(try Data(contentsOf: staged) == audio,
-                   "\(scenario): staged bytes consumed or modified")
+    // The adversarial stage may be a directory or other nonregular entry.
+    // Only compare payload bytes when the scenario retained a regular file.
+    if regular(staged) {
+        try assertSafe(try Data(contentsOf: staged) == audio,
+                       "\(scenario): staged bytes consumed or modified")
+    } else {
+        try assertSafe(fm.fileExists(atPath: staged.path),
+                       "\(scenario): nonregular staged entry was removed")
+    }
+    try assertSafe(fm.fileExists(atPath: journal.path) ||
+                   (try? fm.destinationOfSymbolicLink(atPath: journal.path)) != nil,
+                   "\(scenario): rejected journal was removed")
     cases += 1
 }
 print("PASS: \(cases) unsafe recovery scenarios total")
