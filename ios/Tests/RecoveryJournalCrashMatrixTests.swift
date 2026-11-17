@@ -229,23 +229,23 @@ for scenario in ["foreign-writer", "identical-writer", "directory-writer",
             }
         })
     } catch { rejected = true }
-    try assertSafe(injected && rejected, "\\(scenario): racing publication accepted")
+    try assertSafe(injected && rejected, "\(scenario): racing publication accepted")
     try assertSafe(fm.fileExists(atPath: destination.path) ||
                    (try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil,
-                   "\\(scenario): winning destination removed")
+                   "\(scenario): winning destination removed")
     if scenario == "foreign-writer" || scenario == "hardlink-writer" {
         try assertSafe(try Data(contentsOf: destination) == foreign,
-                       "\\(scenario): winner bytes changed")
+                       "\(scenario): winner bytes changed")
     } else if scenario == "identical-writer" {
         try assertSafe(try Data(contentsOf: destination) == audio,
                        "identical winner bytes changed")
     }
     try assertSafe(try Data(contentsOf: staged) == audio,
-                   "\\(scenario): losing staged bytes consumed")
+                   "\(scenario): losing staged bytes consumed")
     try assertSafe(try Data(contentsOf: other) == foreign,
-                   "\\(scenario): unrelated audio modified")
+                   "\(scenario): unrelated audio modified")
     try assertSafe(fm.fileExists(atPath: journal.path),
-                   "\\(scenario): recovery intent removed")
+                   "\(scenario): recovery intent removed")
     cases += 1
 }
-print("PASS: \\(cases) filesystem recovery and publication-race scenarios total")
+print("PASS: \(cases) filesystem recovery and publication-race scenarios total")
