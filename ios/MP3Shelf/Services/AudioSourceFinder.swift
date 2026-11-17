@@ -605,7 +605,18 @@ extension AudioSourceFinder {
                                        filetype: $0.filetype, duration: $0.duration,
                                        source: $0.source, filesize: $0.filesize, wish: wish)
                 }) {
-                    candidates[match.downloadURL.absoluteString] = match
+                    let key = match.downloadURL.absoluteString
+                    // A catalog may repeat the same direct file URL with
+                    // contradictory publisher or landing-page attribution.
+                    // URL deduplication is safe only when that evidence agrees.
+                    if let previous = candidates[key],
+                       (previous.itemURL != match.itemURL ||
+                        previous.sourceName != match.sourceName) {
+                        throw SourceError.catalogsUnavailable([
+                            "Openverse: conflicting metadata for the same audio URL."
+                        ])
+                    }
+                    candidates[key] = match
                     // Different URLs may represent different recordings.
                     // Never choose one automatically once ambiguity is known.
                     if candidates.count > 1 { return nil }
