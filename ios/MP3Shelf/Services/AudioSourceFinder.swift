@@ -407,7 +407,16 @@ enum AudioSourceFinder {
                                  itemCreator: metadata.creator?.value ?? "",
                                  audioFileCount: eligible.count, wish: wish)
         }
-        guard matches.count == 1, let file = matches.first else { return nil }
+        // Catalog metadata can repeat the same physical file row. Repeated
+        // identical rows are one recording, not two competing versions.
+        // Conflicting metadata for the same filename is untrustworthy: never
+        // let ordering decide which duration/size/source is authoritative.
+        let byName = Dictionary(grouping: matches, by: { $0.name })
+        guard byName.count == 1, let rows = byName.values.first,
+              let file = rows.first,
+              rows.allSatisfy({ $0.source == file.source &&
+                                $0.size == file.size && $0.length == file.length })
+        else { return nil }
         // An exact title/creator can still describe a preview, radio edit or
         // alternate master. When Spotify provides runtime evidence, Archive
         // must independently identify the chosen file's duration before it
