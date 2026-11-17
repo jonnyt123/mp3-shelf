@@ -69,12 +69,12 @@ test('review writes a unique private file and leaves signed record and inventory
 
 test('duplicate signed QA fields cannot override a failing real receipt',()=>{
  const cases=[
-   '- Result: FAIL\\n'+receipt,
-   receipt+'\\n- Result: FAIL',
-   '- Checked commit: '+'c'.repeat(40)+'\\n'+receipt,
-   receipt+'\\n- Signed app executable SHA256: '+'c'.repeat(64),
+   '- Result: FAIL\n'+receipt,
+   receipt+'\n- Result: FAIL',
+   '- Checked commit: '+'c'.repeat(40)+'\n'+receipt,
+   receipt+'\n- Signed app executable SHA256: '+'c'.repeat(64),
    receipt.replace('- Device app installation: PASS',''),
-   receipt+'\\n- Mode: install'
+   receipt+'\n- Mode: install'
  ];
  for(const signedRecord of cases){
    const review=independentlyReviewDevice({inventory:data(),signedRecord,
