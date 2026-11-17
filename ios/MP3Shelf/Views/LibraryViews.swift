@@ -1433,6 +1433,8 @@ struct RenameTrackView: View {
     @State private var artist = ""
     @State private var editError: String?
     @State private var originalRecordingURL: URL?
+    @State private var originalTitle = ""
+    @State private var originalArtist = ""
     @Environment(\.scenePhase) private var scenePhase
     @FocusState private var titleFocused: Bool
 
@@ -1465,8 +1467,8 @@ struct RenameTrackView: View {
             editError = "Return to MP3 Shelf after the audio import finishes, then reopen this song to review its details."
             return
         }
-        guard current.title == track.title,
-              current.artist == track.artist,
+        guard current.title == originalTitle,
+              current.artist == originalArtist,
               originalRecordingURL == library.fileURL(for: current) else {
             editError = "This song changed while you were editing. Close this screen and reopen the latest version. Nothing was overwritten."
             return
@@ -1483,6 +1485,29 @@ struct RenameTrackView: View {
             return
         }
         dismiss()
+    }
+
+    // Explicit reload is the only operation that discards an unsaved draft.
+    // A restored or concurrently edited song can be recovered in-place.
+    private func reloadCurrentSong() {
+        guard !library.isImporting, scenePhase == .active else {
+            editError = "Wait for the import to finish before reloading this song."
+            return
+        }
+        let matches = library.tracks.filter { $0.id == track.id }
+        guard matches.count == 1, let current = matches.first else {
+            editError = matches.isEmpty
+                ? "This song is no longer in your library. Your draft is still here."
+                : "Multiple songs share this recording ID. Your draft is still here; resolve the duplicate first."
+            return
+        }
+        originalTitle = current.title
+        originalArtist = current.artist
+        originalRecordingURL = library.fileURL(for: current)
+        title = current.title
+        artist = current.artist
+        editError = nil
+        titleFocused = true
     }
 
     var body: some View {
@@ -1507,6 +1532,11 @@ struct RenameTrackView: View {
                         Button("Try saving again", action: saveEdit)
                             .disabled(cleanTitle.isEmpty || library.isImporting || scenePhase != .active)
                             .frame(minHeight: 44)
+                        Button("Reload latest song details", action: reloadCurrentSong)
+                            .disabled(library.isImporting || scenePhase != .active)
+                            .frame(minHeight: 44)
+                            .accessibilityHint("Discard this draft and load the current title and artist from your library")
+                            .accessibilityIdentifier("edit-song-reload-latest")
                     }
                 }
                 Section {
@@ -1531,6 +1561,8 @@ struct RenameTrackView: View {
             .onAppear {
                 title = track.title
                 artist = track.artist
+                originalTitle = track.title
+                originalArtist = track.artist
                 originalRecordingURL = library.fileURL(for: track)
             }
             .onChange(of: title) { _, _ in editError = nil }
