@@ -53,6 +53,24 @@ enum AudioSourceFinderTests {
                decodedSearch.response.rawItemCount == 4 &&
                decodedSearch.response.numFound == 20,
                "malformed Archive index rows preserve valid siblings and raw pagination count")
+        verify(!AudioSourceFinder.archiveSearchRowsComplete(decodedSearch.response),
+               "malformed Archive index row blocks unattended unique-match selection")
+        let cleanSearch = #"""
+        {"response":{"numFound":1,"docs":[
+          {"identifier":"valid-one","title":"The Song","creator":"The Artist"}]}}
+        """#.data(using: .utf8)!
+        let decodedClean = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: cleanSearch)
+        verify(AudioSourceFinder.archiveSearchRowsComplete(decodedClean.response),
+               "fully decoded Archive index preserves automatic selection eligibility")
+        let emptySearch = #"""
+        {"response":{"numFound":0,"docs":[]}}
+        """#.data(using: .utf8)!
+        let decodedEmpty = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: emptySearch)
+        verify(AudioSourceFinder.archiveSearchRowsComplete(decodedEmpty.response),
+               "genuinely empty Archive search remains a completed no-match")
+
         let fullPage = #"""
         {"response":{"docs":[{"identifier":"valid-one"},
           null,null,null,null,null,null,null,null,null,
@@ -60,6 +78,8 @@ enum AudioSourceFinderTests {
         """#.data(using: .utf8)!
         let decodedFullPage = try JSONDecoder().decode(
             AudioSourceFinder.SearchResponse.self, from: fullPage)
+        verify(!AudioSourceFinder.archiveSearchRowsComplete(decodedFullPage.response),
+               "lossy full Archive page cannot authorize a unique match")
         verify(decodedFullPage.response.docs.count == 1 &&
                decodedFullPage.response.rawItemCount == 20 &&
                decodedFullPage.response.numFound == nil,
