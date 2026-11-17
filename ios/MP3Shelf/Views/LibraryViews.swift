@@ -1052,6 +1052,7 @@ struct MusicTrackRow: View {
     @State private var audioAvailability: Bool?
     @State private var isCheckingPlayback = false
     @State private var playbackCheckTask: Task<Void, Never>?
+    @State private var playbackCheckGeneration: UUID?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
 
@@ -1090,6 +1091,9 @@ struct MusicTrackRow: View {
         guard !isCheckingPlayback, !library.isImporting, !importBlocked, scenePhase == .active else { return }
         isCheckingPlayback = true
         playbackNotice = nil
+        missingRecordingAlert = false
+        let generation = UUID()
+        playbackCheckGeneration = generation
         let selectedURL = library.fileURL(for: track)
         let queueSnapshot = context.map { ($0.id, library.fileURL(for: $0)) }
         let snapshotIDs = context.map(\.id)
@@ -1108,7 +1112,9 @@ struct MusicTrackRow: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled, !library.isImporting, !importBlocked, scenePhase == .active else { return }
+            guard !Task.isCancelled, playbackCheckGeneration == generation,
+                  !library.isImporting, !importBlocked, scenePhase == .active else { return }
+            playbackCheckGeneration = nil
             isCheckingPlayback = false
             playbackCheckTask = nil
             // A restore, deletion, or playlist edit invalidates the requested
@@ -1294,6 +1300,7 @@ struct MusicTrackRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 Button {
+                    playbackCheckGeneration = nil
                     playbackCheckTask?.cancel()
                     playbackCheckTask = nil
                     isCheckingPlayback = false
@@ -1330,20 +1337,27 @@ struct MusicTrackRow: View {
         .onChange(of: availabilityRefreshKey) { _, _ in
             // Invalidate selection when a restore changes the recording path
             // or the app moves between foreground and background.
+            playbackCheckGeneration = nil
             playbackCheckTask?.cancel()
             playbackCheckTask = nil
             isCheckingPlayback = false
+            missingRecordingAlert = false
         }
         .onDisappear {
+            playbackCheckGeneration = nil
             playbackCheckTask?.cancel()
             playbackCheckTask = nil
             isCheckingPlayback = false
         }
         .alert("Recording unavailable", isPresented: $missingRecordingAlert) {
-            Button("Retry playback") { playOrExplainMissingAudio() }
+            if !isCheckingPlayback && !library.isImporting && !importBlocked && scenePhase == .active {
+                Button("Retry playback") { playOrExplainMissingAudio() }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("\(recoveryReason) Your library entry and playlists are unchanged.")
+            Text("\(recoveryReason) Your library entry and playlists are unchanged." +
+                 (library.isImporting || importBlocked ? " Wait until audio import finishes before retrying." :
+                  scenePhase != .active ? " Return to MP3 Shelf before retrying." : ""))
         }
         .confirmationDialog("Delete downloaded song?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Song", role: .destructive) {
