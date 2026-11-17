@@ -530,7 +530,14 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     private func updateNowPlaying() {
-        guard let library, let song = library.song(with: currentTrackID) else { return }
+        // A recording can be removed by library reconciliation while playback
+        // is paused or recovering. Never leave the removed song's title,
+        // artwork, or elapsed time advertised on the lock screen. The player
+        // and retry state remain untouched so a repaired import can recover.
+        guard let library, let song = library.song(with: currentTrackID) else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: song.title,
             MPMediaItemPropertyArtist: song.artist,
