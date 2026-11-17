@@ -386,3 +386,47 @@ for scenario in ["journal-removed", "journal-replaced-identical",
     cases += 1
 }
 print("PASS: \(cases) filesystem recovery, publication and identity scenarios total")
+
+
+// Recovery must remain retryable after a publication collision. The losing
+// attempt must not consume staged bytes or discard its durable intent; after
+// the competing destination is removed, the original validated audio can
+// publish exactly once. This is a Foundation filesystem contract only.
+for scenario in ["foreign-file", "identical-file", "directory", "symlink",
+                 "dangling-symlink", "hardlink"] {
+    try reset()
+    switch scenario {
+    case "foreign-file": try foreign.write(to: destination)
+    case "identical-file": try audio.write(to: destination)
+    case "directory":
+        try fm.createDirectory(at: destination, withIntermediateDirectories: false)
+    case "symlink": try fm.createSymbolicLink(at: destination, withDestinationURL: other)
+    case "dangling-symlink":
+        try fm.createSymbolicLink(at: destination,
+                                  withDestinationURL: root.appendingPathComponent("absent"))
+    default: try fm.linkItem(at: other, to: destination)
+    }
+    let journalBefore = try Data(contentsOf: journal)
+    var collisionRejected = false
+    do { try recover() } catch { collisionRejected = true }
+    try assertSafe(collisionRejected, "\(scenario): collision did not fail closed")
+    try assertSafe(try Data(contentsOf: staged) == audio,
+                   "\(scenario): collision consumed staged recording")
+    try assertSafe(try Data(contentsOf: journal) == journalBefore,
+                   "\(scenario): collision discarded durable recovery intent")
+    try assertSafe(try Data(contentsOf: other) == foreign,
+                   "\(scenario): collision damaged unrelated recording")
+    try remove(destination)
+    try recover()
+    try assertSafe(try Data(contentsOf: destination) == audio,
+                   "\(scenario): safe retry did not publish original recording")
+    try assertSafe(try Data(contentsOf: staged) == audio,
+                   "\(scenario): retry consumed original stage")
+    var replayRejected = false
+    do { try recover() } catch RecoveryError.occupied { replayRejected = true }
+    try assertSafe(replayRejected, "\(scenario): post-retry replay was accepted")
+    try assertSafe(try Data(contentsOf: destination) == audio,
+                   "\(scenario): replay replaced recovered recording")
+    cases += 1
+}
+print("PASS: \(cases) filesystem recovery scenarios including collision-to-retry")
