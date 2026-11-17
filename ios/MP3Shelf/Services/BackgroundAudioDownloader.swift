@@ -252,6 +252,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         // inventory is known. An orphaned ticket from a deleted playlist must
         // never restart network traffic after a relaunch.
         guard let library else { return }
+        // A completed import may have landed between leader retirement and
+        // promotion. Fulfill those tickets without creating another transfer.
+        if followers.contains(where: { library.hasOfflineRecording(matching: $0.requested) }) {
+            reconcileAlreadyStoredDownloads()
+            return
+        }
         let loadedIDs = Set(library.playlists.map(\.id))
         let valid = followers.filter {
             Self.mayPromoteSharedFollower(
