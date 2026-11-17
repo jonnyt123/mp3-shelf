@@ -3,7 +3,7 @@
  * LaunchAgent entrypoint: execute the existing exact-SHA native release cycle
  * and atomically publish honest last-run diagnostics. No GitHub Actions.
  */
-import { mkdirSync, writeFileSync, renameSync, lstatSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync, lstatSync, openSync, closeSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -46,10 +46,38 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
 }
 export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
   run=runNativeReleaseCycle, now=()=>new Date() } = {}) {
+  // A native build may exceed the hourly interval. A second invocation must
+  // never race the first one for Git worktrees, device state or status files.
+  // The exclusive lock is deliberately not auto-reclaimed on age alone:
+  // a slow Xcode build is not proof that the owner process has died.
+  const lockDirectory=join(home,'Library','Logs','MP3Shelf','NativeAgent');
+  for(const directory of [join(home,'Library'),join(home,'Library','Logs'),
+    join(home,'Library','Logs','MP3Shelf'),lockDirectory]) {
+    try {
+      const info=lstatSync(directory);
+      if(!info.isDirectory()||info.isSymbolicLink())
+        throw Error('Native agent status directory was redirected');
+    } catch(error) {
+      if(error.code!=='ENOENT')throw error;
+      mkdirSync(directory,{mode:0o700});
+    }
+  }
+  const lockPath=join(lockDirectory,'native-cycle.lock');
+  let lock;
+  try { lock=openSync(lockPath,'wx',0o600); }
+  catch(error) {
+    if(error.code==='EEXIST')throw Error('NATIVE_CYCLE_ALREADY_RUNNING: exclusive lock exists; inspect the active Mac process before removing a stale lock');
+    throw error;
+  }
   const startedAt=now().toISOString();
   let result=null, failure=null;
   try { result=await run({repo:resolve(root),home}); }
   catch(error){ failure=error; }
+  finally {
+    // Do not allow lock cleanup to hide the native failure.
+    try { closeSync(lock); unlinkSync(lockPath); }
+    catch(error) { failure ??= error; }
+  }
   const record=nativeAgentRunRecord({startedAt,finishedAt:now().toISOString(),result,error:failure});
   const destination=join(home,'Library','Logs','MP3Shelf','NativeAgent');
   try {
