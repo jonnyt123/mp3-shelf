@@ -23,7 +23,15 @@ let foreignURL = root.appendingPathComponent("foreign.mp3")
 let audio = Data((0..<65536).map { UInt8(($0 * 31 + 7) % 251) })
 let foreign = Data((0..<65536).map { UInt8(($0 * 13 + 5) % 251) })
 try foreign.write(to: foreignURL)
+func safeJournalEntry() -> Bool {
+    if (try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) != nil { return false }
+    guard let attrs = try? fm.attributesOfItem(atPath: journalURL.path),
+          attrs[.type] as? FileAttributeType == .typeRegular,
+          (attrs[.referenceCount] as? NSNumber)?.intValue == 1 else { return false }
+    return true
+}
 func readJournal() throws -> TicketJournal {
+    guard safeJournalEntry() else { throw TicketError.corruptJournal }
     let data = try Data(contentsOf: journalURL)
     guard data.count <= 4096, let value = try? JSONDecoder().decode(TicketJournal.self, from: data),
           value.receiptCount == 0 || value.receiptCount == 1,
@@ -31,6 +39,10 @@ func readJournal() throws -> TicketJournal {
     return value
 }
 func writeJournal(_ value: TicketJournal) throws {
+    guard (try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) == nil,
+          (safeJournalEntry() || !fm.fileExists(atPath: journalURL.path)) else {
+        throw TicketError.corruptJournal
+    }
     try JSONEncoder().encode(value).write(to: journalURL, options: .atomic)
 }
 func validFile(_ url: URL) throws -> Bool {
@@ -205,3 +217,43 @@ try assertQA(try Data(contentsOf: foreignURL) == foreign,
              "destination hardlink modified unrelated recording")
 
 print("PASS: 7 malformed journal cases and 2 destination filesystem adversaries")
+
+// Recovery journal substitution must not authorize publishing audio or
+// rewriting another file. A trusted retry must still work after rejection.
+try resetPending()
+try audio.write(to: stagedURL, options: .atomic)
+let trustedJournal = try Data(contentsOf: journalURL)
+let outsideJournal = root.appendingPathComponent("outside-ticket.json")
+try trustedJournal.write(to: outsideJournal, options: .atomic)
+try fm.removeItem(at: journalURL)
+try fm.createSymbolicLink(at: journalURL, withDestinationURL: outsideJournal)
+do { try replay(); try assertQA(false, "symlink journal accepted") }
+catch TicketError.corruptJournal {}
+do { try writeJournal(TicketJournal(state: .complete, receiptCount: 1)); try assertQA(false, "symlink journal overwritten") }
+catch TicketError.corruptJournal {}
+try assertQA(try Data(contentsOf: outsideJournal) == trustedJournal, "symlink target changed")
+try assertQA(!fm.fileExists(atPath: finalURL.path), "symlink journal published audio")
+try fm.removeItem(at: journalURL)
+try fm.createSymbolicLink(atPath: journalURL.path, withDestinationPath: root.appendingPathComponent("missing-ticket.json").path)
+do { try writeJournal(TicketJournal(state: .complete, receiptCount: 1)); try assertQA(false, "dangling symlink journal overwritten") }
+catch TicketError.corruptJournal {}
+try fm.removeItem(at: journalURL)
+try fm.linkItem(at: outsideJournal, to: journalURL)
+do { try replay(); try assertQA(false, "hardlinked journal accepted") }
+catch TicketError.corruptJournal {}
+do { try writeJournal(TicketJournal(state: .complete, receiptCount: 1)); try assertQA(false, "hardlinked journal overwritten") }
+catch TicketError.corruptJournal {}
+try assertQA(try Data(contentsOf: outsideJournal) == trustedJournal, "hardlink target changed")
+try fm.removeItem(at: journalURL)
+try fm.createDirectory(at: journalURL, withIntermediateDirectories: false)
+do { try replay(); try assertQA(false, "directory journal accepted") }
+catch TicketError.corruptJournal {}
+do { try writeJournal(TicketJournal(state: .complete, receiptCount: 1)); try assertQA(false, "directory journal overwritten") }
+catch TicketError.corruptJournal {}
+try fm.removeItem(at: journalURL)
+try trustedJournal.write(to: journalURL, options: .atomic)
+try replay()
+try assertQA(try readJournal() == TicketJournal(state: .complete, receiptCount: 1), "safe recovery did not publish exactly one receipt")
+try assertQA(try Data(contentsOf: finalURL) == audio, "safe recovery lost audio")
+try assertQA(try Data(contentsOf: foreignURL) == foreign, "journal adversary mutated unrelated audio")
+print("PASS: substituted recovery journals rejected; valid retry recovered")
