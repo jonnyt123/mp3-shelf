@@ -303,7 +303,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             retired.failureReason = Self.obsoleteRequestReason
             updated[item.id] = retired
         }
-        for follower in valid.dropFirst() {
+        // Preserve followers whose playlists have not loaded yet. Leaving
+        // them attached to the retired leader creates a second orphan chain
+        // on relaunch and can start a duplicate transfer. Only positively
+        // obsolete requests are retired; all other queued siblings follow
+        // the newly selected leader in the same manifest transaction.
+        let obsoleteIDs = Set(obsolete.map(\.id))
+        for follower in followers where follower.id != promoted.id &&
+            !obsoleteIDs.contains(follower.id) {
             var redirected = follower
             redirected.sharedLeaderID = promoted.id
             updated[follower.id] = redirected
