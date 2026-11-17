@@ -550,6 +550,13 @@ extension AudioSourceFinder {
                                  licenseURL: licensedURL(license), sourceName: "Openverse: \(source)")
     }
 
+    static func consistentOpenverseDuplicate(_ first: AudioCatalogMatch,
+                                             _ second: AudioCatalogMatch) -> Bool {
+        first.downloadURL == second.downloadURL &&
+            first.itemURL == second.itemURL &&
+            first.sourceName == second.sourceName
+    }
+
     static let maxOpenversePages = 2
 
     /// Keep extra queries bounded for battery life and anonymous API limits.
@@ -610,8 +617,7 @@ extension AudioSourceFinder {
                     // contradictory publisher or landing-page attribution.
                     // URL deduplication is safe only when that evidence agrees.
                     if let previous = candidates[key],
-                       (previous.itemURL != match.itemURL ||
-                        previous.sourceName != match.sourceName) {
+                       !consistentOpenverseDuplicate(previous, match) {
                         throw SourceError.catalogsUnavailable([
                             "Openverse: conflicting metadata for the same audio URL."
                         ])
