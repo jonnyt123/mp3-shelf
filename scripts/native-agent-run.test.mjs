@@ -139,3 +139,26 @@ test('delivery and packaging claims require a recognized integration and exact c
    status:'already-staged',candidateSha:sha,delivery:'ALREADY_DELIVERED'}});
  assert.equal(eligible.delivery,'ALREADY_DELIVERED');
 });
+
+test('agent rejects conflicting exact source identities rather than claiming staging or delivery',()=>{
+ const base={startedAt:'2026-11-17T00:00:00Z',finishedAt:'2026-11-17T00:01:00Z'};
+ const conflict=nativeAgentRunRecord({...base,result:{
+   status:'already-staged',candidateSha:sha,sha:'b'.repeat(40),
+   delivery:'ALREADY_DELIVERED'}});
+ assert.equal(conflict.status,'BLOCKED');
+ assert.equal(conflict.candidateSha,null);
+ assert.equal(conflict.integration,'NOT_VERIFIED');
+ assert.equal(conflict.delivery,'NOT_VERIFIED');
+ const malformed=nativeAgentRunRecord({...base,result:{
+   status:'already-staged',candidateSha:'not-a-commit',sha,
+   delivery:'ALREADY_DELIVERED'}});
+ assert.equal(malformed.status,'BLOCKED');
+ assert.equal(malformed.delivery,'NOT_VERIFIED');
+ const missing=nativeAgentRunRecord({...base,result:{status:'already-staged'}});
+ assert.equal(missing.status,'BLOCKED');
+ assert.equal(missing.integration,'NOT_VERIFIED');
+ const consistent=nativeAgentRunRecord({...base,result:{
+   status:'already-staged',candidateSha:sha,sha,delivery:'ALREADY_DELIVERED'}});
+ assert.equal(consistent.status,'COMPLETED');
+ assert.equal(consistent.delivery,'ALREADY_DELIVERED');
+});
