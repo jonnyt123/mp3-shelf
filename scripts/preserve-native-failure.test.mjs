@@ -67,3 +67,20 @@ test('missing native run directories remain blocked evidence, never a native PAS
    assert.equal(r.preserved.length,1);
  }finally{rmSync(f.home,{recursive:true,force:true});}
 });
+
+test('oversized native compiler logs preserve their last bounded bytes and truthful truncation',()=>{
+ const f=fixture();
+ try {
+   const full=Buffer.alloc(5*1024*1024, 65);
+   full.write('FINAL SWIFT COMPILER FAILURE',full.length-35,'utf8');
+   writeFileSync(join(f.runs,f.first,'playlist-parser-compile.log'),full);
+   const snapshot=preserveNativeFailure({worktree:f.worktree,output:f.output,sourceSHA:SHA});
+   const entry=snapshot.preserved.find(x=>x.file==='run-1-playlist-parser-compile.log');
+   assert(entry);
+   assert.equal(entry.originalBytes,5*1024*1024);
+   assert.equal(entry.bytes,4*1024*1024);
+   assert.equal(entry.truncated,true);
+   assert.equal(snapshot.truncated,true);
+   assert(readFileSync(join(f.output,'failed-native-steps',entry.file)).includes('FINAL SWIFT COMPILER FAILURE'));
+ } finally {rmSync(f.home,{recursive:true,force:true});}
+});
