@@ -1578,16 +1578,28 @@ struct PlaylistsView: View {
         }
     }
 
+    // The confirmation can outlive an import, restore, rename, or playlist edit.
+    // Never delete a different playlist state merely because its UUID survived.
     private func deleteConfirmedPlaylist() {
-        guard let playlist = pendingDelete else { return }
-        library.deletePlaylist(playlist.id)
+        guard let requested = pendingDelete else { return }
         pendingDelete = nil
-        if library.playlists.contains(where: { $0.id == playlist.id }) {
+        guard let current = library.playlists.first(where: { $0.id == requested.id }) else {
+            playlistActionFeedback = "This playlist is no longer available. Nothing was deleted."
+            return
+        }
+        guard current.name == requested.name,
+              current.trackIDs == requested.trackIDs,
+              current.missingTracks == requested.missingTracks else {
+            playlistActionFeedback = "This playlist changed while the confirmation was open. Review it and try again; nothing was deleted."
+            return
+        }
+        library.deletePlaylist(requested.id)
+        if library.playlists.contains(where: { $0.id == requested.id }) {
             playlistActionFeedback = library.libraryStorageError
                 ?? "Could not delete this playlist. Your existing playlists were preserved."
         } else {
-            playlistResultsFocused = true
-            playlistActionFeedback = "Deleted \(playlist.name). Your songs remain in your library."
+            revealPlaylists()
+            playlistActionFeedback = "Deleted \(requested.name). Your songs remain in your library."
         }
     }
 
