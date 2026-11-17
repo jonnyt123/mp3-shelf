@@ -59,3 +59,34 @@ test('read-only dashboard writes JSON, Markdown and HTML without a Mac or GitHub
   assert(readFileSync(result.html,'utf8').startsWith('<!doctype html>'));
  }finally{rmSync(root,{recursive:true,force:true})}
 });
+
+
+test('real native schemaVersion 1 receipt with two completed steps is recognized but does not approve device',()=>{
+ const receipt={schemaVersion:1,mode:'native',candidateSha:sha,
+   status:'local-checks-passed',cleanCheckout:true,exitCode:0,
+   steps:[{name:'native-local-release',success:true},{name:'post-native-checkout-integrity',success:true}]};
+ const model=readinessModel({candidateSha:sha,native:receipt});
+ assert.equal(model.gates.find(x=>x.key==='native').status,'PASS');
+ assert.equal(model.gates.find(x=>x.key==='hardware').status,'BLOCKED');
+ receipt.steps[1].success=false;
+ assert.equal(readinessModel({candidateSha:sha,native:receipt}).gates.find(x=>x.key==='native').status,'BLOCKED');
+});
+test('closed GitHub hardware issue alone is insufficient without matching owner SHA-256 approval marker',()=>{
+ const labels=['Signing / installation','Offline playback','Background licensed downloads',
+   'Failure handling','Spotify metadata integration','Portable backup interoperability',
+   'Accessible responsive UI','Policy/source audit','Final acceptance'];
+ const hardware={schema:'mp3shelf-hardware-acceptance-v1',candidateSha:sha,installedSourceSha:sha,
+   signedAppSHA256:hash,inventorySHA256:hash,reviewer:'jonnyt123',
+   checks:Object.fromEntries(['signingInstallation','offlinePlayback','backgroundDownloads',
+    'failureHandling','spotifyMetadata','backupInterop','accessibility','sourcePolicy','finalAcceptance']
+     .map(name=>[name,'PASS']))};
+ const issue={number:6,state:'closed',body:labels.map(label=>'- [x] **'+label+':** PASS').join('\n')};
+ const args={candidateSha:sha,issue,hardware,inventorySHA256:hash};
+ assert.equal(readinessModel(args).gates.find(g=>g.key==='hardware').status,'BLOCKED');
+ const marker='MP3SHELF_DEVICE_GATE_APPROVED SHA='+sha+
+   ' INVENTORY_SHA256='+hash+' SIGNED_APP_SHA256='+hash;
+ assert.equal(readinessModel({...args,ownerComments:[{user:{login:'jonnyt123'},body:marker}]}).
+   gates.find(g=>g.key==='hardware').status,'PASS');
+ assert.equal(readinessModel({...args,ownerComments:[{user:{login:'unknown'},body:marker}]}).
+   gates.find(g=>g.key==='hardware').status,'BLOCKED');
+});
