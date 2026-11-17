@@ -348,25 +348,33 @@ final class PlaybackController: NSObject, ObservableObject {
         let originalError = playbackError
         let originalFailedTrackID = failedTrackID
         let originalFailedOrder = failedPlaybackOrder
-        let originalWasAudible = audioPlayer?.isPlaying == true
-        func restoreAudibleState() {
-            guard originalWasAudible, audioPlayer?.isPlaying == true else { return }
+        // Previous is speculative for both audible and paused playback. A
+        // failed candidate must not replace the retry target of a paused song
+        // or erase a pre-existing error. The selected track and player remain
+        // unchanged until beginPlayback succeeds.
+        let originalPlayer = audioPlayer
+        let originalTrackID = currentTrackID
+        let originalIsPlaying = isPlaying
+        func restoreSelectionState() {
+            guard audioPlayer === originalPlayer,
+                  currentTrackID == originalTrackID else { return }
             playbackError = originalError
             failedTrackID = originalFailedTrackID
             failedPlaybackOrder = originalFailedOrder
+            isPlaying = originalIsPlaying
             updateNowPlaying()
         }
         var attempted: Set<UUID> = []
         while attempted.count < nextOrder.queueIDs.count {
             guard let id = nextOrder.previous(loop: loopMode),
                   attempted.insert(id).inserted else {
-                restoreAudibleState()
+                restoreSelectionState()
                 return
             }
             if id == currentTrackID {
                 // No earlier playable entry: restart the current recording
                 // without altering its queue position.
-                restoreAudibleState()
+                restoreSelectionState()
                 seek(to: 0)
                 return
             }
@@ -375,7 +383,7 @@ final class PlaybackController: NSObject, ObservableObject {
         }
         // Leave the current recording and its playback order intact when
         // every previous candidate is unavailable.
-        restoreAudibleState()
+        restoreSelectionState()
     }
 
     private func advance(automatically: Bool, crossfading: Bool = false) {
