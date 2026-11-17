@@ -1315,6 +1315,36 @@ enum SourceDiscoveryJobTests {
         verifyDiscovery(exhausted.lastError == "Catalog request failed" &&
                         exhausted.nextRetryAt == nil && exhausted.failed == 1,
                         "exhausted search retains the error without scheduling another retry")
+        // A delayed replacement source must not stall later ready songs.
+        // A global catalog backoff, however, must still apply to every song.
+        let fairnessClock = Date(timeIntervalSince1970: 1_800_200_000)
+        let delayedWish = PlaylistWish(title: "Delayed", artist: "Artist", album: "Album", spotifyURL: nil)
+        let readyWish = PlaylistWish(title: "Ready", artist: "Artist", album: "Album", spotifyURL: nil)
+        var fairQueue = SourceDiscoveryJob(playlistID: UUID(), wishes: [delayedWish, readyWish])
+        fairQueue.sourceRecoveryNotBefore = [delayedWish.id.uuidString: fairnessClock.addingTimeInterval(600)]
+        verifyDiscovery(fairQueue.nextLookupAt == nil &&
+                        fairQueue.prepareLookup(at: fairnessClock) &&
+                        fairQueue.currentWish?.id == readyWish.id,
+                        "a ready playlist song bypasses another song's delayed source recovery")
+        var backedOffQueue = SourceDiscoveryJob(playlistID: UUID(), wishes: [delayedWish, readyWish])
+        backedOffQueue.sourceRecoveryNotBefore = [delayedWish.id.uuidString: fairnessClock.addingTimeInterval(600)]
+        backedOffQueue.nextRetryAt = fairnessClock.addingTimeInterval(30)
+        verifyDiscovery(backedOffQueue.nextLookupAt == fairnessClock.addingTimeInterval(30) &&
+                        !backedOffQueue.prepareLookup(at: fairnessClock) &&
+                        backedOffQueue.prepareLookup(at: fairnessClock.addingTimeInterval(30)) &&
+                        backedOffQueue.currentWish?.id == readyWish.id,
+                        "global catalog backoff delays ready songs only until its own deadline")
+        var allDelayed = SourceDiscoveryJob(playlistID: UUID(), wishes: [delayedWish, readyWish])
+        allDelayed.sourceRecoveryNotBefore = [
+            delayedWish.id.uuidString: fairnessClock.addingTimeInterval(600),
+            readyWish.id.uuidString: fairnessClock.addingTimeInterval(90)
+        ]
+        allDelayed.nextRetryAt = fairnessClock.addingTimeInterval(30)
+        verifyDiscovery(allDelayed.nextLookupAt == fairnessClock.addingTimeInterval(90) &&
+                        !allDelayed.prepareLookup(at: fairnessClock.addingTimeInterval(30)) &&
+                        allDelayed.prepareLookup(at: fairnessClock.addingTimeInterval(90)) &&
+                        allDelayed.currentWish?.id == readyWish.id,
+                        "earliest recovery deadline and global retry are both respected")
         print("Persistent discovery checkpoint tests passed")
     }
 }
