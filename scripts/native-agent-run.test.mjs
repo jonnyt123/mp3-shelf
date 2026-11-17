@@ -162,3 +162,30 @@ test('agent rejects conflicting exact source identities rather than claiming sta
  assert.equal(consistent.status,'COMPLETED');
  assert.equal(consistent.delivery,'ALREADY_DELIVERED');
 });
+
+test('contradictory cycle outcomes never become a completed agent receipt',()=>{
+ const base={startedAt:'2026-11-17T00:00:00Z',finishedAt:'2026-11-17T00:01:00Z'};
+ for(const status of ['blocked','FAILED','not-staged']){
+  const record=nativeAgentRunRecord({...base,result:{
+   candidateSha:sha,status,integration:'staged-draft-only',
+   delivery:'ALREADY_DELIVERED'}});
+  assert.equal(record.status,'BLOCKED');
+  assert.equal(record.candidateSha,null);
+  assert.equal(record.delivery,'NOT_VERIFIED');
+ }
+ const legitimate=nativeAgentRunRecord({...base,result:{
+  candidateSha:sha,status:'already-staged',integration:'staged-draft-only'}});
+ assert.equal(legitimate.status,'COMPLETED');
+});
+test('malformed or reversed run timestamps cannot claim fresh integration',()=>{
+ for(const [startedAt,finishedAt] of [
+  ['invalid','2026-11-17T00:01:00Z'],
+  ['2026-11-17T00:02:00Z','2026-11-17T00:01:00Z'],
+  ['2026-11-17T00:00:00Z','invalid']]){
+  const record=nativeAgentRunRecord({startedAt,finishedAt,
+   result:{candidateSha:sha,status:'already-staged',delivery:'ALREADY_DELIVERED'}});
+  assert.equal(record.status,'BLOCKED');
+  assert.equal(record.candidateSha,null);
+  assert.equal(record.delivery,'NOT_VERIFIED');
+ }
+});
