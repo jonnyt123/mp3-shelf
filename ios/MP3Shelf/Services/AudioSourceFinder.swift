@@ -272,6 +272,10 @@ enum AudioSourceFinder {
         }
     }
 
+    static func archiveSearchRowsComplete(_ body: SearchBody) -> Bool {
+        body.docs.count == body.rawItemCount
+    }
+
     static let maxArchiveSearchPages = 2
 
     static func archiveIndexRelevance(title: String, creator: String,
@@ -340,7 +344,7 @@ enum AudioSourceFinder {
             // turn a lossy page into a falsely unique automatic selection.
             // Preserve a retryable incomplete-search result even when a valid
             // candidate appears in the remaining rows.
-            if search.response.docs.count != search.response.rawItemCount {
+            if !archiveSearchRowsComplete(search.response) {
                 searchIncomplete = true
             }
             let ranked = search.response.docs.enumerated().sorted { left, right in
