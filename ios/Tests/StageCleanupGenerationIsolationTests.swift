@@ -1,0 +1,97 @@
+import Foundation
+
+// Run: swift ios/Tests/StageCleanupGenerationIsolationTests.swift
+// Independent filesystem contract, not a production URLSession integration test.
+private enum Failure: Error { case unsafeCleanup }
+private struct Receipt: Codable, Equatable {
+    let ticket: UUID
+    let generation: Int
+    let stagedName: String
+}
+private let fm = FileManager.default
+private let root = fm.temporaryDirectory.appendingPathComponent("mp3-stage-generation-\(UUID())")
+try fm.createDirectory(at: root, withIntermediateDirectories: true)
+defer { try? fm.removeItem(at: root) }
+private let stage = root.appendingPathComponent("download.part")
+private let journal = root.appendingPathComponent("download.json")
+private let older = Receipt(ticket: UUID(), generation: 1, stagedName: "download.part")
+private let newer = Receipt(ticket: UUID(), generation: 2, stagedName: "download.part")
+private let oldBytes = Data(repeating: 0x31, count: 8192)
+private let newBytes = Data(repeating: 0x72, count: 8192)
+private func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+    if try !condition() { throw NSError(domain: "StageCleanupGenerationIsolation", code: 1,
+        userInfo: [NSLocalizedDescriptionKey: message]) }
+}
+private func inode(_ url: URL) throws -> UInt64 {
+    let attrs = try fm.attributesOfItem(atPath: url.path)
+    guard attrs[.type] as? FileAttributeType == .typeRegular,
+          let number = (attrs[.systemFileNumber] as? NSNumber)?.uint64Value,
+          (attrs[.referenceCount] as? NSNumber)?.intValue == 1,
+          (try? fm.destinationOfSymbolicLink(atPath: url.path)) == nil else {
+        throw Failure.unsafeCleanup
+    }
+    return number
+}
+private func write(_ receipt: Receipt, bytes: Data) throws {
+    try bytes.write(to: stage, options: .atomic)
+    try JSONEncoder().encode(receipt).write(to: journal, options: .atomic)
+}
+private func cleanup(_ expected: Receipt, stageInode: UInt64,
+                     beforeDelete: () throws -> Void = {}) throws {
+    guard let bytes = try? Data(contentsOf: journal),
+          let current = try? JSONDecoder().decode(Receipt.self, from: bytes),
+          current == expected, current.stagedName == stage.lastPathComponent,
+          try inode(stage) == stageInode else { throw Failure.unsafeCleanup }
+    try beforeDelete()
+    // Detect replacement after asynchronous completion. This reference model
+    // does not prove atomicity against a writer racing after this last check.
+    guard let latest = try? Data(contentsOf: journal), latest == bytes,
+          let decoded = try? JSONDecoder().decode(Receipt.self, from: latest),
+          decoded == expected, try inode(stage) == stageInode else {
+        throw Failure.unsafeCleanup
+    }
+    try fm.removeItem(at: stage)
+    guard let final = try? Data(contentsOf: journal), final == bytes else {
+        throw Failure.unsafeCleanup
+    }
+    try fm.removeItem(at: journal)
+}
+var passed = 0
+for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "journal-replaced", "removed-stage"] {
+    try write(older, bytes: oldBytes)
+    let originalInode = try inode(stage)
+    var rejected = false
+    do {
+        try cleanup(older, stageInode: originalInode, beforeDelete: {
+            switch scenario {
+            case "new-generation": try write(newer, bytes: newBytes)
+            case "same-bytes-new-inode":
+                try fm.removeItem(at: stage)
+                try oldBytes.write(to: stage)
+            case "symlink-stage":
+                try fm.removeItem(at: stage)
+                try fm.createSymbolicLink(at: stage, withDestinationURL: journal)
+            case "journal-replaced":
+                try JSONEncoder().encode(newer).write(to: journal, options: .atomic)
+            default: try fm.removeItem(at: stage)
+            }
+        })
+    } catch { rejected = true }
+    try require(rejected, "\(scenario): stale callback cleanup accepted")
+    try require(fm.fileExists(atPath: journal.path), "\(scenario): recovery journal lost")
+    if scenario == "new-generation" {
+        try require(try Data(contentsOf: stage) == newBytes, "new ticket audio deleted")
+        try require(try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)) == newer,
+                    "new ticket journal overwritten")
+    }
+    if scenario == "same-bytes-new-inode" {
+        try require(try Data(contentsOf: stage) == oldBytes, "replacement stage removed")
+    }
+    passed += 1
+}
+try write(older, bytes: oldBytes)
+try cleanup(older, stageInode: inode(stage))
+try require(!fm.fileExists(atPath: stage.path) && !fm.fileExists(atPath: journal.path),
+            "successful cleanup left orphan files")
+passed += 1
+print("PASS: \(passed) stage cleanup generation and replacement scenarios")
