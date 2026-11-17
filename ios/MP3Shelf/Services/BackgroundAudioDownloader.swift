@@ -260,6 +260,16 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         !isProcessing && !hasConversion
     }
 
+    /// Cancellation can immediately promote followers only after the old
+    /// transfer has relinquished both decoder ownership and staged bytes.
+    nonisolated static func mayPromoteAfterCancellation(isProcessing: Bool,
+                                                        hasConversion: Bool,
+                                                        hasStagedFile: Bool) -> Bool {
+        mayPromoteAfterStagingRecovery(hasPredecessorStaging: hasStagedFile,
+                                      isProcessing: isProcessing,
+                                      hasConversion: hasConversion)
+    }
+
     nonisolated static func mayPromoteAfterStagingRecovery(hasPredecessorStaging: Bool,
                                                             isProcessing: Bool,
                                                             hasConversion: Bool) -> Bool {
@@ -598,7 +608,12 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // promotion guard intentionally refuses to race staged bytes, so
             // calling it before cleanup could strand followers indefinitely.
             try? fm.removeItem(at: Self.stagingURL(id))
-            promoteSharedFollowers(of: id)
+            if Self.mayPromoteAfterCancellation(
+                isProcessing: processing.contains(id),
+                hasConversion: conversions[id] != nil,
+                hasStagedFile: fm.fileExists(atPath: Self.stagingURL(id).path)) {
+                promoteSharedFollowers(of: id)
+            }
         }
         // If an import is still active, its defer block reconciles the
         // finished recording and promotes followers after conversion ends.
