@@ -36,33 +36,37 @@ private func write(_ receipt: Receipt, bytes: Data) throws {
     try bytes.write(to: stage, options: .atomic)
     try JSONEncoder().encode(receipt).write(to: journal, options: .atomic)
 }
-private func cleanup(_ expected: Receipt, stageInode: UInt64,
+private func cleanup(_ expected: Receipt, stageInode: UInt64, journalInode: UInt64,
                      beforeDelete: () throws -> Void = {}) throws {
-    guard let bytes = try? Data(contentsOf: journal),
+    guard (try? inode(journal)) == journalInode,
+          let bytes = try? Data(contentsOf: journal),
           let current = try? JSONDecoder().decode(Receipt.self, from: bytes),
           current == expected, current.stagedName == stage.lastPathComponent,
           try inode(stage) == stageInode else { throw Failure.unsafeCleanup }
     try beforeDelete()
     // Detect replacement after asynchronous completion. This reference model
     // does not prove atomicity against a writer racing after this last check.
-    guard let latest = try? Data(contentsOf: journal), latest == bytes,
+    guard (try? inode(journal)) == journalInode,
+          let latest = try? Data(contentsOf: journal), latest == bytes,
           let decoded = try? JSONDecoder().decode(Receipt.self, from: latest),
           decoded == expected, try inode(stage) == stageInode else {
         throw Failure.unsafeCleanup
     }
     try fm.removeItem(at: stage)
-    guard let final = try? Data(contentsOf: journal), final == bytes else {
+    guard (try? inode(journal)) == journalInode,
+          let final = try? Data(contentsOf: journal), final == bytes else {
         throw Failure.unsafeCleanup
     }
     try fm.removeItem(at: journal)
 }
 var passed = 0
-for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "journal-replaced", "removed-stage"] {
+for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "journal-replaced", "removed-stage", "journal-symlink", "journal-same-bytes-new-inode", "journal-hardlink"] {
     try write(older, bytes: oldBytes)
     let originalInode = try inode(stage)
+    let originalJournalInode = try inode(journal)
     var rejected = false
     do {
-        try cleanup(older, stageInode: originalInode, beforeDelete: {
+        try cleanup(older, stageInode: originalInode, journalInode: originalJournalInode, beforeDelete: {
             switch scenario {
             case "new-generation": try write(newer, bytes: newBytes)
             case "same-bytes-new-inode":
@@ -73,12 +77,24 @@ for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "jou
                 try fm.createSymbolicLink(at: stage, withDestinationURL: journal)
             case "journal-replaced":
                 try JSONEncoder().encode(newer).write(to: journal, options: .atomic)
+            case "journal-symlink":
+                try fm.removeItem(at: journal)
+                try fm.createSymbolicLink(at: journal, withDestinationURL: stage)
+            case "journal-same-bytes-new-inode":
+                try fm.removeItem(at: journal)
+                try JSONEncoder().encode(older).write(to: journal)
+            case "journal-hardlink":
+                let alias = root.appendingPathComponent("journal-alias")
+                try fm.linkItem(at: journal, to: alias)
             default: try fm.removeItem(at: stage)
             }
         })
     } catch { rejected = true }
     try require(rejected, "\(scenario): stale callback cleanup accepted")
     try require(fm.fileExists(atPath: journal.path), "\(scenario): recovery journal lost")
+    if scenario.hasPrefix("journal-") {
+        try require(try Data(contentsOf: stage) == oldBytes, "\(scenario): audio deleted on unsafe journal")
+    }
     if scenario == "new-generation" {
         try require(try Data(contentsOf: stage) == newBytes, "new ticket audio deleted")
         try require(try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)) == newer,
@@ -90,7 +106,7 @@ for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "jou
     passed += 1
 }
 try write(older, bytes: oldBytes)
-try cleanup(older, stageInode: inode(stage))
+try cleanup(older, stageInode: inode(stage), journalInode: inode(journal))
 try require(!fm.fileExists(atPath: stage.path) && !fm.fileExists(atPath: journal.path),
             "successful cleanup left orphan files")
 passed += 1
