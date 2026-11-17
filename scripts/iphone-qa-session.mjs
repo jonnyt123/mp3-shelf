@@ -66,7 +66,7 @@ export async function runIPhonePhase({ phase, deviceID, bundleID, playlistID,
       'DeviceAcceptance', sha, 'physical-inventory.json'));
     mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
     const report = await captureDevicePlaylist({
-      deviceID, bundleID, playlistID, expectedSha: sha, output: target, platform
+      deviceID, bundleID, playlistID, expectedSha: sha, output: target, cwd, platform
     });
     // This is a TEMPLATE, never approval: independent actual iPhone testing,
     // app-install provenance and issue #6 review must fill every field.
