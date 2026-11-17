@@ -989,6 +989,18 @@ enum PortableShelfArchive {
             try? output.close()
             throw error
         }
+        // Keep a second descriptor open until cleanup completes. Without this
+        // pin, closing the output can free its inode and the filesystem may
+        // immediately reuse that inode for an unrelated replacement file.
+        // Inode-only pathname checks are not safe after the last close.
+        let pinnedDescriptor = dup(output.fileDescriptor)
+        guard pinnedDescriptor >= 0 else {
+            let code = errno
+            try? output.close()
+            removeOwnedStaging(target, identity: extractionIdentity)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        defer { _ = close(pinnedDescriptor) }
         do {
             // A successful write is not a successful extraction until the
             // destination has been flushed and closed. In particular, do not
