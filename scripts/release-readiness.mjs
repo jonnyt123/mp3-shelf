@@ -135,11 +135,20 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
    smokeOK?'A recent local deletion record exists; this dashboard has not independently verified the owner attestation or remote asset digests.':
     'No recent owner-attested, checksum-matched and deleted draft upload for the current tooling SHA.',
    'Run the one-time draft upload smoke on Mac and verify its GitHub owner attestation.');
+ // A GitHub release can contain two unrelated or duplicate assets with
+ // valid-looking digests. Only the exact source-bound ZIP and manifest names
+ // count as an observable delivery, and both must have nonempty uploaded bytes.
+ // This remains advisory: the authoritative publisher re-downloads and hashes.
+ const zipName=sha?'MP3-Shelf-Xcode-'+sha.slice(0,12)+'.zip':null;
+ const manifestName=sha?'MP3-Shelf-Xcode-'+sha.slice(0,12)+'.manifest.json':null;
+ const expectedNames=[zipName,manifestName];
  const released=!!sha&&release?.draft===false&&
    release?.tag_name==='mp3-shelf-ios-'+sha&&
    Array.isArray(release?.assets)&&release.assets.length===2&&
-   release.assets.every(asset=>asset.state==='uploaded'&&
-     /^sha256:[a-f0-9]{64}$/.test(asset.digest??''));
+   expectedNames.every(name=>release.assets.some(asset=>
+     asset?.name===name&&asset.state==='uploaded'&&
+     Number.isSafeInteger(asset.size)&&asset.size>0&&
+     /^sha256:[a-f0-9]{64}$/.test(asset.digest??'')));
  add('zip','Published verified Xcode project ZIP',released?null:false,
    released?'A matching source release advertises two SHA-256 digests; actual downloaded bytes and release authorization remain unverified here.':
      'No published GitHub Xcode project ZIP for the verified candidate.',
