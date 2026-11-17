@@ -120,6 +120,22 @@ enum BackgroundAudioURLPolicyTests {
             fatalError("Invalid capacity count must not become negative")
         }
         print("PASS: 26 physical-transfer capacity combinations")
+        var promotionCases = 0
+        for loaded in [false, true] {
+            for current in [false, true] {
+                for stored in [false, true] {
+                    let expected = loaded && current && !stored
+                    guard BackgroundAudioDownloader.mayPromoteSharedFollower(
+                        playlistLoaded: loaded, requestCurrent: current,
+                        alreadyStored: stored) == expected else {
+                        fatalError("Orphan follower promoted without a current playlist request")
+                    }
+                    promotionCases += 1
+                }
+            }
+        }
+        guard promotionCases == 8 else { fatalError("Incomplete follower promotion matrix") }
+        print("PASS: 8 orphan follower promotion eligibility combinations")
         print("PASS: 16 cross-playlist transfer eligibility combinations")
         print("PASS: 16 cellular upgrade and in-progress import combinations")
         print("PASS: cellular, expensive and constrained network opt-in fixtures")
