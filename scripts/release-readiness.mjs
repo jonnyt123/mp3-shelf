@@ -33,8 +33,17 @@ function ghJSON(path){
       maxBuffer:2*1024*1024,stdio:['ignore','pipe','ignore']}));
  }catch{return null;}
 }
-function exactTagAbsent(tag){
- return ghJSON('git/ref/tags/'+tag)===null && ghJSON('releases/tags/'+tag)===null;
+function definite404(path){
+ try {
+  execFileSync('gh',['api','-H','Accept: application/vnd.github+json',
+    'repos/'+REPO+'/'+path],{encoding:'utf8',timeout:15000,
+     maxBuffer:512*1024,stdio:['ignore','pipe','pipe']});
+  return false;
+ } catch(error) {
+  // Unlike a transient network, auth or rate-limit error, an explicit GitHub
+  // HTTP 404 is evidence that this disposable smoke resource is absent.
+  return /(?:HTTP\s*)?404|Not Found/.test(String(error.stderr ?? error.message));
+ }
 }
 export function readinessModel({candidateSha=null,toolingSha=null,agent=null,native=null,
   inventory=null,review=null,hardware=null,issue=null,smoke=null,
@@ -193,9 +202,9 @@ function gitHubLive(now){
    for(const c of comments){
     const item=verifiedSmokeComment(c,toolingSha,now);
     if(item){
-      const tag=ghJSON('git/ref/tags/'+item.tag);
-      const rel=ghJSON('releases/tags/'+item.tag);
-      if(tag===null&&rel===null)smoke={...item,deleted:true};
+      if(definite404('git/ref/tags/'+item.tag) &&
+         definite404('releases/tags/'+item.tag))
+        smoke={...item,deleted:true};
     }
    }
    if(comments.length<100)break;
