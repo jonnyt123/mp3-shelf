@@ -1447,8 +1447,15 @@ struct RenameTrackView: View {
             titleFocused = true
             return
         }
-        guard let current = library.tracks.first(where: { $0.id == track.id }) else {
+        // Restores can introduce duplicate track IDs with different recordings.
+        // A first(where:) lookup would silently edit an arbitrary copy.
+        let matchingTracks = library.tracks.filter { $0.id == track.id }
+        guard let current = matchingTracks.first else {
             editError = "This song is no longer in your library. Your changes were not saved."
+            return
+        }
+        guard matchingTracks.count == 1 else {
+            editError = "Multiple songs share this recording ID. Nothing was changed. Resolve the duplicate recordings before editing."
             return
         }
         // The editor owns a snapshot, not the current library revision. A
@@ -1469,7 +1476,8 @@ struct RenameTrackView: View {
             return
         }
         library.rename(current, title: cleanTitle, artist: cleanArtist)
-        guard let updated = library.tracks.first(where: { $0.id == track.id }),
+        let updatedMatches = library.tracks.filter { $0.id == track.id }
+        guard updatedMatches.count == 1, let updated = updatedMatches.first,
               updated.title == cleanTitle && updated.artist == cleanArtist else {
             editError = "The song could not be updated. Your edits are still here so you can retry."
             return
