@@ -249,3 +249,62 @@ for scenario in ["foreign-writer", "identical-writer", "directory-writer",
     cases += 1
 }
 print("PASS: \(cases) filesystem recovery and publication-race scenarios total")
+
+
+// Independent stage-identity race matrix: a validated pathname is not a
+// validated file descriptor. A second writer can replace the staging pathname
+// after preflight; the publisher must detect that identity change before
+// publishing bytes. This models a safe publication boundary using an inode
+// identity snapshot, without changing production-owned recovery code.
+func identity(_ url: URL) throws -> (UInt64, UInt64) {
+    let attrs = try fm.attributesOfItem(atPath: url.path)
+    guard let inode = (attrs[.systemFileNumber] as? NSNumber)?.uint64Value,
+          let device = (attrs[.systemNumber] as? NSNumber)?.uint64Value
+    else { throw RecoveryError.invalidAudio }
+    return (device, inode)
+}
+func guardedRecover(beforePublication: () throws -> Void) throws {
+    let expected = try identity(staged)
+    guard regular(staged), try Data(contentsOf: staged) == audio else {
+        throw RecoveryError.invalidAudio
+    }
+    try beforePublication()
+    let actual = try identity(staged)
+    guard actual == expected, regular(staged),
+          try Data(contentsOf: staged) == audio else {
+        throw RecoveryError.invalidAudio
+    }
+    try fm.linkItem(at: staged, to: destination)
+}
+for scenario in ["replace-stage-with-foreign", "replace-stage-with-identical",
+                 "replace-stage-with-symlink", "replace-stage-with-hardlink",
+                 "remove-stage", "replace-stage-with-directory"] {
+    try reset()
+    var injected = false
+    var rejected = false
+    do {
+        try guardedRecover(beforePublication: {
+            injected = true
+            try fm.removeItem(at: staged)
+            switch scenario {
+            case "replace-stage-with-foreign": try foreign.write(to: staged)
+            case "replace-stage-with-identical": try audio.write(to: staged)
+            case "replace-stage-with-symlink":
+                try fm.createSymbolicLink(at: staged, withDestinationURL: other)
+            case "replace-stage-with-hardlink": try fm.linkItem(at: other, to: staged)
+            case "replace-stage-with-directory":
+                try fm.createDirectory(at: staged, withIntermediateDirectories: false)
+            default: break
+            }
+        })
+    } catch { rejected = true }
+    try assertSafe(injected && rejected, "\(scenario): stage identity race accepted")
+    try assertSafe(!fm.fileExists(atPath: destination.path),
+                   "\(scenario): unvalidated stage published")
+    try assertSafe(try Data(contentsOf: other) == foreign,
+                   "\(scenario): foreign audio changed")
+    try assertSafe(fm.fileExists(atPath: journal.path),
+                   "\(scenario): recovery intent lost")
+    cases += 1
+}
+print("PASS: \(cases) filesystem recovery, publication and stage-identity scenarios total")
