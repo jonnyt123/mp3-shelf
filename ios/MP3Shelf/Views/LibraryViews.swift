@@ -674,7 +674,7 @@ struct LibraryView: View {
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.white)
                                 .accessibilityHint("Recheck recordings stored on this iPhone without connecting to the internet")
-                                .disabled(library.isImporting || offlineRecordingCount == nil)
+                                .disabled(audioImportBusy || scenePhase != .active || offlineRecordingCount == nil)
                             }
                         }
                         Spacer(minLength: 0)
@@ -773,11 +773,15 @@ struct LibraryView: View {
                                                    alignment: .leading)
                                         }
                                         .buttonStyle(.plain)
-                                        .disabled(recentPlaybackCheck != nil)
+                                        .disabled(recentPlaybackCheck != nil || audioImportBusy || scenePhase != .active)
                                         .accessibilityLabel(recentPlaybackCheck == track.id
                                             ? "Checking \(track.title) for offline playback"
                                             : "Play \(track.title) by \(track.artist)")
-                                        .accessibilityHint("Checks the local recording before playback without using the network")
+                                        .accessibilityHint(audioImportBusy
+                                            ? "Wait for audio import to finish before playing this recording"
+                                            : scenePhase != .active
+                                                ? "Return to MP3 Shelf to play this recording"
+                                                : "Checks the local recording before playback without using the network")
                                     }
                                 }
                                 .padding(.vertical, 4)
@@ -904,8 +908,10 @@ struct LibraryView: View {
         }
         .background(PremiumBackdrop())
         .alert("Recording unavailable", isPresented: $missingRecentRecording) {
-            Button("Retry playback") { retryRecentRecording() }
-            Button("Cancel", role: .cancel) {}
+            if recentRetrySelection != nil && !audioImportBusy && scenePhase == .active {
+                Button("Retry playback") { retryRecentRecording() }
+            }
+            Button("OK", role: .cancel) {}
         } message: {
             Text("The selected recording is unavailable or the Recently Added queue changed. Your library entry is preserved. Retry after restoring the recording.")
         }
