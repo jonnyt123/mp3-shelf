@@ -67,3 +67,17 @@ test('untrusted cycle metadata cannot forge native receipt, delivery or leak sec
  assert(!JSON.stringify(failed).includes('ghp_SECRET'));
  assert(!JSON.stringify(failed).includes('playlist.mp3'));
 });
+
+test('status directory symlinks fail closed without modifying outside files',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'mp3-shelf-agent-parent-'));
+ try{
+  const outside=join(home,'outside');
+  mkdirSync(join(home,'Library'),{recursive:true});
+  mkdirSync(outside);
+  writeFileSync(join(outside,'sentinel'),'preserve');
+  symlinkSync(outside,join(home,'Library','Logs'));
+  await assert.rejects(executeNativeAgent({home,root:home,
+   run:async()=>({status:'already-staged',sha})}),/directory was redirected/);
+  assert.equal(readFileSync(join(outside,'sentinel'),'utf8'),'preserve');
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
