@@ -541,6 +541,44 @@ enum PortableShelfArchive {
               staged.manifest.playlists.count == lists.count else {
             throw ArchiveError.invalidManifest
         }
+        // Reopening the staged container validates its structure, but counts
+        // alone cannot detect a same-length rewrite of playlist order, IDs,
+        // source attribution or track metadata. Compare the exact encoded
+        // manifest bytes before publishing: a backup must represent the
+        // catalog snapshot selected for export, not a mutated staging file.
+        let manifestInput = try FileHandle(forReadingFrom: staging)
+        do {
+            let expectedHeader = magic + Data([
+                UInt8(n & 0xFF), UInt8((n >> 8) & 0xFF),
+                UInt8((n >> 16) & 0xFF), UInt8((n >> 24) & 0xFF)
+            ])
+            guard try readExactly(expectedHeader.count, from: manifestInput) == expectedHeader else {
+                throw ArchiveError.invalidManifest
+            }
+            var cursor = 0
+            while cursor < JSON.count {
+                try Task.checkCancellation()
+                let count = min(64 * 1024, JSON.count - cursor)
+                let actual = try readExactly(count, from: manifestInput)
+                guard actual.count == count,
+                      actual.elementsEqual(JSON[cursor..<(cursor + count)]) else {
+                    throw ArchiveError.invalidManifest
+                }
+                cursor += count
+            }
+            // The validation must bind to the same staged inode, not a
+            // pathname substituted between the structural and byte checks.
+            let manifestIdentity = try archiveIdentity(of: manifestInput, at: staging)
+            guard manifestIdentity.device == staged.sourceIdentity.device,
+                  manifestIdentity.inode == staged.sourceIdentity.inode,
+                  manifestIdentity.size == staged.sourceIdentity.size else {
+                throw ArchiveError.invalidFile
+            }
+            try manifestInput.close()
+        } catch {
+            try? manifestInput.close()
+            throw error
+        }
         // Sources can change after their individual copy completes while the
         // remaining tracks are exported. Recheck every preflight identity
         // immediately before publication so an already-copied recording that
