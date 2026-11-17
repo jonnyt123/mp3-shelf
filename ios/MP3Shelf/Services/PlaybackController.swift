@@ -402,52 +402,42 @@ final class PlaybackController: NSObject, ObservableObject {
             if automatically && !crossfading { stop() }
             return
         }
-        guard let target = library.song(with: nextID) else {
-            // A track can disappear after the queue snapshot. Preserve the
-            // outgoing source for manual Next and speculative crossfades.
-            // At natural completion, continue to later available recordings.
-            guard automatically && !crossfading else { return }
-            var attempted: Set<UUID> = [nextID]
-            while attempted.count < nextOrder.queueIDs.count {
-                guard let candidateID = nextOrder.next(automatic: true, loop: loopMode),
-                      !attempted.contains(candidateID) else { break }
-                attempted.insert(candidateID)
-                guard let candidate = library.song(with: candidateID) else { continue }
-                if beginPlayback(candidate, using: nextOrder,
-                                 preserveExistingOnFailure: false) { return }
-            }
-            // A disappeared entry cannot be retried until it returns to the
-            // library; end the session if no playable successor was found.
-            if failedTrackID == nil { stop() }
-            return
-        }
-        if nextID == currentTrackID { seek(to: 0); resume(); return }
-        // An early crossfade is speculative: the outgoing recording still has
-        // playable audio. If the next file cannot be opened, keep that audio
-        // and its clock intact instead of treating the attempt like an
-        // end-of-track advance. The recorded error suppresses repeated fade
-        // attempts on subsequent position ticks.
-        //
-        // At natural completion no playable predecessor remains. Walk the
-        // finite queue once so a missing/corrupt recording does not strand all
-        // later offline songs. Do not skip on manual Next or speculative fades:
-        // both must preserve the outgoing player's position and queue.
+        // Automatic completion has no audible predecessor to preserve. Probe
+        // each remaining queue entry at most once, including catalog entries
+        // removed after the queue snapshot. A failed file may be repaired and
+        // retried from the lock screen; a wholly missing queue must stop.
         let preserveOutgoing = !automatically || crossfading
-        if beginPlayback(target, using: nextOrder,
-                         transition: crossfading ? crossfadeSeconds : 0,
-                         preserveExistingOnFailure: preserveOutgoing) { return }
-        guard automatically && !crossfading else { return }
-        var attempted: Set<UUID> = [nextID]
-        while attempted.count < nextOrder.queueIDs.count {
-            guard let candidateID = nextOrder.next(automatic: true, loop: loopMode),
-                  !attempted.contains(candidateID) else { break }
-            attempted.insert(candidateID)
-            guard let candidate = library.song(with: candidateID) else { continue }
-            if beginPlayback(candidate, using: nextOrder,
-                             preserveExistingOnFailure: false) { return }
+        var attempted: Set<UUID> = []
+        var candidateID: UUID? = nextID
+        var failedToOpenRecording = false
+        while let id = candidateID, attempted.insert(id).inserted {
+            if id == currentTrackID {
+                // Only the current entry remains (for example repeat-all with
+                // a single song). Do not consume shuffle history.
+                seek(to: 0)
+                resume()
+                return
+            }
+            if let target = library.song(with: id) {
+                if beginPlayback(target, using: nextOrder,
+                                 transition: crossfading ? crossfadeSeconds : 0,
+                                 preserveExistingOnFailure: preserveOutgoing) { return }
+                failedToOpenRecording = true
+            }
+            // Manual Next and speculative crossfade must never skip over a
+            // damaged selection or mutate the still-audible queue.
+            guard automatically && !crossfading,
+                  attempted.count < nextOrder.queueIDs.count else { break }
+            candidateID = nextOrder.next(automatic: true, loop: loopMode)
         }
-        // No playable successor: retain the last failed selection for a
-        // lock-screen retry, without changing the committed shuffle history.
+        if automatically && !crossfading && !failedToOpenRecording {
+            // No candidate could even be opened. An old failedTrackID from a
+            // prior manual selection must not keep a completed player alive.
+            stop()
+        }
+        // If a candidate failed to open, beginPlayback retained the last
+        // failure and its speculative order for a later explicit retry.
+
     }
 
     func cycleRepeat() {
