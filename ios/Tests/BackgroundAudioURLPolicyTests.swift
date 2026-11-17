@@ -135,6 +135,21 @@ enum BackgroundAudioURLPolicyTests {
             }
         }
         guard promotionCases == 8 else { fatalError("Incomplete follower promotion matrix") }
+        // Cancelling a leader during an asynchronous decode must not launch
+        // a second network transfer until that decoder has exited.
+        var importRaceCases = 0
+        for processing in [false, true] {
+            for converting in [false, true] {
+                let expected = !processing && !converting
+                guard BackgroundAudioDownloader.mayPromoteAfterImport(
+                    isProcessing: processing, hasConversion: converting) == expected else {
+                    fatalError("Follower promoted while prior import still owns staged bytes")
+                }
+                importRaceCases += 1
+            }
+        }
+        guard importRaceCases == 4 else { fatalError("Incomplete import race matrix") }
+        print("PASS: 4 cancellation/import race promotion combinations")
         print("PASS: 8 orphan follower promotion eligibility combinations")
         print("PASS: 16 cross-playlist transfer eligibility combinations")
         print("PASS: 16 cellular upgrade and in-progress import combinations")
