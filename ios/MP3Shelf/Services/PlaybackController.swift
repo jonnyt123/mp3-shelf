@@ -166,8 +166,8 @@ final class PlaybackController: NSObject, ObservableObject {
     /// A corrupted or missing file cannot consume shuffle history.
     private func beginPlayback(_ track: MusicTrack, using nextOrder: PlaybackOrder,
                                transition: TimeInterval = 0,
-                               preserveExistingOnFailure: Bool = true) {
-        guard let library else { return }
+                               preserveExistingOnFailure: Bool = true) -> Bool {
+        guard let library else { return false }
         do {
             try activateAudio()
             let player = try AVAudioPlayer(contentsOf: library.fileURL(for: track))
@@ -202,6 +202,7 @@ final class PlaybackController: NSObject, ObservableObject {
             isPlaying = true
             startTimer()
             updateNowPlaying()
+            return true
         } catch {
             // Keep an already-playing recording audible when a manually selected
             // replacement cannot open. If automatic advance failed after the
@@ -225,6 +226,7 @@ final class PlaybackController: NSObject, ObservableObject {
             isPlaying = preserveExistingOnFailure && previousIsAudible
             if !preserveExistingOnFailure { interruptionState.cancelResume() }
             updateNowPlaying()
+            return false
         }
     }
 
@@ -372,12 +374,26 @@ final class PlaybackController: NSObject, ObservableObject {
         // end-of-track advance. The recorded error suppresses repeated fade
         // attempts on subsequent position ticks.
         //
-        // At natural completion no playable predecessor remains, so a failed
-        // automatic advance must still retire the old player and polling.
+        // At natural completion no playable predecessor remains. Walk the
+        // finite queue once so a missing/corrupt recording does not strand all
+        // later offline songs. Do not skip on manual Next or speculative fades:
+        // both must preserve the outgoing player's position and queue.
         let preserveOutgoing = !automatically || crossfading
-        beginPlayback(target, using: nextOrder,
-                      transition: crossfading ? crossfadeSeconds : 0,
-                      preserveExistingOnFailure: preserveOutgoing)
+        if beginPlayback(target, using: nextOrder,
+                         transition: crossfading ? crossfadeSeconds : 0,
+                         preserveExistingOnFailure: preserveOutgoing) { return }
+        guard automatically && !crossfading else { return }
+        var attempted: Set<UUID> = [nextID]
+        while attempted.count < nextOrder.queueIDs.count {
+            guard let candidateID = nextOrder.next(automatic: true, loop: loopMode),
+                  !attempted.contains(candidateID) else { break }
+            attempted.insert(candidateID)
+            guard let candidate = library.song(with: candidateID) else { continue }
+            if beginPlayback(candidate, using: nextOrder,
+                             preserveExistingOnFailure: false) { return }
+        }
+        // No playable successor: retain the last failed selection for a
+        // lock-screen retry, without changing the committed shuffle history.
     }
 
     func cycleRepeat() {
