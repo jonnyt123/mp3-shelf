@@ -79,7 +79,7 @@ test('if Notification Center fails, do not mark a change delivered; retry once n
   writeFileSync(x.latest,JSON.stringify(model()));
   deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',send:()=>{}});
   writeFileSync(x.latest,JSON.stringify(model({hardware:'BLOCKED'})));
-  await assert.rejects(async()=>deliverChangeOnlyNotification({
+  assert.throws(()=>deliverChangeOnlyNotification({
    home:x.home,now,platform:'darwin',send:()=>{throw Error('macOS UI offline')}}),/macOS UI offline/);
   const after=deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
     send:s=>sent.push(s)});
