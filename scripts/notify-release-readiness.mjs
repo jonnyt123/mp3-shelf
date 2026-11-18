@@ -4,7 +4,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { lstatSync,readFileSync,renameSync,writeFileSync } from 'node:fs';
+import { lstatSync,readFileSync,renameSync,writeFileSync,openSync,closeSync,unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -87,6 +87,18 @@ export function deliverChangeOnlyNotification({home=homedir(),now=Date.now(),
    throw Error('Readiness notification directory was redirected.');
  }
  const latest=join(root,'latest.json'),previous=join(root,'notification-state.json');
+ // Serialize independent hourly/manual invocations before reading prior state.
+ // A held lock fails closed: never send duplicate or out-of-order alerts.
+ const lock=join(root,'.notification-state.lock');
+ let handle;
+ try{handle=openSync(lock,'wx',0o600);}catch(e){
+  if(e.code==='EEXIST')throw Error('Readiness notification already in progress.');
+  throw e;
+ }
+ try{return deliverLocked({latest,previous,root,now,send,platform});}
+ finally{closeSync(handle);unlinkSync(lock);}
+}
+function deliverLocked({latest,previous,root,now,send,platform}){
  const model=safeRead(latest);
  if(!model)throw Error('Missing latest local release-readiness JSON');
  const current=normalizedGateState(model,{now});
