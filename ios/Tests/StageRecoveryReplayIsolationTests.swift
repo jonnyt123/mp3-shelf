@@ -60,7 +60,9 @@ private func assert(_ condition: @autoclosure () throws -> Bool, _ message: Stri
 var passed = 0
 for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
                  "same-bytes-new-stage", "truncated-stage", "journal-symlink",
-                 "journal-corruption", "stage-directory", "same-size-mutated-audio"] {
+                 "journal-corruption", "stage-directory", "same-size-mutated-audio",
+                 "stage-symlink", "journal-replaced-same-bytes",
+                 "journal-ticket-mutated-in-place", "stage-hardlink-mutated"] {
     try persist(first, bytes: oldAudio)
     let expectedSuccess = scenario == "baseline"
     var recovered: Data?
@@ -87,6 +89,28 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
                 defer { try? handle.close() }
                 try handle.truncate(atOffset: 0)
                 try handle.write(contentsOf: Data("{broken".utf8))
+            case "stage-symlink":
+                try fm.removeItem(at: stage)
+                try fm.createSymbolicLink(at: stage, withDestinationURL: journal)
+            case "journal-replaced-same-bytes":
+                let saved = try Data(contentsOf: journal)
+                try fm.removeItem(at: journal)
+                try saved.write(to: journal)
+            case "journal-ticket-mutated-in-place":
+                let replacement = try JSONEncoder().encode(Journal(ticket: next.ticket,
+                    generation: first.generation, stageName: first.stageName,
+                    expectedBytes: first.expectedBytes))
+                let handle = try FileHandle(forWritingTo: journal)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: replacement)
+            case "stage-hardlink-mutated":
+                let alias = root.appendingPathComponent("stage-alias-\\(UUID().uuidString)")
+                try fm.linkItem(at: stage, to: alias)
+                defer { try? fm.removeItem(at: alias) }
+                let handle = try FileHandle(forWritingTo: alias)
+                defer { try? handle.close() }
+                try handle.write(contentsOf: newAudio)
             case "stage-directory":
                 try fm.removeItem(at: stage)
                 try fm.createDirectory(at: stage, withIntermediateDirectories: false)
