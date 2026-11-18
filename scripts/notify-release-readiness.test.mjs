@@ -53,14 +53,17 @@ test('only newly cleared gates and new blockers produce one compact macOS notifi
   assert.equal(sent.length,1);
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
-test('new native source or release tooling commit resets baseline without stale PASS claims',()=>{
- const older=normalizedGateState(model({native:'PASS'}),{now});
+test('native source changes reset baseline; new tooling invalidating smoke triggers one real blocker',()=>{
+ const older=normalizedGateState(model({native:'PASS',smoke:'PASS'}),{now});
  const newer=normalizedGateState({...model(),candidateSha:'c'.repeat(40)},{now});
  const diff=notificationChanges(older,newer);
  assert.equal(diff.baseline,true);
  assert.equal(notificationMessage(diff),null);
- const other=normalizedGateState({...model(),toolingSha:'d'.repeat(40)},{now});
- assert.equal(notificationChanges(older,other).baseline,true);
+ const other=normalizedGateState({...model({native:'PASS',smoke:'UNVERIFIED'}),
+   toolingSha:'d'.repeat(40)},{now});
+ const changed=notificationChanges(older,other);
+ assert.equal(changed.baseline,false);
+ assert.deepEqual(changed.blocked,['smoke']);
 });
 test('invalid or stale readiness snapshots never generate notifications',()=>{
  const x=dir();
