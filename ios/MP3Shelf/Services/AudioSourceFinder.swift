@@ -279,7 +279,11 @@ enum AudioSourceFinder {
     }
 
     static func archiveSearchRowsComplete(_ body: SearchBody) -> Bool {
-        body.docs.count == body.rawItemCount
+        // A syntactically decoded row with an unsafe identifier is still an
+        // uninspected recording. Skipping it must not make another file appear
+        // uniquely identified for unattended download.
+        body.docs.count == body.rawItemCount &&
+            body.docs.allSatisfy { safeIdentifier($0.identifier) }
     }
 
     static let maxArchiveSearchPages = 2
