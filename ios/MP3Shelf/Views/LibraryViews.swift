@@ -247,8 +247,13 @@ struct LibraryView: View {
     }
 
     private func invalidateStalePlaybackRecovery() {
-        guard playbackSelectionSnapshot != nil, !bulkPlaybackPending,
+        guard playbackSelectionSnapshot != nil,
               !playbackSelectionIsCurrent() else { return }
+        // Invalidate the generation before a detached file scan can publish a
+        // queue for a recording that has just been deleted or restored.
+        if bulkPlaybackPending {
+            cancelBulkPlaybackPreparation(showFeedback: false)
+        }
         bulkRetryShuffle = nil
         bulkSkippedRecordingCount = 0
         partialQueueShuffle = nil
