@@ -695,8 +695,8 @@ extension AudioSourceFinder {
         var candidates: [String: AudioCatalogMatch] = [:]
         // A provider that changes its reported page count mid-query cannot
         // establish a complete inventory of competing recordings.
-        var expectedPageCount: Int?
         for fieldSearch in [true, false] {
+            var expectedPageCount: Int?
             for page in 1...maxOpenversePages {
                 try Task.checkCancellation()
                 let result: OpenverseResponse
