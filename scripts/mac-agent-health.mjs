@@ -87,7 +87,10 @@ export function inspectMacAgent({home=homedir(),root=resolve(dirname(fileURLToPa
   if(!boot.ok)throw Error('launchd bootstrap did not succeed; inspect private launchd diagnostics.');
   loaded=runner('launchctl',['print',target]).ok;
   if(!loaded)throw Error('launchd bootstrap did not confirm loaded status.');
-  runner('launchctl',['kickstart','-k',target]);
+  // RunAtLoad=true already starts the registered job. A forced kickstart -k
+  // terminates a possibly active native build and can invalidate its evidence.
+  // Do not kickstart or kill a process merely to diagnose a missing receipt.
+  // The next scheduled invocation can collect its own exact-SHA evidence.
   report=evaluateAgentHealth({platform,node:nodePath,xcode:xcode.ok?xcode.stdout:null,
     developerDir:selected.ok?selected.stdout:null,plist:plistFile,loaded,
     latest:safeJSON(join(home,'Library','Logs','MP3Shelf','NativeAgent','latest-run.json')),
