@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { runNativeReleaseCycle } from './native-release-cycle.mjs';
 import { writeReadiness } from './release-readiness.mjs';
+import { deliverChangeOnlyNotification } from './notify-release-readiness.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
@@ -132,8 +133,13 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
   }
   // Update the locally viewable readiness dashboard at every execution,
   // including failed Xcode runs. Its absence is NOT a release authorization.
-  try {writeReadiness({home});}
-  catch(error){
+  try {
+    writeReadiness({home});
+    // First run establishes a silent baseline. The existing hourly agent
+    // delivers a single native macOS alert only on genuine gate transitions.
+    try {deliverChangeOnlyNotification({home});}
+    catch {console.error('RELEASE_NOTIFICATION_UNVERIFIED: inspect private local diagnostics');}
+  } catch {
     console.error('RELEASE_READINESS_UNVERIFIED: inspect private local diagnostics');
   }
   if(failure)throw failure;
