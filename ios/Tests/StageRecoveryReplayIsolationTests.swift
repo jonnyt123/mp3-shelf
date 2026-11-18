@@ -105,7 +105,7 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
                 try handle.truncate(atOffset: 0)
                 try handle.write(contentsOf: replacement)
             case "stage-hardlink-mutated":
-                let alias = root.appendingPathComponent("stage-alias-\\(UUID().uuidString)")
+                let alias = root.appendingPathComponent("stage-alias-\(UUID().uuidString)")
                 try fm.linkItem(at: stage, to: alias)
                 defer { try? fm.removeItem(at: alias) }
                 let handle = try FileHandle(forWritingTo: alias)
