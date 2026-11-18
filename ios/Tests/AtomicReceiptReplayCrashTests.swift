@@ -133,5 +133,36 @@ for _ in 0..<80 {
     try check(try Data(contentsOf: external) == foreign, "failed replay changed unrelated audio")
 
 
+    // Interleaved tickets and generations: recovery must never borrow a
+    // previously valid recording when the receipt is replaced or rolled back.
+    // Exercise all permutations deterministically rather than relying on
+    // scheduling-sensitive concurrent sleeps.
+    let alternateTicket = UUID()
+    let alternateBytes = Data((0..<8192).map { UInt8(($0 + 73) % 251) })
+    for generation in 11..<19 {
+        try alternateBytes.write(to: audio, options: .atomic)
+        try publish(CrashReceipt(ticket: alternateTicket, generation: generation, filename: "audio.mp3", expected: alternateBytes))
+        try check(try recover(ticket: ticket, generation: generation) == nil, "borrowed alternate ticket recording")
+        try check(try recover(ticket: alternateTicket, generation: generation) == alternateBytes, "alternate ticket missing")
+        try check(try recover(ticket: alternateTicket, generation: generation - 1) == nil, "previous generation reused")
+        try bytes.write(to: audio, options: .atomic)
+        try check(try recover(ticket: alternateTicket, generation: generation) == nil, "receipt survived replaced recording")
+        try publish(CrashReceipt(ticket: ticket, generation: generation + 1, filename: "audio.mp3", expected: bytes))
+        try check(try recover(ticket: alternateTicket, generation: generation) == nil, "retired ticket recovered")
+        try check(try recover(ticket: ticket, generation: generation + 1) == bytes, "new ticket generation lost")
+    }
+
+    // A rollback of journal bytes alone cannot authenticate the newer
+    // generation, even when the audio bytes happen to be identical.
+    let oldJournal = try JSONEncoder().encode(CrashReceipt(ticket: ticket, generation: 20, filename: "audio.mp3", expected: bytes))
+    try oldJournal.write(to: journal, options: .atomic)
+    try check(try recover(ticket: ticket, generation: 20) == bytes, "rollback baseline not recoverable")
+    try publish(CrashReceipt(ticket: ticket, generation: 21, filename: "audio.mp3", expected: bytes))
+    try check(try recover(ticket: ticket, generation: 21) == bytes, "advanced generation not recoverable")
+    try oldJournal.write(to: journal, options: .atomic)
+    try check(try recover(ticket: ticket, generation: 21) == nil, "rolled-back receipt accepted for newer generation")
+    try check(try recover(ticket: ticket, generation: 20) == bytes, "rollback fixture did not restore old journal")
+    try check(try Data(contentsOf: external) == foreign, "ticket handoff changed external recording")
+
 }
 print("PASS: 80 crash/replay rounds; interrupted/staged publication, generation handoff, identity and audio isolation")
