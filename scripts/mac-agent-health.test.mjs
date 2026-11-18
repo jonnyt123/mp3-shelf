@@ -86,6 +86,6 @@ test('bootstrap-only repair never requires killing a newly launched Xcode job',(
  assert.equal(h.checks.plist.status,'PASS');
  // A newly loaded agent can be running while its first receipt is pending.
  const pending=evaluateAgentHealth(sample({loaded:true,latest:null}));
- assert.equal(pending.repair,'INSPECT_LAUNCHD_LOGS_AND_KICKSTART');
+ assert.equal(pending.repair,'INSPECT_LAUNCHD_LOGS_AND_WAIT_FOR_RECEIPT');
  assert.equal(pending.status,'NEEDS_ATTENTION');
 });
