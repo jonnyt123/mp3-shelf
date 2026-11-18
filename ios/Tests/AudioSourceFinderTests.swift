@@ -282,13 +282,13 @@ enum AudioSourceFinderTests {
             "identical valid duplicate Archive rows still represent one recording")
         // A malformed duration must not disappear as optional evidence, even
         // when a duplicate row provides a valid duration for the same file.
-        let validDurationRow = #"{\"name\":\"The Song.mp3\",\"source\":\"original\",\"size\":5120000,\"length\":\"212\"}"#
-        let malformedDurationRow = #"{\"name\":\"The Song.mp3\",\"source\":\"original\",\"size\":5120000,\"length\":{\"broken\":true}}"#
+        let validDurationRow = #"{"name":"The Song.mp3","source":"original","size":5120000,"length":"212"}"#
+        let malformedDurationRow = #"{"name":"The Song.mp3","source":"original","size":5120000,"length":{"broken":true}}"#
         for rows in [[validDurationRow, malformedDurationRow],
                      [malformedDurationRow, validDurationRow]] {
             let json = """
             {"metadata":{"title":"The Song","creator":"The Artist"},
-             "files":[\\(rows.joined(separator: ","))]}
+             "files":[\(rows.joined(separator: ","))]}
             """
             let item = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
                                                 from: Data(json.utf8))
@@ -299,7 +299,7 @@ enum AudioSourceFinderTests {
         }
         let invalidDurationOnly = """
         {"metadata":{"title":"The Song","creator":"The Artist"},
-         "files":[\\(malformedDurationRow)]}
+         "files":[\(malformedDurationRow)]}
         """
         let invalidDurationItem = try JSONDecoder().decode(
             AudioSourceFinder.ArchiveItem.self, from: Data(invalidDurationOnly.utf8))
