@@ -1225,9 +1225,21 @@ final class MusicLibrary: ObservableObject {
                     // validate the audio before any final filename is created.
                     let asset = AVURLAsset(url: staged)
                     let playbackProbe = try AVAudioPlayer(contentsOf: staged)
+                    // Opening a container is not proof that it contains usable
+                    // audio. A zero, NaN or infinite duration must never be
+                    // published as an offline recording or written to JSON.
+                    // In particular, NaN bypasses the ordinary duration delta
+                    // comparison and can poison a later catalog read.
                     let duration = playbackProbe.duration
-                    if let expectedDuration, abs(duration - expectedDuration) > 4 {
+                    guard duration.isFinite && duration > 0,
+                          playbackProbe.prepareToPlay() else {
                         throw MusicLibraryError.recordingDurationMismatch
+                    }
+                    if let expectedDuration {
+                        guard expectedDuration.isFinite && expectedDuration > 0,
+                              abs(duration - expectedDuration) <= 4 else {
+                            throw MusicLibraryError.recordingDurationMismatch
+                        }
                     }
                     let metadata = asset.commonMetadata
                     func metadataString(_ key: AVMetadataKey) -> String? {
