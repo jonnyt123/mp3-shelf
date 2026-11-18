@@ -2851,17 +2851,30 @@ struct PlaylistDetailView: View {
             get: { playlistPlaybackError != nil },
             set: { if !$0 { dismissPlaylistPlaybackError() } }
         )) {
-            Button(lastPlaylistPlaybackWasShuffled ? "Retry Shuffle" : "Retry Play") {
-                playlistPlaybackError = nil
-                if let currentPlaylist = uniquePlaylist(playlistID),
-                   !library.songs(in: currentPlaylist).isEmpty {
-                    startPlaylist(library.songs(in: currentPlaylist), shuffled: lastPlaylistPlaybackWasShuffled)
-                } else {
+            // Identity conflicts are not recoverable by repeating Play. Never
+            // offer an action that can only fail again against the same data.
+            if playlistPlaybackCanRetry {
+                Button(lastPlaylistPlaybackWasShuffled ? "Retry Shuffle" : "Retry Play") {
+                    let shuffled = lastPlaylistPlaybackWasShuffled
+                    playlistPlaybackError = nil
                     playlistPlaybackCanRetry = false
-                    playlistPlaybackNotice = "This playlist has no songs to play. Add a recording before retrying."
+                    guard playlistScenePhase == .active,
+                          !playlistPlaybackPending,
+                          let currentPlaylist = uniquePlaylist(playlistID) else {
+                        playlistPlaybackNotice = "Return to the playlist while the app is active to retry playback."
+                        return
+                    }
+                    let currentTracks = library.songs(in: currentPlaylist)
+                    guard !currentTracks.isEmpty else {
+                        playlistPlaybackNotice = "This playlist has no songs to play. Add a recording before retrying."
+                        return
+                    }
+                    startPlaylist(currentTracks, shuffled: shuffled)
                 }
             }
-            Button("Not now", role: .cancel) { dismissPlaylistPlaybackError() }
+            Button(playlistPlaybackCanRetry ? "Not now" : "OK", role: .cancel) {
+                dismissPlaylistPlaybackError()
+            }
         } message: {
             Text(playlistPlaybackError ?? "")
         }
