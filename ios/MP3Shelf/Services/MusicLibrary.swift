@@ -2215,6 +2215,17 @@ final class MusicLibrary: ObservableObject {
                 updated[index].trackIDs = existing.filter {
                     catalogTrackIDs.contains($0) && seen.insert($0).inserted
                 }
+                // Restored source playlists can carry missing wishes from an
+                // older nonempty source snapshot. An empty current source is
+                // authoritative for pending requests, but not for user-owned
+                // recordings. Clear only those stale requests; local playlists
+                // without source identity retain their independent wish state.
+                if ImportedPlaylistIdentity.key(
+                    sourceURL: updated[index].sourceURL,
+                    appleMusicLibraryID: updated[index].appleMusicLibraryID
+                ) != nil {
+                    updated[index].missingTracks = []
+                }
                 continue
             }
             var ordered: [UUID] = []
