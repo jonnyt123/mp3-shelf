@@ -2141,6 +2141,15 @@ struct PlaylistsView: View {
     }
 }
 
+// Keep the complete user-visible playlist revision observable while local
+// file validation is running. PlaylistWish already supports equality because
+// the playback completion path compares missingTracks snapshots.
+private struct PlaylistPlaybackMetadata: Equatable {
+    let name: String
+    let trackIDs: [UUID]
+    let missingTracks: [PlaylistWish]
+}
+
 struct PlaylistDetailView: View {
     @ObservedObject private var transfers = BackgroundAudioDownloader.shared
     let playlistID: UUID
@@ -2180,6 +2189,13 @@ struct PlaylistDetailView: View {
 
     // A restored or replaced file can change its URL while trackIDs stay the same.
     // Observe the exact recording identities used by the asynchronous disk scan.
+    private var playlistPlaybackMetadata: PlaylistPlaybackMetadata? {
+        guard let playlist else { return nil }
+        return PlaylistPlaybackMetadata(name: playlist.name,
+                                        trackIDs: playlist.trackIDs,
+                                        missingTracks: playlist.missingTracks)
+    }
+
     private var playlistRecordingLocations: [RecordingLocationKey] {
         guard let playlist else { return [] }
         return library.songs(in: playlist).map {
@@ -2889,18 +2905,18 @@ struct PlaylistDetailView: View {
         } message: {
             Text(playlistPlaybackError ?? "")
         }
-        .onChange(of: playlist?.trackIDs) { _, _ in
-            // A reorder or removal invalidates both an in-flight scan and any
-            // recovery action produced by the old playlist. A later retry must
-            // resolve the latest order instead of preserving stale feedback.
+        .onChange(of: playlistPlaybackMetadata) { _, _ in
+            // A rename, reorder, deletion or missing-source refresh invalidates
+            // the snapshot being checked. Do not wait for the disk scan to finish
+            // before making Play/Shuffle and Retry reflect the new revision.
             if playlistPlaybackPending {
                 cancelPlaylistPreparation(showFeedback: true)
-                playlistPlaybackNotice = "Playlist order or contents changed. Retry to play the current playlist."
+                playlistPlaybackNotice = "Playlist details changed while recordings were checked. Retry to play the latest version."
             } else if playlistPlaybackCanRetry {
                 playlistPlaybackError = nil
                 if let currentPlaylist = uniquePlaylist(playlistID),
                    !library.songs(in: currentPlaylist).isEmpty {
-                    playlistPlaybackNotice = "Playlist contents changed. Retry to check the current recordings."
+                    playlistPlaybackNotice = "Playlist details changed. Retry to check the current recordings."
                 } else {
                     playlistPlaybackCanRetry = false
                     playlistPlaybackNotice = "This playlist has no songs to play. Add a recording before retrying."
