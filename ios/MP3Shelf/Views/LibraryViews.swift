@@ -2291,6 +2291,18 @@ struct PlaylistDetailView: View {
             playlistPlaybackError = "This playlist is missing, duplicated, or changed. Reopen its latest version before playing; no audio was changed."
             return
         }
+        // A restored library can contain distinct recordings with the same UUID.
+        // Never hand an ambiguous identity to playback, even when its file exists.
+        // Repeated occurrences of the *same* recording in a playlist are valid.
+        let requestedIDs = Set(tracks.map(\.id))
+        let recordingCounts = library.tracks.reduce(into: [UUID: Int]()) { counts, track in
+            if requestedIDs.contains(track.id) { counts[track.id, default: 0] += 1 }
+        }
+        guard requestedIDs.allSatisfy({ recordingCounts[$0] == 1 }) else {
+            playlistPlaybackCanRetry = false
+            playlistPlaybackError = "This playlist references duplicate or missing recording identities. Resolve the restored library entries before playing; no audio was changed."
+            return
+        }
         let generation = UUID()
         playlistPlaybackGeneration = generation
         playlistPlaybackPending = true
@@ -2335,6 +2347,17 @@ struct PlaylistDetailView: View {
                 return
             }
             let currentTracks = library.songs(in: currentPlaylist)
+            // The library may have changed while disk checks ran. Revalidate
+            // identity multiplicity, not just UUIDs and file locations.
+            let currentIDs = Set(currentTracks.map(\.id))
+            let currentCounts = library.tracks.reduce(into: [UUID: Int]()) { counts, track in
+                if currentIDs.contains(track.id) { counts[track.id, default: 0] += 1 }
+            }
+            guard currentIDs.allSatisfy({ currentCounts[$0] == 1 }) else {
+                playlistPlaybackCanRetry = false
+                playlistPlaybackError = "Recording identities changed during playback preparation. Resolve duplicate or missing recordings before playing."
+                return
+            }
             let currentLocations = currentTracks.map {
                 RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0))
             }
