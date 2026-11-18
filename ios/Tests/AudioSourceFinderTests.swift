@@ -218,6 +218,33 @@ enum AudioSourceFinderTests {
         verify(archiveMixed.files?.last?.size == nil &&
                archiveMixed.files?.last?.length == "unknown",
                "malformed optional size does not invalidate other catalog files")
+        // A present malformed size must never be treated as missing size.
+        // This previously allowed a catalog row with contradictory size
+        // evidence to become an unattended exact-recording download.
+        let malformedSizeJSON = #"{\"metadata\":{\"title\":\"The Song\",\"creator\":\"The Artist\"},\"files\":[{\"name\":\"The Song.mp3\",\"source\":\"original\",\"size\":{\"unexpected\":1},\"length\":\"212\"}]}"#
+        let malformedSize = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+            from: Data(malformedSizeJSON.utf8))
+        verify(malformedSize.files?.first?.hasInvalidSize == true &&
+               AudioSourceFinder.archiveCandidate(malformedSize,
+                   identifier: "invalid-size", for: wish) == nil,
+               "malformed declared Archive size cannot authorize an automatic download")
+        let missingSizeJSON = malformedSizeJSON.replacingOccurrences(
+            of: #"\"size\":{\"unexpected\":1},"#, with: "")
+        let missingSize = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+            from: Data(missingSizeJSON.utf8))
+        verify(missingSize.files?.first?.hasInvalidSize == false &&
+               AudioSourceFinder.archiveCandidate(missingSize,
+                   identifier: "missing-size", for: wish) != nil,
+               "legacy Archive records with absent size remain eligible")
+        for invalid in ["0", "-1", "104857601", "not-a-number"] {
+            let invalidJSON = malformedSizeJSON.replacingOccurrences(
+                of: #"{\"unexpected\":1}"#, with: "\"\\(invalid)\"")
+            let item = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                from: Data(invalidJSON.utf8))
+            verify(AudioSourceFinder.archiveCandidate(item,
+                identifier: "invalid-range", for: wish) == nil,
+                "invalid Archive file-size range is rejected: \\(invalid)")
+        }
         let archiveValidOnlyJSON = """
         {"metadata":{"title":"The Song","creator":"The Artist"},
          "files":[{"name":"The Song.mp3","source":"original",
