@@ -2337,8 +2337,19 @@ struct PlaylistDetailView: View {
             playlistPlaybackGeneration = nil
             playlistPlaybackPending = false
             playlistPlaybackTask = nil
-            guard playlistScenePhase == .active,
-                  let currentPlaylist = uniquePlaylist(requestedPlaylistID) else { return }
+            // The scan can finish after the app backgrounds or a restore removes
+            // the playlist. Do not silently strand the user without a recovery
+            // message, and never start playback while the scene is inactive.
+            guard playlistScenePhase == .active else {
+                playlistPlaybackCanRetry = true
+                playlistPlaybackNotice = "Playback did not start because MP3 Shelf became inactive. Return to the app and retry."
+                return
+            }
+            guard let currentPlaylist = uniquePlaylist(requestedPlaylistID) else {
+                playlistPlaybackCanRetry = false
+                playlistPlaybackError = "This playlist was removed or its identity became ambiguous while recordings were checked. Reopen the library before playing."
+                return
+            }
             guard currentPlaylist.name == originalPlaylistName,
                   currentPlaylist.trackIDs == originalPlaylistTrackIDs,
                   currentPlaylist.missingTracks == originalPlaylistMissingTracks else {
