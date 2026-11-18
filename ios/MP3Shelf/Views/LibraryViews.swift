@@ -1578,6 +1578,10 @@ struct RenameTrackView: View {
                         .frame(minWidth: 44, minHeight: 44)
                 }
             }
+            // Keep the sheet open while a title/artist draft is modified.
+            // Explicit Cancel still offers Keep editing or Discard changes;
+            // unchanged drafts retain the standard swipe gesture.
+            .interactiveDismissDisabled(hasUnsavedChanges)
             .onAppear {
                 title = track.title
                 artist = track.artist
