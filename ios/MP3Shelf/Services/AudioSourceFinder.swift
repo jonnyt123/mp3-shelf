@@ -495,6 +495,7 @@ enum AudioSourceFinder {
         guard grouped.values.allSatisfy({ rows in
             guard let first = rows.first else { return false }
             return rows.allSatisfy {
+                !$0.hasInvalidSize && !first.hasInvalidSize &&
                 $0.source == first.source && $0.size == first.size &&
                 $0.length == first.length
             }
