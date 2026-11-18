@@ -27,10 +27,16 @@ private final class RecoveryStore {
         try data.write(to: path("staged.part"), options: .atomic)
         try JSONEncoder().encode(ticket).write(to: path("ticket.json"), options: .atomic)
     }
+    func requireRegularFile(_ url: URL) throws {
+        let attrs = try fm.attributesOfItem(atPath: url.path)
+        guard attrs[.type] as? FileAttributeType == .typeRegular else { throw RecoveryFailure.invalid }
+    }
     func recover(_ expected: Ticket) throws -> Receipt {
         let receiptURL = path("receipt.json")
         let destination = path("recording.mp3")
         if fm.fileExists(atPath: receiptURL.path) {
+            try requireRegularFile(receiptURL)
+            try requireRegularFile(destination)
             guard let receipt = try? JSONDecoder().decode(Receipt.self, from: Data(contentsOf: receiptURL)),
                   receipt.ticket == expected, receipt.destination == destination.lastPathComponent,
                   let audio = try? Data(contentsOf: destination),
@@ -38,12 +44,15 @@ private final class RecoveryStore {
             else { throw RecoveryFailure.invalid }
             return receipt // Duplicate callback is read-only; never replay an old stage.
         }
+        try requireRegularFile(path("ticket.json"))
+        try requireRegularFile(path("staged.part"))
         guard let ticket = try? JSONDecoder().decode(Ticket.self, from: Data(contentsOf: path("ticket.json"))),
               ticket == expected, ticket.byteCount > 0,
               let stage = try? Data(contentsOf: path("staged.part")),
               stage.count == ticket.byteCount, digest(stage) == ticket.digest
         else { throw RecoveryFailure.invalid }
         if fm.fileExists(atPath: destination.path) {
+            try requireRegularFile(destination)
             // Crash after move but before receipt: reconcile only identical audio.
             guard let existing = try? Data(contentsOf: destination), existing == stage
             else { throw RecoveryFailure.invalid }
@@ -175,5 +184,35 @@ try scenario("crash-after-receipt-corrupt-replay") { s in
     catch RecoveryFailure.invalid {}
     try check(Data(contentsOf: s.path("recording.mp3")) == original,
               "corrupt published receipt changed audio")
+}
+try scenario("symlinked-stage-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    let outside = root.appendingPathComponent("outside-stage.mp3")
+    try other.write(to: outside)
+    try s.fm.removeItem(at: s.path("staged.part"))
+    try s.fm.createSymbolicLink(at: s.path("staged.part"), withDestinationURL: outside)
+    do { _ = try s.recover(first); preconditionFailure("accepted symlink stage") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: outside) == other, "external audio mutated")
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path), "symlink stage published")
+}
+try scenario("symlinked-destination-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    let outside = root.appendingPathComponent("outside-destination.mp3")
+    try original.write(to: outside)
+    try s.fm.createSymbolicLink(at: s.path("recording.mp3"), withDestinationURL: outside)
+    do { _ = try s.recover(first); preconditionFailure("accepted symlink destination") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: outside) == original, "external destination mutated")
+}
+try scenario("symlinked-receipt-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    _ = try s.recover(first)
+    let outside = root.appendingPathComponent("outside-receipt.json")
+    try s.fm.moveItem(at: s.path("receipt.json"), to: outside)
+    try s.fm.createSymbolicLink(at: s.path("receipt.json"), withDestinationURL: outside)
+    do { _ = try s.recover(first); preconditionFailure("accepted symlink receipt") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: s.path("recording.mp3")) == original, "replay mutated audio")
 }
 print("PASS: \(passed) recovery replay idempotency scenarios")
