@@ -27,6 +27,10 @@ private final class RecoveryStore {
         try data.write(to: path("staged.part"), options: .atomic)
         try JSONEncoder().encode(ticket).write(to: path("ticket.json"), options: .atomic)
     }
+    // Unlike fileExists, lstat-style attributes also detect dangling symlinks.
+    func entryExists(_ url: URL) -> Bool {
+        (try? fm.attributesOfItem(atPath: url.path)) != nil
+    }
     func requireRegularFile(_ url: URL) throws {
         let attrs = try fm.attributesOfItem(atPath: url.path)
         guard attrs[.type] as? FileAttributeType == .typeRegular else { throw RecoveryFailure.invalid }
@@ -34,7 +38,7 @@ private final class RecoveryStore {
     func recover(_ expected: Ticket) throws -> Receipt {
         let receiptURL = path("receipt.json")
         let destination = path("recording.mp3")
-        if fm.fileExists(atPath: receiptURL.path) {
+        if entryExists(receiptURL) {
             try requireRegularFile(receiptURL)
             try requireRegularFile(destination)
             guard let receipt = try? JSONDecoder().decode(Receipt.self, from: Data(contentsOf: receiptURL)),
@@ -51,7 +55,7 @@ private final class RecoveryStore {
               let stage = try? Data(contentsOf: path("staged.part")),
               stage.count == ticket.byteCount, digest(stage) == ticket.digest
         else { throw RecoveryFailure.invalid }
-        if fm.fileExists(atPath: destination.path) {
+        if entryExists(destination) {
             try requireRegularFile(destination)
             // Crash after move but before receipt: reconcile only identical audio.
             guard let existing = try? Data(contentsOf: destination), existing == stage
@@ -214,5 +218,31 @@ try scenario("symlinked-receipt-rejected") { s in
     do { _ = try s.recover(first); preconditionFailure("accepted symlink receipt") }
     catch RecoveryFailure.invalid {}
     try check(Data(contentsOf: s.path("recording.mp3")) == original, "replay mutated audio")
+}
+try scenario("dangling-receipt-symlink-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    let absent = root.appendingPathComponent("never-created-receipt.json")
+    try s.fm.createSymbolicLink(at: s.path("receipt.json"), withDestinationURL: absent)
+    do { _ = try s.recover(first); preconditionFailure("accepted dangling receipt symlink") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path),
+              "dangling receipt unexpectedly published audio")
+    try check(!s.fm.fileExists(atPath: absent.path), "wrote outside recovery root")
+}
+try scenario("dangling-destination-symlink-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    let absent = root.appendingPathComponent("never-created-audio.mp3")
+    try s.fm.createSymbolicLink(at: s.path("recording.mp3"), withDestinationURL: absent)
+    do { _ = try s.recover(first); preconditionFailure("accepted dangling destination symlink") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: absent.path), "wrote through dangling destination")
+    try check(!s.fm.fileExists(atPath: s.path("receipt.json").path), "published invalid receipt")
+}
+try scenario("directory-receipt-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    try s.fm.createDirectory(at: s.path("receipt.json"), withIntermediateDirectories: false)
+    do { _ = try s.recover(first); preconditionFailure("accepted directory receipt") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path), "directory receipt published audio")
 }
 print("PASS: \(passed) recovery replay idempotency scenarios")
