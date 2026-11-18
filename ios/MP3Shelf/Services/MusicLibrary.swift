@@ -872,8 +872,15 @@ final class MusicLibrary: ObservableObject {
         candidatePlaylists = reconciledPlaylists(using: tracks, from: candidatePlaylists)
         try Task.checkCancellation()
         try requireLibraryPersistence()
-        try PersistedLibrary(tracks: tracks, playlists: candidatePlaylists).write(to: databaseURL)
-        playlists = candidatePlaylists
+        // A repeat restore may verify all recordings and resolve playlist links
+        // without changing the catalog. Do not rewrite library.json in that
+        // case: an unnecessary write can fail on nearly full storage even when
+        // the backup was already restored. Compare complete playlist values,
+        // including source wishes, identities, and user-customized ordering.
+        if candidatePlaylists != playlists {
+            try PersistedLibrary(tracks: tracks, playlists: candidatePlaylists).write(to: databaseURL)
+            playlists = candidatePlaylists
+        }
         return report
     }
 
