@@ -59,7 +59,7 @@ export function evaluateAgentHealth({platform='darwin',node=null,xcode=null,deve
    xcodeBuild:'NOT_ATTESTED_BY_HEALTH_CHECK',
    repair:platform!=='darwin'?'REQUIRES_MAC':!owned?'RUN_TRUSTED_INSTALLER':
       checks.xcode.status!=='PASS'?'REQUIRES_XCODE':
-      !loaded?'BOOTSTRAP_OWNED_AGENT':!fresh?'INSPECT_LAUNCHD_LOGS_AND_KICKSTART':'NO_REPAIR_NEEDED',
+      !loaded?'BOOTSTRAP_OWNED_AGENT':!fresh?'INSPECT_LAUNCHD_LOGS_AND_WAIT_FOR_RECEIPT':'NO_REPAIR_NEEDED',
    note:'Agent health is not a passing Xcode build or physical-iPhone acceptance.'};
 }
 export function inspectMacAgent({home=homedir(),root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),
