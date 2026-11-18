@@ -1478,6 +1478,40 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.ccMixterCandidates(
             in: Data(matchingAuthorRSS.utf8), matching: archiveWish)?.count == 1,
             "consistent RSS author and creator preserve valid recording")
+        // Archive pages can repeat an identifier with changed credits even
+        // when each individual page is internally consistent.
+        func archiveIndexPage(_ title: String, _ creator: String) throws
+            -> [AudioSourceFinder.SearchItem] {
+            let json = """
+            {"response":{"docs":[{"identifier":"same-upload",
+                                   "title":"\(title)","creator":"\(creator)"}],
+                         "numFound":2}}
+            """
+            return try JSONDecoder().decode(AudioSourceFinder.SearchResponse.self,
+                                            from: Data(json.utf8)).response.docs
+        }
+        var crossPageEvidence: [String: String] = [:]
+        let firstIndexPage = try archiveIndexPage("Exact Song", "Exact Artist")
+        let sameIndexPage = try archiveIndexPage("Exact Song", "Exact Artist")
+        let changedArtistPage = try archiveIndexPage("Exact Song", "Other Artist")
+        verify(AudioSourceFinder.archiveCrossPageIdentitiesAgree(
+            firstIndexPage, seen: &crossPageEvidence),
+            "first Archive page establishes stable recording identity")
+        verify(AudioSourceFinder.archiveCrossPageIdentitiesAgree(
+            sameIndexPage, seen: &crossPageEvidence),
+            "identical identifier repeated on next page remains eligible")
+        verify(!AudioSourceFinder.archiveCrossPageIdentitiesAgree(
+            changedArtistPage, seen: &crossPageEvidence),
+            "contradictory artist across Archive pages invalidates uniqueness")
+        verify(AudioSourceFinder.archiveCrossPageIdentitiesAgree(
+            sameIndexPage, seen: &crossPageEvidence),
+            "conflicting later page cannot overwrite original identity")
+        var reversedEvidence: [String: String] = [:]
+        verify(AudioSourceFinder.archiveCrossPageIdentitiesAgree(
+            changedArtistPage, seen: &reversedEvidence) &&
+            !AudioSourceFinder.archiveCrossPageIdentitiesAgree(
+                firstIndexPage, seen: &reversedEvidence),
+            "cross-page contradictions reject regardless of page order")
         print("Audio source discovery validation tests passed")
     }
 }
