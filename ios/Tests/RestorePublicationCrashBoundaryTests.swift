@@ -76,3 +76,51 @@ for _ in 0..<30 {
     try fm.removeItem(at: staged)
 }
 print("PASS: 120 restore publication crash windows; 60 link attacks rejected")
+
+
+// Failure-injection regression: catalog publication must be the commit point.
+// A failed catalog write leaves the previous catalog intact, and recovery
+// removes only uncommitted newly published audio. Existing recordings survive.
+enum PublicationFailure: Error { case injected }
+for iteration in 0..<40 {
+    try save(["original.mp3", "neighbor.mp3"])
+    if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+    if fm.fileExists(atPath: staged.path) { try fm.removeItem(at: staged) }
+    try new.write(to: staged, options: .atomic)
+    precondition(safeStage())
+    try fm.moveItem(at: staged, to: target)
+    let before = try Data(contentsOf: catalog)
+    do {
+        // Simulate atomic catalog publication failing after media moved.
+        throw PublicationFailure.injected
+    } catch PublicationFailure.injected {
+        precondition(try Data(contentsOf: catalog) == before)
+    }
+    try recover()
+    precondition(!fm.fileExists(atPath: target.path), "Uncommitted media retained")
+    precondition(try names() == ["original.mp3", "neighbor.mp3"])
+    precondition(try Data(contentsOf: original) == old)
+    precondition(try Data(contentsOf: neighbor) == unrelated)
+    precondition(try Data(contentsOf: backup) == unrelated)
+    // A subsequent retry must commit and retain exactly the new media.
+    try new.write(to: staged, options: .atomic)
+    try fm.moveItem(at: staged, to: target)
+    try save(["original.mp3", "neighbor.mp3", "restored.mp3"])
+    try recover()
+    precondition(try Data(contentsOf: target) == new)
+    precondition(try names().count == 3)
+    if iteration % 2 == 0 {
+        // Stale archive identity: bytes from a prior restore cannot satisfy
+        // the current committed catalog entry, even with the same filename.
+        try old.write(to: target, options: .atomic)
+        do {
+            try recover()
+            fatalError("Stale recording accepted")
+        } catch {
+            precondition((error as NSError).domain == "Missing committed audio")
+        }
+        try new.write(to: target, options: .atomic)
+        try recover()
+    }
+}
+print("PASS: 40 catalog publication failures/retries; 20 stale-media identity rejections")
