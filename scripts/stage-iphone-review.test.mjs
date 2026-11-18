@@ -41,6 +41,9 @@ test('verified device review stages only pending-owner handoff in exact-SHA evid
   assert.equal(r.packet.physicalAcceptance,'INCOMPLETE');
   assert.equal(r.packet.signedAppSHA256,hash);
   assert.equal(r.packet.reviewFile,reviewName);
+  assert.equal(r.packet.signedRecordFile,'signed-install-QA_RECORD.md');
+  assert.equal(readFileSync(join(x.dir,'signed-install-QA_RECORD.md'),'utf8'),
+    readFileSync(x.signed,'utf8'));
   assert(!readdirSync(x.dir).includes('hardware-acceptance.json'));
   assert.equal(stagePhysicalReview({inventoryPath:x.inventory,reviewPath:x.review,
     signedRecordPath:x.signed,expectedSha:sha}).status,'EXISTING_REVIEW_HANDOFF');
@@ -79,5 +82,19 @@ test('pure release handoff gate rejects other audio, expired review and self-app
   assert(handoffErrors({...params,handoff:{...r.packet,ownerApproval:'PASS'}}).length>0);
   assert(handoffErrors({...params,handoff:{...r.packet,createdAt:'2020-01-01T00:00:00Z'}}).length>0);
   assert(handoffErrors({...params,inventorySHA256:'d'.repeat(64)}).length>0);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
+
+
+test('changed signed Mac install receipt never overwrites the first immutable exact-SHA copy',()=>{
+ const x=fixture();
+ try{
+  stagePhysicalReview({inventoryPath:x.inventory,reviewPath:x.review,
+   signedRecordPath:x.signed,expectedSha:sha});
+  const first=readFileSync(join(x.dir,'signed-install-QA_RECORD.md'),'utf8');
+  writeFileSync(x.signed,first.replace('- Result: PASS','- Result: FAIL'));
+  assert.throws(()=>stagePhysicalReview({inventoryPath:x.inventory,reviewPath:x.review,
+    signedRecordPath:x.signed,expectedSha:sha}),/Signed install|Conflicting|fully verified/);
+  assert.equal(readFileSync(join(x.dir,'signed-install-QA_RECORD.md'),'utf8'),first);
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
