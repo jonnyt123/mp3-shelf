@@ -2885,6 +2885,43 @@ private struct RecordingMatchReviewView: View {
     @State private var working = false
     @State private var issue: String?
 
+    // Imported playlists can be deleted, replaced, or restored while this
+    // sheet is open. Never enqueue a candidate against an ambiguous identity.
+    private var isCurrentRequest: Bool {
+        let matches = library.playlists.filter { $0.id == playlistID }
+        guard matches.count == 1 else { return false }
+        return matches[0].sourceOrder.contains(where: { $0.id == wish.id && $0.title == wish.title && $0.artist == wish.artist })
+    }
+
+    private func enqueue(_ candidate: RecordingCandidate) {
+        guard !working else { return }
+        guard isCurrentRequest else {
+            issue = "This playlist or requested song changed. Close this sheet and review the latest playlist before downloading."
+            return
+        }
+        working = true
+        issue = nil
+        task = Task { @MainActor in
+            defer {
+                working = false
+                task = nil
+            }
+            do {
+                try Task.checkCancellation()
+                guard isCurrentRequest else {
+                    issue = "The requested song changed. Review the latest playlist before downloading."
+                    return
+                }
+                try await library.queueRecording(candidate, matching: wish, playlistID: playlistID)
+                if !Task.isCancelled { dismiss() }
+            } catch is CancellationError {
+                // Leaving the sheet is not a download failure.
+            } catch {
+                if !Task.isCancelled { issue = error.localizedDescription }
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -2892,8 +2929,21 @@ private struct RecordingMatchReviewView: View {
                     Text(wish.title).font(.headline)
                     Text(wish.artist)
                     if let length = wish.durationSeconds { Text("Expected length: \(length.formatted(.number.precision(.fractionLength(0)))) seconds") }
-                    if working { ProgressView("Resolving and checking this recording…") }
-                    if let issue { Text(issue).foregroundStyle(.red) }
+                    if working {
+                        ProgressView("Checking and queueing this recording…")
+                            .accessibilityAddTraits(.updatesFrequently)
+                    }
+                    if !isCurrentRequest {
+                        Label("The requested playlist or song is no longer unique and current. Close this sheet and reopen it from the library.", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let issue {
+                        Text(issue)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.updatesFrequently)
+                    }
                 }
                 ForEach(RecordingMatcher.rank(candidates, for: wish).prefix(8), id: \.candidate.id) { match in
                     Section {
@@ -2902,25 +2952,32 @@ private struct RecordingMatchReviewView: View {
                         Text("Match score: \(match.score) • \(match.reason)").font(.caption)
                         if let duration = match.candidate.durationSeconds { Text("\(duration.formatted(.number.precision(.fractionLength(0)))) seconds").font(.caption) }
                         Link("Open recording source", destination: match.candidate.pageURL)
-                        Button("Download this recording") {
-                            working = true
-                            issue = nil
-                            task = Task { @MainActor in
-                                defer { working = false }
-                                do {
-                                    try await library.queueRecording(match.candidate, matching: wish, playlistID: playlistID)
-                                    dismiss()
-                                } catch is CancellationError { }
-                                catch { issue = error.localizedDescription }
-                            }
+                            .frame(minHeight: 44, alignment: .leading)
+                        Button {
+                            enqueue(match.candidate)
+                        } label: {
+                            Label(working ? "Queueing recording…" : "Download this recording", systemImage: "arrow.down.circle")
+                                .frame(minHeight: 44, alignment: .leading)
                         }
-                        .disabled(working || match.decision == .rejected)
+                        .disabled(working || !isCurrentRequest || match.decision == .rejected)
+                        .accessibilityLabel("Download \(match.candidate.title) from \(match.candidate.uploader)")
+                        .accessibilityHint(match.decision == .rejected
+                            ? "This recording does not meet the matching requirements"
+                            : "Verify and queue this recording for the requested playlist song")
                     }
                 }
             }
             .navigationTitle("Recording matches")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        task?.cancel()
+                        dismiss()
+                    }
+                }
+            }
         }
+        .interactiveDismissDisabled(working)
         .onDisappear { task?.cancel() }
     }
 }
