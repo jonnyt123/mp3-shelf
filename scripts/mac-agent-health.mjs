@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /** Read-only launchd/Xcode health inspection; --repair may bootstrap ONLY our verified LaunchAgent. */
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 const LABEL='com.jonnyt.mp3shelf.native-preflight';
 const SHA=/^[0-9a-f]{40}$/;
 function command(exe,args,timeout=12000){
@@ -26,8 +26,10 @@ export function evaluateAgentHealth({platform='darwin',node=null,xcode=null,deve
    'Full Xcode is selected; Command Line Tools alone are insufficient.');
  const args=plist?.ProgramArguments;
  const expectedEntry=typeof sourceRoot==='string'?resolve(sourceRoot,'scripts','native-agent-run.mjs'):null;
+ const sameNode=(()=>{try{return args?.[0]===node ||
+   realpathSync(args?.[0])===realpathSync(node);}catch{return false;}})();
  const owned=plist?.Label===LABEL&&Array.isArray(args)&&args.length===3&&
-   args[0]===node&&args[1]===expectedEntry&&args[2]===sourceRoot&&
+   sameNode&&args[1]===expectedEntry&&args[2]===sourceRoot&&
    plist.RunAtLoad===true&&plist.StartInterval===3600&&plist.WorkingDirectory===sourceRoot;
  put('plist',owned,'The exact MP3 Shelf hourly launchd plist is owned and correctly configured.');
  put('launchd',owned&&loaded,'The MP3 Shelf user LaunchAgent is loaded by launchctl.');
@@ -45,10 +47,11 @@ export function evaluateAgentHealth({platform='darwin',node=null,xcode=null,deve
    candidateSHA:SHA.test(latest?.candidateSha??'')?latest.candidateSha:null,
    xcodeBuild:'NOT_ATTESTED_BY_HEALTH_CHECK',
    repair:platform!=='darwin'?'REQUIRES_MAC':!owned?'RUN_TRUSTED_INSTALLER':
+      checks.xcode.status!=='PASS'?'REQUIRES_XCODE':
       !loaded?'BOOTSTRAP_OWNED_AGENT':!fresh?'INSPECT_LAUNCHD_LOGS_AND_KICKSTART':'NO_REPAIR_NEEDED',
    note:'Agent health is not a passing Xcode build or physical-iPhone acceptance.'};
 }
-export function inspectMacAgent({home=homedir(),root=resolve(import.meta.dirname??process.cwd(),'..'),
+export function inspectMacAgent({home=homedir(),root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),
  repair=false,platform=process.platform,runner=command}={}){
  const plistPath=join(home,'Library','LaunchAgents',LABEL+'.plist');
  const nodePath=process.execPath;
@@ -84,7 +87,7 @@ export function inspectMacAgent({home=homedir(),root=resolve(import.meta.dirname
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
  const args=process.argv.slice(2),repair=args.includes('--repair');
  if(args.length>1||args.some(x=>x!=='--repair')){console.error('Usage: node scripts/mac-agent-health.mjs [--repair]');process.exitCode=2;}
- else try{const result=inspectMacAgent({root:resolve(process.cwd()),repair});
+ else try{const result=inspectMacAgent({root:resolve(dirname(fileURLToPath(import.meta.url)),'..'),repair});
   console.log(JSON.stringify(result,null,2));
   if(result.status!=='AGENT_RUNNING_RECENTLY')process.exitCode=1;
  }catch(e){console.error('MAC_NATIVE_AGENT_HEALTH_BLOCKED: '+e.message);process.exitCode=1;}
