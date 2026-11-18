@@ -63,7 +63,7 @@ private func cleanup(_ expected: Receipt, stageInode: UInt64, journalInode: UInt
     try fm.removeItem(at: journal)
 }
 var passed = 0
-for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "journal-replaced", "removed-stage", "journal-symlink", "journal-same-bytes-new-inode", "journal-hardlink", "stage-hardlink", "stage-mutated-in-place", "journal-mutated-in-place"] {
+for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "journal-replaced", "removed-stage", "journal-symlink", "journal-same-bytes-new-inode", "journal-hardlink", "stage-hardlink", "stage-mutated-in-place", "journal-mutated-in-place", "journal-corrupted-in-place", "stage-truncated-in-place", "stage-directory-replacement", "same-generation-different-ticket"] {
     try write(older, bytes: oldBytes)
     let originalInode = try inode(stage)
     let originalJournalInode = try inode(journal)
@@ -73,6 +73,21 @@ for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "jou
                     stageBytes: oldBytes, beforeDelete: {
             switch scenario {
             case "new-generation": try write(newer, bytes: newBytes)
+            case "same-generation-different-ticket":
+                try write(Receipt(ticket: newer.ticket, generation: older.generation,
+                                  stagedName: older.stagedName), bytes: newBytes)
+            case "stage-truncated-in-place":
+                let handle = try FileHandle(forWritingTo: stage)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+            case "stage-directory-replacement":
+                try fm.removeItem(at: stage)
+                try fm.createDirectory(at: stage, withIntermediateDirectories: false)
+            case "journal-corrupted-in-place":
+                let handle = try FileHandle(forWritingTo: journal)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: Data("{invalid-json".utf8))
             case "same-bytes-new-inode":
                 try fm.removeItem(at: stage)
                 try oldBytes.write(to: stage)
@@ -111,10 +126,22 @@ for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "jou
     if scenario.hasPrefix("journal-") || scenario == "stage-hardlink" {
         try require(try Data(contentsOf: stage) == oldBytes, "\(scenario): audio deleted on unsafe journal")
     }
-    if scenario == "new-generation" {
+    if scenario == "new-generation" || scenario == "same-generation-different-ticket" {
         try require(try Data(contentsOf: stage) == newBytes, "new ticket audio deleted")
         try require(try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)) == newer,
                     "new ticket journal overwritten")
+    }
+    if scenario == "stage-truncated-in-place" {
+        try require(try Data(contentsOf: stage).isEmpty, "truncated stage was removed or rewritten")
+    }
+    if scenario == "stage-directory-replacement" {
+        var isDirectory: ObjCBool = false
+        try require(fm.fileExists(atPath: stage.path, isDirectory: &isDirectory) && isDirectory.boolValue,
+                    "replacement directory was removed")
+    }
+    if scenario == "journal-corrupted-in-place" {
+        try require(try Data(contentsOf: journal) == Data("{invalid-json".utf8),
+                    "corrupted journal was removed or overwritten")
     }
     if scenario == "stage-mutated-in-place" {
         try require(try Data(contentsOf: stage) == newBytes, "mutated stage was deleted or rewritten")
