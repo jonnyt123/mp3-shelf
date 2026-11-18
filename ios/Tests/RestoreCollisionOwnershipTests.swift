@@ -30,12 +30,29 @@ func isSafeStage() -> Bool {
           (attrs[.referenceCount] as? NSNumber)?.intValue == 1 else { return false }
     return true
 }
-// Sequential collision model only: production needs atomic no-replace semantics
-// to close the race between destination inspection and publication.
+// Atomic hard-link publication: link(2) must fail if the destination already exists.
+// Unlike an existence-check followed by move, this does not replace a racing writer.
+// This remains an independent filesystem model, not a MusicLibrary implementation.
+func publishFile(from source: URL, to destination: URL) throws {
+    guard (try? fm.destinationOfSymbolicLink(atPath: source.path)) == nil,
+          let attrs = try? fm.attributesOfItem(atPath: source.path),
+          attrs[.type] as? FileAttributeType == .typeRegular,
+          (attrs[.referenceCount] as? NSNumber)?.intValue == 1 else {
+        throw RestoreError.invalidStage
+    }
+    do {
+        try fm.linkItem(at: source, to: destination)
+    } catch {
+        // A concurrent writer may have won; never touch its destination.
+        if fm.fileExists(atPath: destination.path) { throw RestoreError.collision }
+        throw error
+    }
+    // Publication succeeded. The destination now owns its inode even if
+    // removing the temporary link fails; the caller must journal that state.
+    try fm.removeItem(at: source)
+}
 func publish() throws -> Bool {
-    guard isSafeStage() else { throw RestoreError.invalidStage }
-    guard !fm.fileExists(atPath: target.path) else { throw RestoreError.collision }
-    try fm.moveItem(at: staged, to: target)
+    try publishFile(from: staged, to: target)
     return true
 }
 func recover(ownedByAttempt: Bool, committed: Bool) throws {
@@ -81,4 +98,43 @@ for _ in 0..<50 {
     try recover(ownedByAttempt: committedOwner, committed: true)
     try check(Data(contentsOf: target) == incoming)
 }
-print("PASS: 50 collision, symlink, hardlink, rollback and committed-media preservation rounds")
+// Race regression: each worker publishes a different payload to one absent name.
+// Exactly one atomic link may succeed; no failed worker may replace winner bytes.
+let raceRoot = root.appendingPathComponent("race")
+try fm.createDirectory(at: raceRoot, withIntermediateDirectories: true)
+let raceTarget = raceRoot.appendingPathComponent("shared.mp3")
+for round in 0..<25 {
+    if fm.fileExists(atPath: raceTarget.path) { try fm.removeItem(at: raceTarget) }
+    let sources = try (0..<16).map { index -> URL in
+        let source = raceRoot.appendingPathComponent("source-\\(round)-\\(index).mp3")
+        try Data(repeating: UInt8(index + 1), count: 2048).write(to: source)
+        return source
+    }
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var winners: [Int] = []
+    var failures: [Error] = []
+    for (index, source) in sources.enumerated() {
+        group.enter()
+        DispatchQueue.global().async {
+            defer { group.leave() }
+            do {
+                try publishFile(from: source, to: raceTarget)
+                lock.lock(); winners.append(index); lock.unlock()
+            } catch RestoreError.collision {
+                // Expected: another publisher owns the destination.
+            } catch {
+                lock.lock(); failures.append(error); lock.unlock()
+            }
+        }
+    }
+    group.wait()
+    precondition(failures.isEmpty, "unexpected publication failure: \\(failures)")
+    precondition(winners.count == 1, "multiple writers published")
+    try check(Data(contentsOf: raceTarget) == Data(repeating: UInt8(winners[0] + 1), count: 2048))
+    for (index, source) in sources.enumerated() where index != winners[0] {
+        try check(Data(contentsOf: source) == Data(repeating: UInt8(index + 1), count: 2048))
+    }
+    for source in sources where fm.fileExists(atPath: source.path) { try fm.removeItem(at: source) }
+}
+print("PASS: 50 restore ownership rounds and 25 x 16 atomic publication races")
