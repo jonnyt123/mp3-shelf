@@ -89,6 +89,8 @@ enum AudioSourceFinder {
         // Invalid optional evidence must not discard an otherwise readable
         // catalog item; candidate validation still rejects bad durations.
         let length: String?
+        // A present but unreadable size must not silently become absent evidence.
+        let hasInvalidSize: Bool
 
         private enum CodingKeys: String, CodingKey {
             case name, source, size, length
@@ -99,6 +101,7 @@ enum AudioSourceFinder {
             name = try fields.decode(String.self, forKey: .name)
             source = try? fields.decode(String.self, forKey: .source)
             size = Self.optionalNumberText(fields, key: .size)
+            hasInvalidSize = fields.contains(.size) && size == nil
             length = Self.optionalNumberText(fields, key: .length)
         }
 
@@ -498,7 +501,7 @@ enum AudioSourceFinder {
         }) else { return nil }
         let eligible = grouped.keys.sorted().compactMap { grouped[$0]?.first }
         let matches = eligible.filter { file in
-            archiveFileCandidate(name: file.name, source: file.source, sizeBytes: file.size,
+            !file.hasInvalidSize && archiveFileCandidate(name: file.name, source: file.source, sizeBytes: file.size,
                                  itemTitle: metadata.title?.value ?? "",
                                  itemCreator: metadata.creator?.value ?? "",
                                  audioFileCount: eligible.count, wish: wish)
