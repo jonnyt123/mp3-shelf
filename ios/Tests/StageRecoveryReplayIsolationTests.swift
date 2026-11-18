@@ -62,7 +62,10 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
                  "same-bytes-new-stage", "truncated-stage", "journal-symlink",
                  "journal-corruption", "stage-directory", "same-size-mutated-audio",
                  "stage-symlink", "journal-replaced-same-bytes", "stage-replaced-same-bytes",
-                 "journal-ticket-mutated-in-place", "stage-hardlink-mutated", "journal-hardlink-mutated", "journal-symlink-retargeted"] {
+                 "journal-ticket-mutated-in-place", "stage-hardlink-mutated", "journal-hardlink-mutated", "journal-symlink-retargeted",
+                 "preexisting-stage-symlink", "preexisting-journal-symlink", "preexisting-truncated-stage",
+                 "preexisting-corrupt-journal", "preexisting-wrong-ticket", "preexisting-zero-length-stage",
+                 "journal-truncated-after-read", "stage-extended-after-read"] {
     // Reset every scenario to an independent filesystem state. In particular,
     // stage-directory leaves a directory at the staging path; atomic writes
     // cannot safely replace it with the next scenario's regular file.
@@ -72,10 +75,34 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
         }
     }
     try persist(first, bytes: oldAudio)
+    // Pre-read attacks must be rejected before the replay callback runs.
+    // A failed preflight must never advance a queue or consume a journal.
+    switch scenario {
+    case "preexisting-stage-symlink":
+        try fm.removeItem(at: stage)
+        try fm.createSymbolicLink(at: stage, withDestinationURL: journal)
+    case "preexisting-journal-symlink":
+        try fm.removeItem(at: journal)
+        try fm.createSymbolicLink(at: journal, withDestinationURL: stage)
+    case "preexisting-truncated-stage":
+        let handle = try FileHandle(forWritingTo: stage)
+        try handle.truncate(atOffset: 17)
+        try handle.close()
+    case "preexisting-corrupt-journal":
+        try Data("{bad-json".utf8).write(to: journal, options: .atomic)
+    case "preexisting-wrong-ticket":
+        try JSONEncoder().encode(next).write(to: journal, options: .atomic)
+    case "preexisting-zero-length-stage":
+        try Data().write(to: stage, options: .atomic)
+    default: break
+    }
     let expectedSuccess = scenario == "baseline"
+    let isPreflight = scenario.hasPrefix("preexisting-")
+    var callbackInvoked = false
     var recovered: Data?
     do {
         recovered = try recover(first) {
+            callbackInvoked = true
             switch scenario {
             case "replacement-ticket": try persist(next, bytes: newAudio)
             case "same-generation-new-ticket":
@@ -140,6 +167,15 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
                 let handle = try FileHandle(forWritingTo: alias)
                 defer { try? handle.close() }
                 try handle.write(contentsOf: newAudio)
+            case "journal-truncated-after-read":
+                let handle = try FileHandle(forWritingTo: journal)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 2)
+            case "stage-extended-after-read":
+                let handle = try FileHandle(forWritingTo: stage)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data([0x99]))
             case "stage-directory":
                 try fm.removeItem(at: stage)
                 try fm.createDirectory(at: stage, withIntermediateDirectories: false)
@@ -158,6 +194,8 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
         throw error
     }
     try assert((recovered != nil) == expectedSuccess, "\(scenario): wrong replay decision")
+    try assert(callbackInvoked == !isPreflight,
+               "\(scenario): replay callback crossed the wrong preflight boundary")
     if expectedSuccess {
         try assert(recovered == oldAudio, "baseline media changed")
     } else {
