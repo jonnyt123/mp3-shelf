@@ -110,10 +110,10 @@ elif os.environ.get("FAIL_BUILD") and "Release" in args and "iphonesimulator" in
         self.assertIn("Failure reason: Step playback-order failed", self.report())
         self.assertIn("Completed checks: none", self.report())
 
-    def test_test_mode_runs_all_nine_native_suites_and_matching_core(self):
+    def test_test_mode_runs_all_ten_native_suites_and_matching_core(self):
         self.compiler()
         self.assertEqual(self.run_runner("--tests-only").returncode, 0)
-        expected = "playback-order playback-interruptions downloaded-audio-format playlist-parser lyrics-parser authorized-audio-sources discovery-resume portable-backup recording-matching-core recording-matcher"
+        expected = "playback-order playback-interruptions downloaded-audio-signature downloaded-audio-format playlist-parser lyrics-parser authorized-audio-sources discovery-resume portable-backup recording-matching-core recording-matcher"
         self.assertIn("Completed checks: " + expected, self.report())
         self.assertIn("Failure reason: none", self.report())
         self.assertIn("physical iPhone acceptance: NOT TESTED", self.report())

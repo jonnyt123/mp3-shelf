@@ -661,6 +661,30 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             let stagedURL = Self.stagingURL(ticket.id)
             do {
+                // URLSession stages every provider at a legacy .mp3 path, even
+                // when the actual bytes contain MP4/AAC. AVAudioFile can choose
+                // the wrong parser from the suffix and emit packet-scan errors.
+                // Reject non-audio before decoding and preserve the original
+                // staged file for crash/cancellation recovery.
+                guard let detected = try DownloadedAudioSignature.identify(stagedURL) else {
+                    throw DownloadedAudioSignature.Error.unsupportedOrInvalidAudio
+                }
+                let decodingURL: URL
+                if detected.fileExtension == stagedURL.pathExtension.lowercased() {
+                    decodingURL = stagedURL
+                } else {
+                    // A hard link uses no second copy of a large download and
+                    // gives AVFoundation its actual container extension.
+                    // Recreate an alias left by a previous interrupted import.
+                    let alias = stagedURL.deletingPathExtension()
+                        .appendingPathExtension(detected.fileExtension)
+                    try? fm.removeItem(at: alias)
+                    try fm.linkItem(at: stagedURL, to: alias)
+                    decodingURL = alias
+                }
+                defer {
+                    if decodingURL != stagedURL { try? fm.removeItem(at: decodingURL) }
+                }
                 #if DEBUG
                 var fixtureInput: (ticketID: UUID, bytes: Int, sha256: String)?
                 if let fixtureURL = DownloadPathProof.fixtureDownloadURL, ticket.downloadURL == fixtureURL {
@@ -675,7 +699,7 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                     licenseURL: ticket.licensePage?.absoluteString ?? "",
                     providerName: ticket.provider)
                 let imported = try await library.importStagedAudio(
-                    from: stagedURL, matching: ticket.requested, attribution: attribution, conversionProgress: conversion)
+                    from: decodingURL, matching: ticket.requested, attribution: attribution, conversionProgress: conversion)
                 if imported {
                     if var current = tickets[ticket.id], current.status == .queued {
                         #if DEBUG
