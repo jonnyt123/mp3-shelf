@@ -2618,7 +2618,10 @@ struct PlaylistDetailView: View {
                                           systemImage: "arrow.clockwise")
                                         .frame(minHeight: 44, alignment: .leading)
                                 }
-                                .accessibilityHint("Rechecks restored offline files in the current playlist without modifying saved audio")
+                                .disabled(playlistAudioImportBusy || playlistScenePhase != .active)
+                                .accessibilityHint(playlistAudioImportBusy
+                                    ? "Wait for the local audio import to finish before retrying"
+                                    : "Rechecks restored offline files in the current playlist without modifying saved audio")
                             }
                         }
                     }
@@ -2997,11 +3000,18 @@ struct PlaylistDetailView: View {
             Text(playlistPlaybackError ?? "")
         }
         .onChange(of: playlistAudioImportBusy) { _, importing in
-            guard importing else { return }
-            if playlistPlaybackPending { cancelPlaylistPreparation(showFeedback: true) }
-            if playlistPlaybackCanRetry {
+            if importing {
+                // Never reuse an availability scan across file replacement.
+                if playlistPlaybackPending { cancelPlaylistPreparation(showFeedback: true) }
+                if playlistPlaybackCanRetry {
+                    playlistPlaybackError = nil
+                    playlistPlaybackNotice = "Audio import is updating local recordings. Wait until it finishes, then retry playback."
+                }
+            } else if playlistPlaybackCanRetry && !playlistPlaybackPending {
+                // Completion does not imply that every recording was restored.
+                // Offer an explicit fresh scan without interrupting the active queue.
                 playlistPlaybackError = nil
-                playlistPlaybackNotice = "Audio import is updating local recordings. Wait until it finishes, then retry playback."
+                playlistPlaybackNotice = "Audio import finished. Retry Play or Shuffle to check the current offline recordings."
             }
         }
         .onChange(of: playlistPlaybackMetadata) { _, _ in
