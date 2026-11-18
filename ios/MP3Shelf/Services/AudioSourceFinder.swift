@@ -50,6 +50,7 @@ enum AudioSourceFinder {
     struct ArchiveItem: Decodable {
         let metadata: ItemMetadata?
         let files: [ArchiveFile]?
+        let hasMalformedFileRows: Bool
 
         private enum CodingKeys: String, CodingKey { case metadata, files }
 
@@ -66,8 +67,13 @@ enum AudioSourceFinder {
         init(from decoder: Decoder) throws {
             let fields = try decoder.container(keyedBy: CodingKeys.self)
             metadata = try? fields.decode(ItemMetadata.self, forKey: .metadata)
-            files = (try? fields.decode([LossyFile].self, forKey: .files))?
-                .compactMap(\.value)
+            if let rows = try? fields.decode([LossyFile].self, forKey: .files) {
+                hasMalformedFileRows = rows.contains { $0.value == nil }
+                files = rows.compactMap(\.value)
+            } else {
+                hasMalformedFileRows = true
+                files = nil
+            }
         }
     }
     struct ItemMetadata: Decodable {
@@ -441,7 +447,10 @@ enum AudioSourceFinder {
 
     static func archiveCandidate(_ item: ArchiveItem, identifier: String,
                                  for wish: PlaylistWish) -> AudioCatalogMatch? {
-        guard safeIdentifier(identifier), let metadata = item.metadata else { return nil }
+        // An unreadable sibling may be another original recording.
+        // Never treat the remaining file as uniquely identified.
+        guard safeIdentifier(identifier), let metadata = item.metadata,
+              !item.hasMalformedFileRows else { return nil }
         let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
         let originals = audioFiles.filter { $0.source == "original" }
         let rawEligible = originals.isEmpty ? audioFiles : originals

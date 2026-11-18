@@ -1192,6 +1192,14 @@ enum AudioSourceFinderTests {
         verify(duplicateArchive.flatMap {
             AudioSourceFinder.archiveCandidate($0, identifier: "exact-song", for: archiveWish)
         } != nil, "identical Archive file rows identify one recording")
+        let corruptedArchive = archiveFixture(originalRow + ",null")
+        verify(corruptedArchive?.hasMalformedFileRows == true && corruptedArchive.flatMap {
+            AudioSourceFinder.archiveCandidate($0, identifier: "exact-song", for: archiveWish)
+        } == nil, "malformed sibling cannot make an original falsely unique")
+        let missingNameArchive = archiveFixture(originalRow + #",{"source":"original","length":"180"}"#)
+        verify(missingNameArchive?.hasMalformedFileRows == true && missingNameArchive.flatMap {
+            AudioSourceFinder.archiveCandidate($0, identifier: "exact-song", for: archiveWish)
+        } == nil, "missing filename cannot authorize unattended import")
         let conflictingRow = #"{"name":"Exact Song.mp3","source":"original","size":"3000000","length":"120"}"#
         let contradictoryArchive = archiveFixture(originalRow + "," + conflictingRow)
         verify(contradictoryArchive.flatMap {
