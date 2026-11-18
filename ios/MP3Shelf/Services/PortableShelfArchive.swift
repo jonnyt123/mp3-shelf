@@ -982,10 +982,21 @@ enum PortableShelfArchive {
         // during disk-full, cancellation, or corrupted-archive retries. Capture
         // the exclusive output's inode before writing; cleanup must never
         // unlink a different file substituted at this pathname.
+        // Capture ownership directly from the open descriptor first. If the
+        // subsequent pathname check fails (for example after a concurrent
+        // rename), reclaim only our still-open inode, never its replacement.
+        var createdInfo = stat()
+        guard fstat(output.fileDescriptor, &createdInfo) == 0,
+              (createdInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+            try? output.close()
+            throw ArchiveError.invalidFile
+        }
+        let createdIdentity = ArchiveSourceIdentity(createdInfo)
         let extractionIdentity: ArchiveSourceIdentity
         do {
             extractionIdentity = try archiveIdentity(of: output, at: target)
         } catch {
+            removeOwnedStaging(target, identity: createdIdentity)
             try? output.close()
             throw error
         }
@@ -996,8 +1007,10 @@ enum PortableShelfArchive {
         let pinnedDescriptor = dup(output.fileDescriptor)
         guard pinnedDescriptor >= 0 else {
             let code = errno
-            try? output.close()
+            // Keep the inode allocated until the ownership check has unlinked
+            // our staging name; close-first permits immediate inode reuse.
             removeOwnedStaging(target, identity: extractionIdentity)
+            try? output.close()
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
         }
         defer { _ = close(pinnedDescriptor) }
@@ -1135,8 +1148,8 @@ enum PortableShelfArchive {
         let pinnedDescriptor = dup(output.fileDescriptor)
         guard pinnedDescriptor >= 0 else {
             let code = errno
-            try? output.close()
             removeOwnedStaging(staging, identity: ownedIdentity)
+            try? output.close()
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
         }
         defer { _ = close(pinnedDescriptor) }
