@@ -2204,8 +2204,19 @@ final class MusicLibrary: ObservableObject {
         let available = updatedTracks.filter { isAvailableOwnedRecording($0) }
         let availableIndex = OfflineTrackIndex(tracks: available)
         var updated = sourcePlaylists ?? playlists
-        for index in updated.indices where !updated[index].sourceOrder.isEmpty {
+        for index in updated.indices {
             let existing = updated[index].trackIDs
+            // Local playlists and source playlists whose sourceOrder became empty
+            // must receive the same orphan/duplicate repair as active imports.
+            // Never remove an ID merely because its audio is temporarily missing:
+            // catalog membership, not filesystem availability, determines ownership.
+            if updated[index].sourceOrder.isEmpty {
+                var seen = Set<UUID>()
+                updated[index].trackIDs = existing.filter {
+                    catalogTrackIDs.contains($0) && seen.insert($0).inserted
+                }
+                continue
+            }
             var ordered: [UUID] = []
             var missing: [PlaylistWish] = []
             for wish in updated[index].sourceOrder {
