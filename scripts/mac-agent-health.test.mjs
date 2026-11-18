@@ -79,3 +79,13 @@ test('a recent blocked or failed invocation is visible without claiming compilat
   assert.equal(h.xcodeBuild,'NOT_ATTESTED_BY_HEALTH_CHECK');
  }
 });
+
+test('bootstrap-only repair never requires killing a newly launched Xcode job',()=>{
+ const h=evaluateAgentHealth(sample({loaded:false}));
+ assert.equal(h.repair,'BOOTSTRAP_OWNED_AGENT');
+ assert.equal(h.checks.plist.status,'PASS');
+ // A newly loaded agent can be running while its first receipt is pending.
+ const pending=evaluateAgentHealth(sample({loaded:true,latest:null}));
+ assert.equal(pending.repair,'INSPECT_LAUNCHD_LOGS_AND_KICKSTART');
+ assert.equal(pending.status,'NEEDS_ATTENTION');
+});
