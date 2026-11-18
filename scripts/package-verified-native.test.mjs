@@ -63,6 +63,7 @@ function fixture() {
   const reviewHandoff={schema:'mp3shelf-physical-review-handoff-v1',
     candidateSha:sha,createdAt:new Date().toISOString(),
     reviewFile:'review-20261117T200000Z-11111111-1111-1111-1111-111111111111.json',
+    signedRecordFile:'signed-install-QA_RECORD.md',signedRecordSHA256:hash,
     inventorySHA256:hash,reviewSHA256:hash,signedAppSHA256:hash,
     signedBinaryProvenance:'SIGNED_MAC_BUILD_ONLY',
     physicalAcceptance:'INCOMPLETE',ownerApproval:'REQUIRED_NOT_GRANTED'};
@@ -274,4 +275,12 @@ test('owner-approved ZIP also requires a separate exact-source independently rev
     const item=fixture();change(item);
     assert(nativePackageGate(item).length>0);
   }
+});
+
+
+test('signed Mac install QA must be referenced by a fixed immutable file name and digest',()=>{
+ const wrong=fixture();wrong.reviewHandoff.signedRecordFile='../../other-app-QA.md';
+ assert(nativePackageGate(wrong).length>0);
+ const invalid=fixture();invalid.reviewHandoff.signedRecordSHA256='NOT_VERIFIED';
+ assert(nativePackageGate(invalid).length>0);
 });
