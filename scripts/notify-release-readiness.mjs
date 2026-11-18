@@ -65,6 +65,13 @@ function notifySystem(message) {
 export function deliverChangeOnlyNotification({home=homedir(),now=Date.now(),
  send=notifySystem,platform=process.platform}={}){
  const root=resolve(home,'Library','Logs','MP3Shelf','ReleaseReadiness');
+ // This runs under launchd; never follow redirected home log directories.
+ for(const dir of [join(home,'Library'),join(home,'Library','Logs'),
+   join(home,'Library','Logs','MP3Shelf'),root]){
+  const info=lstatSync(dir);
+  if(!info.isDirectory()||info.isSymbolicLink())
+   throw Error('Readiness notification directory was redirected.');
+ }
  const latest=join(root,'latest.json'),previous=join(root,'notification-state.json');
  const model=safeRead(latest);
  if(!model)throw Error('Missing latest local release-readiness JSON');
