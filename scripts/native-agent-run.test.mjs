@@ -8,7 +8,9 @@ const sha='a'.repeat(40);
 test('real native integration remains distinct from hardware approval',()=>{
  const record=nativeAgentRunRecord({startedAt:'2026-11-16T00:00:00Z',finishedAt:'2026-11-16T01:00:00Z',
    result:{candidateSha:sha,integration:'staged-draft-only',packaging:'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE'}});
- assert.equal(record.status,'COMPLETED');
+ assert.equal(record.status,'BLOCKED');
+ assert.equal(record.integration,'staged-draft-only');
+ assert.equal(record.packaging,'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE');
  assert.equal(record.candidateSha,sha);
  assert.equal(record.xcodeVerification,'NOT_VERIFIED');
  assert.equal(record.physicalIPhoneAcceptance,'REQUIRES_SEPARATE_REAL_DEVICE_REVIEW');
@@ -217,4 +219,21 @@ test('published ZIP receipts require consistent packaging, hash and canonical do
   assert.equal(record.delivery,'NOT_VERIFIED',JSON.stringify(changes));
   assert.equal(record.xcodeVerification,'NOT_VERIFIED');
  }
+});
+
+test('staged draft remains visible but incomplete hardware and unsafe output block the agent cycle',()=>{
+ const base={startedAt:'2026-11-18T00:00:00Z',finishedAt:'2026-11-18T00:01:00Z'};
+ for(const packaging of ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
+   'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION']){
+  const record=nativeAgentRunRecord({...base,result:{candidateSha:sha,
+   integration:'already-staged',packaging}});
+  assert.equal(record.status,'BLOCKED',packaging);
+  assert.equal(record.integration,'already-staged');
+  assert.equal(record.packaging,packaging);
+  assert.equal(record.delivery,'NOT_VERIFIED');
+  assert.equal(record.xcodeVerification,'NOT_VERIFIED');
+ }
+ const complete=nativeAgentRunRecord({...base,result:{candidateSha:sha,
+  integration:'already-staged'}});
+ assert.equal(complete.status,'COMPLETED');
 });
