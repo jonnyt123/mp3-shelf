@@ -371,11 +371,13 @@ extension AudioSourceFinder {
         // independent recordings don't get buried beneath general relevance
         // matches; use the broader query only if no unique eligible result.
         var firstSearchError: Error?
+        var candidates: [String: AudioCatalogMatch] = [:]
         for fieldSearch in [true, false] {
             for page in 1...maxOpenversePages {
                 try Task.checkCancellation()
-                // A failed focused request must not skip the broader lookup.
-                // Keep errors retryable if no trustworthy result is found.
+                // Both focused and broad results must be considered before
+                // automatically choosing a recording. A second page may expose
+                // a different performance with identical catalog metadata.
                 let result: OpenverseResponse
                 do {
                     result = try await requestJSON(
@@ -386,25 +388,25 @@ extension AudioSourceFinder {
                     if firstSearchError == nil { firstSearchError = error }
                     break
                 }
-                let matches = result.results.compactMap {
+                for match in result.results.compactMap({
                     openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
                                        landing: $0.foreign_landing_url, license: $0.license_url,
                                        filetype: $0.filetype, duration: $0.duration,
                                        source: $0.source, filesize: $0.filesize, wish: wish)
+                }) {
+                    candidates[match.downloadURL.absoluteString] = match
                 }
-                // Different URLs could be distinct performances. Do not silently
-                // choose between two matching candidates, even on later pages.
-                let unique = Dictionary(grouping: matches,
-                                        by: { $0.downloadURL.absoluteString })
-                if unique.count == 1 { return unique.values.first?.first }
-                if unique.count > 1 { return nil }
+                // A second distinct URL is ambiguous, not an automatic match.
+                if candidates.count > 1 { return nil }
                 if !shouldSearchNextOpenversePage(
                     page: page, pageCount: result.page_count,
-                    returned: result.results.count, eligible: unique.count) { break }
+                    returned: result.results.count, eligible: 0) { break }
             }
         }
+        // Partial catalog outages cannot establish uniqueness. Retry rather
+        // than silently importing a potentially wrong recording.
         if let firstSearchError { throw firstSearchError }
-        return nil
+        return candidates.count == 1 ? candidates.values.first : nil
     }
 
 
