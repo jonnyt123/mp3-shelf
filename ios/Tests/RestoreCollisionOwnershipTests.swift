@@ -106,7 +106,7 @@ let raceTarget = raceRoot.appendingPathComponent("shared.mp3")
 for round in 0..<25 {
     if fm.fileExists(atPath: raceTarget.path) { try fm.removeItem(at: raceTarget) }
     let sources = try (0..<16).map { index -> URL in
-        let source = raceRoot.appendingPathComponent("source-\\(round)-\\(index).mp3")
+        let source = raceRoot.appendingPathComponent("source-\(round)-\(index).mp3")
         try Data(repeating: UInt8(index + 1), count: 2048).write(to: source)
         return source
     }
@@ -129,7 +129,7 @@ for round in 0..<25 {
         }
     }
     group.wait()
-    precondition(failures.isEmpty, "unexpected publication failure: \\(failures)")
+    precondition(failures.isEmpty, "unexpected publication failure: \(failures)")
     precondition(winners.count == 1, "multiple writers published")
     try check(Data(contentsOf: raceTarget) == Data(repeating: UInt8(winners[0] + 1), count: 2048))
     for (index, source) in sources.enumerated() where index != winners[0] {
