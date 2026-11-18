@@ -74,6 +74,9 @@ struct LibraryView: View {
     // Never mutate the currently playing queue as an import side effect.
     @State private var partialQueueShuffle: Bool?
     @State private var partialQueueNeedsRefresh = false
+    // A retry or partial-queue refresh belongs to an exact visible selection.
+    // Library edits can change it without changing search, Favorites or sorting.
+    @State private var playbackSelectionSnapshot: [RecordingLocationKey]?
 
     // Import completion is asynchronous: never scan or queue a file while the
     // importer may still be replacing it on disk.
@@ -237,6 +240,23 @@ struct LibraryView: View {
     // Invalidate an in-flight scan as soon as the user changes its scope.
     // Waiting for disk I/O to finish leaves the old busy indicator blocking
     // playback of the newly selected results on large libraries.
+    private func playbackSelectionIsCurrent() -> Bool {
+        guard let playbackSelectionSnapshot, !isSearchUpdating else { return false }
+        return displayed.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }
+            == playbackSelectionSnapshot
+    }
+
+    private func invalidateStalePlaybackRecovery() {
+        guard playbackSelectionSnapshot != nil, !bulkPlaybackPending,
+              !playbackSelectionIsCurrent() else { return }
+        bulkRetryShuffle = nil
+        bulkSkippedRecordingCount = 0
+        partialQueueShuffle = nil
+        partialQueueNeedsRefresh = false
+        playbackSelectionSnapshot = nil
+        bulkPlaybackNotice = "Your library selection changed. Choose Play or Shuffle to check the current songs."
+    }
+
     private func browsingScopeDidChange() {
         // Recovery belongs to the exact results that produced the partial
         // queue. A new query, Favorites filter, or sort order must not offer
@@ -258,6 +278,7 @@ struct LibraryView: View {
                 ? "Your song selection changed. Choose Play or Shuffle for the new results."
                 : nil
             bulkRetryShuffle = nil
+            playbackSelectionSnapshot = nil
         }
     }
 
@@ -479,7 +500,7 @@ struct LibraryView: View {
                         .accessibilityAddTraits(.updatesFrequently)
                     // Partial playback has already started: restoring missing files
                     // must not reset the active queue or unexpectedly replay songs.
-                    if bulkSkippedRecordingCount > 0 && !bulkPlaybackPending {
+                    if bulkSkippedRecordingCount > 0 && !bulkPlaybackPending && playbackSelectionIsCurrent() {
                         Button {
                             presentAudioImporter()
                         } label: {
@@ -490,7 +511,8 @@ struct LibraryView: View {
                         .disabled(audioImportBusy || scenePhase != .active)
                         .accessibilityHint("Choose missing local audio files from Files. Currently playing music will not restart.")
                     }
-                    if partialQueueNeedsRefresh, let originalShuffle = partialQueueShuffle, !bulkPlaybackPending {
+                    if partialQueueNeedsRefresh, let originalShuffle = partialQueueShuffle,
+                       !bulkPlaybackPending && playbackSelectionIsCurrent() {
                         Button {
                             playDisplayed(shuffled: originalShuffle)
                         } label: {
@@ -501,7 +523,7 @@ struct LibraryView: View {
                         .disabled(audioImportBusy || scenePhase != .active || isSearchUpdating || displayed.isEmpty)
                         .accessibilityHint("Recheck restored local files and start a new queue only when you choose; current playback is not changed automatically")
                     }
-                    if let retryShuffle = bulkRetryShuffle, !bulkPlaybackPending {
+                    if let retryShuffle = bulkRetryShuffle, !bulkPlaybackPending && playbackSelectionIsCurrent() {
                         // A changed search or Favorites filter can leave no
                         // playable selection. Never offer a silent no-op Retry.
                         let canRetry = scenePhase == .active && !audioImportBusy && !isSearchUpdating && !displayed.isEmpty
@@ -568,6 +590,7 @@ struct LibraryView: View {
         bulkSkippedRecordingCount = 0
         partialQueueShuffle = nil
         partialQueueNeedsRefresh = false
+        playbackSelectionSnapshot = locations.map { RecordingLocationKey(id: $0.0, url: $0.1) }
         bulkRetryShuffle = shuffled
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
@@ -1077,6 +1100,11 @@ struct LibraryView: View {
         .onChange(of: searchText) { _, _ in browsingScopeDidChange() }
         .onChange(of: favoritesOnly) { _, _ in browsingScopeDidChange() }
         .onChange(of: sortMode) { _, _ in browsingScopeDidChange() }
+        .onChange(of: library.tracks.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }) { _, _ in
+            // Imports, restores and deletions can replace the selection without
+            // changing any browsing control. Never retry an obsolete queue.
+            invalidateStalePlaybackRecovery()
+        }
         .onSubmit(of: .search) { submitSearch() }
         .task(id: searchText) {
             // Clearing or whitespace-only input restores the full library
