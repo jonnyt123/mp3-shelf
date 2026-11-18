@@ -1955,7 +1955,17 @@ extension AudioSourceFinder {
                     if !current!.creator.isEmpty && current!.creator != content { current?.ambiguousMetadata = true }
                     if !content.isEmpty { current?.creator = content }
                 case "author":
-                    if current?.creator.isEmpty == true { current?.creator = content }
+                    // RSS author and Dublin Core creator are two claims about
+                    // the same recording identity. A conflicting fallback must
+                    // not be silently ignored when creator is already present.
+                    if !content.isEmpty {
+                        if let creator = current?.creator, !creator.isEmpty,
+                           MusicMatching.key(creator) != MusicMatching.key(content) {
+                            current?.ambiguousMetadata = true
+                        } else if current?.creator.isEmpty == true {
+                            current?.creator = content
+                        }
+                    }
                 case "link":
                     if !current!.landingURL.isEmpty && current!.landingURL != content { current?.ambiguousMetadata = true }
                     if !content.isEmpty { current?.landingURL = content }
