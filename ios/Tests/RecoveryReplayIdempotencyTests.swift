@@ -133,4 +133,47 @@ try scenario("receipt-audio-tamper") { s in
     catch RecoveryFailure.invalid {}
     try check(Data(contentsOf: s.path("recording.mp3")) == other, "tampered audio overwritten")
 }
+try scenario("receipt-destination-missing") { s in
+    try s.writeStage(original, ticket: first)
+    _ = try s.recover(first)
+    try s.fm.removeItem(at: s.path("recording.mp3"))
+    do { _ = try s.recover(first); preconditionFailure("accepted missing committed recording") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path),
+              "duplicate callback recreated missing recording")
+}
+try scenario("receipt-destination-substitution") { s in
+    try s.writeStage(original, ticket: first)
+    _ = try s.recover(first)
+    let forged = Receipt(ticket: first, destination: "../another-recording.mp3")
+    try JSONEncoder().encode(forged).write(to: s.path("receipt.json"), options: .atomic)
+    do { _ = try s.recover(first); preconditionFailure("accepted redirected receipt") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "redirected receipt changed committed recording")
+}
+try scenario("crash-after-move-conflicting-replacement") { s in
+    try s.writeStage(original, ticket: first)
+    s.failAfterMove = true
+    do { _ = try s.recover(first); preconditionFailure("expected interruption") }
+    catch RecoveryFailure.interrupted {}
+    s.failAfterMove = false
+    try other.write(to: s.path("recording.mp3"), options: .atomic)
+    do { _ = try s.recover(first); preconditionFailure("overwrote newer recording after crash") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: s.path("recording.mp3")) == other,
+              "crash replay replaced newer audio")
+}
+try scenario("crash-after-receipt-corrupt-replay") { s in
+    try s.writeStage(original, ticket: first)
+    s.failAfterReceipt = true
+    do { _ = try s.recover(first); preconditionFailure("expected interruption") }
+    catch RecoveryFailure.interrupted {}
+    s.failAfterReceipt = false
+    try Data("corrupt".utf8).write(to: s.path("receipt.json"), options: .atomic)
+    do { _ = try s.recover(first); preconditionFailure("replayed corrupt published receipt") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "corrupt published receipt changed audio")
+}
 print("PASS: \(passed) recovery replay idempotency scenarios")
