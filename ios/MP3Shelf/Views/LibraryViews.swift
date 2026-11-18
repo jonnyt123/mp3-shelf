@@ -2654,6 +2654,20 @@ struct PlaylistDetailView: View {
                                 .foregroundStyle(ShelfTheme.subdued)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityAddTraits(.updatesFrequently)
+                            // A partial queue or an entirely missing offline playlist needs
+                            // a direct recovery journey, not just a Retry that scans the
+                            // same unavailable files. Downloads is local-first and does
+                            // not start a source lookup merely by opening it.
+                            if playlistPlaybackCanRetry {
+                                NavigationLink {
+                                    DownloadManagerView()
+                                } label: {
+                                    Label("Review missing audio in Downloads", systemImage: "arrow.down.circle")
+                                        .frame(minHeight: 44, alignment: .leading)
+                                }
+                                .disabled(playlistScenePhase != .active || playlistAudioImportBusy)
+                                .accessibilityHint("Review failed and pending audio downloads, then return to retry this playlist")
+                            }
                             // Retry also remains available after partial playback: restoring
                             // missing files should not require navigating away to replay them.
                             // Only offer it for the current nonempty playlist.
