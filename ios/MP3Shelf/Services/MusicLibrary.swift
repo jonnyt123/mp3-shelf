@@ -2187,6 +2187,10 @@ final class MusicLibrary: ObservableObject {
     private func reconciledPlaylists(using updatedTracks: [MusicTrack],
                                      from sourcePlaylists: [MusicPlaylist]? = nil) -> [MusicPlaylist] {
         let allTracksIndex = OfflineTrackIndex(tracks: updatedTracks)
+        // A restored or migrated playlist may reference tracks no longer present
+        // in the catalog. Retain unavailable *catalogued* recordings for recovery,
+        // but never perpetuate orphan IDs that cannot resolve to any recording.
+        let catalogTrackIDs = Set(updatedTracks.map(\.id))
         let available = updatedTracks.filter { isAvailableOwnedRecording($0) }
         let availableIndex = OfflineTrackIndex(tracks: available)
         var updated = sourcePlaylists ?? playlists
@@ -2215,7 +2219,8 @@ final class MusicLibrary: ObservableObject {
             var reconciled: [UUID] = []
             reconciled.reserveCapacity(existing.count + ordered.count)
             for id in existing {
-                if (resolvedIDs.contains(id) || !sourcedTrackIDs.contains(id)),
+                if catalogTrackIDs.contains(id),
+                   (resolvedIDs.contains(id) || !sourcedTrackIDs.contains(id)),
                    recorded.insert(id).inserted {
                     reconciled.append(id)
                 }
