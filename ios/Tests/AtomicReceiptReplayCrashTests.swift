@@ -93,5 +93,20 @@ for _ in 0..<80 {
     try fm.createSymbolicLink(at: journal, withDestinationURL: external)
     try check(try recover(ticket: ticket, generation: 8) == nil, "journal symlink")
     try check(try Data(contentsOf: external) == foreign, "external file modified")
+    // A partially written unpublished receipt cannot replace committed state.
+    try reset()
+    try bytes.write(to: audio, options: .atomic)
+    try publish()
+    let pending = root.appendingPathComponent("receipt-pending-\\(UUID()).json")
+    let encoded = try JSONEncoder().encode(receipt)
+    try Data(encoded.prefix(encoded.count / 2)).write(to: pending)
+    try check(try recover(ticket: ticket, generation: 8) == bytes, "unpublished partial receipt altered committed recovery")
+    try check(try Data(contentsOf: journal) == encoded, "committed journal modified")
+    try fm.removeItem(at: pending)
+    try publish(CrashReceipt(ticket: ticket, generation: 9, filename: "audio.mp3", expected: bytes))
+    try check(try recover(ticket: ticket, generation: 8) == nil, "stale generation after replacement")
+    try check(try recover(ticket: ticket, generation: 9) == bytes, "new generation not recoverable")
+    try check(try Data(contentsOf: audio) == bytes, "audio changed on generation transition")
+
 }
-print("PASS: 80 crash/replay rounds; 15 rejection and idempotency boundaries")
+print("PASS: 80 crash/replay rounds; interrupted publication, generation handoff and rejection boundaries")
