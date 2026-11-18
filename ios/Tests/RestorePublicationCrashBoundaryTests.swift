@@ -78,6 +78,11 @@ for _ in 0..<30 {
 print("PASS: 120 restore publication crash windows; 60 link attacks rejected")
 
 
+func check(_ condition: @autoclosure () throws -> Bool) throws {
+    let valid = try condition()
+    precondition(valid)
+}
+
 // Failure-injection regression: catalog publication must be the commit point.
 // A failed catalog write leaves the previous catalog intact, and recovery
 // removes only uncommitted newly published audio. Existing recordings survive.
@@ -94,21 +99,21 @@ for iteration in 0..<40 {
         // Simulate atomic catalog publication failing after media moved.
         throw PublicationFailure.injected
     } catch PublicationFailure.injected {
-        precondition(try Data(contentsOf: catalog) == before)
+        try check(try Data(contentsOf: catalog) == before)
     }
     try recover()
     precondition(!fm.fileExists(atPath: target.path), "Uncommitted media retained")
-    precondition(try names() == ["original.mp3", "neighbor.mp3"])
-    precondition(try Data(contentsOf: original) == old)
-    precondition(try Data(contentsOf: neighbor) == unrelated)
-    precondition(try Data(contentsOf: backup) == unrelated)
+    try check(try names() == ["original.mp3", "neighbor.mp3"])
+    try check(try Data(contentsOf: original) == old)
+    try check(try Data(contentsOf: neighbor) == unrelated)
+    try check(try Data(contentsOf: backup) == unrelated)
     // A subsequent retry must commit and retain exactly the new media.
     try new.write(to: staged, options: .atomic)
     try fm.moveItem(at: staged, to: target)
     try save(["original.mp3", "neighbor.mp3", "restored.mp3"])
     try recover()
-    precondition(try Data(contentsOf: target) == new)
-    precondition(try names().count == 3)
+    try check(try Data(contentsOf: target) == new)
+    try check(try names().count == 3)
     if iteration % 2 == 0 {
         // Stale archive identity: bytes from a prior restore cannot satisfy
         // the current committed catalog entry, even with the same filename.
