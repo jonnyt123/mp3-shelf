@@ -245,4 +245,44 @@ try scenario("directory-receipt-rejected") { s in
     catch RecoveryFailure.invalid {}
     try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path), "directory receipt published audio")
 }
+try scenario("symlinked-ticket-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    let outside = root.appendingPathComponent("outside-ticket.json")
+    try s.fm.moveItem(at: s.path("ticket.json"), to: outside)
+    try s.fm.createSymbolicLink(at: s.path("ticket.json"), withDestinationURL: outside)
+    do { _ = try s.recover(first); preconditionFailure("accepted symlink ticket") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path), "symlink ticket published audio")
+    try check(Data(contentsOf: outside) == try JSONEncoder().encode(first), "external ticket mutated")
+}
+try scenario("directory-stage-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    try s.fm.removeItem(at: s.path("staged.part"))
+    try s.fm.createDirectory(at: s.path("staged.part"), withIntermediateDirectories: false)
+    do { _ = try s.recover(first); preconditionFailure("accepted directory stage") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path), "directory stage published audio")
+}
+try scenario("zero-byte-stage-rejected") { s in
+    let empty = Data()
+    let zero = Ticket(id: UUID(), generation: 10, byteCount: 0, digest: digest(empty))
+    try s.writeStage(empty, ticket: zero)
+    do { _ = try s.recover(zero); preconditionFailure("accepted empty audio") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path), "empty stage published audio")
+}
+try scenario("crash-after-move-stage-substitution") { s in
+    try s.writeStage(original, ticket: first)
+    s.failAfterMove = true
+    do { _ = try s.recover(first); preconditionFailure("expected interruption") }
+    catch RecoveryFailure.interrupted {}
+    s.failAfterMove = false
+    try other.write(to: s.path("staged.part"), options: .atomic)
+    do { _ = try s.recover(first); preconditionFailure("accepted substituted stage") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "stage substitution corrupted previously moved audio")
+    try check(!s.fm.fileExists(atPath: s.path("receipt.json").path),
+              "stage substitution committed a receipt")
+}
 print("PASS: \(passed) recovery replay idempotency scenarios")
