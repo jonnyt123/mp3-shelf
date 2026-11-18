@@ -242,16 +242,23 @@ struct LibraryView: View {
         // queue. A new query, Favorites filter, or sort order must not offer
         // "restore skipped" or "refresh Shuffle" for the old selection.
         // This changes only view feedback; the playing queue is untouched.
-        if bulkSkippedRecordingCount > 0 || partialQueueNeedsRefresh {
+        // A failed Play/Shuffle request also belongs to the previous scope.
+        // Clear its retry before changing results; a retry must never silently
+        // play a different search or Favorites selection.
+        let wasPreparing = bulkPlaybackPending
+        if wasPreparing {
+            cancelBulkPlaybackPreparation(showFeedback: false)
+        }
+        if bulkSkippedRecordingCount > 0 || partialQueueNeedsRefresh ||
+           bulkRetryShuffle != nil || wasPreparing {
             bulkSkippedRecordingCount = 0
             partialQueueShuffle = nil
             partialQueueNeedsRefresh = false
-            bulkPlaybackNotice = nil
+            bulkPlaybackNotice = wasPreparing
+                ? "Your song selection changed. Choose Play or Shuffle for the new results."
+                : nil
             bulkRetryShuffle = nil
         }
-        guard bulkPlaybackPending else { return }
-        cancelBulkPlaybackPreparation(showFeedback: true)
-        bulkPlaybackNotice = "Your song selection changed. Retry to play the current results."
     }
 
     private func retryRecentRecording() {
@@ -531,6 +538,16 @@ struct LibraryView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // Importing can finish after the Files picker has dismissed, and the
+    // library's importing flag may settle before this view's own Task does.
+    // Both completion paths converge here; neither auto-starts playback.
+    private func markPartialQueueReadyForManualRefresh() {
+        guard !audioImportBusy, bulkSkippedRecordingCount > 0,
+              partialQueueShuffle != nil else { return }
+        partialQueueNeedsRefresh = true
+        bulkPlaybackNotice = "Audio import finished. Refresh playback to check restored recordings; the current queue is unchanged."
     }
 
     // Validate the whole playback queue off the main actor. A missing local
@@ -1050,11 +1067,8 @@ struct LibraryView: View {
             if importing {
                 cancelRecentPlaybackPreparation(showFeedback: true)
                 cancelBulkPlaybackPreparation(showFeedback: true)
-            } else if bulkSkippedRecordingCount > 0, partialQueueShuffle != nil {
-                // Import completion does not prove all missing files were restored.
-                // Offer a deliberate rescan instead of silently replacing playback.
-                partialQueueNeedsRefresh = true
-                bulkPlaybackNotice = "Audio import finished. Refresh playback to check restored recordings; the current queue is unchanged."
+            } else if !importInProgress {
+                markPartialQueueReadyForManualRefresh()
             }
         }
         .navigationTitle("MP3 Shelf")
@@ -1111,6 +1125,7 @@ struct LibraryView: View {
                 Task { @MainActor in
                     let outcome = await library.importAudio(urls: urls)
                     importInProgress = false
+                    markPartialQueueReadyForManualRefresh()
                     message = outcome.description
                 }
             case .failure(let error):
