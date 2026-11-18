@@ -137,3 +137,29 @@ test('ZIP indicator rejects unrelated, duplicate, empty and malformed release as
    [asset(archive),asset(manifest),asset('extra.txt')]
  ]) assert.equal(state(assets),'BLOCKED');
 });
+
+
+test('completed review handoff is visible without silently granting owner hardware approval',()=>{
+ const now=Date.parse('2026-11-17T22:00:00Z'),reviewSHA='d'.repeat(64);
+ const review={schema:'mp3shelf-independent-device-review-v1',sourceSha:sha,
+   inventorySHA256:hash,result:'EVIDENCE_CHECKS_PASSED_NOT_HARDWARE_APPROVED',
+   physicalAcceptance:'INCOMPLETE',issue6:'OPEN_UNTIL_INDEPENDENT_REVIEW',
+   failures:[],checks:Object.fromEntries([
+    'sourceIdentity','recentCapture','deviceIdentity','fullPlaylist','copiedBytes',
+    'offlinePlayback','backgroundCallbacks','signedMacBuild'
+   ].map(key=>[key,{status:'PASS'}]))};
+ const reviewHandoff={schema:'mp3shelf-physical-review-handoff-v1',
+   candidateSha:sha,createdAt:new Date(now).toISOString(),inventorySHA256:hash,
+   reviewSHA256:reviewSHA,signedAppSHA256:hash,
+   reviewFile:'review-20261117T200000Z-11111111-1111-1111-1111-111111111111.json',
+   signedBinaryProvenance:'SIGNED_MAC_BUILD_ONLY',
+   ownerApproval:'REQUIRED_NOT_GRANTED',physicalAcceptance:'INCOMPLETE'};
+ const params={candidateSha:sha,now,inventorySHA256:hash,review,reviewHandoff,
+   reviewSHA256:reviewSHA};
+ const ready=readinessModel(params);
+ assert.equal(ready.gates.find(g=>g.key==='review').status,'PASS');
+ assert.equal(ready.gates.find(g=>g.key==='hardware').status,'BLOCKED');
+ assert.equal(ready.status,'NOT_RELEASE_READY');
+ const forged=readinessModel({...params,reviewHandoff:{...reviewHandoff,ownerApproval:'PASS'}});
+ assert.equal(forged.gates.find(g=>g.key==='review').status,'UNVERIFIED');
+});
