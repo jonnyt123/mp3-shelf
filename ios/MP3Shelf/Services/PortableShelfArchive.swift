@@ -1128,6 +1128,18 @@ enum PortableShelfArchive {
             throw ArchiveError.invalidFile
         }
         let ownedIdentity = ArchiveSourceIdentity(createdInfo)
+        // Keep the staging inode allocated until the ownership-checked unlink
+        // has completed. Closing the last descriptor before deferred cleanup
+        // allows the filesystem to recycle that inode for an unrelated file
+        // substituted at the same pathname, defeating an inode-only guard.
+        let pinnedDescriptor = dup(output.fileDescriptor)
+        guard pinnedDescriptor >= 0 else {
+            let code = errno
+            try? output.close()
+            removeOwnedStaging(staging, identity: ownedIdentity)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        defer { _ = close(pinnedDescriptor) }
         defer { removeOwnedStaging(staging, identity: ownedIdentity) }
         do {
             try output.write(contentsOf: bytes)
