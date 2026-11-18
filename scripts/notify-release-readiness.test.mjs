@@ -9,9 +9,10 @@ const names=['source','agent','native','playlist','playback','review','hardware'
 const sha='a'.repeat(40),tooling='b'.repeat(40);
 const now=Date.parse('2026-11-17T23:00:00Z');
 function model(overrides={}){
- return {schema:'mp3shelf-release-readiness-v1',
+ return {schema:'mp3shelf-release-readiness-v1',status:'NOT_RELEASE_READY',
   generatedAt:new Date(now).toISOString(),candidateSha:sha,toolingSha:tooling,
-  gates:names.map(key=>({key,status:overrides[key]??'UNVERIFIED'}))};
+  gates:names.map(key=>({key,status:overrides[key]??'UNVERIFIED'})),
+  blocking:names.filter(key=>(overrides[key]??'UNVERIFIED')!=='PASS')};
 }
 function dir(){
  const home=mkdtempSync(join(tmpdir(),'shelf-notifications-'));
@@ -147,4 +148,17 @@ test('same-source, newer-tooling readiness retains real gate transitions',()=>{
  const diff=notificationChanges(prior,current);
  assert.equal(diff.baseline,false);
  assert.deepEqual(diff.blocked,['smoke']);
+});
+
+test('tampered advisory readiness cannot generate a false gate-cleared notification',()=>{
+ const good=model({native:'PASS',hardware:'BLOCKED'});
+ for(const bad of [
+  {...good,status:'RELEASE_READY'},
+  {...good,blocking:[]},
+  {...good,blocking:['hardware','hardware']},
+  {...good,blocking:[...good.blocking,'native']},
+  {...good,blocking:[...good.blocking,'unknown']},
+ ]) assert.throws(()=>normalizedGateState(bad,{now}),/malformed|identity/);
+ const accepted=normalizedGateState(good,{now});
+ assert.equal(accepted.gates.native,'PASS');
 });
