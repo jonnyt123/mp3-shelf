@@ -2197,7 +2197,6 @@ final class MusicLibrary: ObservableObject {
 
     private func reconciledPlaylists(using updatedTracks: [MusicTrack],
                                      from sourcePlaylists: [MusicPlaylist]? = nil) -> [MusicPlaylist] {
-        let allTracksIndex = OfflineTrackIndex(tracks: updatedTracks)
         // A restored or migrated playlist may reference tracks no longer present
         // in the catalog. Retain unavailable *catalogued* recordings for recovery,
         // but never perpetuate orphan IDs that cannot resolve to any recording.
@@ -2209,11 +2208,7 @@ final class MusicLibrary: ObservableObject {
             let existing = updated[index].trackIDs
             var ordered: [UUID] = []
             var missing: [PlaylistWish] = []
-            var sourcedTrackIDs = Set<UUID>()
             for wish in updated[index].sourceOrder {
-                if let previous = allTracksIndex.reusableTrack(for: wish) {
-                    sourcedTrackIDs.insert(previous.id)
-                }
                 if let track = availableIndex.reusableTrack(for: wish) {
                     ordered.append(track.id)
                 } else {
@@ -2221,17 +2216,17 @@ final class MusicLibrary: ObservableObject {
                 }
             }
             // Reconciliation must not undo a user's saved drag-to-reorder.
-            // Keep surviving entries (including manually added recordings) in
-            // their existing order; append only newly resolved source wishes in
-            // source order. Unavailable sourced entries are removed so they
-            // remain visible as missing wishes instead of unplayable tracks.
-            let resolvedIDs = Set(ordered)
+            // Keep every catalogued entry, even if its audio is temporarily
+            // inaccessible (file protection, detached storage, interrupted
+            // recovery). The missing wish remains visible independently; it
+            // must never erase the recording's stable identity or manual order.
+            // Only genuinely orphaned IDs are discarded. Append newly
+            // available source matches without duplicating retained entries.
             var recorded = Set<UUID>()
             var reconciled: [UUID] = []
             reconciled.reserveCapacity(existing.count + ordered.count)
             for id in existing {
                 if catalogTrackIDs.contains(id),
-                   (resolvedIDs.contains(id) || !sourcedTrackIDs.contains(id)),
                    recorded.insert(id).inserted {
                     reconciled.append(id)
                 }
