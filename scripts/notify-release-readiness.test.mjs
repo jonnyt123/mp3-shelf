@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync,mkdirSync,rmSync,readFileSync,writeFileSync,symlinkSync } from 'node:fs';
+import { mkdtempSync,mkdirSync,rmSync,readFileSync,writeFileSync,symlinkSync,openSync,closeSync,unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { normalizedGateState,notificationChanges,notificationMessage,
@@ -163,4 +163,36 @@ test('tampered advisory readiness cannot generate a false gate-cleared notificat
  ]) assert.throws(()=>normalizedGateState(bad,{now}),/malformed|identity/);
  const accepted=normalizedGateState(good,{now});
  assert.equal(accepted.gates.native,'PASS');
+});
+
+test('overlapping notification invocations fail closed without duplicate delivery',()=>{
+ const x=dir(),sent=[];
+ try{
+  writeFileSync(x.latest,JSON.stringify(model()));
+  deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',send:s=>sent.push(s)});
+  writeFileSync(x.latest,JSON.stringify(model({native:'PASS'})));
+  const outcome=deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',send:s=>{
+   sent.push(s);
+   assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+    send:()=>{throw Error('DUPLICATE_NOTIFICATION')}}),/already in progress/);
+  }});
+  assert.equal(outcome.status,'CHANGE_NOTIFIED');
+  assert.equal(sent.length,1);
+  assert.equal(deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+   send:s=>sent.push(s)}).status,'NO_CHANGE');
+  assert.equal(sent.length,1);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
+test('failed notification releases the exclusive lock so the next run can retry',()=>{
+ const x=dir(),sent=[];
+ try{
+  writeFileSync(x.latest,JSON.stringify(model()));
+  deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',send:()=>{}});
+  writeFileSync(x.latest,JSON.stringify(model({native:'BLOCKED'})));
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+   send:()=>{throw Error('temporary UI failure')}}),/temporary UI failure/);
+  assert.equal(deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+   send:s=>sent.push(s)}).status,'CHANGE_NOTIFIED');
+  assert.equal(sent.length,1);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
 });
