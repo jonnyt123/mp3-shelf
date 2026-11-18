@@ -2164,7 +2164,19 @@ struct PlaylistDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
 
-    private var playlist: MusicPlaylist? { library.playlists.first { $0.id == playlistID } }
+    // Restored archives can contain duplicate playlist IDs. Never choose an
+    // arbitrary copy for playback, editing or source discovery.
+    private func uniquePlaylist(_ id: UUID) -> MusicPlaylist? {
+        let matches = library.playlists.filter { $0.id == id }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private var playlist: MusicPlaylist? { uniquePlaylist(playlistID) }
+    private var hasAmbiguousPlaylistID: Bool {
+        library.playlists.reduce(into: 0) { count, item in
+            if item.id == playlistID { count += 1 }
+        } > 1
+    }
 
     // A restored or replaced file can change its URL while trackIDs stay the same.
     // Observe the exact recording identities used by the asynchronous disk scan.
@@ -2273,6 +2285,12 @@ struct PlaylistDetailView: View {
     // A playlist may contain saved metadata whose audio was removed by Files.
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
         guard playlistScenePhase == .active, !playlistPlaybackPending, !tracks.isEmpty else { return }
+        guard let current = uniquePlaylist(playlistID),
+              library.songs(in: current).map(\.id) == tracks.map(\.id) else {
+            playlistPlaybackCanRetry = false
+            playlistPlaybackError = "This playlist is missing, duplicated, or changed. Reopen its latest version before playing; no audio was changed."
+            return
+        }
         let generation = UUID()
         playlistPlaybackGeneration = generation
         playlistPlaybackPending = true
@@ -2283,6 +2301,9 @@ struct PlaylistDetailView: View {
         let requestedPlaylistID = playlistID
         // Snapshot every occurrence, including duplicates with distinct file URLs.
         // Matching only UUIDs can incorrectly authorize a missing duplicate.
+        let originalPlaylistName = current.name
+        let originalPlaylistTrackIDs = current.trackIDs
+        let originalPlaylistMissingTracks = current.missingTracks
         let snapshots = tracks.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }
         playlistPlaybackTask = Task {
             let scan = Task.detached(priority: .userInitiated) { () -> [Bool] in
@@ -2305,7 +2326,14 @@ struct PlaylistDetailView: View {
             playlistPlaybackPending = false
             playlistPlaybackTask = nil
             guard playlistScenePhase == .active,
-                  let currentPlaylist = library.playlists.first(where: { $0.id == requestedPlaylistID }) else { return }
+                  let currentPlaylist = uniquePlaylist(requestedPlaylistID) else { return }
+            guard currentPlaylist.name == originalPlaylistName,
+                  currentPlaylist.trackIDs == originalPlaylistTrackIDs,
+                  currentPlaylist.missingTracks == originalPlaylistMissingTracks else {
+                playlistPlaybackCanRetry = true
+                playlistPlaybackError = "This playlist changed while recordings were checked. Review the latest playlist before playing."
+                return
+            }
             let currentTracks = library.songs(in: currentPlaylist)
             let currentLocations = currentTracks.map {
                 RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0))
@@ -2358,6 +2386,14 @@ struct PlaylistDetailView: View {
 
     var body: some View {
         List {
+            if hasAmbiguousPlaylistID {
+                Section {
+                    Label("Multiple playlists share this ID. Playback and editing are unavailable until the duplicate library entries are resolved.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
             if let playlist {
                 // Single consistent offline snapshot for progress and per-song actions.
                 let savedWishIDs = Set(playlist.sourceOrder.compactMap { wish in
@@ -2430,7 +2466,7 @@ struct PlaylistDetailView: View {
                             // missing files should not require navigating away to replay them.
                             // Only offer it for the current nonempty playlist.
                             if !playlistPlaybackPending && playlistPlaybackCanRetry,
-                               let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }),
+                               let currentPlaylist = uniquePlaylist(playlistID),
                                !library.songs(in: currentPlaylist).isEmpty {
                                 Button {
                                     // Re-read the latest order and file locations on activation.
@@ -2794,7 +2830,7 @@ struct PlaylistDetailView: View {
         )) {
             Button(lastPlaylistPlaybackWasShuffled ? "Retry Shuffle" : "Retry Play") {
                 playlistPlaybackError = nil
-                if let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }),
+                if let currentPlaylist = uniquePlaylist(playlistID),
                    !library.songs(in: currentPlaylist).isEmpty {
                     startPlaylist(library.songs(in: currentPlaylist), shuffled: lastPlaylistPlaybackWasShuffled)
                 } else {
@@ -2815,7 +2851,7 @@ struct PlaylistDetailView: View {
                 playlistPlaybackNotice = "Playlist order or contents changed. Retry to play the current playlist."
             } else if playlistPlaybackCanRetry {
                 playlistPlaybackError = nil
-                if let currentPlaylist = library.playlists.first(where: { $0.id == playlistID }),
+                if let currentPlaylist = uniquePlaylist(playlistID),
                    !library.songs(in: currentPlaylist).isEmpty {
                     playlistPlaybackNotice = "Playlist contents changed. Retry to check the current recordings."
                 } else {
