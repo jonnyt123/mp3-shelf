@@ -2090,7 +2090,9 @@ final class MusicLibrary: ObservableObject {
                     pair.0.title != pair.1.title || pair.0.artist != pair.1.artist ||
                     pair.0.album != pair.1.album ||
                     pair.0.durationSeconds != pair.1.durationSeconds ||
-                    pair.0.artistNames != pair.1.artistNames || pair.0.appleMusicItemID != pair.1.appleMusicItemID
+                    pair.0.artistNames != pair.1.artistNames ||
+                    pair.0.spotifyURL != pair.1.spotifyURL ||
+                    pair.0.appleMusicItemID != pair.1.appleMusicItemID
                 })
             if listChanged {
                 // Distinguish manually added local files from tracks that
