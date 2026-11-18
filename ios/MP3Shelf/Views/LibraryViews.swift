@@ -21,6 +21,15 @@ private struct RecordingLocationKey: Hashable {
     let url: URL
 }
 
+// Rows need occurrence identity independent of a potentially duplicated UUID.
+// Including position and URL forces SwiftUI to discard stale row-local delete
+// confirmations when a search, sort or restore replaces the visible recording.
+private struct RecordingRowIdentity: Hashable {
+    let position: Int
+    let id: UUID
+    let url: URL
+}
+
 struct LibraryView: View {
     @EnvironmentObject private var library: MusicLibrary
     @EnvironmentObject private var playback: PlaybackController
@@ -641,9 +650,16 @@ struct LibraryView: View {
                             .premiumCard()
                         } else {
                             LazyVStack(spacing: 9) {
-                                ForEach(visibleTracks) { track in
+                                // A restored archive may contain duplicate recording UUIDs.
+                                // Index-based ForEach keeps both rows visible instead of
+                                // collapsing them into one SwiftUI identity. The explicit
+                                // row identity also resets pending destructive/async row
+                                // state when sorting moves a different file into a slot.
+                                ForEach(Array(visibleTracks.enumerated()), id: \.offset) { offset, track in
                                     MusicTrackRow(track: track, context: visibleTracks, importBlocked: audioImportBusy,
                                                   renaming: $renaming)
+                                        .id(RecordingRowIdentity(position: offset, id: track.id,
+                                                                 url: library.fileURL(for: track)))
                                 }
                             }
                         }
@@ -909,9 +925,16 @@ struct LibraryView: View {
                             }
                         } else {
                             LazyVStack(spacing: 9) {
-                                ForEach(visibleTracks) { track in
+                                // A restored archive may contain duplicate recording UUIDs.
+                                // Index-based ForEach keeps both rows visible instead of
+                                // collapsing them into one SwiftUI identity. The explicit
+                                // row identity also resets pending destructive/async row
+                                // state when sorting moves a different file into a slot.
+                                ForEach(Array(visibleTracks.enumerated()), id: \.offset) { offset, track in
                                     MusicTrackRow(track: track, context: visibleTracks, importBlocked: audioImportBusy,
                                                   renaming: $renaming)
+                                        .id(RecordingRowIdentity(position: offset, id: track.id,
+                                                                 url: library.fileURL(for: track)))
                                 }
                             }
                         }
