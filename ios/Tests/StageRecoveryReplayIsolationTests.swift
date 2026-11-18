@@ -61,8 +61,8 @@ var passed = 0
 for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
                  "same-bytes-new-stage", "truncated-stage", "journal-symlink",
                  "journal-corruption", "stage-directory", "same-size-mutated-audio",
-                 "stage-symlink", "journal-replaced-same-bytes",
-                 "journal-ticket-mutated-in-place", "stage-hardlink-mutated"] {
+                 "stage-symlink", "journal-replaced-same-bytes", "stage-replaced-same-bytes",
+                 "journal-ticket-mutated-in-place", "stage-hardlink-mutated", "journal-hardlink-mutated", "journal-symlink-retargeted"] {
     try persist(first, bytes: oldAudio)
     let expectedSuccess = scenario == "baseline"
     var recovered: Data?
@@ -96,6 +96,27 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
                 let saved = try Data(contentsOf: journal)
                 try fm.removeItem(at: journal)
                 try saved.write(to: journal)
+            case "stage-replaced-same-bytes":
+                // Same bytes are not sufficient: another writer owns the new inode.
+                try fm.removeItem(at: stage)
+                try oldAudio.write(to: stage)
+            case "journal-hardlink-mutated":
+                // A second path can mutate the original journal inode in place.
+                let alias = root.appendingPathComponent("journal-alias-\(UUID().uuidString)")
+                try fm.linkItem(at: journal, to: alias)
+                defer { try? fm.removeItem(at: alias) }
+                let handle = try FileHandle(forWritingTo: alias)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: Data("{invalid".utf8))
+            case "journal-symlink-retargeted":
+                // The original journal is removed and replaced with a link to
+                // another regular file. Never follow that link during replay.
+                let decoy = root.appendingPathComponent("journal-decoy-\(UUID().uuidString)")
+                try Data(contentsOf: journal).write(to: decoy)
+                defer { try? fm.removeItem(at: decoy) }
+                try fm.removeItem(at: journal)
+                try fm.createSymbolicLink(at: journal, withDestinationURL: decoy)
             case "journal-ticket-mutated-in-place":
                 let replacement = try JSONEncoder().encode(Journal(ticket: next.ticket,
                     generation: first.generation, stageName: first.stageName,
@@ -121,7 +142,14 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
             default: break
             }
         }
-    } catch { /* Expected for unsafe replay. */ }
+    } catch RecoveryError.unsafe {
+        // Expected refusal: neither a replaced ticket nor modified audio may be replayed.
+    } catch {
+        // Filesystem failures are also a safe refusal, but report their scenario
+        // rather than silently treating an unexpected failure as a passing replay.
+        if expectedSuccess { throw error }
+        print("INFO: \(scenario) refused with filesystem error: \(error)")
+    }
     try assert((recovered != nil) == expectedSuccess, "\(scenario): wrong replay decision")
     if expectedSuccess {
         try assert(recovered == oldAudio, "baseline media changed")
