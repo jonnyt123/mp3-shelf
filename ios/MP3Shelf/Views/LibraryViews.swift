@@ -238,6 +238,17 @@ struct LibraryView: View {
     // Waiting for disk I/O to finish leaves the old busy indicator blocking
     // playback of the newly selected results on large libraries.
     private func browsingScopeDidChange() {
+        // Recovery belongs to the exact results that produced the partial
+        // queue. A new query, Favorites filter, or sort order must not offer
+        // "restore skipped" or "refresh Shuffle" for the old selection.
+        // This changes only view feedback; the playing queue is untouched.
+        if bulkSkippedRecordingCount > 0 || partialQueueNeedsRefresh {
+            bulkSkippedRecordingCount = 0
+            partialQueueShuffle = nil
+            partialQueueNeedsRefresh = false
+            bulkPlaybackNotice = nil
+            bulkRetryShuffle = nil
+        }
         guard bulkPlaybackPending else { return }
         cancelBulkPlaybackPreparation(showFeedback: true)
         bulkPlaybackNotice = "Your song selection changed. Retry to play the current results."
