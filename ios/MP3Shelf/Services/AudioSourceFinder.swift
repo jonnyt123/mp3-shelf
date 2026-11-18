@@ -290,6 +290,16 @@ enum AudioSourceFinder {
             body.docs.allSatisfy { safeIdentifier($0.identifier) }
     }
 
+    // A short page before the reported total is exhausted may indicate a
+    // truncated index response. Treat it as incomplete, not a final page.
+    static func archivePageComplete(page: Int, rows: Int, reportedTotal: Int?) -> Bool {
+        guard page > 0, rows >= 0, rows <= 20 else { return false }
+        guard let reportedTotal else { return rows < 20 }
+        let preceding = (page - 1) * 20
+        guard reportedTotal >= preceding + rows else { return false }
+        return rows == min(20, max(0, reportedTotal - preceding))
+    }
+
     static let maxArchiveSearchPages = 2
 
     static func archiveIndexRelevance(title: String, creator: String,
@@ -344,6 +354,7 @@ enum AudioSourceFinder {
         // A duplicate is not another recording and must not consume a scarce
         // metadata request or conceal a distinct result behind the budget.
         var inspectedIdentifiers: Set<String> = []
+        var expectedIndexTotal: Int?
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
             guard ArchiveLookupBudget.stillWithinWindow(
@@ -360,6 +371,18 @@ enum AudioSourceFinder {
             // candidate appears in the remaining rows.
             if !archiveSearchRowsComplete(search.response) {
                 searchIncomplete = true
+            }
+            if !archivePageComplete(page: page, rows: search.response.rawItemCount,
+                                    reportedTotal: search.response.numFound) {
+                searchIncomplete = true
+            }
+            // A changing total between pages means the index snapshot was not
+            // stable. Do not infer a unique recording from inconsistent pages.
+            if let reported = search.response.numFound {
+                if let previous = expectedIndexTotal, previous != reported {
+                    searchIncomplete = true
+                }
+                expectedIndexTotal = reported
             }
             let ranked = search.response.docs.enumerated().sorted { left, right in
                 let l = archiveIndexRelevance(
