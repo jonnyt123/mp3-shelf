@@ -1432,6 +1432,8 @@ struct RenameTrackView: View {
     @State private var title = ""
     @State private var artist = ""
     @State private var editError: String?
+    @State private var requiresLatestSongReload = false
+    @AccessibilityFocusState private var errorFocused: Bool
     @State private var showReloadConfirmation = false
     @State private var showCancelConfirmation = false
     @State private var originalRecordingURL: URL?
@@ -1466,11 +1468,11 @@ struct RenameTrackView: View {
         // A first(where:) lookup would silently edit an arbitrary copy.
         let matchingTracks = library.tracks.filter { $0.id == track.id }
         guard let current = matchingTracks.first else {
-            editError = "This song is no longer in your library. Your changes were not saved."
+            reportEditFailure("This song is no longer in your library. Your changes were not saved.", requiresReload: true)
             return
         }
         guard matchingTracks.count == 1 else {
-            editError = "Multiple songs share this recording ID. Nothing was changed. Resolve the duplicate recordings before editing."
+            reportEditFailure("Multiple songs share this recording ID. Nothing was changed. Resolve the duplicate recordings before editing.", requiresReload: true)
             return
         }
         // The editor owns a snapshot, not the current library revision. A
@@ -1483,7 +1485,7 @@ struct RenameTrackView: View {
         guard current.title == originalTitle,
               current.artist == originalArtist,
               originalRecordingURL == library.fileURL(for: current) else {
-            editError = "This song changed while you were editing. Close this screen and reopen the latest version. Nothing was overwritten."
+            reportEditFailure("This song changed while you were editing. Reload the latest song details before saving. Nothing was overwritten.", requiresReload: true)
             return
         }
         if current.title == cleanTitle && current.artist == cleanArtist {
@@ -1494,10 +1496,24 @@ struct RenameTrackView: View {
         let updatedMatches = library.tracks.filter { $0.id == track.id }
         guard updatedMatches.count == 1, let updated = updatedMatches.first,
               updated.title == cleanTitle && updated.artist == cleanArtist else {
-            editError = "The song could not be updated. Your edits are still here so you can retry."
+            reportEditFailure("The song could not be verified after saving. Reload the latest song details before trying another edit.", requiresReload: true)
             return
         }
         dismiss()
+    }
+
+    // Preserve stale-library warnings until the user explicitly reloads. Clearing
+    // them on every keystroke hides the only recovery action and encourages
+    // repeated writes against an outdated snapshot.
+    private func reportEditFailure(_ message: String, requiresReload: Bool = false) {
+        editError = message
+        requiresLatestSongReload = requiresReload
+        errorFocused = true
+    }
+
+    private func clearTransientValidationError() {
+        guard !requiresLatestSongReload else { return }
+        editError = nil
     }
 
     // Explicit reload is the only operation that discards an unsaved draft.
@@ -1520,6 +1536,8 @@ struct RenameTrackView: View {
         title = current.title
         artist = current.artist
         editError = nil
+        requiresLatestSongReload = false
+        errorFocused = false
         titleFocused = true
     }
 
@@ -1541,10 +1559,13 @@ struct RenameTrackView: View {
                             .foregroundStyle(.red)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.updatesFrequently)
+                            .accessibilityFocused($errorFocused)
                             .accessibilityIdentifier("edit-song-error")
-                        Button("Try saving again", action: saveEdit)
-                            .disabled(cleanTitle.isEmpty || library.isImporting || scenePhase != .active)
-                            .frame(minHeight: 44)
+                        if !requiresLatestSongReload {
+                            Button("Try saving again", action: saveEdit)
+                                .disabled(cleanTitle.isEmpty || library.isImporting || scenePhase != .active)
+                                .frame(minHeight: 44)
+                        }
                         Button("Reload latest song details") {
                             if title != originalTitle || artist != originalArtist {
                                 showReloadConfirmation = true
@@ -1574,8 +1595,9 @@ struct RenameTrackView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save", action: saveEdit)
-                        .disabled(cleanTitle.isEmpty || library.isImporting || scenePhase != .active)
+                        .disabled(cleanTitle.isEmpty || requiresLatestSongReload || library.isImporting || scenePhase != .active)
                         .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityHint(requiresLatestSongReload ? "Reload the latest song details before saving" : "Save song title and artist")
                 }
             }
             // Keep the sheet open while a title/artist draft is modified.
@@ -1589,8 +1611,8 @@ struct RenameTrackView: View {
                 originalArtist = track.artist
                 originalRecordingURL = library.fileURL(for: track)
             }
-            .onChange(of: title) { _, _ in editError = nil }
-            .onChange(of: artist) { _, _ in editError = nil }
+            .onChange(of: title) { _, _ in clearTransientValidationError() }
+            .onChange(of: artist) { _, _ in clearTransientValidationError() }
             .alert("Discard changes to this song?", isPresented: $showCancelConfirmation) {
                 Button("Keep editing", role: .cancel) {}
                 Button("Discard changes", role: .destructive) { dismiss() }
