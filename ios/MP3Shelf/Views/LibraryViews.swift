@@ -1114,13 +1114,14 @@ struct LibraryView: View {
         }
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.audio],
                       allowsMultipleSelection: true) { result in
-            // A restore may replace an existing file while a disk scan is active.
-            // Cancel before import starts so an obsolete scan cannot start audio.
-            cancelRecentPlaybackPreparation(showFeedback: true)
-            cancelBulkPlaybackPreparation(showFeedback: true)
             switch result {
             case .success(let urls):
+                // Closing Files or selecting nothing must not cancel a playback
+                // check or discard its retry state. Only a real import can
+                // replace a recording being validated for playback.
                 guard !urls.isEmpty, !importInProgress else { return }
+                cancelRecentPlaybackPreparation(showFeedback: true)
+                cancelBulkPlaybackPreparation(showFeedback: true)
                 importInProgress = true
                 Task { @MainActor in
                     let outcome = await library.importAudio(urls: urls)
