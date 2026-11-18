@@ -228,6 +228,32 @@ enum AudioSourceFinderTests {
                AudioSourceFinder.archiveCandidate(malformedSize,
                    identifier: "invalid-size", for: wish) == nil,
                "malformed declared Archive size cannot authorize an automatic download")
+        // A duplicate filename with one valid row and one malformed declared
+        // size must not become eligible merely because the valid row is first.
+        // Both permutations must reject the entire unattended candidate.
+        let validDuplicate = #"{"name":"The Song.mp3","source":"original","size":5120000,"length":"212"}"#
+        let invalidDuplicate = #"{"name":"The Song.mp3","source":"original","size":{"broken":true},"length":"212"}"#
+        for rows in [[validDuplicate, invalidDuplicate],
+                     [invalidDuplicate, validDuplicate]] {
+            let json = """
+            {"metadata":{"title":"The Song","creator":"The Artist"},
+             "files":[\(rows.joined(separator: ","))]}
+            """
+            let item = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                                from: Data(json.utf8))
+            verify(AudioSourceFinder.archiveCandidate(item,
+                identifier: "duplicate-malformed-size", for: wish) == nil,
+                "duplicate Archive filename with malformed size rejects either row ordering")
+        }
+        let identicalDuplicateJSON = """
+        {"metadata":{"title":"The Song","creator":"The Artist"},
+         "files":[\(validDuplicate),\(validDuplicate)]}
+        """
+        let identicalDuplicate = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(identicalDuplicateJSON.utf8))
+        verify(AudioSourceFinder.archiveCandidate(identicalDuplicate,
+            identifier: "duplicate-valid-size", for: wish) != nil,
+            "identical valid duplicate Archive rows still represent one recording")
         let missingSizeJSON = malformedSizeJSON.replacingOccurrences(
             of: #"\"size\":{\"unexpected\":1},"#, with: "")
         let missingSize = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
