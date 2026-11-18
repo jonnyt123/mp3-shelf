@@ -666,6 +666,24 @@ extension AudioSourceFinder {
         return components.url!
     }
 
+    static func openversePageConsistent(
+        page: Int, pageCount: Int?, returned: Int, expectedPageCount: Int?
+    ) -> Bool {
+        guard page > 0, page <= maxOpenversePages,
+              returned >= 0, returned <= 50 else { return false }
+        if let count = pageCount {
+            guard count >= page, count > 0,
+                  expectedPageCount == nil || expectedPageCount == count else { return false }
+            // A supposedly final page cannot be full and claim fewer pages
+            // than the number already inspected.
+            if page < count && returned == 0 { return false }
+        } else if expectedPageCount != nil {
+            // Dropping authoritative pagination midway is not a stable scan.
+            return false
+        }
+        return true
+    }
+
     static func findOpenverse(for wish: PlaylistWish,
                              allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
@@ -675,6 +693,9 @@ extension AudioSourceFinder {
         // before authorizing an automatic download.
         var firstSearchError: Error?
         var candidates: [String: AudioCatalogMatch] = [:]
+        // A provider that changes its reported page count mid-query cannot
+        // establish a complete inventory of competing recordings.
+        var expectedPageCount: Int?
         for fieldSearch in [true, false] {
             for page in 1...maxOpenversePages {
                 try Task.checkCancellation()
@@ -688,6 +709,19 @@ extension AudioSourceFinder {
                     if firstSearchError == nil { firstSearchError = error }
                     break
                 }
+                // Invalid, contradictory or oversized pages must not authorize
+                // a unique unattended recording match. Retry rather than
+                // persisting an incorrect selection for the entire playlist.
+                guard openversePageConsistent(
+                    page: page, pageCount: result.page_count,
+                    returned: result.results.count,
+                    expectedPageCount: expectedPageCount
+                ) else {
+                    throw SourceError.catalogsUnavailable([
+                        "Openverse: incomplete or inconsistent pagination."
+                    ])
+                }
+                if let count = result.page_count { expectedPageCount = count }
                 for match in result.results.compactMap({
                     openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
                                        landing: $0.foreign_landing_url, license: $0.license_url,
