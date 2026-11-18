@@ -336,4 +336,75 @@ try scenario("receipt-replay-with-missing-stage-and-ticket") { s in
     try check(Data(contentsOf: s.path("recording.mp3")) == original,
               "committed audio changed during duplicate callback")
 }
+
+// Replay matrix: a committed recording must remain immutable even when an old
+// transfer completion arrives with a different generation, identity or digest.
+try scenario("committed-receipt-rejects-new-generation") { s in
+    try s.writeStage(original, ticket: first)
+    _ = try s.recover(first)
+    try s.writeStage(other, ticket: second)
+    do { _ = try s.recover(second); preconditionFailure("replaced committed recording") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "new generation replaced committed bytes")
+    try check(JSONDecoder().decode(Receipt.self, from: Data(contentsOf: s.path("receipt.json"))).ticket == first,
+              "new generation replaced committed receipt")
+}
+try scenario("committed-receipt-rejects-same-id-new-generation") { s in
+    try s.writeStage(original, ticket: first)
+    _ = try s.recover(first)
+    let next = Ticket(id: first.id, generation: first.generation + 1,
+                      byteCount: other.count, digest: digest(other))
+    try s.writeStage(other, ticket: next)
+    do { _ = try s.recover(next); preconditionFailure("accepted superseding ticket") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "superseding ticket mutated committed audio")
+}
+try scenario("committed-receipt-rejects-digest-substitution") { s in
+    try s.writeStage(original, ticket: first)
+    _ = try s.recover(first)
+    let forged = Ticket(id: first.id, generation: first.generation,
+                        byteCount: first.byteCount, digest: digest(other))
+    do { _ = try s.recover(forged); preconditionFailure("accepted substituted digest") }
+    catch RecoveryFailure.invalid {}
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "digest substitution mutated audio")
+}
+try scenario("crash-after-move-missing-ticket-preserves-audio") { s in
+    try s.writeStage(original, ticket: first)
+    s.failAfterMove = true
+    do { _ = try s.recover(first); preconditionFailure("expected interruption") }
+    catch RecoveryFailure.interrupted {}
+    s.failAfterMove = false
+    try s.fm.removeItem(at: s.path("ticket.json"))
+    do { _ = try s.recover(first); preconditionFailure("accepted missing recovery ticket") }
+    catch { /* a missing ticket cannot authorize publication */ }
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "missing ticket erased previously moved audio")
+    try check(!s.fm.fileExists(atPath: s.path("receipt.json").path),
+              "missing ticket committed receipt")
+}
+try scenario("crash-after-move-missing-stage-preserves-audio") { s in
+    try s.writeStage(original, ticket: first)
+    s.failAfterMove = true
+    do { _ = try s.recover(first); preconditionFailure("expected interruption") }
+    catch RecoveryFailure.interrupted {}
+    s.failAfterMove = false
+    try s.fm.removeItem(at: s.path("staged.part"))
+    do { _ = try s.recover(first); preconditionFailure("accepted missing staged bytes") }
+    catch { /* a missing stage cannot authorize publication */ }
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "missing stage erased previously moved audio")
+    try check(!s.fm.fileExists(atPath: s.path("receipt.json").path),
+              "missing stage committed receipt")
+}
+try scenario("receipt-replay-ignores-corrupt-stale-stage") { s in
+    try s.writeStage(original, ticket: first)
+    let committed = try s.recover(first)
+    try other.write(to: s.path("staged.part"), options: .atomic)
+    try check(s.recover(first) == committed, "stale stage invalidated committed receipt")
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "stale stage replaced committed recording")
+}
 print("PASS: \(passed) recovery replay idempotency scenarios")
