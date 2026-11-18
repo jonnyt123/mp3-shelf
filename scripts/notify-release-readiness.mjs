@@ -21,13 +21,15 @@ export function normalizedGateState(model,{now=Date.now()}={}){
    !Number.isFinite(Date.parse(model.generatedAt??''))||
    now-Date.parse(model.generatedAt)>2*3600000||Date.parse(model.generatedAt)>now+300000)
   throw Error('Readiness evidence is missing, expired or malformed.');
+ if(!SHA.test(model.candidateSha??'')||!SHA.test(model.toolingSha??''))
+  throw Error('Readiness source or tooling SHA is missing or malformed.');
  const keys=new Set(model.gates.map(g=>g?.key));
  if(keys.size!==KEYS.length||KEYS.some(key=>!keys.has(key))||
    model.gates.some(g=>!STATUS.has(g?.status)))
   throw Error('Readiness gate identity or status is untrusted.');
  return {schema:'mp3shelf-readiness-notification-state-v1',
-  candidateSha:SHA.test(model.candidateSha??'')?model.candidateSha:null,
-  toolingSha:SHA.test(model.toolingSha??'')?model.toolingSha:null,
+  candidateSha:model.candidateSha,
+  toolingSha:model.toolingSha,
   gates:Object.fromEntries(model.gates.map(g=>[g.key,g.status])),
   updatedAt:model.generatedAt};
 }
@@ -77,16 +79,18 @@ export function deliverChangeOnlyNotification({home=homedir(),now=Date.now(),
  const current=normalizedGateState(model,{now});
  const prior=safeRead(previous),diff=notificationChanges(prior,current);
  const message=notificationMessage(diff);
+ // Validate the write destination before delivering an irreversible UI alert.
+ // Otherwise a redirected state file can cause repeated alerts every hour.
+ const st=(()=>{try{return lstatSync(previous);}catch(e){
+  if(e.code==='ENOENT')return null;throw e;}})();
+ if(st&&(!st.isFile()||st.isSymbolicLink()||st.nlink!==1))
+  throw Error('Readiness notification state destination is redirected.');
  // If a notification cannot be delivered, do not commit its new state;
  // the next real hourly transition may retry. Initial baseline is silent.
  if(message){
   if(platform!=='darwin')return {status:'MAC_NOTIFICATION_UNAVAILABLE',diff};
   send(message);
  }
- const st=(()=>{try{return lstatSync(previous);}catch(e){
-  if(e.code==='ENOENT')return null;throw e;}})();
- if(st&&(!st.isFile()||st.isSymbolicLink()||st.nlink!==1))
-  throw Error('Readiness notification state destination is redirected.');
  const tmp=join(root,'.notification-'+randomUUID()+'.tmp');
  writeFileSync(tmp,JSON.stringify(current,null,2)+'\n',{flag:'wx',mode:0o600});
  renameSync(tmp,previous);
