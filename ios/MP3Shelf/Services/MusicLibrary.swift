@@ -2037,12 +2037,18 @@ final class MusicLibrary: ObservableObject {
               playlists[index].trackIDs.contains(trackID) else { return }
         var updated = playlists
         updated[index].trackIDs.removeAll { $0 == trackID }
-        if let track = song(with: trackID),
-           let wishIndex = updated[index].sourceOrder.firstIndex(where: {
-               MusicMatching.reusableOfflineTrack(for: $0, in: [track]) != nil
-           }) {
-            updated[index].sourceOrder.remove(at: wishIndex)
+        if let track = song(with: trackID) {
+            // One local recording can satisfy several repeated source occurrences.
+            // Removing only the first wish allows reconciliation to silently
+            // reinsert the recording on the next refresh or app restart.
+            updated[index].sourceOrder.removeAll {
+                MusicMatching.reusableOfflineTrack(for: $0, in: [track]) != nil
+            }
         }
+        // Persist the playlist links and their missing-source requests in one
+        // catalog transaction. Otherwise a removed wish can remain queued as
+        // missing until a later refresh, even after the user deleted the song.
+        updated = reconciledPlaylists(using: tracks, from: updated)
         commitPlaylistEdit(updated)
     }
 
