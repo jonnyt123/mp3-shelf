@@ -2124,14 +2124,21 @@ final class MusicLibrary: ObservableObject {
                     return PlaylistImportReport(playlistID: old.id, playlistName: old.name,
                                                 matched: old.trackIDs.count, missing: old.missingTracks.count)
                 }
-                if automaticDownloadProgress?.playlistID == old.id {
+                // A metadata-only refresh must not interrupt an in-flight
+                // download whose requested recordings have not changed.
+                if listChanged, automaticDownloadProgress?.playlistID == old.id {
                     automaticDownloadTask?.cancel()
                 }
             } else {
+                // Repeated unchanged-source refreshes are common on resume.
+                // Avoid unnecessary writes (and false low-storage failures),
+                // but still commit actual availability reconciliation.
                 let candidate = reconciledPlaylists(using: tracks)
-                guard commitPlaylistEdit(candidate) else {
-                    return PlaylistImportReport(playlistID: old.id, playlistName: old.name,
-                                                matched: old.trackIDs.count, missing: old.missingTracks.count)
+                if candidate != playlists {
+                    guard commitPlaylistEdit(candidate) else {
+                        return PlaylistImportReport(playlistID: old.id, playlistName: old.name,
+                                                    matched: old.trackIDs.count, missing: old.missingTracks.count)
+                    }
                 }
             }
             var hasNewLookups = false
