@@ -39,7 +39,13 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
   const verifiedIntegration = !error && !conflictingSource && !conflictingIntegration &&
     validInterval && validSource &&
     integrationStates.includes(declaredIntegration ?? declaredStatus);
-  const packagingBlocked = typeof result?.packaging === 'string' &&\n    ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',\n      'INCOMPLETE_OUTPUT_REQUIRES_REVIEW',\n      'BLOCKED_UNSAFE_OUTPUT_DESTINATION'].includes(result.packaging);\n  // A staged draft is not a completed release cycle when packaging is blocked.\n  // Keep the verified staging outcome separately for diagnostic accuracy.\n  const status = error ? 'FAILED' : verifiedIntegration && !packagingBlocked ? 'COMPLETED' : 'BLOCKED';
+  const packagingBlocked = typeof result?.packaging === 'string' &&
+    ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
+      'INCOMPLETE_OUTPUT_REQUIRES_REVIEW',
+      'BLOCKED_UNSAFE_OUTPUT_DESTINATION'].includes(result.packaging);
+  // A staged draft is not a completed release cycle when packaging is blocked.
+  // Keep the verified staging outcome separately for diagnostic accuracy.
+  const status = error ? 'FAILED' : verifiedIntegration && !packagingBlocked ? 'COMPLETED' : 'BLOCKED';
   const categories = ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
     'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
   const verifiedArchiveStates = ['EXISTING_VERIFIED_ARCHIVE',
@@ -124,7 +130,8 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
     if(old && (!old.isFile() || old.isSymbolicLink() || old.nlink!==1))
       throw Error('Native agent status destination was redirected');
     const temp=join(destination,'.latest-run-'+randomUUID()+'.tmp');
-    writeFileSync(temp,JSON.stringify(record,null,2)+'\n',{flag:'wx',mode:0o600});
+    writeFileSync(temp,JSON.stringify(record,null,2)+'
+',{flag:'wx',mode:0o600});
     renameSync(temp,state);
   } catch(error) {
     if(failure) throw new AggregateError([failure,error],
