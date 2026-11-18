@@ -46,8 +46,10 @@ export function notificationChanges(previous,current){
    !SHA.test(previous.toolingSha??'')||
    !Number.isFinite(Date.parse(previous.updatedAt??''))||
    Date.parse(previous.updatedAt)>Date.parse(current.updatedAt)||
+   !SHA.test(previous.candidateSha??'')||
    !previous.gates||Object.keys(previous.gates).length!==KEYS.length||
-   KEYS.some(key=>!STATUS.has(previous.gates[key])))
+   KEYS.some(key=>!STATUS.has(previous.gates[key]))||
+   Object.keys(previous.gates).some(key=>!KEYS.includes(key)))
   return {baseline:true,cleared:[],blocked:[]};
  const cleared=[],blocked=[];
  for(const key of KEYS){
