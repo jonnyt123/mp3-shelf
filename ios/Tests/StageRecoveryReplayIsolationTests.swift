@@ -63,6 +63,14 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
                  "journal-corruption", "stage-directory", "same-size-mutated-audio",
                  "stage-symlink", "journal-replaced-same-bytes", "stage-replaced-same-bytes",
                  "journal-ticket-mutated-in-place", "stage-hardlink-mutated", "journal-hardlink-mutated", "journal-symlink-retargeted"] {
+    // Reset every scenario to an independent filesystem state. In particular,
+    // stage-directory leaves a directory at the staging path; atomic writes
+    // cannot safely replace it with the next scenario's regular file.
+    for path in [stage, journal] {
+        if fm.fileExists(atPath: path.path) || (try? path.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
+            try fm.removeItem(at: path)
+        }
+    }
     try persist(first, bytes: oldAudio)
     let expectedSuccess = scenario == "baseline"
     var recovered: Data?
@@ -145,10 +153,9 @@ for scenario in ["baseline", "replacement-ticket", "same-generation-new-ticket",
     } catch RecoveryError.unsafe {
         // Expected refusal: neither a replaced ticket nor modified audio may be replayed.
     } catch {
-        // Filesystem failures are also a safe refusal, but report their scenario
-        // rather than silently treating an unexpected failure as a passing replay.
-        if expectedSuccess { throw error }
-        print("INFO: \(scenario) refused with filesystem error: \(error)")
+        // A fixture setup error is not evidence that recovery rejected unsafe
+        // input. Only the explicit unsafe decision counts as a passing refusal.
+        throw error
     }
     try assert((recovered != nil) == expectedSuccess, "\(scenario): wrong replay decision")
     if expectedSuccess {
