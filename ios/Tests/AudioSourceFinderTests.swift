@@ -55,6 +55,32 @@ enum AudioSourceFinderTests {
                "malformed Archive index rows preserve valid siblings and raw pagination count")
         verify(!AudioSourceFinder.archiveSearchRowsComplete(decodedSearch.response),
                "malformed Archive index row blocks unattended unique-match selection")
+        let duplicateIndex = #"""
+        {"response":{"numFound":3,"docs":[
+          {"identifier":"same-recording","title":"The Song","creator":"The Artist"},
+          {"identifier":"same-recording","title":"The Song (Live)","creator":"The Artist"},
+          {"identifier":"other-recording","title":"The Song","creator":"The Artist"}]}}
+        """#.data(using: .utf8)!
+        let conflictingIndex = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: duplicateIndex)
+        verify(!AudioSourceFinder.archiveSearchRowsComplete(conflictingIndex.response),
+               "contradictory duplicate Archive identifiers cannot prove a unique recording")
+        let consistentIndex = duplicateIndex.replacingOccurrences(
+            of: "The Song (Live)", with: "The Song")
+        let consistentRows = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: consistentIndex)
+        verify(AudioSourceFinder.archiveSearchRowsComplete(consistentRows.response),
+               "identical duplicate Archive identifiers remain eligible for bounded inspection")
+        let differentArtist = duplicateIndex.replacingOccurrences(
+            of: "The Song (Live)", with: "The Song").replacingOccurrences(
+            of: #""title":"The Song","creator":"The Artist"},
+          {"identifier":"other-recording""#,
+            with: #""title":"The Song","creator":"Other Artist"},
+          {"identifier":"other-recording""#)
+        let conflictingCreator = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: differentArtist)
+        verify(!AudioSourceFinder.archiveSearchRowsComplete(conflictingCreator.response),
+               "duplicate Archive identifiers with conflicting creators fail closed")
         let cleanSearch = #"""
         {"response":{"numFound":1,"docs":[
           {"identifier":"valid-one","title":"The Song","creator":"The Artist"}]}}
