@@ -51,13 +51,29 @@ function fixture() {
     deviceModel:'iPhone14,7', iOSVersion:'26.0',
     checks:Object.fromEntries(keys.map(key=>[key,'PASS']))
   };
+  const review={schema:'mp3shelf-independent-device-review-v1',
+    sourceSha:sha,inventorySHA256:hash,
+    result:'EVIDENCE_CHECKS_PASSED_NOT_HARDWARE_APPROVED',
+    physicalAcceptance:'INCOMPLETE',issue6:'OPEN_UNTIL_INDEPENDENT_REVIEW',
+    failures:[],checks:Object.fromEntries([
+      'sourceIdentity','recentCapture','deviceIdentity','fullPlaylist','copiedBytes',
+      'offlinePlayback','backgroundCallbacks','signedMacBuild'
+    ].map(key=>[key,{status:'PASS'}]))};
+  const reviewSHA256=hash;
+  const reviewHandoff={schema:'mp3shelf-physical-review-handoff-v1',
+    candidateSha:sha,createdAt:new Date().toISOString(),
+    reviewFile:'review-20261117T200000Z-11111111-1111-1111-1111-111111111111.json',
+    inventorySHA256:hash,reviewSHA256:hash,signedAppSHA256:hash,
+    signedBinaryProvenance:'SIGNED_MAC_BUILD_ONLY',
+    physicalAcceptance:'INCOMPLETE',ownerApproval:'REQUIRED_NOT_GRANTED'};
   const issue = {number:6,state:'closed',
     body:labels.map(x=>'- [x] **'+x+':** Passed on exact candidate').join('\n') };
   const comments = [{user:{login:'jonnyt123'},body:'MP3SHELF_DEVICE_GATE_APPROVED SHA='+sha+' INVENTORY_SHA256='+hash+' SIGNED_APP_SHA256='+hash}];
   const pr = {number:29,state:'open',draft:true,
     head:{sha,ref:'feat/ios-consolidated-candidate',repo:{full_name:'jonnyt123/mp3-shelf'}},
     base:{ref:'fix/ios-download-finalization-and-conversion',repo:{full_name:'jonnyt123/mp3-shelf'}}};
-  return {sha,base,receipt,qa,inventory,inventoryHash:hash,hardware,issue,comments,pr};
+  return {sha,base,receipt,qa,inventory,inventoryHash:hash,hardware,
+    review,reviewHandoff,reviewSHA256,issue,comments,pr};
 }
 test('complete synthetic policy fixture can satisfy validation but is not release proof',()=>{
   assert.deepEqual(nativePackageGate(fixture()),[]);
@@ -239,4 +255,23 @@ test('partial Spotify playlist does not satisfy complete offline-archive accepta
   missing.inventory.copiedTracks = 1;
   missing.inventory.files = [missing.inventory.files[0]];
   assert(hardwareInventoryErrors(missing.inventory, missing.hardware).length > 0);
+});
+
+
+test('owner-approved ZIP also requires a separate exact-source independently reviewed iPhone handoff',()=>{
+  const missing=fixture(); delete missing.reviewHandoff;
+  assert(nativePackageGate(missing).some(e=>e.includes('handoff')||e.includes('hashes')));
+  for(const change of [
+    x=>{x.reviewHandoff.candidateSha=base;},
+    x=>{x.reviewHandoff.inventorySHA256='d'.repeat(64);},
+    x=>{x.reviewHandoff.ownerApproval='PASS';},
+    x=>{x.reviewHandoff.signedAppSHA256='d'.repeat(64);},
+    x=>{x.review.result='NOT_VERIFIED';},
+    x=>{x.review.failures.push('offlinePlayback');},
+    x=>{x.reviewSHA256='d'.repeat(64);},
+    x=>{x.reviewHandoff.createdAt='2020-01-01T00:00:00Z';}
+  ]){
+    const item=fixture();change(item);
+    assert(nativePackageGate(item).length>0);
+  }
 });
