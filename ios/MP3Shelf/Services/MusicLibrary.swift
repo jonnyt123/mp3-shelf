@@ -2172,15 +2172,14 @@ final class MusicLibrary: ObservableObject {
         if spotifyID != nil { playlist.sourceURL = sourceURL }
         playlist.appleMusicLibraryID = appleID
         playlist.sourceOrder = wishes
-        for wish in wishes {
-            if let track = indexedByTitle.reusableTrack(for: wish, isAvailable: {
-                self.isAvailableOwnedRecording($0)
-            }) {
-                playlist.trackIDs.append(track.id)
-            } else {
-                playlist.missingTracks.append(wish)
-            }
-        }
+        // Initial imports must obey the same reconciliation contract as
+        // subsequent refreshes: a repeated source occurrence may resolve to
+        // the same recording, but the playlist stores each local UUID once.
+        // Keep every source occurrence in sourceOrder for accurate missing
+        // requests, while preserving the first matched recording's position.
+        // Reusing the shared reconciler also prevents initial-import behavior
+        // from drifting from restore/recheck behavior.
+        playlist = reconciledPlaylists(using: tracks, from: [playlist])[0]
         guard commitPlaylistEdit(playlists + [playlist]) else {
             // Preserve the previous catalog; the storage error is exposed to the UI.
             return PlaylistImportReport(playlistID: playlist.id, playlistName: playlist.name,
