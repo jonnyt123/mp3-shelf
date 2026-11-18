@@ -537,10 +537,16 @@ enum AudioSourceFinder {
         // Duplicate catalog rows do not create additional recordings. Count
         // distinct physical filenames before applying single-track metadata
         // rules, but reject conflicting evidence rather than trusting row order.
-        let grouped = Dictionary(grouping: rawEligible, by: { $0.name })
+        // Case/Unicode-equivalent paths can refer to distinct Archive objects but
+        // collapse to the same local filename on common iPhone file systems.
+        // Never pick a winner by index order when their byte-level names differ.
+        let grouped = Dictionary(grouping: rawEligible, by: {
+            $0.name.precomposedStringWithCanonicalMapping.lowercased()
+        })
         guard grouped.values.allSatisfy({ rows in
             guard let first = rows.first else { return false }
             return rows.allSatisfy {
+                $0.name == first.name &&
                 !$0.hasInvalidSize && !first.hasInvalidSize &&
                 !$0.hasInvalidLength && !first.hasInvalidLength &&
                 $0.source == first.source && $0.size == first.size &&
