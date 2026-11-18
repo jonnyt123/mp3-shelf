@@ -102,3 +102,26 @@ test('notification state cannot replace a symlink or escape the local evidence d
   assert.equal(readFileSync(external,'utf8'),'untouched');
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
+
+test('missing source or tooling identity cannot establish a notification baseline',()=>{
+ for(const bad of [{candidateSha:null},{toolingSha:null},
+   {candidateSha:'not-a-commit'},{toolingSha:'not-a-commit'}]){
+  assert.throws(()=>normalizedGateState({...model(),...bad},{now}),/SHA/);
+ }
+});
+test('redirected notification state fails before any new notification is delivered',()=>{
+ const x=dir(),sent=[];
+ try{
+  writeFileSync(x.latest,JSON.stringify(model()));
+  deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',send:s=>sent.push(s)});
+  writeFileSync(x.latest,JSON.stringify(model({native:'PASS'})));
+  rmSync(x.state);
+  const outside=join(x.home,'outside.json');
+  writeFileSync(outside,'preserve');
+  symlinkSync(outside,x.state);
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+   send:s=>sent.push(s)}),/redirected/);
+  assert.deepEqual(sent,[]);
+  assert.equal(readFileSync(outside,'utf8'),'preserve');
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
