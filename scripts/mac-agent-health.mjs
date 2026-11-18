@@ -68,9 +68,7 @@ export function inspectMacAgent({home=homedir(),root=resolve(import.meta.dirname
   developerDir:selected.ok?selected.stdout:null,plist:plistFile,loaded,
   latest:safeJSON(join(home,'Library','Logs','MP3Shelf','NativeAgent','latest-run.json')),
   sourceRoot:root});
- if(repair){
-  if(report.repair!=='BOOTSTRAP_OWNED_AGENT')
-   throw Error('Repair refused: only an unloaded, verified MP3 Shelf plist can be bootstrapped. Status: '+report.repair);
+ if(repair && report.repair==='BOOTSTRAP_OWNED_AGENT'){
   const boot=runner('launchctl',['bootstrap','gui/'+process.getuid(),plistPath]);
   if(!boot.ok)throw Error('launchd bootstrap did not succeed; inspect private launchd diagnostics.');
   loaded=runner('launchctl',['print',target]).ok;
