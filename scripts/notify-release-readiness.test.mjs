@@ -134,6 +134,8 @@ test('future or corrupted previous notification state cannot fabricate a gate tr
   {...prior,updatedAt:new Date(now+60000).toISOString()},
   {...prior,updatedAt:'not-a-date'},
   {...prior,toolingSha:'invalid'},
+  {...prior,candidateSha:'invalid'},
+  {...prior,gates:{...prior.gates,unknown:'PASS',native:undefined}},
   {...prior,gates:{...prior.gates,extra:'PASS'}},
  ]) {
   const diff=notificationChanges(bad,current);
