@@ -1540,11 +1540,17 @@ final class MusicLibrary: ObservableObject {
 
     func importStagedAudio(from fileURL: URL, matching wish: PlaylistWish,
                            attribution: AudioSourceAttribution, conversionProgress: Progress = Progress()) async throws -> Bool {
+        // A cancelled download must not publish after its ticket was withdrawn.
+        // Leave staged source bytes owned by the downloader, not this importer.
+        try Task.checkCancellation()
+        guard !conversionProgress.isCancelled else { throw CancellationError() }
         let bytes = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         guard bytes > 0 && bytes <= 100 * 1024 * 1024 else {
             throw MusicLibraryError.downloadFailed
         }
         try validateEmbeddedIdentity(fileURL: fileURL, matching: wish)
+        try Task.checkCancellation()
+        guard !conversionProgress.isCancelled else { throw CancellationError() }
         let temporary = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp3")
         defer { try? manager.removeItem(at: temporary) }
         var importURL = fileURL
@@ -1565,7 +1571,8 @@ final class MusicLibrary: ObservableObject {
         let imported = try addLocalAudio(sourceURL: importURL,
                                                originalName: original,
                                                expectedDuration: wish.durationSeconds,
-                                               matching: wish, attribution: attribution)
+                                               matching: wish, attribution: attribution,
+                                               cancellationAware: true)
         return imported
     }
 
