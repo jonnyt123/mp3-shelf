@@ -74,6 +74,12 @@ export async function runNativeReleaseCycle({ repo, preflight = executeNativePre
   const root = resolve(repo ?? join(dirname(fileURLToPath(import.meta.url)), '..'));
   const integration = await preflight({ repo: root, promote: true });
   if (!SHA.test(integration?.sha ?? '')) throw Error('Native staging did not return an exact commit.');
+  // Reject contradictory identities before inspecting or publishing artifacts.
+  // A valid-looking staged SHA does not authorize packaging another source.
+  if (integration.candidateSha != null && integration.candidateSha !== integration.sha)
+    throw Error('Native preflight source identity disagrees with staged draft SHA.');
+  if (integration.proposedSha != null && integration.proposedSha !== integration.sha)
+    throw Error('Native preflight proposed source differs from staged draft SHA.');
   if (!['already-staged', 'staged-draft-only'].includes(integration.status))
     throw Error('Native preflight did not confirm staging to draft #29.');
   const sha = integration.sha;
