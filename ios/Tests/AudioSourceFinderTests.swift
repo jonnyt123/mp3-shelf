@@ -281,6 +281,25 @@ enum AudioSourceFinderTests {
                 identifier: "duplicate-malformed-size", for: wish) == nil,
                 "duplicate Archive filename with malformed size rejects either row ordering")
         }
+        // Archive can publish case or canonically equivalent names as
+        // separate objects. A local case-insensitive filesystem may collapse
+        // them, so even a matching duration cannot justify automatic choice.
+        for alias in ["the song.mp3", "The Song.MP3"] {
+            let aliasRow = """
+            {"name":"\(alias)","source":"original","size":5120000,"length":"212"}
+            """
+            for rows in [[validDuplicate, aliasRow], [aliasRow, validDuplicate]] {
+                let json = """
+                {"metadata":{"title":"The Song","creator":"The Artist"},
+                 "files":[\(rows.joined(separator: ","))]}
+                """
+                let item = try JSONDecoder().decode(
+                    AudioSourceFinder.ArchiveItem.self, from: Data(json.utf8))
+                verify(AudioSourceFinder.archiveCandidate(
+                    item, identifier: "alias-collision", for: wish) == nil,
+                    "case-aliased Archive filenames must not auto-select by row order")
+            }
+        }
         let identicalDuplicateJSON = """
         {"metadata":{"title":"The Song","creator":"The Artist"},
          "files":[\(validDuplicate),\(validDuplicate)]}
