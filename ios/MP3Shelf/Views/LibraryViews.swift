@@ -262,6 +262,34 @@ struct LibraryView: View {
         bulkPlaybackNotice = "Your library selection changed. Choose Play or Shuffle to check the current songs."
     }
 
+    // A Recently Added scan can outlive a library edit. Cancel it immediately
+    // rather than waiting for disk I/O, and never offer Retry for a removed or
+    // relocated recording. A still-present selection can be retried explicitly.
+    private func recentLibrarySelectionDidChange() {
+        guard recentPlaybackCheck != nil || recentRetrySelection != nil else { return }
+        let selectionIsValid: Bool
+        if let selection = recentRetrySelection {
+            let matches = library.tracks.filter { $0.id == selection.id }
+            selectionIsValid = matches.count == 1 &&
+                matches.first.map { library.fileURL(for: $0) == selection.url } == true
+        } else {
+            selectionIsValid = false
+        }
+        if recentPlaybackCheck != nil {
+            cancelRecentPlaybackPreparation(showFeedback: selectionIsValid)
+            missingRecentRecording = true
+            recentPlaybackNotice = selectionIsValid
+                ? "Your library changed while checking local files. Retry this recording when ready."
+                : "The selected recording was removed or replaced. Choose another song."
+        }
+        if !selectionIsValid {
+            recentRetrySelection = nil
+            if recentPlaybackCheck == nil {
+                recentPlaybackNotice = "The selected recording was removed or replaced. Choose another song."
+            }
+        }
+    }
+
     private func browsingScopeDidChange() {
         // Recovery belongs to the exact results that produced the partial
         // queue. A new query, Favorites filter, or sort order must not offer
@@ -1109,6 +1137,7 @@ struct LibraryView: View {
             // Imports, restores and deletions can replace the selection without
             // changing any browsing control. Never retry an obsolete queue.
             invalidateStalePlaybackRecovery()
+            recentLibrarySelectionDidChange()
         }
         .onSubmit(of: .search) { submitSearch() }
         .task(id: searchText) {
