@@ -130,8 +130,7 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
     if(old && (!old.isFile() || old.isSymbolicLink() || old.nlink!==1))
       throw Error('Native agent status destination was redirected');
     const temp=join(destination,'.latest-run-'+randomUUID()+'.tmp');
-    writeFileSync(temp,JSON.stringify(record,null,2)+'
-',{flag:'wx',mode:0o600});
+    writeFileSync(temp,JSON.stringify(record,null,2)+'\n',{flag:'wx',mode:0o600});
     renameSync(temp,state);
   } catch(error) {
     if(failure) throw new AggregateError([failure,error],
