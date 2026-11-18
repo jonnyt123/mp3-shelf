@@ -1342,6 +1342,36 @@ enum AudioSourceFinderTests {
                 itemURL: originalOpenverse.itemURL,
                 licenseURL: nil, sourceName: "Openverse: wikimedia")),
             "different recording URLs are not duplicate evidence")
+        // Conflicting repeated RSS identity fields must never turn an unrelated
+        // enclosure into an automatic match just because the last value wins.
+        let conflictingRSS = """
+        <rss><channel><item>
+          <title>Unrelated Song</title><title>Exact Song</title>
+          <creator>Exact Artist</creator>
+          <link>https://ccmixter.org/files/artist/123</link>
+          <enclosure url="https://ccmixter.org/content/artist/exact.mp3" type="audio/mpeg"/>
+        </item></channel></rss>
+        """
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(conflictingRSS.utf8), matching: archiveWish)?.isEmpty == true,
+            "conflicting RSS titles cannot authorize a last-value automatic match")
+        let repeatedRSS = """
+        <rss><channel><item>
+          <title>Exact Song</title><title>Exact Song</title>
+          <creator>Exact Artist</creator>
+          <link>https://ccmixter.org/files/artist/123</link>
+          <enclosure url="https://ccmixter.org/content/artist/exact.mp3" type="audio/mpeg"/>
+        </item></channel></rss>
+        """
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(repeatedRSS.utf8), matching: archiveWish)?.count == 1,
+            "identical repeated RSS titles remain a single eligible recording")
+        let conflictingLandingRSS = repeatedRSS.replacingOccurrences(
+            of: "<link>https://ccmixter.org/files/artist/123</link>",
+            with: "<link>https://ccmixter.org/files/other/999</link><link>https://ccmixter.org/files/artist/123</link>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(conflictingLandingRSS.utf8), matching: archiveWish)?.isEmpty == true,
+            "conflicting RSS landing identities cannot authorize unattended selection")
         print("Audio source discovery validation tests passed")
     }
 }
