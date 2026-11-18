@@ -1372,6 +1372,24 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.ccMixterCandidates(
             in: Data(conflictingLandingRSS.utf8), matching: archiveWish)?.isEmpty == true,
             "conflicting RSS landing identities cannot authorize unattended selection")
+        let conflictingAuthorRSS = repeatedRSS.replacingOccurrences(
+            of: "<creator>Exact Artist</creator>",
+            with: "<creator>Exact Artist</creator><author>Different Performer</author>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(conflictingAuthorRSS.utf8), matching: archiveWish)?.isEmpty == true,
+            "conflicting RSS author and creator cannot authorize automatic selection")
+        let authorFirstRSS = repeatedRSS.replacingOccurrences(
+            of: "<creator>Exact Artist</creator>",
+            with: "<author>Different Performer</author><creator>Exact Artist</creator>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(authorFirstRSS.utf8), matching: archiveWish)?.isEmpty == true,
+            "conflicting RSS creator after author must also fail closed")
+        let matchingAuthorRSS = repeatedRSS.replacingOccurrences(
+            of: "<creator>Exact Artist</creator>",
+            with: "<creator>Exact Artist</creator><author>Exact Artist</author>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(matchingAuthorRSS.utf8), matching: archiveWish)?.count == 1,
+            "consistent RSS author and creator preserve valid recording")
         print("Audio source discovery validation tests passed")
     }
 }
