@@ -1175,6 +1175,27 @@ enum AudioSourceFinderTests {
         verify(restoredSources?.map(\.downloadURL) == deduped.map(\.downloadURL) &&
                restoredSources?.map(\.sourceName) == deduped.map(\.sourceName),
                "verified fallback source URLs and attribution survive app restart")
+        // Archive search rows can decode successfully but carry identifiers
+        // that cannot be safely requested. They must count as uninspected
+        // competing recordings rather than authorize a false unique match.
+        func archiveSearchBody(_ rows: String) -> AudioSourceFinder.SearchBody? {
+            let json = #"{"docs":["# + rows + #"],"numFound":1}"#
+            return try? JSONDecoder().decode(AudioSourceFinder.SearchBody.self,
+                                             from: Data(json.utf8))
+        }
+        let validIndex = archiveSearchBody(#"{"identifier":"safe-recording","title":"Exact Song","creator":"Exact Artist"}"#)
+        verify(validIndex.map(AudioSourceFinder.archiveSearchRowsComplete) == true,
+               "valid Archive identifiers retain complete-index eligibility")
+        for identifier in ["../other", "bad/id", "bad\\\\id", "", "a?b"] {
+            let escaped = identifier.replacingOccurrences(of: "\\\\", with: "\\\\\\\\")
+            let index = archiveSearchBody(#"{"identifier":""# + escaped + #""}"#)
+            verify(index.map(AudioSourceFinder.archiveSearchRowsComplete) == false,
+                   "unsafe decoded Archive identifier cannot authorize automatic selection")
+        }
+        let mixedIndex = archiveSearchBody(
+            #"{"identifier":"safe-recording"},{"identifier":"../hidden"}"#)
+        verify(mixedIndex.map(AudioSourceFinder.archiveSearchRowsComplete) == false,
+               "a valid recording cannot hide an unsafe competing index row")
         // Replayed Archive metadata rows must not suppress an otherwise exact
         // original recording, while contradictory evidence must fail closed.
         let archiveWish = PlaylistWish(title: "Exact Song", artist: "Exact Artist",
