@@ -2201,13 +2201,25 @@ final class MusicLibrary: ObservableObject {
                     missing.append(wish)
                 }
             }
-            // Retain user-added songs with O(1) membership checks rather than
-            // O(n²) repeated scans on multi-thousand-track playlists.
-            var recorded = Set(ordered)
-            ordered.append(contentsOf: existing.filter {
-                !sourcedTrackIDs.contains($0) && recorded.insert($0).inserted
-            })
-            updated[index].trackIDs = ordered
+            // Reconciliation must not undo a user's saved drag-to-reorder.
+            // Keep surviving entries (including manually added recordings) in
+            // their existing order; append only newly resolved source wishes in
+            // source order. Unavailable sourced entries are removed so they
+            // remain visible as missing wishes instead of unplayable tracks.
+            let resolvedIDs = Set(ordered)
+            var recorded = Set<UUID>()
+            var reconciled: [UUID] = []
+            reconciled.reserveCapacity(existing.count + ordered.count)
+            for id in existing {
+                if (resolvedIDs.contains(id) || !sourcedTrackIDs.contains(id)),
+                   recorded.insert(id).inserted {
+                    reconciled.append(id)
+                }
+            }
+            for id in ordered where recorded.insert(id).inserted {
+                reconciled.append(id)
+            }
+            updated[index].trackIDs = reconciled
             updated[index].missingTracks = missing
         }
         return updated
