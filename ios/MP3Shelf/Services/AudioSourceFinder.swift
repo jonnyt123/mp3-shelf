@@ -291,7 +291,10 @@ enum AudioSourceFinder {
         // claiming fewer total hits than returned rows is not a trustworthy
         // uniqueness proof, even if every returned identifier is valid.
         body.docs.count == body.rawItemCount &&
-            body.numFound.map { $0 >= body.rawItemCount && $0 >= 0 } != false &&
+            // Without an authoritative total, a short page could be a
+            // truncated response hiding another version of this recording.
+            // Fail closed for unattended matching; keep the search retryable.
+            body.numFound.map { $0 >= body.rawItemCount && $0 >= 0 } == true &&
             body.docs.allSatisfy { safeIdentifier($0.identifier) } &&
             archiveIndexDuplicatesAgree(body.docs)
     }

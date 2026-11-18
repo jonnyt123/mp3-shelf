@@ -97,6 +97,16 @@ enum AudioSourceFinderTests {
             AudioSourceFinder.SearchResponse.self, from: contradictorySearch)
         verify(!AudioSourceFinder.archiveSearchRowsComplete(decodedContradictory.response),
                "contradictory Archive total cannot authorize an automatic match")
+        let missingTotal = #"""
+        {"response":{"docs":[
+          {"identifier":"valid-one","title":"The Song","creator":"The Artist"}]}}
+        """#.data(using: .utf8)!
+        let decodedMissingTotal = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: missingTotal)
+        verify(!AudioSourceFinder.archiveSearchRowsComplete(decodedMissingTotal.response),
+               "Archive index without total cannot prove a unique recording")
+        verify(AudioSourceFinder.archiveSearchRowsComplete(decodedClean.response),
+               "known complete Archive total still permits exact matching")
         let negativeTotal = #"""
         {"response":{"numFound":-1,"docs":[]}}
         """#.data(using: .utf8)!
