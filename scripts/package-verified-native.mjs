@@ -11,6 +11,7 @@ import { readPersistedReceipt, verifyLocalReceipt } from './local-evidence.mjs';
 import { nativeStageErrors, readNativeQaRecord } from './verify-native-stage.mjs';
 import { verifyConsolidatedDraftPR } from './mac-native-candidate.mjs';
 import { handoffErrors } from './stage-iphone-review.mjs';
+import { validateSignedInstallRecord } from './run-iphone-playlist-acceptance.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -225,6 +226,19 @@ export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
   const reviewPath = join(device, 'reviews', reviewHandoff.reviewFile);
   const review = boundedJSON(reviewPath, 512 * 1024);
   const reviewSHA256 = fingerprint(readFileSync(reviewPath));
+  if(reviewHandoff.signedRecordFile!=='signed-install-QA_RECORD.md')
+    throw Error('Expected immutable signed Mac install proof under exact-SHA device evidence.');
+  const signedPath=join(device,reviewHandoff.signedRecordFile);
+  const signedMeta=lstatSync(signedPath);
+  if(!signedMeta.isFile()||signedMeta.isSymbolicLink()||signedMeta.nlink!==1||
+     signedMeta.size<1||signedMeta.size>256*1024)
+    throw Error('Signed Mac installation QA record is unsafe or missing.');
+  const signedRaw=readFileSync(signedPath);
+  if(fingerprint(signedRaw)!==reviewHandoff.signedRecordSHA256)
+    throw Error('The original signed Mac installation proof has changed.');
+  const signedInfo=validateSignedInstallRecord(signedRaw.toString('utf8'),sha);
+  if(signedInfo.signedAppSHA256!==hardware.signedAppSHA256)
+    throw Error('Signed Mac executable digest disagrees with independent owner approval.');
   const endpoint = 'https://api.github.com/repos/jonnyt123/mp3-shelf';
   const [issue, comments, pr] = await Promise.all([
     githubJSON(endpoint + '/issues/6'),
