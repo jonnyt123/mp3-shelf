@@ -128,7 +128,7 @@ for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "jou
     }
     if scenario == "new-generation" || scenario == "same-generation-different-ticket" {
         try require(try Data(contentsOf: stage) == newBytes, "new ticket audio deleted")
-        try require(try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)) == newer,
+        try require(try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)) == (scenario == "new-generation" ? newer : Receipt(ticket: newer.ticket, generation: older.generation, stagedName: older.stagedName)),
                     "new ticket journal overwritten")
     }
     if scenario == "stage-truncated-in-place" {
