@@ -1899,6 +1899,7 @@ extension AudioSourceFinder {
         var downloadURL = ""
         var licenseURL = ""
         var ambiguousEnclosure = false
+        var ambiguousMetadata = false
     }
 
     private final class CCMixterRSSReader: NSObject, XMLParserDelegate {
@@ -1947,11 +1948,17 @@ extension AudioSourceFinder {
             let content = characters.trimmingCharacters(in: .whitespacesAndNewlines)
             if current != nil {
                 switch field {
-                case "title": current?.title = content
-                case "creator": current?.creator = content
+                case "title":
+                    if !current!.title.isEmpty && current!.title != content { current?.ambiguousMetadata = true }
+                    if !content.isEmpty { current?.title = content }
+                case "creator":
+                    if !current!.creator.isEmpty && current!.creator != content { current?.ambiguousMetadata = true }
+                    if !content.isEmpty { current?.creator = content }
                 case "author":
                     if current?.creator.isEmpty == true { current?.creator = content }
-                case "link": current?.landingURL = content
+                case "link":
+                    if !current!.landingURL.isEmpty && current!.landingURL != content { current?.ambiguousMetadata = true }
+                    if !content.isEmpty { current?.landingURL = content }
                 case "license":
                     if !content.isEmpty { current?.licenseURL = content }
                 case "item":
@@ -1985,7 +1992,7 @@ extension AudioSourceFinder {
 
     static func ccMixterCandidate(_ track: CCMixterFeedTrack,
                                    for wish: PlaylistWish) -> AudioCatalogMatch? {
-        guard !track.ambiguousEnclosure,
+        guard !track.ambiguousEnclosure, !track.ambiguousMetadata,
               exactMetadataMatch(title: track.title, creator: track.creator, wish: wish),
               let page = URL(string: track.landingURL), page.scheme == "https",
               let pageHost = page.host?.lowercased(),
