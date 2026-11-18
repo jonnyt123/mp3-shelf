@@ -32,7 +32,9 @@ export function handoffErrors({handoff,review,sha,inventorySHA256,signedAppSHA25
  if(!REVIEW.test(handoff?.reviewFile??'')||
    handoff?.ownerApproval!=='REQUIRED_NOT_GRANTED'||
    handoff?.physicalAcceptance!=='INCOMPLETE'||
-   handoff?.signedBinaryProvenance!=='SIGNED_MAC_BUILD_ONLY')
+   handoff?.signedBinaryProvenance!=='SIGNED_MAC_BUILD_ONLY'||
+   handoff?.signedRecordFile!=='signed-install-QA_RECORD.md'||
+   !HASH.test(handoff?.signedRecordSHA256??''))
   errors.push('Expected a bounded, non-approving physical evidence handoff.');
  const t=Date.parse(handoff?.createdAt??'');
  if(!Number.isFinite(t)||!Number.isFinite(now)||t>now+300000||now-t>7*86400000)
@@ -66,6 +68,7 @@ export function stagePhysicalReview({inventoryPath,reviewPath,signedRecordPath,e
  const packet={schema:'mp3shelf-physical-review-handoff-v1',
   createdAt:new Date(now).toISOString(),candidateSha:expectedSha,
   reviewFile:name,reviewSHA256:hash(reviewRaw),inventorySHA256:hash(inventoryRaw),
+  signedRecordFile:'signed-install-QA_RECORD.md',
   signedRecordSHA256:hash(signedRaw),signedAppSHA256:signedInfo.signedAppSHA256,
   signedBinaryProvenance:'SIGNED_MAC_BUILD_ONLY',
   physicalAcceptance:'INCOMPLETE',ownerApproval:'REQUIRED_NOT_GRANTED'};
@@ -73,12 +76,24 @@ export function stagePhysicalReview({inventoryPath,reviewPath,signedRecordPath,e
   inventorySHA256:packet.inventorySHA256,reviewSHA256:packet.reviewSHA256,
   signedAppSHA256:packet.signedAppSHA256,now});
  if(errs.length)throw Error('PHYSICAL_REVIEW_HANDOFF_BLOCKED: '+errs.join('; '));
+ // Preserve the signed Mac build receipt in the same immutable exact-SHA
+ // directory: the packager re-hashes and parses the original bytes. This
+ // remains Mac signing evidence, not independent installed-phone attestation.
+ const qaCopy=join(dir,'signed-install-QA_RECORD.md');
+ try {
+  const existing=bounded(qaCopy,256*1024);
+  if(hash(existing)!==packet.signedRecordSHA256)
+   throw Error('Conflicting signed iPhone installation record; review manually.');
+ }catch(e){
+  if(e.code!=='ENOENT')throw e;
+  writeFileSync(qaCopy,signedRaw,{flag:'wx',mode:0o600});
+ }
  const dest=join(dir,FILENAME);
  try{
   const existing=bounded(dest,65536);
   const current=JSON.parse(existing.toString('utf8'));
   const keys=['candidateSha','reviewFile','reviewSHA256','inventorySHA256',
-   'signedRecordSHA256','signedAppSHA256','physicalAcceptance','ownerApproval'];
+   'signedRecordFile','signedRecordSHA256','signedAppSHA256','physicalAcceptance','ownerApproval'];
   if(keys.some(k=>current[k]!==packet[k])||
     handoffErrors({handoff:current,review:reviewData,sha:expectedSha,
      inventorySHA256:packet.inventorySHA256,reviewSHA256:packet.reviewSHA256,
