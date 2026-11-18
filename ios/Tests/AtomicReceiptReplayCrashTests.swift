@@ -20,8 +20,8 @@ let foreign = Data(repeating: 99, count: 8192)
 try foreign.write(to: external)
 let ticket = UUID()
 let receipt = CrashReceipt(ticket: ticket, generation: 8, filename: "audio.mp3", expected: bytes)
-func publish() throws {
-    try JSONEncoder().encode(receipt).write(to: journal, options: .atomic)
+func publish(_ state: CrashReceipt = receipt) throws {
+    try JSONEncoder().encode(state).write(to: journal, options: .atomic)
 }
 func recover(ticket: UUID, generation: Int) throws -> Data? {
     guard (try? fm.destinationOfSymbolicLink(atPath: journal.path)) == nil,
@@ -43,35 +43,55 @@ func check(_ condition: @autoclosure () throws -> Bool, _ label: String) throws 
     let ok = try condition()
     precondition(ok, label)
 }
-for round in 0..<80 {
-    try? fm.removeItem(at: audio)
-    try? fm.removeItem(at: journal)
+func reset() throws {
+    for url in [audio, journal] where fm.fileExists(atPath: url.path) || (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil {
+        try fm.removeItem(at: url)
+    }
+}
+for _ in 0..<80 {
+    try reset()
     try publish()
     try check(try recover(ticket: ticket, generation: 8) == nil, "missing audio")
     try fm.removeItem(at: journal)
     try bytes.write(to: audio, options: .atomic)
     try check(try recover(ticket: ticket, generation: 8) == nil, "orphan audio")
     try publish()
-    for _ in 0..<3 {
-        try check(try recover(ticket: ticket, generation: 8) == bytes, "idempotent replay")
-    }
+    for _ in 0..<3 { try check(try recover(ticket: ticket, generation: 8) == bytes, "idempotent replay") }
     try check(try recover(ticket: ticket, generation: 7) == nil, "stale generation")
     try check(try recover(ticket: UUID(), generation: 8) == nil, "foreign ticket")
     try Data("{incomplete".utf8).write(to: journal, options: .atomic)
     try check(try recover(ticket: ticket, generation: 8) == nil, "corrupt journal")
+    try publish(CrashReceipt(ticket: ticket, generation: 8, filename: "../external.mp3", expected: bytes))
+    try check(try recover(ticket: ticket, generation: 8) == nil, "traversal filename")
+    try publish(CrashReceipt(ticket: ticket, generation: 8, filename: "audio.mp3", expected: Data()))
+    try check(try recover(ticket: ticket, generation: 8) == nil, "empty receipt")
     try publish()
+    try Data().write(to: audio, options: .atomic)
+    try check(try recover(ticket: ticket, generation: 8) == nil, "zero-byte audio")
+    try Data(bytes.dropLast()).write(to: audio, options: .atomic)
+    try check(try recover(ticket: ticket, generation: 8) == nil, "truncated audio")
     try foreign.write(to: audio, options: .atomic)
     try check(try recover(ticket: ticket, generation: 8) == nil, "same-size audio substitution")
     try fm.removeItem(at: audio)
     try fm.createSymbolicLink(at: audio, withDestinationURL: external)
     try check(try recover(ticket: ticket, generation: 8) == nil, "audio symlink")
     try fm.removeItem(at: audio)
+    try fm.linkItem(at: external, to: audio)
+    try check(try recover(ticket: ticket, generation: 8) == nil, "audio hardlink")
+    try fm.removeItem(at: audio)
+    try fm.createDirectory(at: audio, withIntermediateDirectories: false)
+    try check(try recover(ticket: ticket, generation: 8) == nil, "audio directory")
+    try fm.removeItem(at: audio)
     try bytes.write(to: audio, options: .atomic)
-    if round % 2 == 0 {
-        try fm.removeItem(at: journal)
-        try fm.createSymbolicLink(at: journal, withDestinationURL: external)
-        try check(try recover(ticket: ticket, generation: 8) == nil, "journal symlink")
-    }
+    try fm.removeItem(at: journal)
+    try fm.linkItem(at: external, to: journal)
+    try check(try recover(ticket: ticket, generation: 8) == nil, "journal hardlink")
+    try fm.removeItem(at: journal)
+    try fm.createDirectory(at: journal, withIntermediateDirectories: false)
+    try check(try recover(ticket: ticket, generation: 8) == nil, "journal directory")
+    try fm.removeItem(at: journal)
+    try fm.createSymbolicLink(at: journal, withDestinationURL: external)
+    try check(try recover(ticket: ticket, generation: 8) == nil, "journal symlink")
+    try check(try Data(contentsOf: external) == foreign, "external file modified")
 }
-try check(try Data(contentsOf: external) == foreign, "foreign audio mutated")
-print("PASS: 80 crash/replay rounds, 8 rejection/idempotency boundaries")
+print("PASS: 80 crash/replay rounds; 15 rejection and idempotency boundaries")
