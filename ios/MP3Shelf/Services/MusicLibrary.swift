@@ -2098,8 +2098,16 @@ final class MusicLibrary: ObservableObject {
                 let formerlySourced = Set(old.sourceOrder.compactMap {
                     indexedByTitle.reusableTrack(for: $0)?.id
                 })
+                // A source refresh must not discard a user's saved playlist order.
+                // Only unlink recordings whose source wishes disappeared; keep
+                // surviving source matches in place and let reconciliation append
+                // newly resolved wishes after the existing ordered recordings.
+                let stillSourced = Set(updated.compactMap {
+                    indexedByTitle.reusableTrack(for: $0)?.id
+                })
+                let obsoleteSourceIDs = formerlySourced.subtracting(stillSourced)
                 var candidate = playlists
-                candidate[index].trackIDs.removeAll { formerlySourced.contains($0) }
+                candidate[index].trackIDs.removeAll { obsoleteSourceIDs.contains($0) }
                 candidate[index].sourceOrder = updated
                 candidate[index].name = displayName
                 candidate[index].sourceURL = sourceURL
