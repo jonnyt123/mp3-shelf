@@ -981,8 +981,19 @@ struct LibraryView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
-            cancelRecentPlaybackPreparation(showFeedback: false)
-            cancelBulkPlaybackPreparation(showFeedback: false)
+            // A phone call or lock interrupts local-file validation. Keep the
+            // original recording and Play/Shuffle intent available for a
+            // deliberate retry when the user returns; never auto-start audio.
+            let interruptedRecent = recentPlaybackCheck != nil
+            let interruptedBulk = bulkPlaybackPending
+            cancelRecentPlaybackPreparation(showFeedback: interruptedRecent)
+            cancelBulkPlaybackPreparation(showFeedback: interruptedBulk)
+            if interruptedRecent {
+                recentPlaybackNotice = "Playback was interrupted when MP3 Shelf became inactive. Retry after returning to the app."
+            }
+            if interruptedBulk {
+                bulkPlaybackNotice = "Playback was interrupted when MP3 Shelf became inactive. Retry to check the current selection."
+            }
         }
         .onChange(of: library.isImporting) { _, importing in
             // Imports can start from another screen. Invalidate outstanding
