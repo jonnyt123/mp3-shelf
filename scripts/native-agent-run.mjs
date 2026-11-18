@@ -39,7 +39,7 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
   const verifiedIntegration = !error && !conflictingSource && !conflictingIntegration &&
     validInterval && validSource &&
     integrationStates.includes(declaredIntegration ?? declaredStatus);
-  const status = error ? 'FAILED' : verifiedIntegration ? 'COMPLETED' : 'BLOCKED';
+  const packagingBlocked = typeof result?.packaging === 'string' &&\n    ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',\n      'INCOMPLETE_OUTPUT_REQUIRES_REVIEW',\n      'BLOCKED_UNSAFE_OUTPUT_DESTINATION'].includes(result.packaging);\n  // A staged draft is not a completed release cycle when packaging is blocked.\n  // Keep the verified staging outcome separately for diagnostic accuracy.\n  const status = error ? 'FAILED' : verifiedIntegration && !packagingBlocked ? 'COMPLETED' : 'BLOCKED';
   const categories = ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
     'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
   const verifiedArchiveStates = ['EXISTING_VERIFIED_ARCHIVE',
