@@ -282,7 +282,11 @@ enum AudioSourceFinder {
         // A syntactically decoded row with an unsafe identifier is still an
         // uninspected recording. Skipping it must not make another file appear
         // uniquely identified for unattended download.
+        // Inconsistent totals can conceal omitted recordings. A catalog page
+        // claiming fewer total hits than returned rows is not a trustworthy
+        // uniqueness proof, even if every returned identifier is valid.
         body.docs.count == body.rawItemCount &&
+            body.numFound.map { $0 >= body.rawItemCount && $0 >= 0 } != false &&
             body.docs.allSatisfy { safeIdentifier($0.identifier) }
     }
 
