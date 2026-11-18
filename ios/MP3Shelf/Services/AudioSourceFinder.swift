@@ -290,7 +290,25 @@ enum AudioSourceFinder {
         // uniqueness proof, even if every returned identifier is valid.
         body.docs.count == body.rawItemCount &&
             body.numFound.map { $0 >= body.rawItemCount && $0 >= 0 } != false &&
-            body.docs.allSatisfy { safeIdentifier($0.identifier) }
+            body.docs.allSatisfy { safeIdentifier($0.identifier) } &&
+            archiveIndexDuplicatesAgree(body.docs)
+    }
+
+    // An identifier may appear repeatedly in the index. Contradictory
+    // title/creator evidence cannot be silently discarded by the later
+    // inspectedIdentifiers dedupe, which would otherwise permit a false
+    // unique automatic recording selection.
+    static func archiveIndexDuplicatesAgree(_ docs: [SearchItem]) -> Bool {
+        var identities: [String: String] = [:]
+        for doc in docs {
+            let identity = MusicMatching.key(doc.title?.value ?? "") + "\u{0}" +
+                MusicMatching.key(doc.creator?.value ?? "")
+            if let previous = identities[doc.identifier], previous != identity {
+                return false
+            }
+            identities[doc.identifier] = identity
+        }
+        return true
     }
 
     // A short page before the reported total is exhausted may indicate a
