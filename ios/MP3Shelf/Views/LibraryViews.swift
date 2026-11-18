@@ -68,6 +68,8 @@ struct LibraryView: View {
     @State private var bulkPlaybackGeneration: UUID?
     // Keep the user's original Play/Shuffle intent for a safe, explicit retry.
     @State private var bulkRetryShuffle: Bool?
+    // A successful partial queue still needs a visible, local-only repair path.
+    @State private var bulkSkippedRecordingCount = 0
 
     // Import completion is asynchronous: never scan or queue a file while the
     // importer may still be replacing it on disk.
@@ -218,11 +220,13 @@ struct LibraryView: View {
         bulkPlaybackTask = nil
         bulkPlaybackPending = false
         if showFeedback {
+            bulkSkippedRecordingCount = 0
             bulkPlaybackNotice = "Playback preparation cancelled. Your saved recordings were not changed."
             // Retry mode is set when the request begins, before any disk I/O.
         } else {
             bulkPlaybackNotice = nil
             bulkRetryShuffle = nil
+            bulkSkippedRecordingCount = 0
         }
     }
 
@@ -451,6 +455,19 @@ struct LibraryView: View {
                         .foregroundStyle(ShelfTheme.subdued)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.updatesFrequently)
+                    // Partial playback has already started: restoring missing files
+                    // must not reset the active queue or unexpectedly replay songs.
+                    if bulkSkippedRecordingCount > 0 && !bulkPlaybackPending {
+                        Button {
+                            presentAudioImporter()
+                        } label: {
+                            Label("Restore skipped recordings", systemImage: "square.and.arrow.down")
+                                .frame(minHeight: 44, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(audioImportBusy || scenePhase != .active)
+                        .accessibilityHint("Choose missing local audio files from Files. Currently playing music will not restart.")
+                    }
                     if let retryShuffle = bulkRetryShuffle, !bulkPlaybackPending {
                         // A changed search or Favorites filter can leave no
                         // playable selection. Never offer a silent no-op Retry.
@@ -505,6 +522,7 @@ struct LibraryView: View {
         let generation = UUID()
         bulkPlaybackGeneration = generation
         bulkPlaybackNotice = nil
+        bulkSkippedRecordingCount = 0
         bulkRetryShuffle = shuffled
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
@@ -577,6 +595,7 @@ struct LibraryView: View {
             bulkRetryShuffle = nil
             bulkPlaybackNotice = nil
             let skipped = songs.count - queue.count
+            bulkSkippedRecordingCount = skipped
             if skipped > 0 {
                 bulkPlaybackNotice = "\(skipped) unavailable recording\(skipped == 1 ? "" : "s") skipped. Playing \(queue.count) available song\(queue.count == 1 ? "" : "s")."
             }
