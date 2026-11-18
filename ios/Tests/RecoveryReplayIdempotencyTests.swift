@@ -285,4 +285,55 @@ try scenario("crash-after-move-stage-substitution") { s in
     try check(!s.fm.fileExists(atPath: s.path("receipt.json").path),
               "stage substitution committed a receipt")
 }
+
+try scenario("stale-generation-same-recording-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    let stale = Ticket(id: first.id, generation: first.generation - 1,
+                       byteCount: first.byteCount, digest: first.digest)
+    do { _ = try s.recover(stale); preconditionFailure("accepted stale generation") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path),
+              "stale generation published recording")
+    try check(s.recover(first).ticket == first, "valid generation could not recover")
+}
+try scenario("tampered-stage-same-length-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    try other.write(to: s.path("staged.part"), options: .atomic)
+    do { _ = try s.recover(first); preconditionFailure("accepted same-length corrupted audio") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path),
+              "same-length corrupted stage published audio")
+    try check(!s.fm.fileExists(atPath: s.path("receipt.json").path),
+              "corrupted stage published receipt")
+}
+try scenario("missing-ticket-preserves-stage") { s in
+    try s.writeStage(original, ticket: first)
+    try s.fm.removeItem(at: s.path("ticket.json"))
+    do { _ = try s.recover(first); preconditionFailure("accepted missing ticket") }
+    catch { /* missing metadata is a fail-closed error, not a successful recovery */ }
+    try check(Data(contentsOf: s.path("staged.part")) == original,
+              "missing ticket destroyed staged recording")
+    try check(!s.fm.fileExists(atPath: s.path("recording.mp3").path),
+              "missing ticket published recording")
+}
+try scenario("directory-destination-rejected") { s in
+    try s.writeStage(original, ticket: first)
+    try s.fm.createDirectory(at: s.path("recording.mp3"), withIntermediateDirectories: false)
+    do { _ = try s.recover(first); preconditionFailure("accepted directory destination") }
+    catch RecoveryFailure.invalid {}
+    try check(!s.fm.fileExists(atPath: s.path("receipt.json").path),
+              "directory destination published receipt")
+    try check((try s.fm.attributesOfItem(atPath: s.path("recording.mp3").path))[.type]
+              as? FileAttributeType == .typeDirectory,
+              "directory destination was replaced")
+}
+try scenario("receipt-replay-with-missing-stage-and-ticket") { s in
+    try s.writeStage(original, ticket: first)
+    let receipt = try s.recover(first)
+    try s.fm.removeItem(at: s.path("staged.part"))
+    try s.fm.removeItem(at: s.path("ticket.json"))
+    try check(s.recover(first) == receipt, "committed receipt depended on temporary stage")
+    try check(Data(contentsOf: s.path("recording.mp3")) == original,
+              "committed audio changed during duplicate callback")
+}
 print("PASS: \(passed) recovery replay idempotency scenarios")
