@@ -97,7 +97,7 @@ for _ in 0..<80 {
     try reset()
     try bytes.write(to: audio, options: .atomic)
     try publish()
-    let pending = root.appendingPathComponent("receipt-pending-\\(UUID()).json")
+    let pending = root.appendingPathComponent("receipt-pending-\(UUID()).json")
     let encoded = try JSONEncoder().encode(receipt)
     try Data(encoded.prefix(encoded.count / 2)).write(to: pending)
     try check(try recover(ticket: ticket, generation: 8) == bytes, "unpublished partial receipt altered committed recovery")
@@ -108,5 +108,30 @@ for _ in 0..<80 {
     try check(try recover(ticket: ticket, generation: 9) == bytes, "new generation not recoverable")
     try check(try Data(contentsOf: audio) == bytes, "audio changed on generation transition")
 
+    // A staged replacement is not visible until publication; malformed replacements
+    // fail closed and never mutate the independently owned recording bytes.
+    let staged = root.appendingPathComponent("receipt-next-\(UUID()).json")
+    let next = CrashReceipt(ticket: ticket, generation: 10, filename: "audio.mp3", expected: bytes)
+    let nextData = try JSONEncoder().encode(next)
+    try Data(nextData.prefix(nextData.count / 3)).write(to: staged, options: .atomic)
+    try check(try recover(ticket: ticket, generation: 9) == bytes, "partial staged generation displaced committed receipt")
+    try check(try recover(ticket: ticket, generation: 10) == nil, "unpublished generation became visible")
+    try nextData.write(to: staged, options: .atomic)
+    try check(try recover(ticket: ticket, generation: 9) == bytes, "complete staged generation displaced committed receipt")
+    try fm.removeItem(at: journal)
+    try fm.moveItem(at: staged, to: journal)
+    try check(try recover(ticket: ticket, generation: 9) == nil, "old generation survived committed handoff")
+    try check(try recover(ticket: ticket, generation: 10) == bytes, "committed handoff lost recording")
+
+    // A receipt whose bytes are correct but whose identity is substituted must
+    // never be treated as an authorized completion.
+    try publish(CrashReceipt(ticket: UUID(), generation: 10, filename: "audio.mp3", expected: bytes))
+    try check(try recover(ticket: ticket, generation: 10) == nil, "foreign receipt accepted")
+    try publish(CrashReceipt(ticket: ticket, generation: 10, filename: "audio.mp3", expected: foreign))
+    try check(try recover(ticket: ticket, generation: 10) == nil, "substituted audio digest accepted")
+    try check(try Data(contentsOf: audio) == bytes, "failed receipt replay changed owned audio")
+    try check(try Data(contentsOf: external) == foreign, "failed replay changed unrelated audio")
+
+
 }
-print("PASS: 80 crash/replay rounds; interrupted publication, generation handoff and rejection boundaries")
+print("PASS: 80 crash/replay rounds; interrupted/staged publication, generation handoff, identity and audio isolation")
