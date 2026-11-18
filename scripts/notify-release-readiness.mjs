@@ -36,7 +36,11 @@ export function normalizedGateState(model,{now=Date.now()}={}){
 export function notificationChanges(previous,current){
  if(previous?.schema!=='mp3shelf-readiness-notification-state-v1'||
    !current||previous.candidateSha!==current.candidateSha||
-   !previous.gates||KEYS.some(key=>!STATUS.has(previous.gates[key])))
+   !SHA.test(previous.toolingSha??'')||
+   !Number.isFinite(Date.parse(previous.updatedAt??''))||
+   Date.parse(previous.updatedAt)>Date.parse(current.updatedAt)||
+   !previous.gates||Object.keys(previous.gates).length!==KEYS.length||
+   KEYS.some(key=>!STATUS.has(previous.gates[key])))
   return {baseline:true,cleared:[],blocked:[]};
  const cleared=[],blocked=[];
  for(const key of KEYS){
