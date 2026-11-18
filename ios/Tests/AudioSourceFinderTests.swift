@@ -1198,6 +1198,22 @@ enum AudioSourceFinderTests {
             return try? JSONDecoder().decode(AudioSourceFinder.SearchBody.self,
                                              from: Data(json.utf8))
         }
+        verify(AudioSourceFinder.archivePageComplete(page: 1, rows: 20, reportedTotal: 35),
+               "full first page is consistent with 35 indexed recordings")
+        verify(AudioSourceFinder.archivePageComplete(page: 2, rows: 15, reportedTotal: 35),
+               "15-row final page exhausts the reported index")
+        verify(AudioSourceFinder.archivePageComplete(page: 2, rows: 0, reportedTotal: 20),
+               "empty final page is valid when previous page exhausted total")
+        verify(!AudioSourceFinder.archivePageComplete(page: 1, rows: 1, reportedTotal: 35),
+               "truncated first page cannot authorize a unique match")
+        verify(!AudioSourceFinder.archivePageComplete(page: 2, rows: 10, reportedTotal: 35),
+               "truncated second page cannot authorize a unique match")
+        verify(!AudioSourceFinder.archivePageComplete(page: 2, rows: 20, reportedTotal: 35),
+               "second page cannot exceed the index total")
+        verify(!AudioSourceFinder.archivePageComplete(page: 0, rows: 1, reportedTotal: 1),
+               "invalid index page numbers are rejected")
+        verify(!AudioSourceFinder.archivePageComplete(page: 1, rows: 21, reportedTotal: 40),
+               "oversized page response cannot pass bounded search policy")
         let validIndex = archiveSearchBody(#"{"identifier":"safe-recording","title":"Exact Song","creator":"Exact Artist"}"#)
         verify(validIndex.map(AudioSourceFinder.archiveSearchRowsComplete) == true,
                "valid Archive identifiers retain complete-index eligibility")
