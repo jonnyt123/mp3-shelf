@@ -33,12 +33,23 @@ export function evaluateAgentHealth({platform='darwin',node=null,xcode=null,deve
    plist.RunAtLoad===true&&plist.StartInterval===3600&&plist.WorkingDirectory===sourceRoot;
  put('plist',owned,'The exact MP3 Shelf hourly launchd plist is owned and correctly configured.');
  put('launchd',owned&&loaded,'The MP3 Shelf user LaunchAgent is loaded by launchctl.');
+ // A recent timestamp alone is not evidence of a completed invocation. Validate
+ // both ends of the interval and the candidate identity before reporting health.
+ // A malformed or contradictory receipt must never be promoted to a healthy Mac.
+ const started=Date.parse(latest?.startedAt??'');
  const finished=Date.parse(latest?.finishedAt??'');
+ const validInterval=Number.isFinite(started)&&Number.isFinite(finished)&&
+   started<=finished&&started<=now+300000&&finished<=now+300000&&
+   finished-started<=24*3600000;
+ const validIdentity=SHA.test(latest?.candidateSha??'')||
+   (latest?.status!=='COMPLETED'&&latest?.candidateSha==null);
+ const validOutcome=latest?.status!=='COMPLETED'||
+   (['already-staged','staged-draft-only'].includes(latest?.integration)&&
+    latest?.failureReason==null);
  const fresh=latest?.schema==='mp3shelf-native-agent-run-v1'&&
    ['COMPLETED','FAILED','BLOCKED'].includes(latest.status)&&
-   Number.isFinite(finished)&&Number.isFinite(now)&&finished<=now+300000&&
-   now-finished<=2*3600000;
- put('recentRun',fresh,'A real native agent invocation wrote a recent exact-run status.');
+   validInterval&&validIdentity&&validOutcome&&now-finished<=2*3600000;
+ put('recentRun',fresh,'A recent, internally consistent native-agent receipt exists.');
  const failed=latest?.status==='FAILED'||latest?.status==='BLOCKED';
  const blockers=Object.entries(checks).filter(([,v])=>v.status!=='PASS').map(([k])=>k);
  return {schema:'mp3shelf-mac-agent-health-v1',generatedAt:new Date(now).toISOString(),
