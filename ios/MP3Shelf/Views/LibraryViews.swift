@@ -2913,10 +2913,22 @@ struct PlaylistDetailView: View {
             recordingLocationsDidChange()
         }
         .onChange(of: playlist == nil) { _, isMissing in
-            if isMissing { cancelPlaylistPreparation(showFeedback: false) }
+            guard isMissing else { return }
+            // A deleted or ambiguous playlist must never leave a stale Retry
+            // action that could target a different restored playlist.
+            cancelPlaylistPreparation(showFeedback: false)
+            playlistPlaybackCanRetry = false
+            playlistPlaybackNotice = nil
+            playlistPlaybackError = hasAmbiguousPlaylistID
+                ? "Multiple playlists now share this identity. Resolve the duplicates before playing."
+                : "This playlist is no longer in the library. Return to Library to choose an available playlist."
         }
         .onChange(of: playlistScenePhase) { _, phase in
-            if phase != .active { cancelPlaylistPreparation(showFeedback: false) }
+            guard phase != .active, playlistPlaybackPending else { return }
+            // Keep a visible recovery path when validation is interrupted by
+            // an incoming call, app switch, or device lock.
+            cancelPlaylistPreparation(showFeedback: true)
+            playlistPlaybackNotice = "Playback was interrupted when MP3 Shelf became inactive. Return to the app and retry; your audio was not changed."
         }
         .onDisappear { cancelPlaylistPreparation(showFeedback: false) }
     }
