@@ -127,7 +127,12 @@ struct LibraryView: View {
             // Index the current library once: repeated linear searches made
             // playback preparation quadratic for large imported collections.
             // Include the URL so duplicate IDs cannot substitute recordings.
-            let currentByLocation = recordingIndex()
+            guard let currentByLocation = recordingIndex() else {
+                missingRecentRecording = true
+                recentPlaybackNotice = "Duplicate recording identities were found in your library. Resolve the duplicates before playing."
+                recentRetrySelection = nil
+                return
+            }
             let queue: [MusicTrack] = recent.enumerated().compactMap { index, song in
                 guard availability[index] else { return nil }
                 return currentByLocation[RecordingLocationKey(id: song.id, url: locations[index].1)]
@@ -153,12 +158,17 @@ struct LibraryView: View {
     // Build once per completed availability scan, on the library's actor.
     // Preserve the first occurrence for a duplicate (ID, URL) pair, matching
     // the prior first(where:) behavior without O(results × library) lookups.
-    private func recordingIndex() -> [RecordingLocationKey: MusicTrack] {
+    // The playback service identifies recordings by UUID, not file URL.
+    // A restored library with two entries sharing a UUID cannot safely
+    // resolve either one, even if the two entries point to the same file.
+    // Return nil instead of silently selecting the first duplicate.
+    private func recordingIndex() -> [RecordingLocationKey: MusicTrack]? {
         var index: [RecordingLocationKey: MusicTrack] = [:]
+        var seenIDs = Set<UUID>()
         index.reserveCapacity(library.tracks.count)
         for track in library.tracks {
-            let key = RecordingLocationKey(id: track.id, url: library.fileURL(for: track))
-            if index[key] == nil { index[key] = track }
+            guard seenIDs.insert(track.id).inserted else { return nil }
+            index[RecordingLocationKey(id: track.id, url: library.fileURL(for: track))] = track
         }
         return index
     }
@@ -226,6 +236,16 @@ struct LibraryView: View {
         // reimport, its URL may change; accept that replacement only if the ID
         // uniquely identifies one current recording. The normal playback scan
         // still validates the replacement's actual bytes before queueing it.
+        // Never retry an ambiguous UUID, even if one candidate retains the
+        // original URL. PlaybackController resolves track identity by UUID.
+        let allMatches = library.tracks.filter { $0.id == selection.id }
+        guard allMatches.count == 1 else {
+            recentPlaybackNotice = allMatches.isEmpty
+                ? "This recording is no longer in your library."
+                : "Duplicate recording identities were found. Resolve the duplicates before playing."
+            recentRetrySelection = nil
+            return
+        }
         let exact = candidates.first { library.fileURL(for: $0) == selection.url }
         guard let current = exact ?? (candidates.count == 1 ? candidates[0] : nil) else {
             recentPlaybackNotice = candidates.isEmpty
@@ -519,7 +539,11 @@ struct LibraryView: View {
             // Resolve the exact original file location, not just its ID.
             // A changed or removed recording invalidates this request; a file
             // that was already missing at scan time is simply skipped.
-            let currentByLocation = recordingIndex()
+            guard let currentByLocation = recordingIndex() else {
+                bulkPlaybackNotice = "Duplicate recording identities were found in your library. Resolve the duplicates before playing."
+                bulkRetryShuffle = nil
+                return
+            }
             var queue: [MusicTrack] = []
             queue.reserveCapacity(songs.count)
             for (index, song) in songs.enumerated() {
