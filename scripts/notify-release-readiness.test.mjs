@@ -125,3 +125,26 @@ test('redirected notification state fails before any new notification is deliver
   assert.equal(readFileSync(outside,'utf8'),'preserve');
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
+
+test('future or corrupted previous notification state cannot fabricate a gate transition',()=>{
+ const current=normalizedGateState(model({native:'BLOCKED'}),{now});
+ const prior=normalizedGateState(model({native:'PASS'}),{now});
+ for(const bad of [
+  {...prior,updatedAt:new Date(now+60000).toISOString()},
+  {...prior,updatedAt:'not-a-date'},
+  {...prior,toolingSha:'invalid'},
+  {...prior,gates:{...prior.gates,extra:'PASS'}},
+ ]) {
+  const diff=notificationChanges(bad,current);
+  assert.equal(diff.baseline,true);
+  assert.equal(notificationMessage(diff),null);
+ }
+});
+test('same-source, newer-tooling readiness retains real gate transitions',()=>{
+ const prior=normalizedGateState(model({smoke:'PASS'}),{now});
+ const current=normalizedGateState({...model({smoke:'BLOCKED'}),toolingSha:'c'.repeat(40),
+  generatedAt:new Date(now+1000).toISOString()},{now:now+1000});
+ const diff=notificationChanges(prior,current);
+ assert.equal(diff.baseline,false);
+ assert.deepEqual(diff.blocked,['smoke']);
+});
