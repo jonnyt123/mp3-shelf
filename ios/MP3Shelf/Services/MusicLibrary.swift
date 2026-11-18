@@ -2094,7 +2094,12 @@ final class MusicLibrary: ObservableObject {
                     pair.0.spotifyURL != pair.1.spotifyURL ||
                     pair.0.appleMusicItemID != pair.1.appleMusicItemID
                 })
-            if listChanged {
+            // A source refresh can rename a playlist without changing its
+            // recordings. Treat that as a durable playlist edit too; otherwise
+            // the new name is silently discarded on the unchanged-list path.
+            let metadataChanged = old.name != displayName ||
+                old.sourceURL != sourceURL || old.appleMusicLibraryID != appleID
+            if listChanged || metadataChanged {
                 // A recording can appear both as a source match and as a manual
                 // playlist addition. The persisted schema does not record which
                 // occurrence the user added, so metadata matching cannot prove
@@ -2108,6 +2113,12 @@ final class MusicLibrary: ObservableObject {
                 candidate[index].name = displayName
                 candidate[index].sourceURL = sourceURL
                 candidate[index].appleMusicLibraryID = appleID
+                // A source that becomes empty must not retain stale missing
+                // wishes from the previous import. Keep manually retained
+                // local recordings and their ordering untouched.
+                if updated.isEmpty {
+                    candidate[index].missingTracks = []
+                }
                 candidate = reconciledPlaylists(using: tracks, from: candidate)
                 guard commitPlaylistEdit(candidate) else {
                     return PlaylistImportReport(playlistID: old.id, playlistName: old.name,
