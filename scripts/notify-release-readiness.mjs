@@ -17,6 +17,8 @@ function safeRead(path,max=128*1024){
 }
 export function normalizedGateState(model,{now=Date.now()}={}){
  if(model?.schema!=='mp3shelf-release-readiness-v1'||
+   model.status!=='NOT_RELEASE_READY'||
+   !Array.isArray(model.blocking)||
    !Array.isArray(model.gates)||model.gates.length!==KEYS.length||
    !Number.isFinite(Date.parse(model.generatedAt??''))||
    now-Date.parse(model.generatedAt)>2*3600000||Date.parse(model.generatedAt)>now+300000)
@@ -25,7 +27,12 @@ export function normalizedGateState(model,{now=Date.now()}={}){
   throw Error('Readiness source or tooling SHA is missing or malformed.');
  const keys=new Set(model.gates.map(g=>g?.key));
  if(keys.size!==KEYS.length||KEYS.some(key=>!keys.has(key))||
-   model.gates.some(g=>!STATUS.has(g?.status)))
+   model.gates.some(g=>!STATUS.has(g?.status))||
+   model.blocking.length!==model.gates.filter(g=>g.status!=='PASS').length||
+   new Set(model.blocking).size!==model.blocking.length||
+   model.blocking.some(key=>!KEYS.includes(key)||
+     model.gates.find(g=>g.key===key)?.status==='PASS')||
+   model.gates.some(g=>g.status!=='PASS'&&!model.blocking.includes(g.key)))
   throw Error('Readiness gate identity or status is untrusted.');
  return {schema:'mp3shelf-readiness-notification-state-v1',
   candidateSha:model.candidateSha,
