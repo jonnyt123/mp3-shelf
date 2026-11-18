@@ -359,3 +359,24 @@ test('existing ZIP and manifest cannot be symlinks, dangling links or hard links
   } finally { rmSync(f.home, { recursive: true, force: true }); }
  }
 });
+
+test('conflicting preflight source identities fail before device evidence or packaging', async () => {
+  const f = fixture();
+  try {
+    let packages = 0;
+    for (const conflict of [
+      { candidateSha: 'b'.repeat(40) },
+      { proposedSha: 'b'.repeat(40) },
+      { candidateSha: 'not-a-sha' },
+      { proposedSha: 'not-a-sha' }
+    ]) {
+      await assert.rejects(runNativeReleaseCycle({
+        home: f.home, repo: f.home,
+        preflight: async () => ({ status: 'already-staged', sha, ...conflict }),
+        packageProject: async () => { packages++; throw Error('must not package'); },
+        deliverArchive: async () => { throw Error('must not deliver'); }
+      }), /source identity disagrees|proposed source differs/);
+    }
+    assert.equal(packages, 0);
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
