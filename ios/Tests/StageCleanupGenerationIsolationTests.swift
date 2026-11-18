@@ -37,19 +37,22 @@ private func write(_ receipt: Receipt, bytes: Data) throws {
     try JSONEncoder().encode(receipt).write(to: journal, options: .atomic)
 }
 private func cleanup(_ expected: Receipt, stageInode: UInt64, journalInode: UInt64,
+                     stageBytes: Data,
                      beforeDelete: () throws -> Void = {}) throws {
     guard (try? inode(journal)) == journalInode,
           let bytes = try? Data(contentsOf: journal),
           let current = try? JSONDecoder().decode(Receipt.self, from: bytes),
           current == expected, current.stagedName == stage.lastPathComponent,
-          try inode(stage) == stageInode else { throw Failure.unsafeCleanup }
+          try inode(stage) == stageInode,
+          (try? Data(contentsOf: stage)) == stageBytes else { throw Failure.unsafeCleanup }
     try beforeDelete()
     // Detect replacement after asynchronous completion. This reference model
     // does not prove atomicity against a writer racing after this last check.
     guard (try? inode(journal)) == journalInode,
           let latest = try? Data(contentsOf: journal), latest == bytes,
           let decoded = try? JSONDecoder().decode(Receipt.self, from: latest),
-          decoded == expected, try inode(stage) == stageInode else {
+          decoded == expected, try inode(stage) == stageInode,
+          (try? Data(contentsOf: stage)) == stageBytes else {
         throw Failure.unsafeCleanup
     }
     try fm.removeItem(at: stage)
@@ -60,13 +63,14 @@ private func cleanup(_ expected: Receipt, stageInode: UInt64, journalInode: UInt
     try fm.removeItem(at: journal)
 }
 var passed = 0
-for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "journal-replaced", "removed-stage", "journal-symlink", "journal-same-bytes-new-inode", "journal-hardlink"] {
+for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "journal-replaced", "removed-stage", "journal-symlink", "journal-same-bytes-new-inode", "journal-hardlink", "stage-hardlink", "stage-mutated-in-place", "journal-mutated-in-place"] {
     try write(older, bytes: oldBytes)
     let originalInode = try inode(stage)
     let originalJournalInode = try inode(journal)
     var rejected = false
     do {
-        try cleanup(older, stageInode: originalInode, journalInode: originalJournalInode, beforeDelete: {
+        try cleanup(older, stageInode: originalInode, journalInode: originalJournalInode,
+                    stageBytes: oldBytes, beforeDelete: {
             switch scenario {
             case "new-generation": try write(newer, bytes: newBytes)
             case "same-bytes-new-inode":
@@ -86,13 +90,25 @@ for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "jou
             case "journal-hardlink":
                 let alias = root.appendingPathComponent("journal-alias")
                 try fm.linkItem(at: journal, to: alias)
+            case "stage-hardlink":
+                let alias = root.appendingPathComponent("stage-alias")
+                try fm.linkItem(at: stage, to: alias)
+            case "stage-mutated-in-place":
+                let handle = try FileHandle(forWritingTo: stage)
+                defer { try? handle.close() }
+                try handle.write(contentsOf: newBytes)
+            case "journal-mutated-in-place":
+                let handle = try FileHandle(forWritingTo: journal)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: JSONEncoder().encode(newer))
             default: try fm.removeItem(at: stage)
             }
         })
     } catch { rejected = true }
     try require(rejected, "\(scenario): stale callback cleanup accepted")
     try require(fm.fileExists(atPath: journal.path), "\(scenario): recovery journal lost")
-    if scenario.hasPrefix("journal-") {
+    if scenario.hasPrefix("journal-") || scenario == "stage-hardlink" {
         try require(try Data(contentsOf: stage) == oldBytes, "\(scenario): audio deleted on unsafe journal")
     }
     if scenario == "new-generation" {
@@ -100,13 +116,16 @@ for scenario in ["new-generation", "same-bytes-new-inode", "symlink-stage", "jou
         try require(try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: journal)) == newer,
                     "new ticket journal overwritten")
     }
+    if scenario == "stage-mutated-in-place" {
+        try require(try Data(contentsOf: stage) == newBytes, "mutated stage was deleted or rewritten")
+    }
     if scenario == "same-bytes-new-inode" {
         try require(try Data(contentsOf: stage) == oldBytes, "replacement stage removed")
     }
     passed += 1
 }
 try write(older, bytes: oldBytes)
-try cleanup(older, stageInode: inode(stage), journalInode: inode(journal))
+try cleanup(older, stageInode: inode(stage), journalInode: inode(journal), stageBytes: oldBytes)
 try require(!fm.fileExists(atPath: stage.path) && !fm.fileExists(atPath: journal.path),
             "successful cleanup left orphan files")
 passed += 1
