@@ -2095,21 +2095,15 @@ final class MusicLibrary: ObservableObject {
                     pair.0.appleMusicItemID != pair.1.appleMusicItemID
                 })
             if listChanged {
-                // Distinguish manually added local files from tracks that
-                // belonged to the previous Spotify source-order mapping.
-                let formerlySourced = Set(old.sourceOrder.compactMap {
-                    indexedByTitle.reusableTrack(for: $0)?.id
-                })
-                // A source refresh must not discard a user's saved playlist order.
-                // Only unlink recordings whose source wishes disappeared; keep
-                // surviving source matches in place and let reconciliation append
-                // newly resolved wishes after the existing ordered recordings.
-                let stillSourced = Set(updated.compactMap {
-                    indexedByTitle.reusableTrack(for: $0)?.id
-                })
-                let obsoleteSourceIDs = formerlySourced.subtracting(stillSourced)
+                // A recording can appear both as a source match and as a manual
+                // playlist addition. The persisted schema does not record which
+                // occurrence the user added, so metadata matching cannot prove
+                // ownership of a track ID. Never erase an existing local entry
+                // merely because its source wish disappeared: that would also
+                // erase indistinguishable manual additions. Preserve the user's
+                // ordered recordings; reconciliation appends new matches and
+                // explicit playlist removal remains the way to discard old ones.
                 var candidate = playlists
-                candidate[index].trackIDs.removeAll { obsoleteSourceIDs.contains($0) }
                 candidate[index].sourceOrder = updated
                 candidate[index].name = displayName
                 candidate[index].sourceURL = sourceURL
