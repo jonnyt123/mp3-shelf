@@ -30,7 +30,7 @@ test('runner writes atomically updated local success and failure receipts withou
    const path=join(home,'Library','Logs','MP3Shelf','NativeAgent','latest-run.json');
    const success=await executeNativeAgent({home,root:home,now:()=>new Date('2026-11-16T00:01:00Z'),
      run:async()=>{iteration++;return{status:'already-staged',sha}}});
-   assert.equal(success.status,'COMPLETED');
+   assert.equal(success.status,'BLOCKED');
    assert.equal(JSON.parse(readFileSync(path,'utf8')).candidateSha,sha);
    await assert.rejects(executeNativeAgent({home,root:home,now:()=>new Date('2026-11-16T00:02:00Z'),
      run:async()=>{iteration++;throw Error('real native failure')}}),/real native failure/);
@@ -104,7 +104,7 @@ test('overlapping hourly invocations cannot execute the native cycle twice',asyn
   const next=await executeNativeAgent({home,root:home,run:async()=>{
    started++;return {status:'already-staged',sha};
   }});
-  assert.equal(next.status,'COMPLETED');
+  assert.equal(next.status,'BLOCKED');
   assert.equal(started,2);
  }finally{release?.();rmSync(home,{recursive:true,force:true});}
 });
@@ -182,7 +182,7 @@ test('contradictory cycle outcomes never become a completed agent receipt',()=>{
  }
  const legitimate=nativeAgentRunRecord({...base,result:{
   candidateSha:sha,status:'already-staged',integration:'staged-draft-only'}});
- assert.equal(legitimate.status,'COMPLETED');
+ assert.equal(legitimate.status,'BLOCKED');
 });
 test('malformed or reversed run timestamps cannot claim fresh integration',()=>{
  for(const [startedAt,finishedAt] of [
@@ -235,5 +235,15 @@ test('staged draft remains visible but incomplete hardware and unsafe output blo
  }
  const complete=nativeAgentRunRecord({...base,result:{candidateSha:sha,
   integration:'already-staged'}});
- assert.equal(complete.status,'COMPLETED');
+ assert.equal(complete.status,'BLOCKED');
+});
+
+test('successful staging without verified ZIP remains blocked even if packaging is unknown',()=>{
+ const base={startedAt:'2026-11-18T00:00:00Z',finishedAt:'2026-11-18T00:01:00Z'};
+ for(const packaging of [undefined,'EXISTING_VERIFIED_ARCHIVE','PACKAGED_VERIFIED_NATIVE_SOURCE','untrusted']){
+  const result={candidateSha:sha,integration:'already-staged',packaging};
+  const record=nativeAgentRunRecord({...base,result});
+  assert.equal(record.status,'BLOCKED');
+  assert.equal(record.delivery,'NOT_VERIFIED');
+ }
 });
