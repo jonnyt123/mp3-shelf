@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { readPersistedReceipt, verifyLocalReceipt } from './local-evidence.mjs';
 import { nativeStageErrors, readNativeQaRecord } from './verify-native-stage.mjs';
 import { verifyConsolidatedDraftPR } from './mac-native-candidate.mjs';
+import { handoffErrors } from './stage-iphone-review.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -52,7 +53,7 @@ export function hardwareInventoryErrors(inventory, hardware, now = Date.now()) {
 }
 
 export function nativePackageGate({ sha, base, receipt, qa, inventory, inventoryHash,
-  hardware, issue, comments, pr }) {
+  hardware, reviewHandoff, review, reviewSHA256, issue, comments, pr }) {
   const errors = [...nativeStageErrors({ proposed: sha, current: base, receipt, qaRecord: qa })];
   if (!SHA.test(sha ?? '') || !SHA.test(base ?? '') || sha === base)
     errors.push('Full distinct candidate/source baseline SHAs are required.');
@@ -79,6 +80,12 @@ export function nativePackageGate({ sha, base, receipt, qa, inventory, inventory
       CHECKS.some(key => hardware.checks?.[key] !== 'PASS'))
     errors.push('Signed-install and independent hardware QA approval incomplete or wrong SHA.');
   errors.push(...hardwareInventoryErrors(inventory, hardware));
+  // A complete independent local device review is a distinct prerequisite.
+  // It neither creates nor replaces manual owner approval, issue #6 or the
+  // authenticated GitHub owner marker.
+  errors.push(...handoffErrors({ handoff: reviewHandoff, review, sha,
+    inventorySHA256: inventoryHash, signedAppSHA256: hardware?.signedAppSHA256,
+    reviewSHA256 }));
   if (issue?.number !== 6 || issue.state !== 'closed' ||
       typeof issue.body !== 'string' ||
       ISSUE_LABELS.some(label => !issue.body.includes('- [x] **' + label + ':**')) ||
@@ -210,6 +217,14 @@ export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
   const inventoryBytes = readFileSync(inventoryPath);
   const inventoryHash = fingerprint(inventoryBytes);
   const hardware = boundedJSON(join(device, 'hardware-acceptance.json'), 32 * 1024);
+  const reviewHandoff = boundedJSON(join(device, 'review-handoff.json'), 64 * 1024);
+  // Do not allow a handoff-provided filename to escape the exact source
+  // review directory; independently hash the original review bytes.
+  if (!/^review-[0-9TZ-]+-[0-9a-f-]{36}\.json$/.test(reviewHandoff?.reviewFile ?? ''))
+    throw Error('Independent iPhone review file is unsafe or missing.');
+  const reviewPath = join(device, 'reviews', reviewHandoff.reviewFile);
+  const review = boundedJSON(reviewPath, 512 * 1024);
+  const reviewSHA256 = fingerprint(readFileSync(reviewPath));
   const endpoint = 'https://api.github.com/repos/jonnyt123/mp3-shelf';
   const [issue, comments, pr] = await Promise.all([
     githubJSON(endpoint + '/issues/6'),
@@ -218,7 +233,8 @@ export async function packageNativeXcode({ root, candidateSha, nativeEvidence,
   ]);
   const errors = nativePackageGate({
     sha, base: baseline.baseSha, receipt, qa, inventory,
-    inventoryHash, hardware, issue, comments, pr
+    inventoryHash, hardware, reviewHandoff, review, reviewSHA256,
+    issue, comments, pr
   });
   if (errors.length) throw Error('NATIVE_ZIP_BLOCKED: ' + errors.join('; '));
   const dest = resolve(outputDirectory ?? join(homedir(), 'Documents', 'MP3Shelf', 'VerifiedReleases'));
