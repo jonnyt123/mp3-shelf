@@ -34,7 +34,6 @@ export function normalizedGateState(model,{now=Date.now()}={}){
 export function notificationChanges(previous,current){
  if(previous?.schema!=='mp3shelf-readiness-notification-state-v1'||
    !current||previous.candidateSha!==current.candidateSha||
-   previous.toolingSha!==current.toolingSha||
    !previous.gates||KEYS.some(key=>!STATUS.has(previous.gates[key])))
   return {baseline:true,cleared:[],blocked:[]};
  const cleared=[],blocked=[];
