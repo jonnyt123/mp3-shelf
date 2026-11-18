@@ -2170,6 +2170,8 @@ struct PlaylistDetailView: View {
     @State private var lastPlaylistPlaybackWasShuffled = false
     @State private var playlistEditWarning: String?
     @Environment(\.scenePhase) private var playlistScenePhase
+    // Import may replace local audio while a background file scan is running.
+    private var playlistAudioImportBusy: Bool { library.isImporting }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("MP3Shelf.recordingMatching") private var recordingMatchingEnabled = true
 
@@ -2301,6 +2303,13 @@ struct PlaylistDetailView: View {
     // A playlist may contain saved metadata whose audio was removed by Files.
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
         guard playlistScenePhase == .active, !playlistPlaybackPending, !tracks.isEmpty else { return }
+        guard !playlistAudioImportBusy else {
+            lastPlaylistPlaybackWasShuffled = shuffled
+            playlistPlaybackCanRetry = true
+            playlistPlaybackError = nil
+            playlistPlaybackNotice = "Audio files are being imported. Wait until the import finishes, then retry playback."
+            return
+        }
         guard let current = uniquePlaylist(playlistID),
               library.songs(in: current).map(\.id) == tracks.map(\.id) else {
             playlistPlaybackCanRetry = false
@@ -2361,6 +2370,11 @@ struct PlaylistDetailView: View {
                 playlistPlaybackNotice = "Playback did not start because MP3 Shelf became inactive. Return to the app and retry."
                 return
             }
+            guard !playlistAudioImportBusy else {
+                playlistPlaybackCanRetry = true
+                playlistPlaybackNotice = "An audio import started while recordings were checked. Wait until it finishes, then retry playback."
+                return
+            }
             guard let currentPlaylist = uniquePlaylist(requestedPlaylistID) else {
                 playlistPlaybackCanRetry = false
                 playlistPlaybackError = "This playlist was removed or its identity became ambiguous while recordings were checked. Reopen the library before playing."
@@ -2418,7 +2432,7 @@ struct PlaylistDetailView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(ShelfTheme.accent)
-        .disabled(tracks.isEmpty || playlistPlaybackPending)
+        .disabled(tracks.isEmpty || playlistPlaybackPending || playlistAudioImportBusy)
         .accessibilityLabel(playlistPlaybackPending ? "Checking playlist recordings" : "Play playlist in order")
         .accessibilityHint("Play available offline recordings in playlist order; missing files are skipped")
     }
@@ -2429,7 +2443,7 @@ struct PlaylistDetailView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
-        .disabled(tracks.isEmpty || playlistPlaybackPending)
+        .disabled(tracks.isEmpty || playlistPlaybackPending || playlistAudioImportBusy)
         .accessibilityLabel("Shuffle playlist")
         .accessibilityHint("Shuffle available offline recordings; missing files are skipped")
     }
@@ -2904,6 +2918,14 @@ struct PlaylistDetailView: View {
             }
         } message: {
             Text(playlistPlaybackError ?? "")
+        }
+        .onChange(of: playlistAudioImportBusy) { _, importing in
+            guard importing else { return }
+            if playlistPlaybackPending { cancelPlaylistPreparation(showFeedback: true) }
+            if playlistPlaybackCanRetry {
+                playlistPlaybackError = nil
+                playlistPlaybackNotice = "Audio import is updating local recordings. Wait until it finishes, then retry playback."
+            }
         }
         .onChange(of: playlistPlaybackMetadata) { _, _ in
             // A rename, reorder, deletion or missing-source refresh invalidates
