@@ -45,7 +45,9 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
       'BLOCKED_UNSAFE_OUTPUT_DESTINATION'].includes(result.packaging);
   // A staged draft is not a completed release cycle when packaging is blocked.
   // Keep the verified staging outcome separately for diagnostic accuracy.
-  const status = error ? 'FAILED' : verifiedIntegration && !packagingBlocked ? 'COMPLETED' : 'BLOCKED';
+  // Integration alone is not a completed release: a verified archive and
+  // canonical published asset are required before the agent reports completion.
+  // Compute completion after verifying the delivery identity below.
   const categories = ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
     'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
   const verifiedArchiveStates = ['EXISTING_VERIFIED_ARCHIVE',
@@ -58,6 +60,7 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
     result.downloadURL === 'https://github.com/jonnyt123/mp3-shelf/releases/download/' +
       'mp3-shelf-ios-' + candidateSha + '/MP3-Shelf-Xcode-' +
       candidateSha.slice(0, 12) + '.zip';
+  const status = error ? 'FAILED' : verifiedDelivery && !packagingBlocked ? 'COMPLETED' : 'BLOCKED';
   const packaging = verifiedDelivery ? result.packaging :
     categories.includes(result?.packaging) ? result.packaging : 'NOT_VERIFIED';
   // Arbitrary compiler/CLI errors may contain credentials, paths or user data.
