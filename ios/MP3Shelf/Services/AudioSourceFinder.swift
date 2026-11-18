@@ -316,6 +316,22 @@ enum AudioSourceFinder {
         return true
     }
 
+    static func archiveCrossPageIdentitiesAgree(_ docs: [SearchItem],
+                                                seen: inout [String: String]) -> Bool {
+        var consistent = true
+        for doc in docs {
+            let identity = MusicMatching.key(doc.title?.value ?? "") + "\u{0}" +
+                MusicMatching.key(doc.creator?.value ?? "")
+            if let previous = seen[doc.identifier], previous != identity {
+                consistent = false
+            }
+            // Keep the first identity, so later contradictory rows cannot
+            // erase evidence or restore an apparently consistent result.
+            if seen[doc.identifier] == nil { seen[doc.identifier] = identity }
+        }
+        return consistent
+    }
+
     // A short page before the reported total is exhausted may indicate a
     // truncated index response. Treat it as incomplete, not a final page.
     static func archivePageComplete(page: Int, rows: Int, reportedTotal: Int?) -> Bool {
@@ -380,6 +396,9 @@ enum AudioSourceFinder {
         // A duplicate is not another recording and must not consume a scarce
         // metadata request or conceal a distinct result behind the budget.
         var inspectedIdentifiers: Set<String> = []
+        // Index pages are not a snapshot: a repeated identifier with different
+        // recording credits must invalidate uniqueness even across pages.
+        var indexIdentities: [String: String] = [:]
         var expectedIndexTotal: Int?
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
@@ -409,6 +428,10 @@ enum AudioSourceFinder {
                     searchIncomplete = true
                 }
                 expectedIndexTotal = reported
+            }
+            if !archiveCrossPageIdentitiesAgree(search.response.docs,
+                                                 seen: &indexIdentities) {
+                searchIncomplete = true
             }
             let ranked = search.response.docs.enumerated().sorted { left, right in
                 let l = archiveIndexRelevance(
