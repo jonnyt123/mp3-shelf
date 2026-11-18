@@ -11,6 +11,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { selectNativeEvidence } from './native-release-cycle.mjs';
 import { verifiedSmokeComment } from './draft-smoke-attestation.mjs';
+import { handoffErrors } from './stage-iphone-review.mjs';
 
 const SHA=/^[0-9a-f]{40}$/;
 const HASH=/^[0-9a-f]{64}$/;
@@ -46,8 +47,9 @@ function definite404(path){
  }
 }
 export function readinessModel({candidateSha=null,toolingSha=null,agent=null,native=null,
-  inventory=null,inventorySHA256=null,review=null,hardware=null,issue=null,
-  ownerComments=null,smoke=null,release=null,now=Date.now()}={}){
+  inventory=null,inventorySHA256=null,review=null,reviewHandoff=null,
+  reviewSHA256=null,hardware=null,issue=null,ownerComments=null,smoke=null,
+  release=null,now=Date.now()}={}){
  const gates=[],add=(key,label,ok,details,action)=>gates.push({
    key,label,status:ok===true?'PASS':ok===null?'UNVERIFIED':'BLOCKED',
    details,action:ok===true?null:action});
@@ -100,13 +102,13 @@ export function readinessModel({candidateSha=null,toolingSha=null,agent=null,nat
    playback?'App-reported offline playback and background callbacks exist; independent on-device verification is still required.':
      'No corroborated real-iPhone offline restart plus background callback evidence.',
    'Complete the on-device radios-off playback and background-transfer test.');
- const reviewed=!!sha&&review?.schema==='mp3shelf-independent-device-review-v1'&&
-   review.sourceSha===sha&&review.result==='EVIDENCE_CHECKS_PASSED_NOT_HARDWARE_APPROVED'&&
-   review.physicalAcceptance==='INCOMPLETE'&&Array.isArray(review.failures)&&review.failures.length===0;
- add('review','Independent collected-device evidence review',reviewed?null:false,
-   reviewed?'Automated evidence triage passed; manual hardware acceptance remains separate.':
-     'No complete independent review for the currently selected native candidate.',
-   'Run the iPhone evidence reviewer after collecting signed and downloaded-audio records.');
+ const reviewed=!!sha&&HASH.test(inventorySHA256??'')&&
+   handoffErrors({handoff:reviewHandoff,review,sha,inventorySHA256,
+     signedAppSHA256:reviewHandoff?.signedAppSHA256,reviewSHA256,now}).length===0;
+ add('review','Independent collected-device evidence review handoff',reviewed?true:null,
+   reviewed?'Exact-SHA iPhone review and original hash-bound handoff are staged; owner approval remains separate.':
+     'No fully matched independent iPhone review and source-bound release handoff are recorded.',
+   'Run iPhone acceptance, independent review, and exact-SHA review handoff staging.');
  const ownerMarker='MP3SHELF_DEVICE_GATE_APPROVED SHA='+(sha??'')+
    ' INVENTORY_SHA256='+(inventorySHA256??'')+
    ' SIGNED_APP_SHA256='+(hardware?.signedAppSHA256??'');
@@ -294,14 +296,23 @@ export function writeReadiness({home=homedir(),now=Date.now(),github=gitHubLive}
  try{if(rawInventory)parsedInventory=JSON.parse(rawInventory);}catch{
    // Corrupt or partial device evidence is a BLOCKER, not a broken dashboard.
  }
+ const deviceDir=SHA.test(sha??'')?join(logs,'DeviceAcceptance',sha):null;
+ const reviewHandoff=deviceDir?json(join(deviceDir,'review-handoff.json'),65536):null;
+ const reviewFile=reviewHandoff?.reviewFile;
+ const reviewRaw=deviceDir&&/^review-[0-9TZ-]+-[0-9a-f-]{36}\.json$/.test(reviewFile??'')?
+   readSafe(join(deviceDir,'reviews',reviewFile),512*1024):null;
+ let reviewedJSON=null;
+ try{if(reviewRaw)reviewedJSON=JSON.parse(reviewRaw);}catch{}
  const result=readinessModel({...live,now,
    agent:json(join(logs,'NativeAgent','latest-run.json')),
    native:nativeDir?json(join(nativeDir,'local-evidence.json')):null,
    inventory:parsedInventory,
    inventorySHA256:rawInventory?
      createHash('sha256').update(rawInventory).digest('hex'):null,
-   hardware:SHA.test(sha??'')?json(join(logs,'DeviceAcceptance',sha,'hardware-acceptance.json')):null,
-   review:getLatestReview(home,sha)});
+   hardware:deviceDir?json(join(deviceDir,'hardware-acceptance.json')):null,
+   review:reviewedJSON,
+   reviewHandoff,reviewSHA256:reviewRaw?
+     createHash('sha256').update(reviewRaw).digest('hex'):null});
  const dir=ensureReadinessDestination(home);
  const body={json:JSON.stringify(result,null,2)+'\n',md:readinessMarkdown(result),html:readinessHTML(result)};
  const pending=[];
