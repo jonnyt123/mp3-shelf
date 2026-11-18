@@ -238,12 +238,12 @@ enum AudioSourceFinderTests {
                "legacy Archive records with absent size remain eligible")
         for invalid in ["0", "-1", "104857601", "not-a-number"] {
             let invalidJSON = malformedSizeJSON.replacingOccurrences(
-                of: #"{\"unexpected\":1}"#, with: "\"\\(invalid)\"")
+                of: #"{\"unexpected\":1}"#, with: "\"\(invalid)\"")
             let item = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
                 from: Data(invalidJSON.utf8))
             verify(AudioSourceFinder.archiveCandidate(item,
                 identifier: "invalid-range", for: wish) == nil,
-                "invalid Archive file-size range is rejected: \\(invalid)")
+                "invalid Archive file-size range is rejected: \(invalid)")
         }
         let archiveValidOnlyJSON = """
         {"metadata":{"title":"The Song","creator":"The Artist"},
