@@ -60,6 +60,14 @@ struct PlaybackOrder {
         queueIDs.removeAll { !available.contains($0) && $0 != anchor }
         remainingShuffle.removeAll { !available.contains($0) }
         playHistory.removeAll { !available.contains($0) }
+        // The removed current song may have been the final item in a shuffle
+        // cycle. An empty pending cycle must not strand surviving recordings:
+        // rebuild from the available library, excluding the deleted anchor.
+        // This is a recovery continuation, not an ordinary repeat of a
+        // completed shuffle cycle (which still obeys loop == .off).
+        if isShuffled, unavailableAnchor != nil, remainingShuffle.isEmpty {
+            remainingShuffle = playableIDs.shuffled()
+        }
         if let selected = currentID, anchor == nil && !available.contains(selected) {
             currentID = nil
         }
