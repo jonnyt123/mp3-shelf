@@ -1459,13 +1459,29 @@ struct MusicTrackRow: View {
                 missingRecordingAlert = true
                 return
             }
-            // Duplicate IDs can refer to different recordings after import/restore.
-            // Resolve by both identity and exact file URL, once per validation.
+            // PlaybackController resolves tracks by UUID, so even two entries
+            // with identical UUID and URL are ambiguous. Refuse to play either
+            // occurrence rather than silently selecting the first recording.
+            // Also require every selected queue occurrence to be unique.
             var currentByLocation: [RecordingLocationKey: MusicTrack] = [:]
+            var seenRecordingIDs = Set<UUID>()
             currentByLocation.reserveCapacity(library.tracks.count)
+            seenRecordingIDs.reserveCapacity(library.tracks.count)
             for current in library.tracks {
+                guard seenRecordingIDs.insert(current.id).inserted else {
+                    audioAvailability = false
+                    recoveryReason = "Duplicate recording identities were found. Resolve the duplicates before playing."
+                    missingRecordingAlert = true
+                    return
+                }
                 let key = RecordingLocationKey(id: current.id, url: library.fileURL(for: current))
-                if currentByLocation[key] == nil { currentByLocation[key] = current }
+                currentByLocation[key] = current
+            }
+            guard Set(queueSnapshot.map { $0.0 }).count == queueSnapshot.count else {
+                audioAvailability = false
+                recoveryReason = "This selection contains duplicate recordings. Choose a unique recording before playing."
+                missingRecordingAlert = true
+                return
             }
             var queue: [MusicTrack] = []
             queue.reserveCapacity(context.count)
