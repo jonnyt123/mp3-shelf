@@ -805,6 +805,12 @@ final class MusicLibrary: ObservableObject {
                     candidateTracks[index] = restoredTrack
                     try PersistedLibrary(tracks: candidateTracks, playlists: playlists).write(to: databaseURL)
                     tracks = candidateTracks
+                    // The size index contains value snapshots from before the
+                    // portable identity commit. Refresh the newly imported entry
+                    // immediately after durable publication; otherwise a later
+                    // byte-identical archive track may select its stale nil ID
+                    // and fail instead of preserving both distinct identities.
+                    refreshIndexedRecording(restoredTrack)
                     // Only a durable archive-identity commit may contribute
                     // membership to the restored playlists. On failure the
                     // original recording remains safe and the next restore can
