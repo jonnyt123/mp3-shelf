@@ -249,6 +249,13 @@ enum AudioSourceFinder {
         // non-original classification must never be auto-imported.
         guard source == nil || source == "original" else { return false }
         if audioFileCount == 1 {
+            // A single file is not proof that its edition matches Spotify.
+            // Archive item-level titles often omit qualifiers present only in
+            // filenames (e.g. "Song (Karaoke)" inside an item titled "Song").
+            // Keep such recordings for review rather than auto-importing them.
+            guard recordingEditionAgrees(filename: name, requestedTitle: wish.title) else {
+                return false
+            }
             return exactMetadataMatch(title: itemTitle, creator: itemCreator, wish: wish)
         }
         guard source == "original" else { return false }
@@ -262,6 +269,34 @@ enum AudioSourceFinder {
         return !title.isEmpty && [stem, withoutTrackNumber].contains { candidate in
             let key = MusicMatching.key(candidate)
             return key == title || key == artistTitle
+        }
+    }
+
+    /// Reject explicit alternate-recording markers that exist in the physical
+    /// filename but not in the requested Spotify title. Whole-word matching
+    /// avoids misclassifying titles such as "Deliver" as a live performance.
+    /// This is a conservative automatic-selection gate, not a license check.
+    static func recordingEditionAgrees(filename: String, requestedTitle: String) -> Bool {
+        func tokens(_ value: String) -> [String] {
+            value.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        }
+        let file = tokens((filename as NSString).deletingPathExtension)
+        let requested = tokens(requestedTitle)
+        let markers: [[String]] = [
+            ["karaoke"], ["instrumental"], ["cover"], ["live"], ["acoustic"],
+            ["demo"], ["remix"], ["remaster"], ["remastered"], ["nightcore"],
+            ["slowed"], ["sped"], ["radio", "edit"], ["extended", "mix"],
+            ["alternate", "take"]
+        ]
+        func contains(_ phrase: [String], in words: [String]) -> Bool {
+            guard words.count >= phrase.count else { return false }
+            return (0...(words.count - phrase.count)).contains {
+                Array(words[$0..<($0 + phrase.count)]) == phrase
+            }
+        }
+        return markers.allSatisfy { marker in
+            !contains(marker, in: file) || contains(marker, in: requested)
         }
     }
 
