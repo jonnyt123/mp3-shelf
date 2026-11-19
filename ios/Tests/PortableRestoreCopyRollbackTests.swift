@@ -34,7 +34,7 @@ try before.write(to: manifest, options: .atomic)
 
 // Model the required all-or-nothing copy contract. Roll back only files that
 // this attempt created; never delete pre-existing recordings on failure.
-private func restore(failAtCopy: Int?) throws {
+private func restore(failAtCopy: Int?, failAfterCopy: Int? = nil, failBeforeManifest: Bool = false) throws {
     var pending: [(URL, URL)] = []
     for name in names {
         let src = source.appendingPathComponent(name)
@@ -57,7 +57,9 @@ private func restore(failAtCopy: Int?) throws {
             if failAtCopy == index { throw CopyFault.injected }
             try fm.copyItem(at: pair.0, to: pair.1)
             created.append(pair.1)
+            if failAfterCopy == index { throw CopyFault.injected }
         }
+        if failBeforeManifest { throw CopyFault.injected }
         try after.write(to: manifest, options: .atomic)
     } catch {
         for path in created.reversed() { try fm.removeItem(at: path) }
@@ -79,6 +81,20 @@ for round in 0..<32 {
         try require(names.allSatisfy { !fm.fileExists(atPath: library.appendingPathComponent($0).path) }, "partial copy survived rollback")
         try require(Data(contentsOf: original) == originalBytes, "existing audio lost")
     }
+    // A crash/failure immediately after a successful copy must not orphan that file.
+    for failAt in 0..<names.count {
+        var rejected = false
+        do { try restore(failAtCopy: nil, failAfterCopy: failAt) } catch CopyFault.injected { rejected = true }
+        try require(rejected, "post-copy injection missed round \(round), copy \(failAt)")
+        try require(Data(contentsOf: manifest) == before, "post-copy failure published manifest")
+        try require(names.allSatisfy { !fm.fileExists(atPath: library.appendingPathComponent($0).path) }, "post-copy failure left orphan audio")
+        try require(Data(contentsOf: original) == originalBytes, "post-copy failure damaged original")
+    }
+    var manifestRejected = false
+    do { try restore(failAtCopy: nil, failBeforeManifest: true) } catch CopyFault.injected { manifestRejected = true }
+    try require(manifestRejected, "pre-publication injection missed")
+    try require(Data(contentsOf: manifest) == before, "pre-publication failure changed manifest")
+    try require(names.allSatisfy { !fm.fileExists(atPath: library.appendingPathComponent($0).path) }, "pre-publication failure left orphan audio")
     try restore(failAtCopy: nil)
     try restore(failAtCopy: nil)
     try require(Data(contentsOf: manifest) == after, "successful retry failed")
@@ -86,4 +102,4 @@ for round in 0..<32 {
         try require(Data(contentsOf: library.appendingPathComponent(name)) == payloads[index], "recording corrupted")
     }
 }
-print("PASS: 96 injected copy failures, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
+print("PASS: 224 injected failures across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
