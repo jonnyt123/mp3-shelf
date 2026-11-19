@@ -330,3 +330,62 @@ for reverse in [false, true] {
     }
 }
 print("PASS: 6 borrowed-recording late-substitution rollback isolation scenarios")
+
+
+// A committed journal is a finalization marker, not permission to overwrite
+// concurrent edits. A late replacement of either owned or borrowed media,
+// or the manifest, must retain the journal and every pre-existing byte.
+for reverse in [false, true] {
+    for target in ["new.mp3", "borrowed.mp3", "manifest"] {
+        for substitution in 0..<3 {
+            try reset()
+            try created.write(to: path("new.mp3"))
+            try new.write(to: manifest, options: .atomic)
+            try persist(Journal(entries: reverse ? Array(entries.reversed()) : entries, committed: true))
+            let foreign = Data(repeating: 0xF3, count: 5001)
+            let destination = target == "manifest" ? manifest : path(target)
+            var rejected = false
+            do {
+                try replay(beforeCleanup: {
+                    try fm.removeItem(at: destination)
+                    switch substitution {
+                    case 0: try foreign.write(to: destination)
+                    case 1: try fm.createSymbolicLink(at: destination, withDestinationURL: path("unrelated.mp3"))
+                    default: try fm.createDirectory(at: destination, withIntermediateDirectories: false)
+                    }
+                })
+            } catch { rejected = true }
+            try assert(rejected, "committed replay accepted a late substitution: \(target), \(substitution)")
+            try assert(fm.fileExists(atPath: journal.path), "committed replay erased contested journal")
+            try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated,
+                       "committed replay changed unrelated recording")
+            if target != "new.mp3" {
+                try assert(Data(contentsOf: path("new.mp3")) == created,
+                           "committed replay changed owned recording")
+            }
+            if target != "borrowed.mp3" {
+                try assert(Data(contentsOf: path("borrowed.mp3")) == borrowed,
+                           "committed replay changed borrowed recording")
+            }
+            if target != "manifest" {
+                try assert(Data(contentsOf: manifest) == new,
+                           "committed replay changed committed manifest")
+            }
+            if substitution == 0 {
+                try assert(Data(contentsOf: destination) == foreign,
+                           "committed replay overwrote foreign replacement")
+            } else if substitution == 1 {
+                try assert((try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil,
+                           "committed replay unlinked foreign symlink")
+            } else {
+                var isDirectory: ObjCBool = false
+                try assert(fm.fileExists(atPath: destination.path, isDirectory: &isDirectory) && isDirectory.boolValue,
+                           "committed replay removed foreign directory")
+            }
+            if target == "manifest" {
+                try fm.removeItem(at: manifest)
+            }
+        }
+    }
+}
+print("PASS: 18 committed-journal late-substitution isolation scenarios")
