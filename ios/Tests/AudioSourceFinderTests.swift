@@ -396,6 +396,36 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.archiveCandidate(safeDerivative,
             identifier: "original-and-derivative", for: wish) != nil,
             "explicit derivative alongside original does not block a valid match")
+        // One Archive item can include both studio and live/remix editions
+        // with matching artist/title metadata. Never auto-select the studio
+        // file just because the alternate edition fails its individual gate.
+        for alternate in ["The Song Live.mp3", "The Song Remix.mp3",
+                          "The Song Remastered.mp3"] {
+            let json = """
+            {"metadata":{"title":"The Song","creator":"The Artist"},
+             "files":[{"name":"The Song.mp3","source":"original",
+                       "size":"5120000","length":"212"},
+                      {"name":"\\(alternate)","source":"original",
+                       "size":"5120000","length":"212"}]}
+            """
+            let item = try JSONDecoder().decode(
+                AudioSourceFinder.ArchiveItem.self, from: Data(json.utf8))
+            verify(AudioSourceFinder.archiveCandidate(
+                item, identifier: "competing-edition", for: wish) == nil,
+                "competing edition in same Archive item requires review")
+        }
+        let unrelatedAlbum = """
+        {"metadata":{"title":"The Song","creator":"The Artist"},
+         "files":[{"name":"The Song.mp3","source":"original",
+                   "size":"5120000","length":"212"},
+                  {"name":"Another Track.mp3","source":"original",
+                   "size":"5120000","length":"180"}]}
+        """
+        let albumItem = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(unrelatedAlbum.utf8))
+        verify(AudioSourceFinder.archiveCandidate(
+            albumItem, identifier: "unrelated-album", for: wish) != nil,
+            "unrelated album tracks do not block exact original selection")
         let identicalDuplicateJSON = """
         {"metadata":{"title":"The Song","creator":"The Artist"},
          "files":[\(validDuplicate),\(validDuplicate)]}
