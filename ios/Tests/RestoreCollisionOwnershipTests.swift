@@ -27,7 +27,8 @@ func isSafeStage() -> Bool {
     guard (try? fm.destinationOfSymbolicLink(atPath: staged.path)) == nil,
           let attrs = try? fm.attributesOfItem(atPath: staged.path),
           attrs[.type] as? FileAttributeType == .typeRegular,
-          (attrs[.referenceCount] as? NSNumber)?.intValue == 1 else { return false }
+          (attrs[.referenceCount] as? NSNumber)?.intValue == 1,
+          (attrs[.size] as? NSNumber)?.int64Value ?? 0 > 0 else { return false }
     return true
 }
 // Atomic hard-link publication: link(2) must fail if the destination already exists.
@@ -266,3 +267,44 @@ try fm.removeItem(at: alias)
 try check(try rollbackUncommitted(at: protectedFile, expected: protectedIdentity))
 try check(!fm.fileExists(atPath: protectedFile.path))
 print("PASS: symlink substitution and shared-inode rollback refusal")
+
+// Staging input rejection: empty files, directories, symlinks and shared inodes
+// cannot be promoted as recovered recordings. A rejected stage must not change
+// any existing library entry or neighboring user-owned audio.
+let invalidRoot = root.appendingPathComponent("invalid-stage")
+try fm.createDirectory(at: invalidRoot, withIntermediateDirectories: true)
+let invalidProtected = invalidRoot.appendingPathComponent("protected.mp3")
+let invalidBytes = Data(repeating: 0xC9, count: 16384)
+try invalidBytes.write(to: invalidProtected)
+for scenario in 0..<80 {
+    try reset()
+    try original.write(to: target)
+    switch scenario % 5 {
+    case 0:
+        try Data().write(to: staged)
+    case 1:
+        try fm.createDirectory(at: staged, withIntermediateDirectories: false)
+    case 2:
+        try fm.createSymbolicLink(at: staged, withDestinationURL: invalidProtected)
+    case 3:
+        try fm.linkItem(at: invalidProtected, to: staged)
+    default:
+        // An existing directory or protected destination cannot be replaced,
+        // even when the staged file itself is valid.
+        try incoming.write(to: staged)
+    }
+    if scenario % 5 != 4 {
+        try check(!isSafeStage())
+        do { try publishFile(from: staged, to: target); fatalError("invalid stage published") }
+        catch RestoreError.invalidStage {}
+    } else {
+        try check(isSafeStage())
+        do { try publishFile(from: staged, to: target); fatalError("collision replaced library audio") }
+        catch RestoreError.collision {}
+    }
+    try check(Data(contentsOf: target) == original)
+    try check(Data(contentsOf: invalidProtected) == invalidBytes)
+    try check(Data(contentsOf: other) == neighbor)
+}
+try reset()
+print("PASS: 80 rejected staging inputs and collision attempts preserve user-owned audio")
