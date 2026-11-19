@@ -1488,11 +1488,20 @@ struct MusicTrackRow: View {
                 let key = RecordingLocationKey(id: current.id, url: library.fileURL(for: current))
                 currentByLocation[key] = current
             }
-            guard Set(queueSnapshot.map { $0.0 }).count == queueSnapshot.count else {
-                audioAvailability = false
-                recoveryReason = "This selection contains duplicate recordings. Choose a unique recording before playing."
-                missingRecordingAlert = true
-                return
+            // Playlists may intentionally contain the same recording more than
+            // once. Keep those occurrences in queue order, but never permit a
+            // repeated UUID to resolve to different files. The library-wide
+            // uniqueness check above still rejects ambiguous restored records.
+            var selectedLocations: [UUID: URL] = [:]
+            selectedLocations.reserveCapacity(queueSnapshot.count)
+            for (id, url) in queueSnapshot {
+                if let existingURL = selectedLocations[id], existingURL != url {
+                    audioAvailability = false
+                    recoveryReason = "This selection contains conflicting recording locations. Reopen the playlist before playing."
+                    missingRecordingAlert = true
+                    return
+                }
+                selectedLocations[id] = url
             }
             var queue: [MusicTrack] = []
             queue.reserveCapacity(context.count)
