@@ -216,3 +216,16 @@ test('a replaced notification lock is never removed by the previous owner',()=>{
    send:()=>{throw Error('DUPLICATE')}}),/already in progress/);
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
+
+test('multi-day Mac agent downtime resets notification baseline without replaying stale blockers',()=>{
+ const prior=normalizedGateState(model({native:'PASS',hardware:'PASS'}),{now});
+ const after=normalizedGateState({...model({native:'BLOCKED',hardware:'BLOCKED'}),
+   generatedAt:new Date(now+25*3600000).toISOString()},{now:now+25*3600000});
+ const stale=notificationChanges(prior,after);
+ assert.equal(stale.baseline,true);
+ assert.equal(notificationMessage(stale),null);
+ const recent=normalizedGateState({...model({native:'PASS',hardware:'BLOCKED'}),
+   generatedAt:new Date(now+25*3600000+60000).toISOString()},
+   {now:now+25*3600000+60000});
+ assert.deepEqual(notificationChanges(after,recent).cleared,['native']);
+});
