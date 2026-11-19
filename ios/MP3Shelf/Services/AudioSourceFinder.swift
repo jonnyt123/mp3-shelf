@@ -296,7 +296,10 @@ enum AudioSourceFinder {
             }
         }
         return markers.allSatisfy { marker in
-            !contains(marker, in: file) || contains(marker, in: requested)
+            // An explicitly requested live/remix/remastered edition is not
+            // interchangeable with a generic studio file either. Require
+            // matching evidence in both directions before auto-selection.
+            contains(marker, in: file) == contains(marker, in: requested)
         }
     }
 
