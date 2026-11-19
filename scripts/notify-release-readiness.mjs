@@ -46,6 +46,9 @@ export function notificationChanges(previous,current){
    !SHA.test(previous.toolingSha??'')||
    !Number.isFinite(Date.parse(previous.updatedAt??''))||
    Date.parse(previous.updatedAt)>Date.parse(current.updatedAt)||
+   // An agent offline for days must not replay obsolete gate transitions.
+   // Establish a quiet fresh baseline before alerting on new evidence.
+   Date.parse(current.updatedAt)-Date.parse(previous.updatedAt)>24*3600000||
    !SHA.test(previous.candidateSha??'')||
    !previous.gates||Object.keys(previous.gates).length!==KEYS.length||
    KEYS.some(key=>!STATUS.has(previous.gates[key]))||
