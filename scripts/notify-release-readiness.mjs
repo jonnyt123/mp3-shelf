@@ -4,7 +4,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { lstatSync,readFileSync,renameSync,writeFileSync,openSync,closeSync,unlinkSync } from 'node:fs';
+import { lstatSync,readFileSync,renameSync,writeFileSync,openSync,closeSync,unlinkSync,fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -96,7 +96,19 @@ export function deliverChangeOnlyNotification({home=homedir(),now=Date.now(),
   throw e;
  }
  try{return deliverLocked({latest,previous,root,now,send,platform});}
- finally{closeSync(handle);unlinkSync(lock);}
+ finally{
+  // An operator may replace the lock while Notification Center is blocked.
+  // Never delete a lock owned by another process; preserve the conflict.
+  const owner=fstatSync(handle);
+  let current;
+  try{current=lstatSync(lock);}catch(error){if(error.code!=='ENOENT')throw error;}
+  const same=current?.isFile()&&!current.isSymbolicLink()&&current.nlink===1&&
+    current.dev===owner.dev&&current.ino===owner.ino;
+  try{
+   if(!same)throw Error('NOTIFICATION_LOCK_OWNERSHIP_LOST: inspect active processes');
+   unlinkSync(lock);
+  }finally{closeSync(handle);}
+ }
 }
 function deliverLocked({latest,previous,root,now,send,platform}){
  const model=safeRead(latest);
