@@ -50,7 +50,7 @@ struct PlaybackOrder {
         queueIDs.removeAll { !available.contains($0) && $0 != anchor }
         remainingShuffle.removeAll { !available.contains($0) }
         playHistory.removeAll { !available.contains($0) }
-        if currentID != nil && anchor == nil && !available.contains(currentID!) {
+        if let selected = currentID, anchor == nil && !available.contains(selected) {
             currentID = nil
         }
     }
