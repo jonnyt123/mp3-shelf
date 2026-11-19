@@ -8,6 +8,24 @@ func verify(_ condition: @autoclosure () -> Bool, _ description: String) {
 @main
 enum AudioSourceFinderTests {
     static func main() throws {
+        // Catalog arrays sometimes contain duplicate or contradictory
+        // recording identities. Empty leading values may be skipped, but
+        // disagreeing titles/artists must never authorize auto-selection.
+        func decodeCatalogText(_ json: String) throws -> String {
+            try JSONDecoder().decode(AudioSourceFinder.FlexibleText.self,
+                                     from: Data(json.utf8)).value
+        }
+        verify(try decodeCatalogText(#"["", "Exact Song", " Exact Song "]"#) == "Exact Song",
+               "blank first catalog title retains an unambiguous identity")
+        verify(try decodeCatalogText(#"["Exact Song", "Different Song"]"#).isEmpty,
+               "conflicting catalog titles cannot select the first match")
+        verify(try decodeCatalogText(#"["Artist", "Other Artist"]"#).isEmpty,
+               "conflicting catalog artist credits cannot auto-match")
+        verify(try decodeCatalogText(#"["Exact Song", "exact song"]"#) == "Exact Song",
+               "case-only duplicate catalog identities remain usable")
+        verify(try decodeCatalogText(#"["", "  "]"#).isEmpty,
+               "blank-only catalog metadata stays unavailable")
+
         // RSS and JSON catalogs share one bounded response validator. A
         // redirect is rejected by their common URLSession delegate before
         // either response can be parsed; status and size fail closed here.
