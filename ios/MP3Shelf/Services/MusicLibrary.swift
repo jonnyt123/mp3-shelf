@@ -419,6 +419,23 @@ final class MusicLibrary: ObservableObject {
             guard let position = recordingsBySize[key]?.firstIndex(where: { $0.id == track.id }) else { return }
             recordingsBySize[key]?[position] = track
         }
+        // Resolve archive identities in constant time for large libraries. Only
+        // update this index after the corresponding catalog write succeeds;
+        // an interrupted restore must never publish an uncommitted identity.
+        var recordingIDsByPortableIdentity: [String: UUID] = [:]
+        for track in tracks {
+            try Task.checkCancellation()
+            recordingIDsByPortableIdentity[track.id.uuidString] = track.id
+            if let portableID = track.portableBackupID {
+                recordingIDsByPortableIdentity[portableID] = track.id
+            }
+        }
+        func indexCommittedIdentity(_ track: MusicTrack) {
+            recordingIDsByPortableIdentity[track.id.uuidString] = track.id
+            if let portableID = track.portableBackupID {
+                recordingIDsByPortableIdentity[portableID] = track.id
+            }
+        }
         // Byte-identical audio is often already present when restoring a
         // backup over a partial library. Restore missing sidecars too; otherwise
         // the early duplicate-audio path silently drops backed-up artwork and
@@ -570,9 +587,8 @@ final class MusicLibrary: ObservableObject {
                 // subsequent restores would keep adding copies. Fail this track
                 // without touching either recording so the user can repair the
                 // conflicting library entry and safely retry the same archive.
-                if let identityOwner = tracks.first(where: {
-                    $0.portableBackupID == archived.id || $0.id.uuidString == archived.id
-                }), identityOwner.id != identicalRecording?.id {
+                if let identityOwnerID = recordingIDsByPortableIdentity[archived.id],
+                   identityOwnerID != identicalRecording?.id {
                     throw PortableShelfArchive.ArchiveError.invalidManifest
                 }
                 if let existing = identicalRecording {
@@ -593,10 +609,8 @@ final class MusicLibrary: ObservableObject {
                     // A matching audio payload does not authorize stealing the
                     // archived playlist identity from that other recording.
                     guard let index = tracks.firstIndex(where: { $0.id == existing.id }),
-                          !tracks.contains(where: {
-                              $0.id != existing.id &&
-                              ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
-                          }) else {
+                          (recordingIDsByPortableIdentity[archived.id] == nil ||
+                           recordingIDsByPortableIdentity[archived.id] == existing.id) else {
                         throw PortableShelfArchive.ArchiveError.invalidManifest
                     }
                     if let assignedID = tracks[index].portableBackupID {
@@ -609,6 +623,7 @@ final class MusicLibrary: ObservableObject {
                         try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
                         tracks = updatedTracks
                         refreshIndexedRecording(updatedTracks[index])
+                        indexCommittedIdentity(updatedTracks[index])
                     }
                     try Task.checkCancellation()
                     try restoreMissingSidecars(for: archived, existingID: existing.id)
@@ -677,10 +692,8 @@ final class MusicLibrary: ObservableObject {
                         // after the initial identity-owner check. A verified
                         // same-byte duplicate is not a successful restore unless
                         // its identity is either already correct or durably bound.
-                        guard !tracks.contains(where: {
-                            $0.id != tracks[index].id &&
-                            ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
-                        }) else {
+                        guard (recordingIDsByPortableIdentity[archived.id] == nil ||
+                         recordingIDsByPortableIdentity[archived.id] == tracks[index].id) else {
                             throw PortableShelfArchive.ArchiveError.invalidManifest
                         }
                         if let assignedID = tracks[index].portableBackupID {
@@ -693,6 +706,7 @@ final class MusicLibrary: ObservableObject {
                             try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
                             tracks = updatedTracks
                             refreshIndexedRecording(updatedTracks[index])
+                        indexCommittedIdentity(updatedTracks[index])
                         }
                         try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
                         restoredIDs[archived.id] = tracks[index].id
@@ -728,10 +742,8 @@ final class MusicLibrary: ObservableObject {
                 // not produce a successful restore or playlist membership under
                 // a newly invented export identity. Keep the audio intact for a
                 // subsequent retry after the conflicting catalog entry is fixed.
-                guard !tracks.contains(where: {
-                    $0.id != tracks[index].id &&
-                    ($0.portableBackupID == archived.id || $0.id.uuidString == archived.id)
-                }) else {
+                guard (recordingIDsByPortableIdentity[archived.id] == nil ||
+                 recordingIDsByPortableIdentity[archived.id] == tracks[index].id) else {
                     throw PortableShelfArchive.ArchiveError.invalidManifest
                 }
                 restoredTrack.portableBackupID = archived.id
@@ -807,6 +819,7 @@ final class MusicLibrary: ObservableObject {
                     candidateTracks[index] = restoredTrack
                     try PersistedLibrary(tracks: candidateTracks, playlists: playlists).write(to: databaseURL)
                     tracks = candidateTracks
+                    indexCommittedIdentity(restoredTrack)
                     // Publish only the durably assigned identity into the
                     // same-restore byte-reuse index. Failed catalog writes leave
                     // existing audio intact but cannot claim an archive ID.
