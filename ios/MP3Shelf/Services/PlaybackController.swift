@@ -53,6 +53,9 @@ final class PlaybackController: NSObject, ObservableObject {
     private var positionTimer: Timer?
     private var fadeTimer: Timer?
     private var outgoingPlayer: AVAudioPlayer?
+    // A damaged successor must not be reopened on every 200 ms clock tick.
+    // Retry crossfade only after the user changes the queue or playback position.
+    private weak var attemptedCrossfadePlayer: AVAudioPlayer?
     @Published private var playbackOrder = PlaybackOrder()
 
     #if DEBUG
@@ -88,14 +91,17 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func moveQueuedTrack(_ id: UUID, earlier: Bool) {
         _ = playbackOrder.moveUpcoming(id, earlier: earlier)
+        attemptedCrossfadePlayer = nil
     }
 
     func playQueuedTrackNext(_ id: UUID) {
         _ = playbackOrder.playNext(id)
+        attemptedCrossfadePlayer = nil
     }
 
     func removeQueuedTrack(_ id: UUID) {
         _ = playbackOrder.removeUpcoming(id)
+        attemptedCrossfadePlayer = nil
     }
 
     private let relay = AudioCompletionRelay()
@@ -196,6 +202,7 @@ final class PlaybackController: NSObject, ObservableObject {
             failedPlaybackOrder = nil
             interruptionState.cancelResume()
             playbackOrder = nextOrder
+            attemptedCrossfadePlayer = nil
             currentTrackID = track.id
             duration = player.duration
             currentTime = 0
@@ -308,6 +315,7 @@ final class PlaybackController: NSObject, ObservableObject {
         positionTimer?.invalidate()
         positionTimer = nil
         currentTrackID = nil
+        attemptedCrossfadePlayer = nil
         currentTime = 0
         duration = 0
         isPlaying = false
@@ -323,6 +331,7 @@ final class PlaybackController: NSObject, ObservableObject {
         // Invalidate it before changing the player's clock so it cannot
         // advance the queue or report a spurious decode failure after scrubbing.
         relay.invalidatePendingCompletions()
+        attemptedCrossfadePlayer = nil
         cancelFade()
         audioPlayer.volume = 1
         let position = max(0, min(seconds, audioPlayer.duration))
@@ -392,6 +401,11 @@ final class PlaybackController: NSObject, ObservableObject {
             seek(to: 0)
             resume()
             return
+        }
+        if crossfading {
+            guard let activePlayer = audioPlayer,
+                  attemptedCrossfadePlayer !== activePlayer else { return }
+            attemptedCrossfadePlayer = activePlayer
         }
         var nextOrder = playbackOrder
         nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
