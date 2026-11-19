@@ -635,7 +635,12 @@ enum AudioSourceFinder {
             audioExtensions.contains((file.name as NSString).pathExtension.lowercased())
         }
         let originals = audioFiles.filter { $0.source == "original" }
-        let rawEligible = originals.isEmpty ? audioFiles : originals
+        // An unclassified file may be an independently uploaded original. When
+        // classified originals exist, do not discard unclassified siblings:
+        // doing so can turn two possible recordings into a false unique match.
+        // Explicit derivatives are excluded only when an original is present.
+        let rawEligible = originals.isEmpty ? audioFiles :
+            audioFiles.filter { $0.source == "original" || $0.source == nil }
         // Duplicate catalog rows do not create additional recordings. Count
         // distinct physical filenames before applying single-track metadata
         // rules, but reject conflicting evidence rather than trusting row order.
