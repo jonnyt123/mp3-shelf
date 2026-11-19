@@ -1586,6 +1586,36 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "Exact Song.mp3", requestedTitle: "Exact Song"),
             "ordinary unqualified recordings remain eligible")
+        // Canonical edition labels avoid rejecting a correct recording simply
+        // because the independent host uses a different standard spelling.
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Remaster).mp3",
+            requestedTitle: "Exact Song (Remastered)"),
+            "remaster and remastered describe the same recording edition")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Unplugged).mp3",
+            requestedTitle: "Exact Song (Acoustic)"),
+            "unplugged and acoustic edition aliases agree")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Speed Up).mp3",
+            requestedTitle: "Exact Song (Sped Up)"),
+            "sped-up spelling variants agree without matching studio audio")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Remastered Live).mp3",
+            requestedTitle: "Exact Song (Remaster)"),
+            "a live remaster cannot match a studio remaster")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Mono).mp3",
+            requestedTitle: "Exact Song (Stereo)"),
+            "mono and stereo editions remain distinct")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Re-recorded).mp3",
+            requestedTitle: "Exact Song"),
+            "re-recordings cannot silently replace original recordings")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Nightcore).mp3",
+            requestedTitle: "Exact Song (Sped Up)"),
+            "nightcore and sped-up editions are not interchangeable")
         print("Audio source discovery validation tests passed")
     }
 }
