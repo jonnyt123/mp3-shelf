@@ -405,7 +405,7 @@ enum AudioSourceFinderTests {
             {"metadata":{"title":"The Song","creator":"The Artist"},
              "files":[{"name":"The Song.mp3","source":"original",
                        "size":"5120000","length":"212"},
-                      {"name":"\\(alternate)","source":"original",
+                      {"name":"\(alternate)","source":"original",
                        "size":"5120000","length":"212"}]}
             """
             let item = try JSONDecoder().decode(
