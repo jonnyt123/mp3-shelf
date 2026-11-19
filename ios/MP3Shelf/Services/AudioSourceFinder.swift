@@ -273,7 +273,13 @@ enum AudioSourceFinder {
                   fileIdentities.contains(expectedArtistTitle) else { return false }
             return exactMetadataMatch(title: itemTitle, creator: itemCreator, wish: wish)
         }
-        guard source == "original" else { return false }
+        // Multi-track Archive items need the same bidirectional edition gate as
+        // single-file uploads. A matching base title alone cannot authorize a
+        // live, remastered, karaoke or speed-altered recording.
+        guard source == "original",
+              recordingEditionAgrees(filename: name, requestedTitle: wish.title) else {
+            return false
+        }
         let title = MusicMatching.key(wish.title)
         let stem = (name as NSString).deletingPathExtension.replacingOccurrences(of: "_", with: " ")
         // Preserve exact numeric titles first; only strip explicit track-number
