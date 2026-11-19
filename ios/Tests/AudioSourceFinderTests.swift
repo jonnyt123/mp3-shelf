@@ -1568,6 +1568,24 @@ enum AudioSourceFinderTests {
             "a twelve-second preview cannot auto-match a fifteen-second song")
         verify(abs(239.0 - 240.0) <= AudioSourceFinder.recordingDurationTolerance(240),
             "a full-length recording with one-second metadata drift stays eligible")
+        // Multi-file Archive items must not bypass the recording-edition
+        // policy already applied to single-file uploads.
+        func multiFileEdition(_ filename: String, requestedTitle: String) -> Bool {
+            AudioSourceFinder.archiveFileCandidate(
+                name: filename, source: "original", sizeBytes: "5000000",
+                itemTitle: requestedTitle, itemCreator: "Exact Artist",
+                audioFileCount: 2,
+                wish: PlaylistWish(title: requestedTitle, artist: "Exact Artist",
+                                   album: "", spotifyURL: nil, durationSeconds: 180))
+        }
+        verify(!multiFileEdition("Exact Song (Live).mp3", requestedTitle: "Exact Song"),
+            "multi-file live recording cannot auto-match studio request")
+        verify(!multiFileEdition("Exact Song.mp3", requestedTitle: "Exact Song (Live)"),
+            "multi-file studio recording cannot auto-match live request")
+        verify(!multiFileEdition("Exact Song (Karaoke).mp3", requestedTitle: "Exact Song"),
+            "multi-file karaoke recording cannot auto-match studio request")
+        verify(multiFileEdition("Exact Song.mp3", requestedTitle: "Exact Song"),
+            "multi-file studio original remains eligible")
         // The Spotify request can specify a particular edition even when an
         // independently hosted file has the same base title and artist.
         // Missing edition evidence must require review, not unattended import.
