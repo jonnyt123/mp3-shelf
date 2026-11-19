@@ -155,4 +155,67 @@ for sourceIndex in names.indices {
     try fm.moveItem(at: held, to: src)
     try require(Data(contentsOf: original) == originalBytes, "source failure damaged existing audio")
 }
-print("PASS: 224 injected failures, 3 collision and 6 missing/symlink rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
+// Validate all three destination positions against filesystem substitution.
+// A destination directory or symlink must never be treated as an existing
+// identical audio recording, and must not be deleted during rollback.
+for destinationIndex in names.indices {
+    for substitution in 0..<2 {
+        for name in names {
+            let path = library.appendingPathComponent(name)
+            if fm.fileExists(atPath: path.path) { try fm.removeItem(at: path) }
+        }
+        try before.write(to: manifest, options: .atomic)
+        let dst = library.appendingPathComponent(names[destinationIndex])
+        if substitution == 0 {
+            try fm.createDirectory(at: dst, withIntermediateDirectories: false)
+        } else {
+            try fm.createSymbolicLink(at: dst, withDestinationURL: original)
+        }
+        var rejected = false
+        do { try restore(failAtCopy: nil) } catch CopyFault.invalidSource { rejected = true }
+        try require(rejected, "destination substitution accepted at index \(destinationIndex)")
+        try require(Data(contentsOf: manifest) == before, "destination substitution published manifest")
+        try require(Data(contentsOf: original) == originalBytes, "destination substitution modified original")
+        try require(names.enumerated().allSatisfy { index, name in
+            index == destinationIndex || !fm.fileExists(atPath: library.appendingPathComponent(name).path)
+        }, "destination substitution created orphan audio")
+        if substitution == 0 {
+            var isDirectory: ObjCBool = false
+            try require(fm.fileExists(atPath: dst.path, isDirectory: &isDirectory) && isDirectory.boolValue,
+                        "destination directory was removed")
+        } else {
+            try require((try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil,
+                        "destination symlink was removed")
+        }
+        try fm.removeItem(at: dst)
+    }
+}
+
+// A zero-byte or directory source must be rejected before any copy starts.
+for sourceIndex in names.indices {
+    for substitution in 0..<2 {
+        for name in names {
+            let path = library.appendingPathComponent(name)
+            if fm.fileExists(atPath: path.path) { try fm.removeItem(at: path) }
+        }
+        try before.write(to: manifest, options: .atomic)
+        let src = source.appendingPathComponent(names[sourceIndex])
+        let held = source.appendingPathComponent("invalid-held-\(sourceIndex)")
+        try fm.moveItem(at: src, to: held)
+        if substitution == 0 {
+            try Data().write(to: src)
+        } else {
+            try fm.createDirectory(at: src, withIntermediateDirectories: false)
+        }
+        var rejected = false
+        do { try restore(failAtCopy: nil) } catch CopyFault.invalidSource { rejected = true }
+        try require(rejected, "invalid source accepted at index \(sourceIndex)")
+        try require(Data(contentsOf: manifest) == before, "invalid source published manifest")
+        try require(names.allSatisfy { !fm.fileExists(atPath: library.appendingPathComponent($0).path) },
+                    "invalid source created orphan audio")
+        try require(Data(contentsOf: original) == originalBytes, "invalid source damaged original")
+        try fm.removeItem(at: src)
+        try fm.moveItem(at: held, to: src)
+    }
+}
+print("PASS: 224 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
