@@ -32,6 +32,7 @@ private let entries = [Entry(name: "borrowed.mp3", bytes: borrowed, owned: false
                        Entry(name: "new.mp3", bytes: created, owned: true)]
 private func replay() throws {
     let record = try JSONDecoder().decode(Journal.self, from: Data(contentsOf: journal))
+    guard !record.entries.isEmpty else { throw Rejection.unsafe }
     var names = Set<String>()
     for entry in record.entries {
         guard !entry.name.isEmpty, !entry.name.hasPrefix("."),
@@ -182,3 +183,25 @@ for committed in [false, true] {
     }
 }
 print("PASS: 20 ordered rollback/commit validation-failure isolation scenarios")
+
+// Invalid journal structures must never authorize deletion or evidence cleanup.
+for committed in [false, true] {
+    try reset()
+    try created.write(to: path("new.mp3"))
+    if committed { try new.write(to: manifest, options: .atomic) }
+    let before = try Data(contentsOf: path("new.mp3"))
+    for candidate in [
+        Journal(entries: [], committed: committed),
+        Journal(entries: [entries[0], entries[0]], committed: committed),
+        Journal(entries: [entries[1], entries[1]], committed: committed)
+    ] {
+        try persist(candidate)
+        var rejected = false
+        do { try replay() } catch { rejected = true }
+        try assert(rejected, "invalid journal accepted")
+        try assert(fm.fileExists(atPath: journal.path), "invalid journal erased evidence")
+        try assert(Data(contentsOf: path("new.mp3")) == before, "invalid journal changed owned media")
+        try assert(Data(contentsOf: manifest) == (committed ? new : old), "invalid journal changed manifest")
+    }
+}
+print("PASS: 6 empty/duplicate journal isolation scenarios")
