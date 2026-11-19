@@ -313,6 +313,32 @@ enum AudioSourceFinderTests {
                AudioSourceFinder.archiveCandidate(malformedSize,
                    identifier: "invalid-size", for: wish) == nil,
                "malformed declared Archive size cannot authorize an automatic download")
+        // An explicitly malformed Archive source is not the same as an absent
+        // classification on a legacy upload. A malformed value must never
+        // become an unattended original even when title/duration match.
+        for malformed in ["42", "null", "{\\"kind\\":\\"original\\"}", "true"] {
+            let json = """
+            {"metadata":{"title":"The Song","creator":"The Artist"},
+             "files":[{"name":"The Song.mp3","source":\(malformed),
+                       "size":"5120000","length":"212"}]}
+            """
+            let item = try JSONDecoder().decode(
+                AudioSourceFinder.ArchiveItem.self, from: Data(json.utf8))
+            verify(item.files?.first?.hasInvalidSource == true &&
+                   AudioSourceFinder.archiveCandidate(
+                       item, identifier: "malformed-source", for: wish) == nil,
+                   "malformed explicit Archive source never becomes a legacy original")
+        }
+        let legacySource = """
+        {"metadata":{"title":"The Song","creator":"The Artist"},
+         "files":[{"name":"The Song.mp3","size":"5120000","length":"212"}]}
+        """
+        let legacyItem = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(legacySource.utf8))
+        verify(legacyItem.files?.first?.hasInvalidSource == false &&
+               AudioSourceFinder.archiveCandidate(
+                   legacyItem, identifier: "legacy-source", for: wish) != nil,
+               "truly absent source classification retains legacy exact-match behavior")
         // A duplicate filename with one valid row and one malformed declared
         // size must not become eligible merely because the valid row is first.
         // Both permutations must reject the entire unattended candidate.
