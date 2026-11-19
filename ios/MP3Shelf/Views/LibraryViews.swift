@@ -4031,11 +4031,12 @@ struct PublisherPageInspectorView: View {
     @State private var inspectionID = UUID()
     @State private var completedInspection = false
     @State private var candidateFilter = ""
+    @State private var visibleLinkLimit = 40
     @State private var excludedLinkCount = 0
     @State private var inspectionNotice: String?
     @AccessibilityFocusState private var inspectionFeedbackFocused: Bool
 
-    private var visibleCandidates: [URL] {
+    private var matchingCandidates: [URL] {
         let query = candidateFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return candidates }
         return candidates.filter {
@@ -4043,6 +4044,10 @@ struct PublisherPageInspectorView: View {
             ($0.host?.localizedStandardContains(query) ?? false) ||
             $0.absoluteString.localizedStandardContains(query)
         }
+    }
+
+    private var visibleCandidates: [URL] {
+        Array(matchingCandidates.prefix(visibleLinkLimit))
     }
 
     // Editing the URL or leaving this sheet invalidates the in-flight response.
@@ -4055,6 +4060,7 @@ struct PublisherPageInspectorView: View {
         isInspecting = false
         candidates = []
         candidateFilter = ""
+        visibleLinkLimit = 40
         excludedLinkCount = 0
         error = nil
         completedInspection = false
@@ -4217,13 +4223,19 @@ struct PublisherPageInspectorView: View {
                                 .autocorrectionDisabled()
                                 .accessibilityHint("Filter results by filename or publisher without another network request")
                             if !candidateFilter.isEmpty {
-                                Button("Clear link filter") { candidateFilter = "" }
+                                Button("Clear link filter") { candidateFilter = ""; visibleLinkLimit = 40 }
                                     .frame(minHeight: 44)
                             }
                         }
-                        if visibleCandidates.isEmpty {
+                        if matchingCandidates.isEmpty {
                             Text("No links match this filter. Clear it to see all discovered files.")
                                 .foregroundStyle(.secondary)
+                        }
+                        if !matchingCandidates.isEmpty {
+                            Text("Showing \(visibleCandidates.count) of \(matchingCandidates.count) matching links")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Showing \(visibleCandidates.count) of \(matchingCandidates.count) matching audio links")
                         }
                         ForEach(visibleCandidates, id: \.absoluteString) { file in
                             VStack(alignment: .leading, spacing: 8) {
@@ -4260,6 +4272,16 @@ struct PublisherPageInspectorView: View {
                             }
                             .padding(.vertical, 4)
                         }
+                        if visibleCandidates.count < matchingCandidates.count {
+                            Button {
+                                visibleLinkLimit += 40
+                            } label: {
+                                Label("Show more audio links", systemImage: "list.bullet")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .frame(minHeight: 44)
+                            }
+                            .accessibilityHint("Show the next audio links without inspecting the webpage again")
+                        }
                     }
                 }
                 Section {
@@ -4280,6 +4302,9 @@ struct PublisherPageInspectorView: View {
             }
             .sheet(item: $chosenAudio) { selected in
                 AuthorizedPlaylistAudioView(wish: selected.wish, initialURL: selected.url)
+            }
+            .onChange(of: candidateFilter) { _, _ in
+                visibleLinkLimit = 40
             }
             .onChange(of: pageText) { _, _ in
                 invalidateInspection()
