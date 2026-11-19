@@ -101,7 +101,7 @@ for _ in 0..<16 {
     try reset()
     try created.write(to: path("new.mp3"))
     for damaged in [Data(), Data("{".utf8), Data("null".utf8),
-                    Data("{\\"entries\\":[]}".utf8)] {
+                    Data(#"{"entries":[]}"#.utf8)] {
         try damaged.write(to: journal, options: .atomic)
         var rejected = false
         do { try replay() } catch { rejected = true }
