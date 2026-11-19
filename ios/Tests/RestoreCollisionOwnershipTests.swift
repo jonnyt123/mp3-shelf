@@ -38,7 +38,8 @@ func publishFile(from source: URL, to destination: URL) throws {
     guard (try? fm.destinationOfSymbolicLink(atPath: source.path)) == nil,
           let attrs = try? fm.attributesOfItem(atPath: source.path),
           attrs[.type] as? FileAttributeType == .typeRegular,
-          (attrs[.referenceCount] as? NSNumber)?.intValue == 1 else {
+          (attrs[.referenceCount] as? NSNumber)?.intValue == 1,
+          (attrs[.size] as? NSNumber)?.int64Value ?? 0 > 0 else {
         throw RestoreError.invalidStage
     }
     do {
@@ -308,3 +309,44 @@ for scenario in 0..<80 {
 }
 try reset()
 print("PASS: 80 rejected staging inputs and collision attempts preserve user-owned audio")
+
+// Absent-destination regression: collision tests alone cannot prove the stage
+// validator rejects empty files, directories, symlinks and hard-linked audio.
+// Verify rejection before publication, not merely preservation of an existing
+// destination. A valid stage must publish and leave exactly one durable copy.
+let absentRoot = root.appendingPathComponent("absent-destination")
+try fm.createDirectory(at: absentRoot, withIntermediateDirectories: true)
+let absentDestination = absentRoot.appendingPathComponent("published.mp3")
+let absentStage = absentRoot.appendingPathComponent("incoming.mp3")
+let absentProtected = absentRoot.appendingPathComponent("user-owned.mp3")
+let absentProtectedBytes = Data(repeating: 0xE5, count: 8192)
+try absentProtectedBytes.write(to: absentProtected)
+for scenario in 0..<100 {
+    if fm.fileExists(atPath: absentStage.path) ||
+        (try? fm.destinationOfSymbolicLink(atPath: absentStage.path)) != nil {
+        try fm.removeItem(at: absentStage)
+    }
+    if fm.fileExists(atPath: absentDestination.path) {
+        try fm.removeItem(at: absentDestination)
+    }
+    switch scenario % 5 {
+    case 0: try Data().write(to: absentStage)
+    case 1: try fm.createDirectory(at: absentStage, withIntermediateDirectories: false)
+    case 2: try fm.createSymbolicLink(at: absentStage, withDestinationURL: absentProtected)
+    case 3: try fm.linkItem(at: absentProtected, to: absentStage)
+    default: try incoming.write(to: absentStage)
+    }
+    if scenario % 5 == 4 {
+        try publishFile(from: absentStage, to: absentDestination)
+        try check(Data(contentsOf: absentDestination) == incoming)
+        try check(!fm.fileExists(atPath: absentStage.path))
+    } else {
+        do {
+            try publishFile(from: absentStage, to: absentDestination)
+            fatalError("invalid stage published into absent destination")
+        } catch RestoreError.invalidStage {}
+        try check(!fm.fileExists(atPath: absentDestination.path))
+    }
+    try check(Data(contentsOf: absentProtected) == absentProtectedBytes)
+}
+print("PASS: 100 absent-destination staging cases reject unsafe inputs and publish valid audio")
