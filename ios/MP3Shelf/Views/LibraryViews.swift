@@ -595,14 +595,32 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // Importing can finish after the Files picker has dismissed, and the
-    // library's importing flag may settle before this view's own Task does.
-    // Both completion paths converge here; neither auto-starts playback.
+    // Imports from other screens do not expose their per-file report here.
+    // Offer an explicit local-only recheck, never an automatic queue replacement.
     private func markPartialQueueReadyForManualRefresh() {
         guard !audioImportBusy, bulkSkippedRecordingCount > 0,
               partialQueueShuffle != nil else { return }
         partialQueueNeedsRefresh = true
-        bulkPlaybackNotice = "Audio import finished. Refresh playback to check restored recordings; the current queue is unchanged."
+        bulkPlaybackNotice = "The library import finished. Refresh playback to recheck missing recordings; the current queue is unchanged."
+    }
+
+    // A failed or duplicate-only Files import cannot restore missing audio.
+    // Partial success can be rechecked manually without replacing the queue.
+    private func completeLocalAudioImport(importedCount: Int, skippedCount: Int,
+                                          failureCount: Int) {
+        guard bulkSkippedRecordingCount > 0, partialQueueShuffle != nil else { return }
+        guard importedCount > 0 else {
+            partialQueueNeedsRefresh = false
+            bulkPlaybackNotice = failureCount > 0
+                ? "No recordings were imported. Review the import errors, then retry or choose another audio file. The current queue is unchanged."
+                : "No new recordings were imported. Duplicate files do not restore missing audio. The current queue is unchanged."
+            return
+        }
+        partialQueueNeedsRefresh = true
+        let detail = failureCount > 0 || skippedCount > 0
+            ? "Some selected files were skipped or failed."
+            : "Audio files were imported."
+        bulkPlaybackNotice = "\(detail) Refresh playback to recheck missing recordings; the current queue is unchanged."
     }
 
     // Validate the whole playback queue off the main actor. A missing local
@@ -1188,7 +1206,9 @@ struct LibraryView: View {
                 Task { @MainActor in
                     let outcome = await library.importAudio(urls: urls)
                     importInProgress = false
-                    markPartialQueueReadyForManualRefresh()
+                    completeLocalAudioImport(importedCount: outcome.imported,
+                                             skippedCount: outcome.skipped,
+                                             failureCount: outcome.errors.count)
                     message = outcome.description
                 }
             case .failure(let error):
