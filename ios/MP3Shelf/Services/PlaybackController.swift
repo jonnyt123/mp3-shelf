@@ -41,11 +41,26 @@ final class PlaybackController: NSObject, ObservableObject {
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published var isShuffled = false {
-        didSet { playbackOrder.setShuffle(isShuffled) }
+        didSet {
+            playbackOrder.setShuffle(isShuffled)
+            // A shuffle change can select a different successor. A failed
+            // crossfade attempt against the old queue must not block it.
+            attemptedCrossfadePlayer = nil
+        }
     }
-    @Published var repeatMode: RepeatMode = .off
+    @Published var repeatMode: RepeatMode = .off {
+        didSet {
+            // Repeat-all can expose a successor that was not eligible under
+            // repeat-off; permit a fresh attempt without seeking the song.
+            attemptedCrossfadePlayer = nil
+        }
+    }
     @Published var crossfadeSeconds: Double = UserDefaults.standard.double(forKey: "mp3shelf.crossfadeSeconds") {
-        didSet { UserDefaults.standard.set(crossfadeSeconds, forKey: "mp3shelf.crossfadeSeconds") }
+        didSet {
+            UserDefaults.standard.set(crossfadeSeconds, forKey: "mp3shelf.crossfadeSeconds")
+            // A user-adjusted transition window is a new explicit attempt.
+            attemptedCrossfadePlayer = nil
+        }
     }
 
     private weak var library: MusicLibrary?
