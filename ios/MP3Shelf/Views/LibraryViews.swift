@@ -3615,6 +3615,7 @@ struct WebAudioDiscoveryView: View {
         inspectionGeneration = UUID()
         for task in manualInspectionTasks.values { task.cancel() }
         manualInspectionTasks.removeAll()
+        manualPageOwners.removeAll()
         wishInspectionIDs.removeAll()
         for task in directInspectionTasks.values { task.cancel() }
         directInspectionTasks.removeAll()
@@ -3627,6 +3628,25 @@ struct WebAudioDiscoveryView: View {
     @State private var inspectingPages: Set<String> = []
     @State private var inspectingWishes: Set<UUID> = []
     @State private var manualInspectionTasks: [UUID: Task<Void, Never>] = [:]
+    // A publisher hit can appear in multiple imported songs. Track ownership
+    // separately so cancelling one song cannot hide another song's progress.
+    @State private var manualPageOwners: [String: Set<UUID>] = [:]
+
+    private func beginManualPage(_ hitID: String, for wishID: UUID) {
+        manualPageOwners[hitID, default: []].insert(wishID)
+        inspectingPages.insert(hitID)
+    }
+
+    private func endManualPage(_ hitID: String, for wishID: UUID) {
+        manualPageOwners[hitID]?.remove(wishID)
+        if manualPageOwners[hitID]?.isEmpty == true {
+            manualPageOwners.removeValue(forKey: hitID)
+        }
+        // Direct inspections and automatic scans also use this indicator.
+        if manualPageOwners[hitID] == nil && directInspectionTasks[hitID] == nil && !scanning {
+            inspectingPages.remove(hitID)
+        }
+    }
     @State private var inspectionGeneration = UUID()
     @State private var wishInspectionIDs: [UUID: UUID] = [:]
     @State private var directInspectionTasks: [String: Task<Void, Never>] = [:]
@@ -3843,7 +3863,7 @@ struct WebAudioDiscoveryView: View {
                                                     inspectedCount[wish.id, default: 0] += 1
                                                     continue
                                                 }
-                                                inspectingPages.insert(hit.id)
+                                                beginManualPage(hit.id, for: wish.id)
                                                 inspectionErrors.removeValue(forKey: hit.id)
                                                 do {
                                                     let links = try await AudioLandingPageInspector.inspect(hit.url)
@@ -3856,7 +3876,7 @@ struct WebAudioDiscoveryView: View {
                                                     guard !Task.isCancelled, inspectionGeneration == generation else { break }
                                                     inspectionErrors[hit.id] = error.localizedDescription
                                                 }
-                                                inspectingPages.remove(hit.id)
+                                                endManualPage(hit.id, for: wish.id)
                                                 inspectedCount[wish.id, default: 0] += 1
                                             }
                                             guard inspectionGeneration == generation,
@@ -3880,8 +3900,9 @@ struct WebAudioDiscoveryView: View {
                                             wishInspectionIDs.removeValue(forKey: wish.id)
                                             inspectingWishes.remove(wish.id)
                                             // Only cancel this song. Other songs may be inspected concurrently.
-                                            let candidateIDs = Set(candidates.map(\.id))
-                                            inspectingPages.subtract(candidateIDs)
+                                            for hit in candidates {
+                                                endManualPage(hit.id, for: wish.id)
+                                            }
                                         }
                                         .frame(minHeight: 44)
                                         .accessibilityHint("Stops outstanding page inspections without deleting completed results")
