@@ -30,7 +30,7 @@ private func reset() throws {
 }
 private let entries = [Entry(name: "borrowed.mp3", bytes: borrowed, owned: false),
                        Entry(name: "new.mp3", bytes: created, owned: true)]
-private func replay() throws {
+private func replay(beforeCleanup: (() throws -> Void)? = nil) throws {
     let record = try JSONDecoder().decode(Journal.self, from: Data(contentsOf: journal))
     guard !record.entries.isEmpty else { throw Rejection.unsafe }
     var names = Set<String>()
@@ -50,6 +50,16 @@ private func replay() throws {
     }
     guard (try? Data(contentsOf: manifest)) == (record.committed ? new : old)
     else { throw Rejection.changed }
+    try beforeCleanup?()
+    // Recheck every owned destination after the validation/cleanup boundary.
+    // A concurrent replacement must never be unlinked using stale validation.
+    for entry in record.entries where entry.owned {
+        let file = path(entry.name)
+        guard (try? fm.destinationOfSymbolicLink(atPath: file.path)) == nil else { throw Rejection.unsafe }
+        if fm.fileExists(atPath: file.path) {
+            guard (try? Data(contentsOf: file)) == entry.bytes else { throw Rejection.changed }
+        } else if record.committed { throw Rejection.changed }
+    }
     if !record.committed {
         for entry in record.entries where entry.owned {
             if fm.fileExists(atPath: path(entry.name).path) { try fm.removeItem(at: path(entry.name)) }
@@ -205,3 +215,31 @@ for committed in [false, true] {
     }
 }
 print("PASS: 6 empty/duplicate journal isolation scenarios")
+
+// Deterministic validation-to-cleanup replacement race. A journal replay
+// must not unlink audio that appeared after its initial ownership check.
+for mode in 0..<3 {
+    try reset()
+    try created.write(to: path("new.mp3"))
+    try persist(Journal(entries: entries, committed: false))
+    let foreign = Data(repeating: 0xD4, count: 16384)
+    var rejected = false
+    do {
+        try replay(beforeCleanup: {
+            try fm.removeItem(at: path("new.mp3"))
+            switch mode {
+            case 0: try foreign.write(to: path("new.mp3"))
+            case 1: try fm.createSymbolicLink(at: path("new.mp3"), withDestinationURL: path("unrelated.mp3"))
+            default: try fm.createDirectory(at: path("new.mp3"), withIntermediateDirectories: false)
+            }
+        })
+    } catch { rejected = true }
+    try assert(rejected, "concurrent destination replacement was accepted")
+    try assert(fm.fileExists(atPath: journal.path), "race discarded recovery evidence")
+    try assert(Data(contentsOf: manifest) == old, "race changed manifest")
+    try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "race changed unrelated media")
+    if mode == 0 { try assert(Data(contentsOf: path("new.mp3")) == foreign, "race deleted foreign audio") }
+    if mode == 1 { try assert((try? fm.destinationOfSymbolicLink(atPath: path("new.mp3").path)) != nil, "race removed substituted symlink") }
+    if mode == 2 { var directory: ObjCBool = false; try assert(fm.fileExists(atPath: path("new.mp3").path, isDirectory: &directory) && directory.boolValue, "race removed substituted directory") }
+}
+print("PASS: 3 validation-to-cleanup replacement isolation scenarios")
