@@ -349,6 +349,27 @@ enum AudioSourceFinderTests {
                     "case-aliased Archive filenames must not auto-select by row order")
             }
         }
+        // An unclassified sibling can be a second uploaded recording, even
+        // when the catalog also contains a confidently classified original.
+        // Ignoring it would falsely authorize an unattended exact match.
+        let originalAndUnknown = """
+        {"metadata":{"title":"The Song","creator":"The Artist"},
+         "files":[{"name":"The Song.mp3","source":"original","size":5120000,"length":"212"},
+                  {"name":"Other Take.mp3","size":5120000,"length":"212"}]}
+        """
+        let ambiguousUnknown = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(originalAndUnknown.utf8))
+        verify(AudioSourceFinder.archiveCandidate(ambiguousUnknown,
+            identifier: "original-and-unknown", for: wish) == nil,
+            "unclassified competing audio prevents false unique automatic selection")
+        let originalAndDerivative = originalAndUnknown.replacingOccurrences(
+            of: "\"name\":\"Other Take.mp3\",",
+            with: "\"name\":\"Other Take.mp3\",\"source\":\"derivative\",")
+        let safeDerivative = try JSONDecoder().decode(
+            AudioSourceFinder.ArchiveItem.self, from: Data(originalAndDerivative.utf8))
+        verify(AudioSourceFinder.archiveCandidate(safeDerivative,
+            identifier: "original-and-derivative", for: wish) != nil,
+            "explicit derivative alongside original does not block a valid match")
         let identicalDuplicateJSON = """
         {"metadata":{"title":"The Song","creator":"The Artist"},
          "files":[\(validDuplicate),\(validDuplicate)]}
