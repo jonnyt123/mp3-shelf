@@ -177,3 +177,57 @@ try interruptedPayload.write(to: identicalTarget)
 try check(Data(contentsOf: identicalTarget) == Data(contentsOf: interruptedTarget))
 try check(inode(identicalTarget) != inode(interruptedTarget))
 print("PASS: interrupted link publication, stage reuse and inode ownership isolation")
+
+// Crash replay with an identity-bound publication receipt. A boolean "owned"
+// flag is insufficient: a different writer may replace the destination before
+// rollback, including with byte-identical audio. Record device + inode while
+// the published link exists and refuse cleanup if either changes.
+struct PublicationIdentity: Equatable {
+    let device: NSNumber
+    let inode: NSNumber
+}
+func identity(at url: URL) throws -> PublicationIdentity {
+    let attrs = try fm.attributesOfItem(atPath: url.path)
+    guard let device = attrs[.systemNumber] as? NSNumber,
+          let number = attrs[.systemFileNumber] as? NSNumber,
+          attrs[.type] as? FileAttributeType == .typeRegular else {
+        throw RestoreError.invalidStage
+    }
+    return PublicationIdentity(device: device, inode: number)
+}
+func rollbackUncommitted(at destination: URL, expected: PublicationIdentity) throws -> Bool {
+    // Missing or replaced files must never be deleted by a stale receipt.
+    guard let current = try? identity(at: destination), current == expected else { return false }
+    try fm.removeItem(at: destination)
+    return true
+}
+let replayRoot = root.appendingPathComponent("replay")
+try fm.createDirectory(at: replayRoot, withIntermediateDirectories: true)
+let replayDestination = replayRoot.appendingPathComponent("song.mp3")
+let replayStage = replayRoot.appendingPathComponent("pending.mp3")
+for round in 0..<100 {
+    try Data(repeating: UInt8(round % 251), count: 4096).write(to: replayStage)
+    try fm.linkItem(at: replayStage, to: replayDestination)
+    let receipt = try identity(at: replayDestination)
+    try check(identity(at: replayStage) == receipt)
+    try fm.removeItem(at: replayStage)
+    if round % 2 == 0 {
+        // The original publisher remains owner: rollback may remove it once.
+        try check(try rollbackUncommitted(at: replayDestination, expected: receipt))
+        try check(!(try rollbackUncommitted(at: replayDestination, expected: receipt)))
+    } else {
+        // The original was removed, then an unrelated writer reused its name.
+        try fm.removeItem(at: replayDestination)
+        let replacement = replayRoot.appendingPathComponent("replacement-\(round).mp3")
+        try Data(repeating: UInt8(round % 251), count: 4096).write(to: replacement)
+        try fm.linkItem(at: replacement, to: replayDestination)
+        let replacementIdentity = try identity(at: replayDestination)
+        try check(replacementIdentity != receipt)
+        try check(!(try rollbackUncommitted(at: replayDestination, expected: receipt)))
+        try check(identity(at: replayDestination) == replacementIdentity)
+        try check(Data(contentsOf: replayDestination) == Data(contentsOf: replacement))
+        try fm.removeItem(at: replacement)
+        try fm.removeItem(at: replayDestination)
+    }
+}
+print("PASS: 100 identity-bound crash replays, including replaced identical audio")
