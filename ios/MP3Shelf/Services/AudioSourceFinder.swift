@@ -292,30 +292,50 @@ enum AudioSourceFinder {
     /// avoids misclassifying titles such as "Deliver" as a live performance.
     /// This is a conservative automatic-selection gate, not a license check.
     static func recordingEditionAgrees(filename: String, requestedTitle: String) -> Bool {
+        // Compare recording identities, not literal spelling of an edition.
+        // "Remaster" and "Remastered" describe the same category, while
+        // remastered studio and remastered live are still different recordings.
         func tokens(_ value: String) -> [String] {
             value.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
                 .filter { !$0.isEmpty }
         }
-        let file = tokens((filename as NSString).deletingPathExtension)
-        let requested = tokens(requestedTitle)
-        let markers: [[String]] = [
-            ["karaoke"], ["instrumental"], ["cover"], ["live"], ["acoustic"],
-            ["demo"], ["remix"], ["remaster"], ["remastered"], ["nightcore"],
-            ["slowed"], ["sped"], ["radio", "edit"], ["extended", "mix"],
-            ["alternate", "take"]
-        ]
         func contains(_ phrase: [String], in words: [String]) -> Bool {
             guard words.count >= phrase.count else { return false }
             return (0...(words.count - phrase.count)).contains {
                 Array(words[$0..<($0 + phrase.count)]) == phrase
             }
         }
-        return markers.allSatisfy { marker in
-            // An explicitly requested live/remix/remastered edition is not
-            // interchangeable with a generic studio file either. Require
-            // matching evidence in both directions before auto-selection.
-            contains(marker, in: file) == contains(marker, in: requested)
+        func editions(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            var result = Set<String>()
+            let variants: [(String, [[String]])] = [
+                ("karaoke", [["karaoke"]]),
+                ("instrumental", [["instrumental"]]),
+                ("cover", [["cover"]]),
+                ("live", [["live"]]),
+                ("acoustic", [["acoustic"], ["unplugged"]]),
+                ("demo", [["demo"]]),
+                ("remix", [["remix"]]),
+                ("remaster", [["remaster"], ["remastered"]]),
+                ("nightcore", [["nightcore"]]),
+                ("slowed", [["slowed"], ["slowed", "down"]]),
+                ("sped-up", [["sped", "up"], ["speed", "up"]]),
+                ("radio-edit", [["radio", "edit"]]),
+                ("extended-mix", [["extended", "mix"]]),
+                ("alternate-take", [["alternate", "take"]]),
+                ("mono", [["mono"]]),
+                ("stereo", [["stereo"]]),
+                ("re-recording", [["re", "recorded"], ["rerecorded"],
+                                  ["re", "recording"], ["rerecording"]])
+            ]
+            for (category, spellings) in variants where spellings.contains(where: {
+                contains($0, in: words)
+            }) {
+                result.insert(category)
+            }
+            return result
         }
+        return editions((filename as NSString).deletingPathExtension) == editions(requestedTitle)
     }
 
     // Avoid spending an entire iOS background processing window on up to
