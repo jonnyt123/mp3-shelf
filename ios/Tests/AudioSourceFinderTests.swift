@@ -316,7 +316,7 @@ enum AudioSourceFinderTests {
         // An explicitly malformed Archive source is not the same as an absent
         // classification on a legacy upload. A malformed value must never
         // become an unattended original even when title/duration match.
-        for malformed in ["42", "null", "{\\"kind\\":\\"original\\"}", "true"] {
+        for malformed in ["42", "null", #"{\"kind\":\"original\"}"#, "true"] {
             let json = """
             {"metadata":{"title":"The Song","creator":"The Artist"},
              "files":[{"name":"The Song.mp3","source":\(malformed),
