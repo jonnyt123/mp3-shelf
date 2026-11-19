@@ -187,6 +187,40 @@ for borrowedIndex in names.indices {
     }
 }
 
+// A pre-existing matching recording must survive an interrupted copy of a
+// different recording, even when the new destination contains partial bytes.
+// This combines borrowed ownership with the mid-copy failure path.
+for borrowedIndex in names.indices {
+    for interruptedIndex in 0..<(names.count - 1) {
+        for name in names {
+            let path = library.appendingPathComponent(name)
+            if fm.fileExists(atPath: path.path) { try fm.removeItem(at: path) }
+        }
+        try before.write(to: manifest, options: .atomic)
+        let borrowed = library.appendingPathComponent(names[borrowedIndex])
+        try payloads[borrowedIndex].write(to: borrowed)
+        var rejected = false
+        do { try restore(failAtCopy: nil, failDuringCopy: interruptedIndex) }
+        catch CopyFault.injected { rejected = true }
+        try require(rejected, "borrowed mid-copy failure was not injected")
+        try require(Data(contentsOf: borrowed) == payloads[borrowedIndex],
+                    "borrowed audio removed by partial-copy rollback")
+        try require(Data(contentsOf: manifest) == before,
+                    "borrowed mid-copy failure published metadata")
+        try require(names.enumerated().allSatisfy { index, name in
+            index == borrowedIndex || !fm.fileExists(atPath: library.appendingPathComponent(name).path)
+        }, "partial destination survived borrowed rollback")
+        try require(Data(contentsOf: original) == originalBytes,
+                    "borrowed mid-copy rollback modified existing audio")
+        try restore(failAtCopy: nil)
+        try require(Data(contentsOf: manifest) == after, "borrowed mid-copy retry failed")
+        for (index, name) in names.enumerated() {
+            try require(Data(contentsOf: library.appendingPathComponent(name)) == payloads[index],
+                        "borrowed mid-copy retry corrupted audio")
+        }
+    }
+}
+
 // Missing source and symlink attempts must not mutate a valid existing library.
 for sourceIndex in names.indices {
     for name in names {
@@ -275,4 +309,4 @@ for sourceIndex in names.indices {
         try fm.moveItem(at: held, to: src)
     }
 }
-print("PASS: 24 borrowed-destination rollback failures plus 320 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
+print("PASS: 30 borrowed-destination rollback failures plus 320 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
