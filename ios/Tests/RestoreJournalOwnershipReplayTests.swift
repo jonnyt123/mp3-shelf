@@ -243,3 +243,53 @@ for mode in 0..<3 {
     if mode == 2 { var directory: ObjCBool = false; try assert(fm.fileExists(atPath: path("new.mp3").path, isDirectory: &directory) && directory.boolValue, "race removed substituted directory") }
 }
 print("PASS: 3 validation-to-cleanup replacement isolation scenarios")
+
+
+// Multi-entry rollback must validate the *entire* journal before unlinking the
+// first owned recording. A late conflict in the second owned recording must
+// preserve both recordings and the journal, regardless of journal ordering.
+for reverse in [false, true] {
+    for substitution in 0..<3 {
+        try reset()
+        let second = path("second.mp3")
+        let secondBytes = Data(repeating: 0xB2, count: 3072)
+        let foreign = Data(repeating: 0xE1, count: 6144)
+        try created.write(to: path("new.mp3"))
+        try secondBytes.write(to: second)
+        let secondEntry = Entry(name: "second.mp3", bytes: secondBytes, owned: true)
+        let ordered = reverse ? [secondEntry, entries[1], entries[0]] : [entries[0], entries[1], secondEntry]
+        try persist(Journal(entries: ordered, committed: false))
+        var rejected = false
+        do {
+            try replay(beforeCleanup: {
+                try fm.removeItem(at: second)
+                switch substitution {
+                case 0: try foreign.write(to: second)
+                case 1: try fm.createSymbolicLink(at: second, withDestinationURL: path("unrelated.mp3"))
+                default: try fm.createDirectory(at: second, withIntermediateDirectories: false)
+                }
+            })
+        } catch { rejected = true }
+        try assert(rejected, "multi-entry rollback accepted late ownership conflict")
+        try assert(Data(contentsOf: path("new.mp3")) == created,
+                   "multi-entry rollback partially deleted valid owned audio")
+        try assert(Data(contentsOf: path("borrowed.mp3")) == borrowed,
+                   "multi-entry rollback modified borrowed audio")
+        try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated,
+                   "multi-entry rollback modified unrelated audio")
+        try assert(Data(contentsOf: manifest) == old, "multi-entry rollback changed manifest")
+        try assert(fm.fileExists(atPath: journal.path), "multi-entry rollback lost recovery evidence")
+        if substitution == 0 {
+            try assert(Data(contentsOf: second) == foreign, "multi-entry rollback deleted foreign replacement")
+        } else if substitution == 1 {
+            try assert((try? fm.destinationOfSymbolicLink(atPath: second.path)) != nil,
+                       "multi-entry rollback deleted substituted link")
+        } else {
+            var isDirectory: ObjCBool = false
+            try assert(fm.fileExists(atPath: second.path, isDirectory: &isDirectory) && isDirectory.boolValue,
+                       "multi-entry rollback deleted substituted directory")
+        }
+        try fm.removeItem(at: second)
+    }
+}
+print("PASS: 6 multi-entry late-conflict all-or-nothing rollback scenarios")
