@@ -36,6 +36,28 @@ enum AudioSourceFinderTests {
             "oversized RSS catalog response is rejected")
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        // Single-file Archive items often hide a different recording edition
+        // in the physical filename despite exact item-level title/artist.
+        for alternate in ["The Song (Karaoke).mp3", "The Song - Live.mp3",
+                          "The Song (Slowed).mp3", "The Song - Radio Edit.mp3",
+                          "The Song (Acoustic).mp3", "The Song (Remix).mp3"] {
+            verify(!AudioSourceFinder.archiveFileCandidate(
+                name: alternate, source: "original", sizeBytes: "6000000",
+                itemTitle: "The Song", itemCreator: "The Artist",
+                audioFileCount: 1, wish: wish),
+                "single-file alternate edition cannot auto-match: \(alternate)")
+        }
+        verify(AudioSourceFinder.archiveFileCandidate(
+            name: "The Song.mp3", source: "original", sizeBytes: "6000000",
+            itemTitle: "The Song", itemCreator: "The Artist",
+            audioFileCount: 1, wish: wish),
+            "single-file original edition remains eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Deliver.mp3", requestedTitle: "Deliver"),
+            "embedded live letters are not a live-edition marker")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song - Live.mp3", requestedTitle: "The Song (Live)"),
+            "explicit matching live edition remains eligible")
         // Archive may contain one broken file entry among usable recordings.
         // Preserve the valid original instead of discarding the whole item.
         // One invalid search row must not abort a whole playlist lookup.
