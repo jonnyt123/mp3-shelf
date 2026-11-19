@@ -242,8 +242,15 @@ struct LibraryView: View {
     // playback of the newly selected results on large libraries.
     private func playbackSelectionIsCurrent() -> Bool {
         guard let playbackSelectionSnapshot, !isSearchUpdating else { return false }
-        return displayed.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }
-            == playbackSelectionSnapshot
+        let current = displayed.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }
+        // An ID collision can make a restored recording ambiguous even when
+        // its visible position and file URL appear unchanged. Never authorize
+        // recovery of a queue whose recording identities are not unique.
+        guard Set(current.map(\.id)).count == current.count,
+              Set(playbackSelectionSnapshot.map(\.id)).count == playbackSelectionSnapshot.count else {
+            return false
+        }
+        return current == playbackSelectionSnapshot
     }
 
     private func invalidateStalePlaybackRecovery() {
@@ -600,6 +607,13 @@ struct LibraryView: View {
     private func markPartialQueueReadyForManualRefresh() {
         guard !audioImportBusy, bulkSkippedRecordingCount > 0,
               partialQueueShuffle != nil else { return }
+        // Imports initiated outside Files do not provide a per-file report to
+        // this view. Reconcile their visible selection before exposing Refresh:
+        // an expanded or ambiguous library must require a new explicit Play.
+        guard playbackSelectionIsCurrent() else {
+            invalidateStalePlaybackRecovery()
+            return
+        }
         partialQueueNeedsRefresh = true
         bulkPlaybackNotice = "The library import finished. Refresh playback to recheck missing recordings; the current queue is unchanged."
     }
@@ -621,6 +635,12 @@ struct LibraryView: View {
             bulkPlaybackNotice = explanation + (canStillRefresh
                 ? " You can still refresh playback after your earlier import; the current queue is unchanged."
                 : " The current queue is unchanged.")
+            return
+        }
+        // This helper also handles future callers outside the Files completion
+        // closure. A successful import cannot authorize a changed queue.
+        guard playbackSelectionIsCurrent() else {
+            invalidateStalePlaybackRecovery()
             return
         }
         partialQueueNeedsRefresh = true
