@@ -3612,6 +3612,9 @@ struct WebAudioDiscoveryView: View {
         scanTask?.cancel()
         scanTask = nil
         scanning = false
+        inspectionGeneration = UUID()
+        for task in manualInspectionTasks.values { task.cancel() }
+        manualInspectionTasks.removeAll()
         inspectingPages.removeAll()
         inspectingWishes.removeAll()
     }
@@ -3619,6 +3622,8 @@ struct WebAudioDiscoveryView: View {
     @State private var inspectingWish: PlaylistWish?
     @State private var inspectingPages: Set<String> = []
     @State private var inspectingWishes: Set<UUID> = []
+    @State private var manualInspectionTasks: [UUID: Task<Void, Never>] = [:]
+    @State private var inspectionGeneration = UUID()
     @State private var inspectedCount: [UUID: Int] = [:]
     @State private var extractedLinks: [String: [URL]] = [:]
     @State private var inspectionErrors: [String: String] = [:]
@@ -3820,10 +3825,10 @@ struct WebAudioDiscoveryView: View {
                                         guard !inspectingWishes.contains(wish.id) else { return }
                                         inspectingWishes.insert(wish.id)
                                         inspectedCount[wish.id] = 0
-                                        Task {
-                                            defer { inspectingWishes.remove(wish.id) }
+                                        let generation = inspectionGeneration
+                                        manualInspectionTasks[wish.id] = Task {
                                             for hit in candidates {
-                                                if Task.isCancelled { break }
+                                                guard !Task.isCancelled, inspectionGeneration == generation else { break }
                                                 if extractedLinks[hit.id] != nil {
                                                     inspectedCount[wish.id, default: 0] += 1
                                                     continue
@@ -3831,13 +3836,21 @@ struct WebAudioDiscoveryView: View {
                                                 inspectingPages.insert(hit.id)
                                                 inspectionErrors.removeValue(forKey: hit.id)
                                                 do {
-                                                    extractedLinks[hit.id] = try await AudioLandingPageInspector.inspect(hit.url)
+                                                    let links = try await AudioLandingPageInspector.inspect(hit.url)
+                                                    guard !Task.isCancelled, inspectionGeneration == generation else { break }
+                                                    extractedLinks[hit.id] = links
+                                                } catch is CancellationError {
+                                                    break
                                                 } catch {
+                                                    guard !Task.isCancelled, inspectionGeneration == generation else { break }
                                                     inspectionErrors[hit.id] = error.localizedDescription
                                                 }
                                                 inspectingPages.remove(hit.id)
                                                 inspectedCount[wish.id, default: 0] += 1
                                             }
+                                            guard inspectionGeneration == generation else { return }
+                                            inspectingWishes.remove(wish.id)
+                                            manualInspectionTasks.removeValue(forKey: wish.id)
                                         }
                                     } label: {
                                         Label(inspectingWishes.contains(wish.id)
@@ -3848,6 +3861,17 @@ struct WebAudioDiscoveryView: View {
                                     }
                                     .disabled(inspectingWishes.contains(wish.id))
                                     if inspectingWishes.contains(wish.id) {
+                                        Button("Cancel page inspection") {
+                                            manualInspectionTasks[wish.id]?.cancel()
+                                            manualInspectionTasks.removeValue(forKey: wish.id)
+                                            inspectionGeneration = UUID()
+                                            for task in manualInspectionTasks.values { task.cancel() }
+                                            manualInspectionTasks.removeAll()
+                                            inspectingWishes.removeAll()
+                                            inspectingPages.removeAll()
+                                        }
+                                        .frame(minHeight: 44)
+                                        .accessibilityHint("Stops outstanding page inspections without deleting completed results")
                                         ProgressView(value: Double(inspectedCount[wish.id] ?? 0),
                                                      total: Double(max(1, candidates.count)))
                                             .accessibilityLabel("Inspecting music webpages for \(wish.title) by \(wish.artist)")
