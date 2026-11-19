@@ -41,10 +41,18 @@ struct PlaybackOrder {
     }
 
     mutating func retainAvailable(_ available: Set<UUID>) {
-        queueIDs.removeAll { !available.contains($0) }
+        // A recording can disappear from the catalog while its already-open
+        // player is finishing. Keep that selection as a temporary queue anchor
+        // so Next and natural completion can still reach surviving recordings.
+        // Do not keep a removed selection if there is nothing left to play.
+        let hasSuccessor = queueIDs.contains { available.contains($0) }
+        let anchor = hasSuccessor ? currentID : nil
+        queueIDs.removeAll { !available.contains($0) && $0 != anchor }
         remainingShuffle.removeAll { !available.contains($0) }
         playHistory.removeAll { !available.contains($0) }
-        if let currentID, !available.contains(currentID) { self.currentID = nil }
+        if currentID != nil && anchor == nil && !available.contains(currentID!) {
+            currentID = nil
+        }
     }
 
     mutating func next(automatic: Bool, loop: PlaybackLoopMode) -> UUID? {
