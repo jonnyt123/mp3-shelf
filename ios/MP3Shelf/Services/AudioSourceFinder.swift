@@ -13,7 +13,16 @@ enum AudioSourceFinder {
         init(from decoder: Decoder) throws {
             let item = try decoder.singleValueContainer()
             if let string = try? item.decode(String.self) { value = string }
-            else if let strings = try? item.decode([String].self) { value = strings.first ?? "" }
+            else if let strings = try? item.decode([String].self) {
+                // Multi-valued catalog metadata is not an authoritative
+                // recording identity when the values disagree. Never pick a
+                // convenient first title/artist and silently auto-match it.
+                let nonempty = strings.map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { !$0.isEmpty }
+                let identities = Set(nonempty.map(MusicMatching.key))
+                value = identities.count == 1 ? (nonempty.first ?? "") : ""
+            }
             else { value = "" }
         }
     }
