@@ -282,7 +282,8 @@ struct LibraryView: View {
         } else {
             selectionIsValid = false
         }
-        if recentPlaybackCheck != nil {
+        let wasPreparing = recentPlaybackCheck != nil
+        if wasPreparing {
             cancelRecentPlaybackPreparation(showFeedback: selectionIsValid)
             missingRecentRecording = true
             recentPlaybackNotice = selectionIsValid
@@ -296,7 +297,7 @@ struct LibraryView: View {
             // Never retain the retry for duplicates, deletions, or an in-flight
             // scan, which could otherwise authorize a different recording.
             let uniqueReplacement: Bool
-            if recentPlaybackCheck == nil, let selection = recentRetrySelection {
+            if !wasPreparing, let selection = recentRetrySelection {
                 let matches = library.tracks.filter { $0.id == selection.id }
                 uniqueReplacement = matches.count == 1 &&
                     recentlyAdded.contains(where: { $0.id == selection.id })
