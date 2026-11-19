@@ -686,7 +686,7 @@ enum AudioSourceFinder {
                 .replacingOccurrences(of: #"^\\s*[0-9]{1,3}\\s*[._-]\\s*"#,
                                       with: "", options: .regularExpression)
             let normalized = MusicMatching.key(stem)
-            let artistPrefix = MusicMatching.key("\\(wish.artist) - ")
+            let artistPrefix = MusicMatching.key(wish.artist) + " "
             let titleStem = normalized.hasPrefix(artistPrefix)
                 ? String(normalized.dropFirst(artistPrefix.count)) : normalized
             return !requestedBase.isEmpty &&
