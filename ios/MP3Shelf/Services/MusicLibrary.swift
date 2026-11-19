@@ -408,6 +408,17 @@ final class MusicLibrary: ObservableObject {
                 recordingsBySize[Int64(size), default: []].append(track)
             }
         }
+        // The size index holds value snapshots. Refresh a committed identity
+        // assignment so a later same-byte archive entry cannot reuse a stale
+        // nil portable ID and accidentally claim another song's recording.
+        func refreshIndexedRecording(_ track: MusicTrack) {
+            guard let owned = LocalLibraryFileSafety.regularFile(
+                named: track.fileName, in: musicDirectory),
+                  let size = try? owned.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return }
+            let key = Int64(size)
+            guard let position = recordingsBySize[key]?.firstIndex(where: { $0.id == track.id }) else { return }
+            recordingsBySize[key]?[position] = track
+        }
         // Byte-identical audio is often already present when restoring a
         // backup over a partial library. Restore missing sidecars too; otherwise
         // the early duplicate-audio path silently drops backed-up artwork and
@@ -597,6 +608,7 @@ final class MusicLibrary: ObservableObject {
                         updatedTracks[index].portableBackupID = archived.id
                         try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
                         tracks = updatedTracks
+                        refreshIndexedRecording(updatedTracks[index])
                     }
                     try Task.checkCancellation()
                     try restoreMissingSidecars(for: archived, existingID: existing.id)
@@ -680,6 +692,7 @@ final class MusicLibrary: ObservableObject {
                             updatedTracks[index].portableBackupID = archived.id
                             try PersistedLibrary(tracks: updatedTracks, playlists: playlists).write(to: databaseURL)
                             tracks = updatedTracks
+                            refreshIndexedRecording(updatedTracks[index])
                         }
                         try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
                         restoredIDs[archived.id] = tracks[index].id
