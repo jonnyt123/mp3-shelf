@@ -43,8 +43,19 @@ export function evaluateAgentHealth({platform='darwin',node=null,xcode=null,deve
    finished-started<=24*3600000;
  const validIdentity=SHA.test(latest?.candidateSha??'')||
    (latest?.status!=='COMPLETED'&&latest?.candidateSha==null);
+ // A completed run must carry the canonical, exact-SHA published ZIP identity.
+ // Otherwise an arbitrary or stale local receipt could appear healthy even
+ // though no verified release asset was delivered.
+ const expectedURL=SHA.test(latest?.candidateSha??'')
+   ? 'https://github.com/jonnyt123/mp3-shelf/releases/download/mp3-shelf-ios-'+
+     latest.candidateSha+'/MP3-Shelf-Xcode-'+latest.candidateSha.slice(0,12)+'.zip'
+   : null;
  const validOutcome=latest?.status!=='COMPLETED'||
    (['already-staged','staged-draft-only'].includes(latest?.integration)&&
+    ['EXISTING_VERIFIED_ARCHIVE','PACKAGED_VERIFIED_NATIVE_SOURCE'].includes(latest?.packaging)&&
+    ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(latest?.delivery)&&
+    latest?.downloadURL===expectedURL&&
+    /^[0-9a-f]{64}$/.test(latest?.sha256??'')&&
     latest?.failureReason==null);
  const fresh=latest?.schema==='mp3shelf-native-agent-run-v1'&&
    ['COMPLETED','FAILED','BLOCKED'].includes(latest.status)&&
