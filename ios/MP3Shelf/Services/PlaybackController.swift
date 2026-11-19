@@ -464,7 +464,9 @@ final class PlaybackController: NSObject, ObservableObject {
             // damaged selection or mutate the still-audible queue.
             guard automatically && !crossfading,
                   attempted.count < nextOrder.queueIDs.count else {
-                restoreSpeculativeFailure()
+                if !automatically || crossfading {
+                    restoreSpeculativeFailure()
+                }
                 break
             }
             candidateID = nextOrder.next(automatic: true, loop: loopMode)
