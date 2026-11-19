@@ -1426,7 +1426,9 @@ struct MusicTrackRow: View {
         playbackCheckGeneration = generation
         let selectedURL = library.fileURL(for: track)
         let queueSnapshot = context.map { ($0.id, library.fileURL(for: $0)) }
-        let snapshotIDs = context.map(\.id)
+        // Capture the complete visible queue identity. A restore can retain a
+        // UUID while relocating its file, so comparing IDs alone is insufficient.
+        let requestedQueue = queueSnapshot.map { RecordingLocationKey(id: $0.0, url: $0.1) }
         playbackCheckTask = Task {
             let scan = Task.detached(priority: .userInitiated) { () -> [Bool] in
                 var results: [Bool] = []
@@ -1450,12 +1452,21 @@ struct MusicTrackRow: View {
             // A restore, deletion, or playlist edit invalidates the requested
             // queue. Validate every occurrence, not only its UUID.
             guard playable.count == queueSnapshot.count,
-                  context.map(\.id) == snapshotIDs,
+                  context.map({ RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }) == requestedQueue,
                   let currentTrack = library.tracks.first(where: {
                       $0.id == track.id && library.fileURL(for: $0) == selectedURL
                   }) else {
                 audioAvailability = false
                 recoveryReason = "The song or its location changed while checking offline audio. Retry to use the current library."
+                missingRecordingAlert = true
+                return
+            }
+            // The selected row must still belong to this exact queue. A row
+            // reused after filtering or a playlist edit must not start a track
+            // that is absent from the listener's current selection.
+            guard requestedQueue.contains(RecordingLocationKey(id: track.id, url: selectedURL)) else {
+                audioAvailability = false
+                recoveryReason = "This song is no longer in the selected queue. Choose it again to play the updated selection."
                 missingRecordingAlert = true
                 return
             }
