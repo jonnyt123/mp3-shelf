@@ -34,6 +34,15 @@ enum AudioSourceFinderTests {
         verify((try? AudioSourceFinder.validatedCatalogBody(
             rss, response: ok, maximumBytes: rss.count - 1)) == nil,
             "oversized RSS catalog response is rejected")
+        let commonsComplete = Data(#"{"query":{"pages":{}}}"#.utf8)
+        let commonsContinued = Data(#"{"continue":{"gsroffset":20,"continue":"-||"},"query":{"pages":{}}}"#.utf8)
+        let commonsMalformed = Data(#"{"continue":{"gsroffset":20}}"#.utf8)
+        verify(AudioSourceFinder.commonsSearchComplete(commonsComplete),
+               "complete Commons page can be evaluated for recording uniqueness")
+        verify(!AudioSourceFinder.commonsSearchComplete(commonsContinued),
+               "Commons continuation prevents first-page automatic selection")
+        verify(!AudioSourceFinder.commonsSearchComplete(commonsMalformed),
+               "malformed Commons page cannot authorize a recording")
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
         // Single-file Archive items often hide a different recording edition
