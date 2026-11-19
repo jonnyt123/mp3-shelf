@@ -538,6 +538,15 @@ enum AudioSourceFinder {
     /// Archive metadata may encode duration as seconds or a clock timestamp.
     /// Parse the entire value; malformed or overflowing fields cannot authorize
     /// an unattended recording match.
+    // A fixed four-second tolerance is too permissive for short recordings:
+    // a 12-second preview could otherwise pass as a 15-second song. Retain
+    // the historical four-second allowance for full-length songs, while
+    // requiring proportionally tighter evidence for short clips.
+    static func recordingDurationTolerance(_ expected: Double) -> Double {
+        guard expected.isFinite, expected > 0 else { return 0 }
+        return min(4.0, max(0.5, expected * 0.03))
+    }
+
     static func archiveDurationSeconds(_ raw: String?) -> Double? {
         guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else { return nil }
@@ -613,7 +622,7 @@ enum AudioSourceFinder {
         if let expected = wish.durationSeconds {
             guard expected.isFinite, expected > 0,
                   let measured = archiveDurationSeconds(file.length),
-                  abs(measured - expected) <= 4.0 else { return nil }
+                  abs(measured - expected) <= recordingDurationTolerance(expected) else { return nil }
         }
         return AudioCatalogMatch(
             downloadURL: URL(string: "https://archive.org/download/")!
@@ -688,7 +697,7 @@ extension AudioSourceFinder {
             // tracks; do not infer units from an arbitrary threshold.
             let measured = duration / 1000.0
             guard measured.isFinite, measured > 0,
-                  abs(measured - expected) <= 4.0 else { return nil }
+                  abs(measured - expected) <= recordingDurationTolerance(expected) else { return nil }
         }
         // Openverse supplies the creator, link and license but does not itself
         // certify that a publisher actually owns the recording.
