@@ -93,3 +93,49 @@ for _ in 0..<24 {
     try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "unrelated bytes changed")
 }
 print("PASS: 24 rollback, 24 committed replay, 168 hostile journal, 24 foreign replacement scenarios")
+
+
+// Recovery must fail closed on torn journals, missing owned media and filesystem
+// substitutions. Rejected replay leaves the journal available for investigation.
+for _ in 0..<16 {
+    try reset()
+    try created.write(to: path("new.mp3"))
+    for damaged in [Data(), Data("{".utf8), Data("null".utf8),
+                    Data("{\\"entries\\":[]}".utf8)] {
+        try damaged.write(to: journal, options: .atomic)
+        var rejected = false
+        do { try replay() } catch { rejected = true }
+        try assert(rejected, "corrupt journal was accepted")
+        try assert(Data(contentsOf: path("new.mp3")) == created, "corrupt journal deleted audio")
+        try assert(Data(contentsOf: manifest) == old, "corrupt journal changed manifest")
+        try assert(fm.fileExists(atPath: journal.path), "corrupt journal was discarded")
+    }
+    try persist(Journal(entries: entries, committed: false))
+    try fm.removeItem(at: path("new.mp3"))
+    var missingRejected = false
+    do { try replay() } catch Rejection.changed { missingRejected = true }
+    // Missing owned audio is safe to roll back, while missing borrowed media is not.
+    try assert(!missingRejected, "missing owned media prevented safe rollback")
+    try assert(!fm.fileExists(atPath: journal.path), "rollback left stale journal")
+
+    try reset()
+    try created.write(to: path("new.mp3"))
+    try persist(Journal(entries: entries, committed: false))
+    try fm.removeItem(at: path("new.mp3"))
+    try fm.createSymbolicLink(at: path("new.mp3"), withDestinationURL: path("unrelated.mp3"))
+    var linkRejected = false
+    do { try replay() } catch Rejection.unsafe { linkRejected = true }
+    try assert(linkRejected, "symlink substitution accepted")
+    try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "symlink target changed")
+    try assert(fm.fileExists(atPath: journal.path), "symlink rejection discarded journal")
+    try fm.removeItem(at: path("new.mp3"))
+
+    try fm.createDirectory(at: path("new.mp3"), withIntermediateDirectories: false)
+    var dirRejected = false
+    do { try replay() } catch Rejection.changed { dirRejected = true }
+    try assert(dirRejected, "directory substitution accepted")
+    try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "directory replay changed unrelated audio")
+    try assert(fm.fileExists(atPath: journal.path), "directory rejection discarded journal")
+    try fm.removeItem(at: path("new.mp3"))
+}
+print("PASS: 64 torn journal, 16 missing owned media, 16 symlink and 16 directory substitution scenarios")
