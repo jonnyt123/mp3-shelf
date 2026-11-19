@@ -101,6 +101,7 @@ enum AudioSourceFinder {
         // A present but unreadable size must not silently become absent evidence.
         let hasInvalidSize: Bool
         let hasInvalidLength: Bool
+        let hasInvalidSource: Bool
 
         private enum CodingKeys: String, CodingKey {
             case name, source, size, length
@@ -110,6 +111,7 @@ enum AudioSourceFinder {
             let fields = try decoder.container(keyedBy: CodingKeys.self)
             name = try fields.decode(String.self, forKey: .name)
             source = try? fields.decode(String.self, forKey: .source)
+            hasInvalidSource = fields.contains(.source) && source == nil
             size = Self.optionalNumberText(fields, key: .size)
             hasInvalidSize = fields.contains(.size) && size == nil
             length = Self.optionalNumberText(fields, key: .length)
@@ -634,6 +636,9 @@ enum AudioSourceFinder {
         let audioFiles = (item.files ?? []).filter { file in
             audioExtensions.contains((file.name as NSString).pathExtension.lowercased())
         }
+        // A malformed explicit source classification is not a legacy missing value.
+        // It cannot prove whether a file is an original or a derivative.
+        guard audioFiles.allSatisfy({ !$0.hasInvalidSource }) else { return nil }
         let originals = audioFiles.filter { $0.source == "original" }
         // An unclassified file may be an independently uploaded original. When
         // classified originals exist, do not discard unclassified siblings:
