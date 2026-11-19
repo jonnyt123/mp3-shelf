@@ -112,8 +112,16 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool, failOnCopy: Int? =
         for destination in created.reversed() { try? fm.removeItem(at: destination) }
         throw error
     }
-    if failAfterCopy { throw RestoreFault.interrupted }
-    try JSONEncoder().encode(next).write(to: manifestURL, options: .atomic)
+    // Commit is part of the same transaction as the copied audio. A failure
+    // after copying but before durable metadata publication must remove only
+    // newly created destinations, leaving pre-existing user audio untouched.
+    do {
+        if failAfterCopy { throw RestoreFault.interrupted }
+        try JSONEncoder().encode(next).write(to: manifestURL, options: .atomic)
+    } catch {
+        for destination in created.reversed() { try? fm.removeItem(at: destination) }
+        throw error
+    }
 }
 let archive = ArchiveManifest(tracks: [oldTrack, newTrack], playlists: [oldPlaylist, incomingPlaylist])
 for attempt in 0..<32 {
@@ -124,7 +132,8 @@ for attempt in 0..<32 {
     catch RestoreFault.interrupted { }
     try check(try load().tracks == baseline.tracks, "partial manifest published on attempt \(attempt)")
     try check(Data(contentsOf: original) == oldBytes, "existing audio overwritten")
-    try check(Data(contentsOf: copied) == newBytes, "staged audio bytes lost")
+    try check(!fm.fileExists(atPath: copied.path), "uncommitted audio survived failed metadata publication")
+    try check(Data(contentsOf: candidate) == newBytes, "staged audio bytes lost")
     try restore(archive, failAfterCopy: false)
     try restore(archive, failAfterCopy: false)
     let recovered = try load()
