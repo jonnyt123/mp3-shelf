@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, renameSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { nativeAgentRunRecord, executeNativeAgent } from './native-agent-run.mjs';
@@ -246,4 +246,44 @@ test('successful staging without verified ZIP remains blocked even if packaging 
   assert.equal(record.status,'BLOCKED');
   assert.equal(record.delivery,'NOT_VERIFIED');
  }
+});
+
+test('replacement lock survives first runner cleanup and prevents overlapping execution',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'mp3-agent-replaced-lock-'));
+ const dir=join(home,'Library','Logs','MP3Shelf','NativeAgent');
+ let release;
+ try {
+  const hold=new Promise(resolve=>{release=resolve;});
+  const first=executeNativeAgent({home,root:home,run:async()=>{
+   await hold;
+   return {status:'already-staged',sha};
+  }});
+  const lock=join(dir,'native-cycle.lock');
+  const old=join(dir,'old-native-cycle.lock');
+  renameSync(lock,old);
+  writeFileSync(lock,'another runner owns this lock');
+  release();
+  await assert.rejects(first,/NATIVE_CYCLE_LOCK_OWNERSHIP_LOST/);
+  assert.equal(readFileSync(lock,'utf8'),'another runner owns this lock');
+  await assert.rejects(executeNativeAgent({home,root:home,run:async()=>{
+   throw Error('must not execute');
+  }}),/NATIVE_CYCLE_ALREADY_RUNNING/);
+  assert.equal(existsSync(old),true);
+ }finally {release?.();rmSync(home,{recursive:true,force:true});}
+});
+
+test('missing lock is never silently recreated or treated as successful cleanup',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'mp3-agent-missing-lock-'));
+ let release;
+ try {
+  const hold=new Promise(resolve=>{release=resolve;});
+  const first=executeNativeAgent({home,root:home,run:async()=>{
+   await hold;return {status:'already-staged',sha};
+  }});
+  const lock=join(home,'Library','Logs','MP3Shelf','NativeAgent','native-cycle.lock');
+  renameSync(lock,lock+'.moved');
+  release();
+  await assert.rejects(first,/NATIVE_CYCLE_LOCK_OWNERSHIP_LOST/);
+  assert.equal(existsSync(lock),false);
+ }finally {release?.();rmSync(home,{recursive:true,force:true});}
 });
