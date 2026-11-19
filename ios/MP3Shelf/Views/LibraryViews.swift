@@ -3199,7 +3199,7 @@ struct PlaylistDetailView: View {
         }
         .sheet(item: $editing) { track in RenameTrackView(track: track) }
         .sheet(item: $manuallyAdding) { wish in
-            AuthorizedPlaylistAudioView(wish: wish)
+            AuthorizedPlaylistAudioView(wish: wish, playlistID: playlistID)
         }
         .sheet(isPresented: $showWebDiscovery) {
             WebAudioDiscoveryView(wishes: playlist?.missingTracks ?? [])
@@ -3440,11 +3440,68 @@ private struct SongSourceDiagnosticsView: View {
 struct AuthorizedPlaylistAudioView: View {
     let wish: PlaylistWish
     var initialURL: URL? = nil
+    // The discovery and inspector entry points may not have a playlist context.
+    // The playlist-detail entry point does: guard it against stale requests.
+    var playlistID: UUID? = nil
+
     @EnvironmentObject private var library: MusicLibrary
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var linkFocused: Bool
     @State private var link = ""
     @State private var isDownloading = false
     @State private var errorMessage: String?
+
+    private var trimmedLink: String {
+        link.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var requestIsCurrent: Bool {
+        guard let playlistID else { return true }
+        let matches = library.playlists.filter { $0.id == playlistID }
+        guard matches.count == 1 else { return false }
+        return matches[0].sourceOrder.contains {
+            $0.id == wish.id && $0.title == wish.title && $0.artist == wish.artist
+        }
+    }
+
+    private func submitAudioLink() {
+        guard !isDownloading else { return }
+        guard requestIsCurrent else {
+            errorMessage = "This playlist or requested song changed. Close this sheet and reopen it from the current playlist."
+            return
+        }
+        guard let url = URL(string: trimmedLink),
+              url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil else {
+            errorMessage = "Enter a direct HTTPS audio-file link without embedded credentials."
+            linkFocused = true
+            return
+        }
+
+        errorMessage = nil
+        linkFocused = false
+        isDownloading = true
+        Task { @MainActor in
+            defer { isDownloading = false }
+            do {
+                let result = try await library.downloadAudio(from: url, matching: wish)
+                guard requestIsCurrent else {
+                    // The download may already be stored. Do not claim that it
+                    // attached to a playlist that changed during the operation.
+                    errorMessage = "Audio was checked, but the playlist changed. Review the latest playlist before attaching a recording."
+                    return
+                }
+                if result.imported > 0 {
+                    dismiss()
+                } else {
+                    errorMessage = "The audio file is already stored. Check the song's title and artist in your library to match this playlist."
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -3456,46 +3513,47 @@ struct AuthorizedPlaylistAudioView: View {
                         Text("Expected length: \(Int(duration)) seconds")
                             .font(.caption).foregroundStyle(.secondary)
                     }
+                    if !requestIsCurrent {
+                        Label("This playlist or song changed. Close and reopen this screen from the current playlist.", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("attach-audio-stale-request")
+                    }
                 }
                 Section("DIRECT AUDIO FILE URL") {
                     TextField("https://example.org/song.mp3", text: $link)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                        .textContentType(.URL)
+                        .focused($linkFocused)
+                        .submitLabel(.done)
+                        .onSubmit(submitAudioLink)
+                        .disabled(isDownloading || !requestIsCurrent)
+                        .accessibilityIdentifier("attach-audio-url")
                     Text("Paste a direct HTTPS audio-file URL. MP3 Shelf checks that the file can play and matches the song's duration when available, then attaches it to this playlist.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button {
-                        guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
-                              url.scheme?.lowercased() == "https",
-                              url.host != nil else {
-                            errorMessage = "Enter a direct HTTPS audio file link."
-                            return
-                        }
-                        isDownloading = true
-                        Task {
-                            defer { isDownloading = false }
-                            do {
-                                let result = try await library.downloadAudio(from: url, matching: wish)
-                                if result.imported > 0 {
-                                    dismiss()
-                                } else {
-                                    errorMessage = "The audio file is already stored. Check the song's title and artist in your library to match this playlist."
-                                }
-                            } catch {
-                                errorMessage = error.localizedDescription
-                            }
-                        }
-                    } label: {
+                    if let errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.updatesFrequently)
+                            .accessibilityIdentifier("attach-audio-error")
+                    }
+                    Button(action: submitAudioLink) {
                         if isDownloading {
                             HStack {
-                                ProgressView()
+                                ProgressView().accessibilityHidden(true)
                                 Text("Downloading and checking audio…")
                             }
                         } else {
                             Label("Download and attach this song", systemImage: "arrow.down.circle.fill")
                         }
                     }
-                    .disabled(isDownloading || link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .frame(minHeight: 44)
+                    .disabled(isDownloading || trimmedLink.isEmpty || !requestIsCurrent)
+                    .accessibilityIdentifier("attach-audio-submit")
+                    .accessibilityHint("Checks the direct audio file before saving it; does not replace the current playback queue")
                 }
                 Section {
                     Text("Imported playlists contain song details. Use a direct audio-file link here to save the recording.")
@@ -3507,24 +3565,21 @@ struct AuthorizedPlaylistAudioView: View {
             .onAppear {
                 if link.isEmpty, let initialURL { link = initialURL.absoluteString }
             }
+            .onChange(of: link) { _, _ in
+                if !isDownloading { errorMessage = nil }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }
                         .disabled(isDownloading)
                 }
             }
-            .alert("Audio Download", isPresented: Binding(
-                get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
-            }
         }
+        // Do not let a swipe dismiss the only visible progress indicator while
+        // the download is still running. Failed requests remain editable.
+        .interactiveDismissDisabled(isDownloading)
     }
 }
-
 
 private struct WebAudioSelection: Identifiable {
     let id = UUID()
