@@ -406,6 +406,25 @@ final class PlaybackController: NSObject, ObservableObject {
         // each remaining queue entry at most once, including catalog entries
         // removed after the queue snapshot. A failed file may be repaired and
         // retried from the lock screen; a wholly missing queue must stop.
+        // Manual Next and pre-end crossfade are speculative: a corrupt next
+        // file must not replace the retry identity of the still-selected song.
+        // Automatic end-of-track advancement intentionally retains failures
+        // for explicit retry, because the predecessor has already finished.
+        let originalError = playbackError
+        let originalFailedTrackID = failedTrackID
+        let originalFailedOrder = failedPlaybackOrder
+        let originalPlayer = audioPlayer
+        let originalTrackID = currentTrackID
+        let originalIsPlaying = isPlaying
+        func restoreSpeculativeFailure() {
+            guard audioPlayer === originalPlayer,
+                  currentTrackID == originalTrackID else { return }
+            playbackError = originalError
+            failedTrackID = originalFailedTrackID
+            failedPlaybackOrder = originalFailedOrder
+            isPlaying = originalIsPlaying
+            updateNowPlaying()
+        }
         let preserveOutgoing = !automatically || crossfading
         var attempted: Set<UUID> = []
         var candidateID: UUID? = nextID
@@ -444,7 +463,10 @@ final class PlaybackController: NSObject, ObservableObject {
             // Manual Next and speculative crossfade must never skip over a
             // damaged selection or mutate the still-audible queue.
             guard automatically && !crossfading,
-                  attempted.count < nextOrder.queueIDs.count else { break }
+                  attempted.count < nextOrder.queueIDs.count else {
+                restoreSpeculativeFailure()
+                break
+            }
             candidateID = nextOrder.next(automatic: true, loop: loopMode)
         }
         if automatically && !crossfading && !failedToOpenRecording {
