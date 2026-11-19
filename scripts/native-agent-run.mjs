@@ -3,7 +3,7 @@
  * LaunchAgent entrypoint: execute the existing exact-SHA native release cycle
  * and atomically publish honest last-run diagnostics. No GitHub Actions.
  */
-import { mkdirSync, writeFileSync, renameSync, lstatSync, openSync, closeSync, unlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync, lstatSync, fstatSync, openSync, closeSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -154,9 +154,19 @@ export async function executeNativeAgent({ root=process.cwd(), home=homedir(),
   if(failure)throw failure;
   return record;
   } finally {
-    // Retain ownership through receipt and dashboard writes, including errors.
-    closeSync(lock);
-    unlinkSync(lockPath);
+    // Never unlink another process's lock if an operator replaced ours while
+    // Xcode was running. Compare inode/device while our descriptor is open.
+    // A missing/replaced lock is a coordination failure requiring inspection.
+    const owned = fstatSync(lock);
+    let current;
+    try { current = lstatSync(lockPath); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const stillOwned = current && current.isFile() && !current.isSymbolicLink() &&
+      current.dev === owned.dev && current.ino === owned.ino && current.nlink === 1;
+    try {
+      if (!stillOwned) throw Error('NATIVE_CYCLE_LOCK_OWNERSHIP_LOST: inspect active Mac processes and lock before retry');
+      unlinkSync(lockPath);
+    } finally { closeSync(lock); }
   }
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
