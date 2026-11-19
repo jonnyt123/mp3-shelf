@@ -290,9 +290,26 @@ struct LibraryView: View {
                 : "The selected recording was removed or replaced. Choose another song."
         }
         if !selectionIsValid {
-            recentRetrySelection = nil
-            if recentPlaybackCheck == nil {
-                recentPlaybackNotice = "The selected recording was removed or replaced. Choose another song."
+            // A restored file may move while retaining the same unique track ID.
+            // Keep an idle, explicit Retry in that case: retryRecentRecording()
+            // resolves the current URL and performs a fresh local-file scan.
+            // Never retain the retry for duplicates, deletions, or an in-flight
+            // scan, which could otherwise authorize a different recording.
+            let uniqueReplacement: Bool
+            if recentPlaybackCheck == nil, let selection = recentRetrySelection {
+                let matches = library.tracks.filter { $0.id == selection.id }
+                uniqueReplacement = matches.count == 1 &&
+                    recentlyAdded.contains(where: { $0.id == selection.id })
+            } else {
+                uniqueReplacement = false
+            }
+            if uniqueReplacement {
+                recentPlaybackNotice = "This recording moved after import. Retry to check its current local file before playing."
+            } else {
+                recentRetrySelection = nil
+                if recentPlaybackCheck == nil {
+                    recentPlaybackNotice = "The selected recording was removed or replaced. Choose another song."
+                }
             }
         }
     }
