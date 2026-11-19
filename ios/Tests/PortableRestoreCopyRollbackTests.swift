@@ -309,4 +309,4 @@ for sourceIndex in names.indices {
         try fm.moveItem(at: held, to: src)
     }
 }
-print("PASS: 30 borrowed-destination rollback failures plus 320 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
+print("PASS: 18 borrowed-destination rollback failures plus 320 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
