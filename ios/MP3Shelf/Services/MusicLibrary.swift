@@ -209,7 +209,14 @@ final class MusicLibrary: ObservableObject {
         // Update both indexes only after the atomic catalog commit succeeds.
         var recoveredByID = Dictionary(tracks.map { ($0.id, $0) },
                                        uniquingKeysWith: { first, _ in first })
-        // Match LocalLibraryFileSafety.isReferenced semantics on case- and\n        // diacritic-insensitive volumes; exact-string sets can miss aliases.\n        let filenameLocale = Locale(identifier: "en_US_POSIX")\n        func referenceKey(_ name: String) -> String {\n            name.folding(options: [.caseInsensitive, .diacriticInsensitive],\n                         locale: filenameLocale)\n        }\n        var referencedAudioNames = Set(tracks.map { referenceKey($0.fileName) })
+        // Match LocalLibraryFileSafety.isReferenced semantics on case- and
+        // diacritic-insensitive volumes; exact-string sets can miss aliases.
+        let filenameLocale = Locale(identifier: "en_US_POSIX")
+        func referenceKey(_ name: String) -> String {
+            name.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                         locale: filenameLocale)
+        }
+        var referencedAudioNames = Set(tracks.map { referenceKey($0.fileName) })
         for journal in LocalAudioRecoveryRecord.pending(in: musicDirectory) {
             do {
                 let record = try LocalAudioRecoveryRecord.read(journal, in: musicDirectory)
