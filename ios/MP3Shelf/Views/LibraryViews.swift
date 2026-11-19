@@ -610,10 +610,17 @@ struct LibraryView: View {
                                           failureCount: Int) {
         guard bulkSkippedRecordingCount > 0, partialQueueShuffle != nil else { return }
         guard importedCount > 0 else {
-            partialQueueNeedsRefresh = false
-            bulkPlaybackNotice = failureCount > 0
-                ? "No recordings were imported. Review the import errors, then retry or choose another audio file. The current queue is unchanged."
-                : "No new recordings were imported. Duplicate files do not restore missing audio. The current queue is unchanged."
+            // A later failed/duplicate-only attempt must not revoke a manual
+            // refresh already earned by an earlier successful restoration.
+            // The active queue remains untouched until the listener refreshes.
+            let canStillRefresh = partialQueueNeedsRefresh && playbackSelectionIsCurrent()
+            partialQueueNeedsRefresh = canStillRefresh
+            let explanation = failureCount > 0
+                ? "No recordings were imported. Review the import errors or choose another audio file."
+                : "No new recordings were imported. Duplicate files do not restore missing audio."
+            bulkPlaybackNotice = explanation + (canStillRefresh
+                ? " You can still refresh playback after your earlier import; the current queue is unchanged."
+                : " The current queue is unchanged.")
             return
         }
         partialQueueNeedsRefresh = true
