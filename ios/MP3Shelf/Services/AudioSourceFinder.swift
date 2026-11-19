@@ -815,16 +815,14 @@ extension AudioSourceFinder {
     ) -> Bool {
         guard page > 0, page <= maxOpenversePages,
               returned >= 0, returned <= 50 else { return false }
-        if let count = pageCount {
-            guard count >= page, count > 0,
-                  expectedPageCount == nil || expectedPageCount == count else { return false }
-            // A supposedly final page cannot be full and claim fewer pages
-            // than the number already inspected.
-            if page < count && returned == 0 { return false }
-        } else if expectedPageCount != nil {
-            // Dropping authoritative pagination midway is not a stable scan.
-            return false
-        }
+        // A response without page_count cannot prove that the index did not
+        // omit another version. Do not auto-select a recording from a partial
+        // catalog inventory, even if the returned page is short.
+        guard let count = pageCount, count >= page, count > 0,
+              expectedPageCount == nil || expectedPageCount == count else { return false }
+        // Empty intermediate pages and full pages with contradictory totals
+        // cannot establish an unambiguous recording inventory.
+        if page < count && returned == 0 { return false }
         return true
     }
 
