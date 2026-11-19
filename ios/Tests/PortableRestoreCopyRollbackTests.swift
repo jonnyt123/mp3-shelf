@@ -130,6 +130,47 @@ for collisionIndex in names.indices {
     try require(Data(contentsOf: manifest) == after, "safe retry did not publish metadata")
 }
 
+// A matching pre-existing destination is borrowed, never owned by this restore.
+// Inject failures before and after copying later tracks and ensure rollback
+// removes only newly created recordings, preserving the borrowed bytes.
+for borrowedIndex in names.indices {
+    for failurePoint in 0..<2 {
+        for name in names {
+            let path = library.appendingPathComponent(name)
+            if fm.fileExists(atPath: path.path) { try fm.removeItem(at: path) }
+        }
+        try before.write(to: manifest, options: .atomic)
+        let borrowed = library.appendingPathComponent(names[borrowedIndex])
+        try payloads[borrowedIndex].write(to: borrowed)
+        let pendingCount = names.count - 1
+        for copyIndex in 0..<pendingCount {
+            var rejected = false
+            do {
+                if failurePoint == 0 {
+                    try restore(failAtCopy: copyIndex)
+                } else {
+                    try restore(failAtCopy: nil, failAfterCopy: copyIndex)
+                }
+            } catch CopyFault.injected { rejected = true }
+            try require(rejected, "borrowed destination injection not reached")
+            try require(Data(contentsOf: borrowed) == payloads[borrowedIndex],
+                        "borrowed recording was modified or removed")
+            try require(Data(contentsOf: manifest) == before,
+                        "borrowed destination failure published metadata")
+            try require(names.enumerated().allSatisfy { index, name in
+                index == borrowedIndex || !fm.fileExists(atPath: library.appendingPathComponent(name).path)
+            }, "borrowed destination failure left orphan recording")
+            try require(Data(contentsOf: original) == originalBytes,
+                        "borrowed destination failure damaged original library")
+        }
+        try restore(failAtCopy: nil)
+        try require(Data(contentsOf: borrowed) == payloads[borrowedIndex],
+                    "successful borrowed destination retry replaced audio")
+        try require(Data(contentsOf: manifest) == after,
+                    "successful borrowed destination retry did not publish metadata")
+    }
+}
+
 // Missing source and symlink attempts must not mutate a valid existing library.
 for sourceIndex in names.indices {
     for name in names {
@@ -218,4 +259,4 @@ for sourceIndex in names.indices {
         try fm.moveItem(at: held, to: src)
     }
 }
-print("PASS: 224 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
+print("PASS: 24 borrowed-destination rollback failures plus 224 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
