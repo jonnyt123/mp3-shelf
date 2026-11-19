@@ -683,7 +683,7 @@ enum AudioSourceFinder {
         let competingEdition = eligible.contains { file in
             let stem = (file.name as NSString).deletingPathExtension
                 .replacingOccurrences(of: "_", with: " ")
-                .replacingOccurrences(of: #"^\\s*[0-9]{1,3}\\s*[._-]\\s*"#,
+                .replacingOccurrences(of: #"^\s*[0-9]{1,3}\s*[._-]\s*"#,
                                       with: "", options: .regularExpression)
             let normalized = MusicMatching.key(stem)
             let artistPrefix = MusicMatching.key(wish.artist) + " "
