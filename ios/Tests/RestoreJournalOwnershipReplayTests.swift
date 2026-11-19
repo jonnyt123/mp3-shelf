@@ -139,3 +139,46 @@ for _ in 0..<16 {
     try fm.removeItem(at: path("new.mp3"))
 }
 print("PASS: 64 torn journal, 16 missing owned media, 16 symlink and 16 directory substitution scenarios")
+
+
+// A failed validation must be all-or-nothing. In particular, the importer must
+// never delete an owned file before noticing that a later borrowed entry or the
+// manifest has changed. Exercise both entry orderings and committed recovery.
+for committed in [false, true] {
+    for ownedFirst in [false, true] {
+        for failure in 0..<5 {
+            try reset()
+            try created.write(to: path("new.mp3"))
+            if committed { try new.write(to: manifest, options: .atomic) }
+            let ordered = ownedFirst ? entries : Array(entries.reversed())
+            try persist(Journal(entries: ordered, committed: committed))
+            switch failure {
+            case 0: // A borrowed file is absent.
+                try fm.removeItem(at: path("borrowed.mp3"))
+            case 1: // A borrowed file has been replaced.
+                try Data("replacement".utf8).write(to: path("borrowed.mp3"))
+            case 2: // An owned file has been replaced by foreign bytes.
+                try Data("foreign".utf8).write(to: path("new.mp3"))
+            case 3: // The manifest is stale or unexpectedly advanced.
+                try Data("unexpected".utf8).write(to: manifest)
+            default: // A borrowed file has become a symlink.
+                try fm.removeItem(at: path("borrowed.mp3"))
+                try fm.createSymbolicLink(at: path("borrowed.mp3"), withDestinationURL: path("unrelated.mp3"))
+            }
+            let ownedBefore = try Data(contentsOf: path("new.mp3"))
+            let manifestBefore = try Data(contentsOf: manifest)
+            var rejected = false
+            do { try replay() } catch { rejected = true }
+            try assert(rejected, "changed recovery input was accepted")
+            try assert(Data(contentsOf: path("new.mp3")) == ownedBefore,
+                       "validation failure deleted or changed owned audio")
+            try assert(Data(contentsOf: manifest) == manifestBefore,
+                       "validation failure changed the manifest")
+            try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated,
+                       "validation failure changed unrelated audio")
+            try assert(fm.fileExists(atPath: journal.path),
+                       "validation failure discarded the recovery journal")
+        }
+    }
+}
+print("PASS: 20 ordered rollback/commit validation-failure isolation scenarios")
