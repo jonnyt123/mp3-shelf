@@ -1152,9 +1152,13 @@ struct LibraryView: View {
         .onChange(of: favoritesOnly) { _, _ in browsingScopeDidChange() }
         .onChange(of: sortMode) { _, _ in browsingScopeDidChange() }
         .onChange(of: library.tracks.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }) { _, _ in
-            // Imports, restores and deletions can replace the selection without
-            // changing any browsing control. Never retry an obsolete queue.
-            invalidateStalePlaybackRecovery()
+            // A Files import is an intentional library mutation. Preserve its
+            // partial-queue recovery until the import report is available;
+            // completion will bind recovery to the new visible selection.
+            // All other mutations still invalidate obsolete playback intent.
+            if !importInProgress {
+                invalidateStalePlaybackRecovery()
+            }
             recentLibrarySelectionDidChange()
         }
         .onSubmit(of: .search) { submitSearch() }
@@ -1205,10 +1209,20 @@ struct LibraryView: View {
                 importInProgress = true
                 Task { @MainActor in
                     let outcome = await library.importAudio(urls: urls)
-                    importInProgress = false
+                    // SwiftUI can publish library.tracks while importAudio is
+                    // suspended. Rebind an existing partial queue to the new
+                    // selection before clearing the local import guard. This
+                    // never replaces the active queue or starts playback.
+                    if outcome.imported > 0, bulkSkippedRecordingCount > 0,
+                       partialQueueShuffle != nil {
+                        playbackSelectionSnapshot = displayed.map {
+                            RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0))
+                        }
+                    }
                     completeLocalAudioImport(importedCount: outcome.imported,
                                              skippedCount: outcome.skipped,
                                              failureCount: outcome.errors.count)
+                    importInProgress = false
                     message = outcome.description
                 }
             case .failure(let error):
