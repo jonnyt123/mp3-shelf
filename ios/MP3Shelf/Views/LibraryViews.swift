@@ -4031,6 +4031,7 @@ struct PublisherPageInspectorView: View {
     @State private var inspectionID = UUID()
     @State private var completedInspection = false
     @State private var candidateFilter = ""
+    @State private var excludedLinkCount = 0
     @State private var inspectionNotice: String?
     @AccessibilityFocusState private var inspectionFeedbackFocused: Bool
 
@@ -4054,6 +4055,7 @@ struct PublisherPageInspectorView: View {
         isInspecting = false
         candidates = []
         candidateFilter = ""
+        excludedLinkCount = 0
         error = nil
         completedInspection = false
         inspectionFeedbackFocused = false
@@ -4085,9 +4087,24 @@ struct PublisherPageInspectorView: View {
             do {
                 let found = try await AudioLandingPageInspector.inspect(pageURL)
                 guard !Task.isCancelled, inspectionID == requestID else { return }
-                candidates = found
+                // Publisher pages can advertise the same URL in multiple tags,
+                // including URLs with fragments or embedded credentials. Keep
+                // only distinct public HTTPS links before exposing review actions.
+                var seen = Set<String>()
+                let safeLinks = found.compactMap { link -> URL? in
+                    guard var components = URLComponents(url: link, resolvingAgainstBaseURL: false),
+                          components.scheme?.lowercased() == "https",
+                          components.host != nil,
+                          components.user == nil, components.password == nil else { return nil }
+                    components.fragment = nil
+                    guard let canonical = components.url,
+                          seen.insert(canonical.absoluteString).inserted else { return nil }
+                    return canonical
+                }
+                candidates = safeLinks
+                excludedLinkCount = found.count - safeLinks.count
                 completedInspection = true
-                inspectionFeedbackFocused = found.isEmpty
+                inspectionFeedbackFocused = safeLinks.isEmpty
             } catch is CancellationError {
                 return
             } catch {
@@ -4188,6 +4205,12 @@ struct PublisherPageInspectorView: View {
                         Text("\(candidates.count) possible audio links found. Review the recording and publisher before downloading.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                        if excludedLinkCount > 0 {
+                            Text("\(excludedLinkCount) duplicate or unsafe links were excluded from review.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("\(excludedLinkCount) duplicate or unsafe links excluded")
+                        }
                         if candidates.count > 5 {
                             TextField("Filter audio links", text: $candidateFilter)
                                 .textInputAutocapitalization(.never)
@@ -4219,7 +4242,11 @@ struct PublisherPageInspectorView: View {
                                     // Only a URL still present in the current completed
                                     // inspection may advance to recording review.
                                     guard !isInspecting, completedInspection,
-                                          candidates.contains(file) else { return }
+                                          candidates.contains(file),
+                                          let components = URLComponents(url: file, resolvingAgainstBaseURL: false),
+                                          components.scheme?.lowercased() == "https",
+                                          components.host != nil,
+                                          components.user == nil, components.password == nil else { return }
                                     chosenAudio = WebAudioSelection(wish: wish, url: file)
                                 } label: {
                                     Label("Review this audio file", systemImage: "arrow.down.circle")
