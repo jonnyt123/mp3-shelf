@@ -256,6 +256,21 @@ enum AudioSourceFinder {
             guard recordingEditionAgrees(filename: name, requestedTitle: wish.title) else {
                 return false
             }
+            // A single audio file in an item with correct title/creator is not
+            // necessarily that recording. Uploads can contain an unrelated
+            // file (or a renamed alternate take) under accurate item metadata.
+            // Require the physical filename to identify the requested track;
+            // ambiguous generic names remain review-only.
+            let stem = (name as NSString).deletingPathExtension
+                .replacingOccurrences(of: "_", with: " ")
+            let withoutTrackNumber = stem.replacingOccurrences(
+                of: #"^\\s*[0-9]{1,3}\\s*[._-]\\s*"#,
+                with: "", options: .regularExpression)
+            let expectedTitle = MusicMatching.key(wish.title)
+            let expectedArtistTitle = MusicMatching.key("\(wish.artist) - \(wish.title)")
+            let fileIdentities = [stem, withoutTrackNumber].map(MusicMatching.key)
+            guard fileIdentities.contains(expectedTitle) ||
+                  fileIdentities.contains(expectedArtistTitle) else { return false }
             return exactMetadataMatch(title: itemTitle, creator: itemCreator, wish: wish)
         }
         guard source == "original" else { return false }
