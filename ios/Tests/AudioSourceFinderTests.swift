@@ -1553,6 +1553,21 @@ enum AudioSourceFinderTests {
             !AudioSourceFinder.archiveCrossPageIdentitiesAgree(
                 firstIndexPage, seen: &reversedEvidence),
             "cross-page contradictions reject regardless of page order")
+        // Duration evidence must not confuse a short preview with the full
+        // recording even when the absolute difference is under four seconds.
+        verify(AudioSourceFinder.recordingDurationTolerance(15) == 0.5,
+            "short recordings use a subsecond evidence window")
+        verify(AudioSourceFinder.recordingDurationTolerance(100) == 3.0,
+            "midlength songs use proportional duration evidence")
+        verify(AudioSourceFinder.recordingDurationTolerance(240) == 4.0,
+            "full-length recordings retain the existing four-second allowance")
+        verify(AudioSourceFinder.recordingDurationTolerance(.nan) == 0 &&
+               AudioSourceFinder.recordingDurationTolerance(-1) == 0,
+            "invalid expected runtimes cannot authorize a match")
+        verify(abs(12.0 - 15.0) > AudioSourceFinder.recordingDurationTolerance(15),
+            "a twelve-second preview cannot auto-match a fifteen-second song")
+        verify(abs(239.0 - 240.0) <= AudioSourceFinder.recordingDurationTolerance(240),
+            "a full-length recording with one-second metadata drift stays eligible")
         print("Audio source discovery validation tests passed")
     }
 }
