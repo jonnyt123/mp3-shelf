@@ -138,3 +138,42 @@ for round in 0..<25 {
     for source in sources where fm.fileExists(atPath: source.path) { try fm.removeItem(at: source) }
 }
 print("PASS: 50 restore ownership rounds and 25 x 16 atomic publication races")
+
+
+// Interrupted publication regression: a hard link was installed, but unlinking
+// the stage failed before the journal could mark the operation committed.
+// Recovery must identify the same inode, not merely the same filename/bytes.
+let interruptedRoot = root.appendingPathComponent("interrupted")
+try fm.createDirectory(at: interruptedRoot, withIntermediateDirectories: true)
+let interruptedStage = interruptedRoot.appendingPathComponent("stage.mp3")
+let interruptedTarget = interruptedRoot.appendingPathComponent("target.mp3")
+let interruptedPayload = Data(repeating: 0xA7, count: 32768)
+try interruptedPayload.write(to: interruptedStage)
+try fm.linkItem(at: interruptedStage, to: interruptedTarget)
+func inode(_ url: URL) throws -> NSNumber {
+    let attrs = try fm.attributesOfItem(atPath: url.path)
+    guard let number = attrs[.systemFileNumber] as? NSNumber else {
+        throw RestoreError.invalidStage
+    }
+    return number
+}
+try check(inode(interruptedStage) == inode(interruptedTarget))
+try check(Data(contentsOf: interruptedTarget) == interruptedPayload)
+// A crash after linking leaves both paths. Replaying a cleanup of the stage
+// must preserve the published destination and its original bytes.
+try fm.removeItem(at: interruptedStage)
+try check(Data(contentsOf: interruptedTarget) == interruptedPayload)
+// A later unrelated writer may reuse the stage pathname; recovery must never
+// delete it based solely on the old journal's pathname.
+let unrelatedPayload = Data(repeating: 0xD4, count: 1024)
+try unrelatedPayload.write(to: interruptedStage)
+try check(inode(interruptedStage) != inode(interruptedTarget))
+try check(Data(contentsOf: interruptedStage) == unrelatedPayload)
+try check(Data(contentsOf: interruptedTarget) == interruptedPayload)
+// Two identical byte sequences are not proof of ownership. An independently
+// created destination must not be removed by a stale restore attempt.
+let identicalTarget = interruptedRoot.appendingPathComponent("identical.mp3")
+try interruptedPayload.write(to: identicalTarget)
+try check(Data(contentsOf: identicalTarget) == Data(contentsOf: interruptedTarget))
+try check(inode(identicalTarget) != inode(interruptedTarget))
+print("PASS: interrupted link publication, stage reuse and inode ownership isolation")
