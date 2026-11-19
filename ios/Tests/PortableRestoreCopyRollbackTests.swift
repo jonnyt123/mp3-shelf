@@ -102,4 +102,57 @@ for round in 0..<32 {
         try require(Data(contentsOf: library.appendingPathComponent(name)) == payloads[index], "recording corrupted")
     }
 }
-print("PASS: 224 injected failures across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
+
+// Collision and hostile-filesystem regression: validation must finish before
+// creating any new recording, and a retry must preserve previously owned bytes.
+for collisionIndex in names.indices {
+    for name in names {
+        let path = library.appendingPathComponent(name)
+        if fm.fileExists(atPath: path.path) { try fm.removeItem(at: path) }
+    }
+    try before.write(to: manifest, options: .atomic)
+    let colliding = library.appendingPathComponent(names[collisionIndex])
+    let foreignBytes = Data(repeating: UInt8(collisionIndex + 1), count: 4096)
+    try foreignBytes.write(to: colliding)
+    var rejected = false
+    do { try restore(failAtCopy: nil) } catch CopyFault.invalidSource { rejected = true }
+    try require(rejected, "conflicting destination was accepted")
+    try require(Data(contentsOf: colliding) == foreignBytes, "existing conflicting recording overwritten")
+    try require(Data(contentsOf: manifest) == before, "conflict published metadata")
+    try require(names.enumerated().allSatisfy { index, name in
+        index == collisionIndex || !fm.fileExists(atPath: library.appendingPathComponent(name).path)
+    }, "conflict left new recordings")
+    try require(Data(contentsOf: original) == originalBytes, "conflict damaged original library")
+    try fm.removeItem(at: colliding)
+    try payloads[collisionIndex].write(to: colliding)
+    try restore(failAtCopy: nil)
+    try require(Data(contentsOf: colliding) == payloads[collisionIndex], "identical pre-existing recording changed")
+    try require(Data(contentsOf: manifest) == after, "safe retry did not publish metadata")
+}
+
+// Missing source and symlink attempts must not mutate a valid existing library.
+for sourceIndex in names.indices {
+    for name in names {
+        let path = library.appendingPathComponent(name)
+        if fm.fileExists(atPath: path.path) { try fm.removeItem(at: path) }
+    }
+    try before.write(to: manifest, options: .atomic)
+    let src = source.appendingPathComponent(names[sourceIndex])
+    let held = source.appendingPathComponent("held-\\(sourceIndex)")
+    try fm.moveItem(at: src, to: held)
+    var missingRejected = false
+    do { try restore(failAtCopy: nil) } catch CopyFault.invalidSource { missingRejected = true }
+    try require(missingRejected, "missing source was accepted")
+    try require(Data(contentsOf: manifest) == before, "missing source published metadata")
+    try require(names.allSatisfy { !fm.fileExists(atPath: library.appendingPathComponent($0).path) }, "missing source left audio")
+    try fm.createSymbolicLink(at: src, withDestinationURL: held)
+    var symlinkRejected = false
+    do { try restore(failAtCopy: nil) } catch CopyFault.invalidSource { symlinkRejected = true }
+    try require(symlinkRejected, "source symlink was accepted")
+    try require(Data(contentsOf: manifest) == before, "source symlink published metadata")
+    try require(names.allSatisfy { !fm.fileExists(atPath: library.appendingPathComponent($0).path) }, "source symlink left audio")
+    try fm.removeItem(at: src)
+    try fm.moveItem(at: held, to: src)
+    try require(Data(contentsOf: original) == originalBytes, "source failure damaged existing audio")
+}
+print("PASS: 224 injected failures, 3 collision and 6 missing/symlink rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
