@@ -4046,10 +4046,6 @@ struct PublisherPageInspectorView: View {
         }
     }
 
-    private var visibleCandidates: [URL] {
-        Array(matchingCandidates.prefix(visibleLinkLimit))
-    }
-
     // Editing the URL or leaving this sheet invalidates the in-flight response.
     // A cancelled network request may still complete; only its matching ID
     // may publish results into the current source-page review.
@@ -4227,17 +4223,36 @@ struct PublisherPageInspectorView: View {
                                     .frame(minHeight: 44)
                             }
                         }
-                        if matchingCandidates.isEmpty {
-                            Text("No links match this filter. Clear it to see all discovered files.")
-                                .foregroundStyle(.secondary)
-                        }
-                        if !matchingCandidates.isEmpty {
-                            Text("Showing \(visibleCandidates.count) of \(matchingCandidates.count) matching links")
+                        // Resolve the filtered snapshot once per render. Previously the
+                        // count, empty state, page and footer each re-filtered the full
+                        // discovery result, multiplying work on large publisher pages.
+                        let filteredLinks = matchingCandidates
+                        let displayedLinks = Array(filteredLinks.prefix(visibleLinkLimit))
+                        if filteredLinks.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("No audio links match your filter")
+                                    .font(.headline)
+                                    .accessibilityAddTraits(.isHeader)
+                                Text("Try a different filename or publisher, or clear the filter to return to all discovered links.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Button {
+                                    candidateFilter = ""
+                                    visibleLinkLimit = 40
+                                } label: {
+                                    Label("Show all audio links", systemImage: "line.3.horizontal.decrease.circle")
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .frame(minHeight: 44)
+                                }
+                                .accessibilityHint("Clear the filter without inspecting the webpage again")
+                            }
+                        } else {
+                            Text("Showing \(displayedLinks.count) of \(filteredLinks.count) matching links")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .accessibilityLabel("Showing \(visibleCandidates.count) of \(matchingCandidates.count) matching audio links")
+                                .accessibilityLabel("Showing \(displayedLinks.count) of \(filteredLinks.count) matching audio links")
                         }
-                        ForEach(visibleCandidates, id: \.absoluteString) { file in
+                        ForEach(displayedLinks, id: \.absoluteString) { file in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(file.lastPathComponent.removingPercentEncoding ?? file.lastPathComponent)
                                     .font(.subheadline.weight(.semibold))
@@ -4272,9 +4287,10 @@ struct PublisherPageInspectorView: View {
                             }
                             .padding(.vertical, 4)
                         }
-                        if visibleCandidates.count < matchingCandidates.count {
+                        if displayedLinks.count < filteredLinks.count {
                             Button {
-                                visibleLinkLimit += 40
+                                // Clamp rather than growing an unbounded page counter.
+                                visibleLinkLimit = min(filteredLinks.count, visibleLinkLimit + 40)
                             } label: {
                                 Label("Show more audio links", systemImage: "list.bullet")
                                     .frame(maxWidth: .infinity, alignment: .leading)
