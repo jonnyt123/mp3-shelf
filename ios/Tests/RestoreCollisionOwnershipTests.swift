@@ -197,7 +197,13 @@ func identity(at url: URL) throws -> PublicationIdentity {
 }
 func rollbackUncommitted(at destination: URL, expected: PublicationIdentity) throws -> Bool {
     // Missing or replaced files must never be deleted by a stale receipt.
-    guard let current = try? identity(at: destination), current == expected else { return false }
+    // A pathname can be swapped for a symlink to the *same* inode; stat alone
+    // would falsely authorize rollback. Likewise, a hard-link alias makes the
+    // inode shared with another owner. Fail closed instead of claiming cleanup.
+    guard (try? fm.destinationOfSymbolicLink(atPath: destination.path)) == nil,
+          let attrs = try? fm.attributesOfItem(atPath: destination.path),
+          (attrs[.referenceCount] as? NSNumber)?.intValue == 1,
+          let current = try? identity(at: destination), current == expected else { return false }
     try fm.removeItem(at: destination)
     return true
 }
@@ -231,3 +237,32 @@ for round in 0..<100 {
     }
 }
 print("PASS: 100 identity-bound crash replays, including replaced identical audio")
+
+// Path-substitution regressions: identity equality is not sufficient when the
+// destination becomes a symlink to the same inode or acquires another hard link.
+// These are filesystem-model checks, not a claim about production restore code.
+let substitutionRoot = root.appendingPathComponent("substitution")
+try fm.createDirectory(at: substitutionRoot, withIntermediateDirectories: true)
+let protectedFile = substitutionRoot.appendingPathComponent("protected.mp3")
+let substituted = substitutionRoot.appendingPathComponent("destination.mp3")
+let alias = substitutionRoot.appendingPathComponent("alias.mp3")
+let protectedBytes = Data(repeating: 0xB2, count: 2048)
+try protectedBytes.write(to: protectedFile)
+let protectedIdentity = try identity(at: protectedFile)
+try fm.createSymbolicLink(at: substituted, withDestinationURL: protectedFile)
+try check(!(try rollbackUncommitted(at: substituted, expected: protectedIdentity)))
+try check((try? fm.destinationOfSymbolicLink(atPath: substituted.path)) != nil)
+try check(Data(contentsOf: protectedFile) == protectedBytes)
+try fm.removeItem(at: substituted)
+try fm.linkItem(at: protectedFile, to: substituted)
+try check(identity(at: substituted) == protectedIdentity)
+try check(!(try rollbackUncommitted(at: substituted, expected: protectedIdentity)))
+try check(Data(contentsOf: substituted) == protectedBytes)
+try fm.removeItem(at: substituted)
+try fm.linkItem(at: protectedFile, to: alias)
+try check(!(try rollbackUncommitted(at: protectedFile, expected: protectedIdentity)))
+try check(Data(contentsOf: alias) == protectedBytes)
+try fm.removeItem(at: alias)
+try check(try rollbackUncommitted(at: protectedFile, expected: protectedIdentity))
+try check(!fm.fileExists(atPath: protectedFile.path))
+print("PASS: symlink substitution and shared-inode rollback refusal")
