@@ -3603,6 +3603,18 @@ struct WebAudioDiscoveryView: View {
     @State private var searched = 0
     @State private var scanning = false
     @State private var scanTask: Task<Void, Never>?
+    @State private var scanID = UUID()
+
+    // Invalidate pending callbacks before cancelling: URLSession completions can
+    // arrive after cancellation and must not repopulate a closed/changed search.
+    private func cancelScan() {
+        scanID = UUID()
+        scanTask?.cancel()
+        scanTask = nil
+        scanning = false
+        inspectingPages.removeAll()
+        inspectingWishes.removeAll()
+    }
     @State private var selectedLink: WebAudioSelection?
     @State private var inspectingWish: PlaylistWish?
     @State private var inspectingPages: Set<String> = []
@@ -3662,12 +3674,13 @@ struct WebAudioDiscoveryView: View {
                             message = "Could not securely save the search key to Keychain."
                             return
                         }
-                        scanTask?.cancel()
+                        cancelScan()
                         results = [:]
                         issues = [:]
                         searched = 0
                         inspectedDuringSearch = 0
                         scanning = true
+                        let requestID = scanID
                         let currentBatch = batch
                         let depth = searchDepth
                         let inspectPages = inspectPagesDuringSearch
@@ -3676,26 +3689,31 @@ struct WebAudioDiscoveryView: View {
                             var scannedStop = false
                             let key = apiKey
                             for wish in currentBatch {
-                                if Task.isCancelled { break }
+                                if Task.isCancelled || scanID != requestID { break }
                                 do {
                                     let found = try await WebAudioSearch.search(for: wish, using: key, depth: depth)
+                                    guard !Task.isCancelled, scanID == requestID else { break }
                                     results[wish.id] = found
                                     if inspectPages && inspectedPages < 12 {
                                         let candidates = WebAudioSearch.pagesWorthInspecting(
                                             found, for: wish, limit: 1)
                                         for hit in candidates {
-                                            if Task.isCancelled { break }
+                                            if Task.isCancelled || scanID != requestID { break }
                                             inspectedPages += 1
                                             inspectingPages.insert(hit.id)
                                             do {
-                                                extractedLinks[hit.id] = try await AudioLandingPageInspector.inspect(
+                                                let links = try await AudioLandingPageInspector.inspect(
                                                     hit.url, maxProbes: 2)
+                                                guard !Task.isCancelled, scanID == requestID else { break }
+                                                extractedLinks[hit.id] = links
                                             } catch is CancellationError {
                                                 inspectingPages.remove(hit.id)
                                                 break
                                             } catch {
+                                                guard !Task.isCancelled, scanID == requestID else { break }
                                                 inspectionErrors[hit.id] = error.localizedDescription
                                             }
+                                            guard scanID == requestID else { break }
                                             inspectingPages.remove(hit.id)
                                             inspectedDuringSearch = inspectedPages
                                         }
@@ -3703,6 +3721,7 @@ struct WebAudioDiscoveryView: View {
                                 } catch is CancellationError {
                                     break
                                 } catch {
+                                    guard !Task.isCancelled, scanID == requestID else { break }
                                     issues[wish.id] = error.localizedDescription
                                     // Do not repeatedly hit an invalid key or exhausted API quota.
                                     if let problem = error as? WebAudioSearch.SearchFailure {
@@ -3713,10 +3732,14 @@ struct WebAudioDiscoveryView: View {
                                         }
                                     }
                                 }
+                                guard !Task.isCancelled, scanID == requestID else { break }
                                 searched += 1
                                 if scannedStop { break }
                             }
-                            scanning = false
+                            if scanID == requestID {
+                                scanning = false
+                                scanTask = nil
+                            }
                         }
                     } label: {
                         Label(scanning ? "Searching web…" : "Find downloadable sources for missing songs",
@@ -3724,6 +3747,9 @@ struct WebAudioDiscoveryView: View {
                     }
                     .disabled(scanning || apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || batch.isEmpty)
                     if scanning {
+                        Button("Cancel web search") { cancelScan() }
+                            .frame(minHeight: 44)
+                            .accessibilityHint("Stops remaining web searches and keeps results already found")
                         ProgressView(value: Double(searched), total: Double(max(1, batch.count)))
                         Text("\(searched) of \(batch.count) songs searched" +
                              (inspectPagesDuringSearch ? " · \(inspectedDuringSearch) source pages inspected" : ""))
@@ -3931,7 +3957,7 @@ struct WebAudioDiscoveryView: View {
                 pageStart = 0
                 searched = 0
             }
-            .onDisappear { scanTask?.cancel() }
+            .onDisappear { cancelScan() }
             .alert("Web Search", isPresented: Binding(
                 get: { message != nil },
                 set: { if !$0 { message = nil } }
