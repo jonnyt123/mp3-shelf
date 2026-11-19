@@ -51,6 +51,12 @@ private func replay(beforeCleanup: (() throws -> Void)? = nil) throws {
     guard (try? Data(contentsOf: manifest)) == (record.committed ? new : old)
     else { throw Rejection.changed }
     try beforeCleanup?()
+    // Finalization must not discard the journal if another writer changed
+    // the manifest after initial validation.
+    guard (try? fm.destinationOfSymbolicLink(atPath: manifest.path)) == nil
+    else { throw Rejection.unsafe }
+    guard (try? Data(contentsOf: manifest)) == (record.committed ? new : old)
+    else { throw Rejection.changed }
     // Recheck every owned destination after the validation/cleanup boundary.
     // A concurrent replacement must never be unlinked using stale validation.
     for entry in record.entries {
