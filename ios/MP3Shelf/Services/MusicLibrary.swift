@@ -423,18 +423,22 @@ final class MusicLibrary: ObservableObject {
         // update this index after the corresponding catalog write succeeds;
         // an interrupted restore must never publish an uncommitted identity.
         var recordingIDsByPortableIdentity: [String: UUID] = [:]
-        for track in tracks {
-            try Task.checkCancellation()
-            recordingIDsByPortableIdentity[track.id.uuidString] = track.id
-            if let portableID = track.portableBackupID {
-                recordingIDsByPortableIdentity[portableID] = track.id
+        var conflictingPortableIdentities = Set<String>()
+        func indexCommittedIdentity(_ track: MusicTrack) {
+            for identity in [track.id.uuidString, track.portableBackupID].compactMap({ $0 }) {
+                if let previous = recordingIDsByPortableIdentity[identity], previous != track.id {
+                    // A damaged legacy catalog can contain duplicate portable
+                    // identities. Never silently select the last owner and
+                    // attach a restored playlist to the wrong recording.
+                    conflictingPortableIdentities.insert(identity)
+                } else {
+                    recordingIDsByPortableIdentity[identity] = track.id
+                }
             }
         }
-        func indexCommittedIdentity(_ track: MusicTrack) {
-            recordingIDsByPortableIdentity[track.id.uuidString] = track.id
-            if let portableID = track.portableBackupID {
-                recordingIDsByPortableIdentity[portableID] = track.id
-            }
+        for track in tracks {
+            try Task.checkCancellation()
+            indexCommittedIdentity(track)
         }
         // Byte-identical audio is often already present when restoring a
         // backup over a partial library. Restore missing sidecars too; otherwise
@@ -587,6 +591,9 @@ final class MusicLibrary: ObservableObject {
                 // subsequent restores would keep adding copies. Fail this track
                 // without touching either recording so the user can repair the
                 // conflicting library entry and safely retry the same archive.
+                guard !conflictingPortableIdentities.contains(archived.id) else {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
                 if let identityOwnerID = recordingIDsByPortableIdentity[archived.id],
                    identityOwnerID != identicalRecording?.id {
                     throw PortableShelfArchive.ArchiveError.invalidManifest
