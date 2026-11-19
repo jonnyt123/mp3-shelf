@@ -712,9 +712,11 @@ final class MusicLibrary: ObservableObject {
                     // Do not silently lose this archive identity or playlist link.
                     throw PortableShelfArchive.ArchiveError.invalidManifest
                 }
-                if extractedSize >= 0 {
-                    recordingsBySize[Int64(extractedSize), default: []].append(tracks[index])
-                }
+                // Do not add this newly imported recording to the candidate
+                // reuse index until its portable identity has been committed.
+                // A failed metadata write leaves the local audio recoverable,
+                // but must not expose an unassigned identity to later archive
+                // entries in this same restore pass.
                 // The initial audio import is durable, but the archive identity
                 // and metadata are not. Do not expose this track to playlist
                 // restoration until the metadata catalog commit succeeds.
@@ -805,12 +807,12 @@ final class MusicLibrary: ObservableObject {
                     candidateTracks[index] = restoredTrack
                     try PersistedLibrary(tracks: candidateTracks, playlists: playlists).write(to: databaseURL)
                     tracks = candidateTracks
-                    // The size index contains value snapshots from before the
-                    // portable identity commit. Refresh the newly imported entry
-                    // immediately after durable publication; otherwise a later
-                    // byte-identical archive track may select its stale nil ID
-                    // and fail instead of preserving both distinct identities.
-                    refreshIndexedRecording(restoredTrack)
+                    // Publish only the durably assigned identity into the
+                    // same-restore byte-reuse index. Failed catalog writes leave
+                    // existing audio intact but cannot claim an archive ID.
+                    if extractedSize >= 0 {
+                        recordingsBySize[Int64(extractedSize), default: []].append(restoredTrack)
+                    }
                     // Only a durable archive-identity commit may contribute
                     // membership to the restored playlists. On failure the
                     // original recording remains safe and the next restore can
