@@ -53,12 +53,12 @@ private func replay(beforeCleanup: (() throws -> Void)? = nil) throws {
     try beforeCleanup?()
     // Recheck every owned destination after the validation/cleanup boundary.
     // A concurrent replacement must never be unlinked using stale validation.
-    for entry in record.entries where entry.owned {
+    for entry in record.entries {
         let file = path(entry.name)
         guard (try? fm.destinationOfSymbolicLink(atPath: file.path)) == nil else { throw Rejection.unsafe }
         if fm.fileExists(atPath: file.path) {
             guard (try? Data(contentsOf: file)) == entry.bytes else { throw Rejection.changed }
-        } else if record.committed { throw Rejection.changed }
+        } else if !entry.owned || record.committed { throw Rejection.changed }
     }
     if !record.committed {
         for entry in record.entries where entry.owned {
@@ -293,3 +293,40 @@ for reverse in [false, true] {
     }
 }
 print("PASS: 6 multi-entry late-conflict all-or-nothing rollback scenarios")
+
+// Borrowed recordings are part of the rollback ownership contract too. If a
+// second tab replaces a borrowed recording after the initial validation,
+// abort before removing any newly imported recording or the recovery journal.
+for reverse in [false, true] {
+    for substitution in 0..<3 {
+        try reset()
+        try created.write(to: path("new.mp3"))
+        try persist(Journal(entries: reverse ? Array(entries.reversed()) : entries, committed: false))
+        let foreign = Data(repeating: 0xC7, count: 1234)
+        var rejected = false
+        do {
+            try replay(beforeCleanup: {
+                try fm.removeItem(at: path("borrowed.mp3"))
+                switch substitution {
+                case 0: try foreign.write(to: path("borrowed.mp3"))
+                case 1: try fm.createSymbolicLink(at: path("borrowed.mp3"), withDestinationURL: path("unrelated.mp3"))
+                default: try fm.createDirectory(at: path("borrowed.mp3"), withIntermediateDirectories: false)
+                }
+            })
+        } catch { rejected = true }
+        try assert(rejected, "borrowed recording replacement accepted after validation")
+        try assert(Data(contentsOf: path("new.mp3")) == created, "borrowed race deleted newly owned audio")
+        try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "borrowed race damaged unrelated audio")
+        try assert(Data(contentsOf: manifest) == old, "borrowed race changed manifest")
+        try assert(fm.fileExists(atPath: journal.path), "borrowed race erased journal evidence")
+        if substitution == 0 {
+            try assert(Data(contentsOf: path("borrowed.mp3")) == foreign, "borrowed race changed foreign bytes")
+        } else if substitution == 1 {
+            try assert((try? fm.destinationOfSymbolicLink(atPath: path("borrowed.mp3").path)) != nil, "borrowed race removed symlink")
+        } else {
+            var directory: ObjCBool = false
+            try assert(fm.fileExists(atPath: path("borrowed.mp3").path, isDirectory: &directory) && directory.boolValue, "borrowed race removed directory")
+        }
+    }
+}
+print("PASS: 6 borrowed-recording late-substitution rollback isolation scenarios")
