@@ -34,7 +34,7 @@ try before.write(to: manifest, options: .atomic)
 
 // Model the required all-or-nothing copy contract. Roll back only files that
 // this attempt created; never delete pre-existing recordings on failure.
-private func restore(failAtCopy: Int?, failAfterCopy: Int? = nil, failBeforeManifest: Bool = false) throws {
+private func restore(failAtCopy: Int?, failAfterCopy: Int? = nil, failBeforeManifest: Bool = false, failDuringCopy: Int? = nil) throws {
     var pending: [(URL, URL)] = []
     for name in names {
         let src = source.appendingPathComponent(name)
@@ -55,8 +55,13 @@ private func restore(failAtCopy: Int?, failAfterCopy: Int? = nil, failBeforeMani
     do {
         for (index, pair) in pending.enumerated() {
             if failAtCopy == index { throw CopyFault.injected }
-            try fm.copyItem(at: pair.0, to: pair.1)
             created.append(pair.1)
+            if failDuringCopy == index {
+                let input = try Data(contentsOf: pair.0)
+                try input.prefix(max(1, input.count / 3)).write(to: pair.1)
+                throw CopyFault.injected
+            }
+            try fm.copyItem(at: pair.0, to: pair.1)
             if failAfterCopy == index { throw CopyFault.injected }
         }
         if failBeforeManifest { throw CopyFault.injected }
@@ -80,6 +85,17 @@ for round in 0..<32 {
         try require(Data(contentsOf: manifest) == before, "partial manifest publication")
         try require(names.allSatisfy { !fm.fileExists(atPath: library.appendingPathComponent($0).path) }, "partial copy survived rollback")
         try require(Data(contentsOf: original) == originalBytes, "existing audio lost")
+    }
+    // Inject a failure after a truncated destination is written.
+    for failAt in 0..<names.count {
+        var rejected = false
+        do { try restore(failAtCopy: nil, failDuringCopy: failAt) }
+        catch CopyFault.injected { rejected = true }
+        try require(rejected, "mid-copy failure injection missed")
+        try require(Data(contentsOf: manifest) == before, "mid-copy published metadata")
+        try require(names.allSatisfy { !fm.fileExists(atPath: library.appendingPathComponent($0).path) },
+                    "mid-copy left partial audio")
+        try require(Data(contentsOf: original) == originalBytes, "mid-copy damaged original audio")
     }
     // A crash/failure immediately after a successful copy must not orphan that file.
     for failAt in 0..<names.count {
@@ -179,7 +195,7 @@ for sourceIndex in names.indices {
     }
     try before.write(to: manifest, options: .atomic)
     let src = source.appendingPathComponent(names[sourceIndex])
-    let held = source.appendingPathComponent("held-\\(sourceIndex)")
+    let held = source.appendingPathComponent("held-\(sourceIndex)")
     try fm.moveItem(at: src, to: held)
     var missingRejected = false
     do { try restore(failAtCopy: nil) } catch CopyFault.invalidSource { missingRejected = true }
@@ -259,4 +275,4 @@ for sourceIndex in names.indices {
         try fm.moveItem(at: held, to: src)
     }
 }
-print("PASS: 24 borrowed-destination rollback failures plus 224 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
+print("PASS: 24 borrowed-destination rollback failures plus 320 injected failures, 3 collision, 6 missing/symlink, 6 destination substitution and 6 empty/directory source rejection scenarios across pre-copy/post-copy/pre-manifest boundaries, rollback isolation, 32 successful idempotent retries, byte-preserving 3-track restore")
