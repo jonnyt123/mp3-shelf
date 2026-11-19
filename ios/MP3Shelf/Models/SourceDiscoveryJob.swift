@@ -685,8 +685,10 @@ struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
         guard let wish = currentWish, nextRetryAt.map({ $0 <= date }) ?? true else { return false }
         guard let deadlines = sourceRecoveryNotBefore,
               let recovery = deadlines[wish.id.uuidString], recovery > date else { return true }
-        guard nextRetryAt == nil,
-              let readyIndex = wishes.indices.dropFirst(nextIndex + 1).first(where: {
+        // An elapsed global retry deadline is no longer a reason to block
+        // other ready songs. The entry guard above still enforces a future
+        // deadline; preserving the expired timestamp is safe until record().
+        guard let readyIndex = wishes.indices.dropFirst(nextIndex + 1).first(where: {
                   (deadlines[wishes[$0].id.uuidString] ?? date) <= date
               }) else { return false }
         let ready = wishes.remove(at: readyIndex)
