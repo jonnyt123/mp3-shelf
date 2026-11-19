@@ -85,6 +85,10 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
         guard (try? fm.destinationOfSymbolicLink(atPath: source.path)) == nil,
               (try? fm.destinationOfSymbolicLink(atPath: destination.path)) == nil,
               fm.fileExists(atPath: source.path),
+              let sourceAttributes = try? fm.attributesOfItem(atPath: source.path),
+              sourceAttributes[.type] as? FileAttributeType == .typeRegular,
+              (sourceAttributes[.referenceCount] as? NSNumber)?.intValue == 1,
+              (sourceAttributes[.size] as? NSNumber)?.int64Value ?? 0 > 0,
               let expected = try? Data(contentsOf: source) else {
             throw RestoreFault.malformed
         }
@@ -289,5 +293,38 @@ try check(Data(contentsOf: linkDestination) == newBytes,
           "valid non-symlink retry did not restore audio")
 try check(Data(contentsOf: outside) == outsideBytes,
           "valid retry mutated unrelated external audio")
+
+// A valid filename is not sufficient: a source may be empty, a directory,
+// or a hard link to user-owned audio. Reject every unsafe source before any
+// destination is copied or metadata committed; permit a clean retry.
+let unsafeBatchTrack = ArchiveTrack(id: "unsafe-batch", filename: "unsafe-batch.mp3", digest: "safe")
+let unsafeBatch = ArchiveManifest(tracks: [unsafeBatchTrack], playlists: [])
+let unsafeBatchSource = incoming.appendingPathComponent(unsafeBatchTrack.filename)
+let unsafeBatchDestination = library.appendingPathComponent(unsafeBatchTrack.filename)
+let protectedSource = root.appendingPathComponent("protected-source.mp3")
+let protectedBytes = Data(repeating: 0xBA, count: 8192)
+try protectedBytes.write(to: protectedSource)
+for scenario in 0..<60 {
+    if fm.fileExists(atPath: unsafeBatchSource.path) { try fm.removeItem(at: unsafeBatchSource) }
+    switch scenario % 3 {
+    case 0: try Data().write(to: unsafeBatchSource)
+    case 1: try fm.createDirectory(at: unsafeBatchSource, withIntermediateDirectories: false)
+    default: try fm.linkItem(at: protectedSource, to: unsafeBatchSource)
+    }
+    let before = try Data(contentsOf: manifestURL)
+    var rejected = false
+    do { try restore(unsafeBatch, failAfterCopy: false) }
+    catch RestoreFault.malformed { rejected = true }
+    try check(rejected, "unsafe staged source accepted: \\(scenario)")
+    try check(Data(contentsOf: manifestURL) == before, "unsafe source published metadata")
+    try check(!fm.fileExists(atPath: unsafeBatchDestination.path), "unsafe source copied")
+    try check(Data(contentsOf: protectedSource) == protectedBytes, "protected source changed")
+}
+try fm.removeItem(at: unsafeBatchSource)
+try newBytes.write(to: unsafeBatchSource)
+try restore(unsafeBatch, failAfterCopy: false)
+try check(Data(contentsOf: unsafeBatchDestination) == newBytes, "valid retry failed")
+try check(Data(contentsOf: protectedSource) == protectedBytes, "valid retry changed protected audio")
+print("PASS: 60 unsafe-source rejections and clean retry")
 
 print("PASS: 32 interruption/retry cycles; 4 malformed archives; 9 unsafe filenames; 4 collision cases; 3 stale-file collision cases; metadata-only isolation; missing-source rejection; 3 symlink path attacks; two-track preflight/retry; byte preservation")
