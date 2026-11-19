@@ -1337,11 +1337,16 @@ enum SourceDiscoveryJobTests {
         // A resumed checkpoint may retain an expired global backoff while its
         // first song still waits for a new source. Round-trip the real persisted
         // model to catch starvation after an app relaunch, not just in memory.
-        let persistedQueue = try! JSONEncoder().encode(backedOffQueue)
+        var checkpointQueue = SourceDiscoveryJob(playlistID: UUID(), wishes: [delayedWish, readyWish])
+        checkpointQueue.sourceRecoveryNotBefore = [delayedWish.id.uuidString: fairnessClock.addingTimeInterval(600)]
+        checkpointQueue.nextRetryAt = fairnessClock.addingTimeInterval(30)
+        let persistedQueue = try! JSONEncoder().encode(checkpointQueue)
         var restoredQueue = try! JSONDecoder().decode(SourceDiscoveryJob.self, from: persistedQueue)
-        verifyDiscovery(restoredQueue.currentWish?.id == readyWish.id &&
+        verifyDiscovery(restoredQueue.currentWish?.id == delayedWish.id &&
                         restoredQueue.nextIndex == 0 &&
-                        restoredQueue.prepareLookup(at: fairnessClock.addingTimeInterval(31)),
+                        !restoredQueue.prepareLookup(at: fairnessClock.addingTimeInterval(29)) &&
+                        restoredQueue.prepareLookup(at: fairnessClock.addingTimeInterval(31)) &&
+                        restoredQueue.currentWish?.id == readyWish.id,
                         "restored playlist continues processing after an elapsed global retry")
         var allDelayed = SourceDiscoveryJob(playlistID: UUID(), wishes: [delayedWish, readyWish])
         allDelayed.sourceRecoveryNotBefore = [
