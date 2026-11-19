@@ -4031,6 +4031,7 @@ struct PublisherPageInspectorView: View {
     @State private var inspectionID = UUID()
     @State private var completedInspection = false
     @State private var candidateFilter = ""
+    @State private var inspectionNotice: String?
     @AccessibilityFocusState private var inspectionFeedbackFocused: Bool
 
     private var visibleCandidates: [URL] {
@@ -4056,6 +4057,16 @@ struct PublisherPageInspectorView: View {
         error = nil
         completedInspection = false
         inspectionFeedbackFocused = false
+        // A pending review belongs to the previous page's result set.
+        // Never carry it into a different URL or a restarted inspection.
+        chosenAudio = nil
+    }
+
+    private func cancelInspection() {
+        guard isInspecting else { return }
+        invalidateInspection()
+        inspectionNotice = "Page inspection cancelled. You can inspect this URL again."
+        inspectionFeedbackFocused = true
     }
 
     private func inspectPage() {
@@ -4067,6 +4078,7 @@ struct PublisherPageInspectorView: View {
             return
         }
         invalidateInspection()
+        inspectionNotice = nil
         let requestID = inspectionID
         isInspecting = true
         inspectionTask = Task {
@@ -4116,12 +4128,23 @@ struct PublisherPageInspectorView: View {
                                 .font(.subheadline)
                             Spacer(minLength: 0)
                             Button("Cancel inspection") {
-                                invalidateInspection()
+                                cancelInspection()
                             }
                             .frame(minHeight: 44)
                             .accessibilityHint("Stop inspecting this page without changing the URL")
                         }
                         .accessibilityElement(children: .contain)
+                    }
+                    if let inspectionNotice {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(inspectionNotice)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .accessibilityFocused($inspectionFeedbackFocused)
+                            Button("Inspect page again") { inspectPage() }
+                                .frame(minHeight: 44)
+                                .accessibilityHint("Restart the cancelled inspection without changing the URL")
+                        }
                     }
                     if let error {
                         VStack(alignment: .leading, spacing: 10) {
@@ -4193,6 +4216,10 @@ struct PublisherPageInspectorView: View {
                                     .lineLimit(2)
                                     .textSelection(.enabled)
                                 Button {
+                                    // Only a URL still present in the current completed
+                                    // inspection may advance to recording review.
+                                    guard !isInspecting, completedInspection,
+                                          candidates.contains(file) else { return }
                                     chosenAudio = WebAudioSelection(wish: wish, url: file)
                                 } label: {
                                     Label("Review this audio file", systemImage: "arrow.down.circle")
@@ -4227,7 +4254,10 @@ struct PublisherPageInspectorView: View {
             .sheet(item: $chosenAudio) { selected in
                 AuthorizedPlaylistAudioView(wish: selected.wish, initialURL: selected.url)
             }
-            .onChange(of: pageText) { _, _ in invalidateInspection() }
+            .onChange(of: pageText) { _, _ in
+                invalidateInspection()
+                inspectionNotice = nil
+            }
             .onDisappear { invalidateInspection() }
         }
     }
