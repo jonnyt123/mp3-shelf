@@ -1209,19 +1209,24 @@ struct LibraryView: View {
                 importInProgress = true
                 Task { @MainActor in
                     let outcome = await library.importAudio(urls: urls)
-                    // SwiftUI can publish library.tracks while importAudio is
-                    // suspended. Rebind an existing partial queue to the new
-                    // selection before clearing the local import guard. This
-                    // never replaces the active queue or starts playback.
-                    if outcome.imported > 0, bulkSkippedRecordingCount > 0,
-                       partialQueueShuffle != nil {
-                        playbackSelectionSnapshot = displayed.map {
-                            RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0))
-                        }
+                    // Importing unrelated songs can expand a search or the
+                    // unfiltered Library. Never rebind an old partial queue to
+                    // those new results: Refresh would silently play a different
+                    // selection from the one the listener originally requested.
+                    // An exact match may still offer an explicit local recheck.
+                    if bulkSkippedRecordingCount > 0, partialQueueShuffle != nil,
+                       !playbackSelectionIsCurrent() {
+                        bulkSkippedRecordingCount = 0
+                        partialQueueShuffle = nil
+                        partialQueueNeedsRefresh = false
+                        bulkRetryShuffle = nil
+                        playbackSelectionSnapshot = nil
+                        bulkPlaybackNotice = "Your library selection changed during import. Choose Play or Shuffle to check the new songs. The current queue is unchanged."
+                    } else {
+                        completeLocalAudioImport(importedCount: outcome.imported,
+                                                 skippedCount: outcome.skipped,
+                                                 failureCount: outcome.errors.count)
                     }
-                    completeLocalAudioImport(importedCount: outcome.imported,
-                                             skippedCount: outcome.skipped,
-                                             failureCount: outcome.errors.count)
                     importInProgress = false
                     message = outcome.description
                 }
