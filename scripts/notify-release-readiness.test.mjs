@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync,mkdirSync,rmSync,readFileSync,writeFileSync,symlinkSync,openSync,closeSync,unlinkSync } from 'node:fs';
+import { mkdtempSync,mkdirSync,rmSync,readFileSync,writeFileSync,symlinkSync,openSync,closeSync,unlinkSync,renameSync,existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { normalizedGateState,notificationChanges,notificationMessage,
@@ -194,5 +194,25 @@ test('failed notification releases the exclusive lock so the next run can retry'
   assert.equal(deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
    send:s=>sent.push(s)}).status,'CHANGE_NOTIFIED');
   assert.equal(sent.length,1);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
+
+test('a replaced notification lock is never removed by the previous owner',()=>{
+ const x=dir(),sent=[],lock=join(x.path,'.notification-state.lock');
+ try{
+  writeFileSync(x.latest,JSON.stringify(model()));
+  deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',send:()=>{}});
+  writeFileSync(x.latest,JSON.stringify(model({native:'PASS'})));
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+   send:message=>{
+    sent.push(message);
+    renameSync(lock,join(x.path,'previous-owner.lock'));
+    writeFileSync(lock,'another process owns this lock',{flag:'wx'});
+   }}),/NOTIFICATION_LOCK_OWNERSHIP_LOST/);
+  assert.equal(sent.length,1);
+  assert.equal(readFileSync(lock,'utf8'),'another process owns this lock');
+  assert(existsSync(join(x.path,'previous-owner.lock')));
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+   send:()=>{throw Error('DUPLICATE')}}),/already in progress/);
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
