@@ -1682,6 +1682,23 @@ enum AudioSourceFinderTests {
             filename: "Exact Song (Nightcore).mp3",
             requestedTitle: "Exact Song (Sped Up)"),
             "nightcore and sped-up editions are not interchangeable")
+        // An Openverse page without authoritative page_count may be a
+        // truncated result set, hiding another version of the same recording.
+        verify(!AudioSourceFinder.openversePageConsistent(
+            page: 1, pageCount: nil, returned: 1, expectedPageCount: nil),
+            "short Openverse page without total cannot authorize unique selection")
+        verify(!AudioSourceFinder.openversePageConsistent(
+            page: 2, pageCount: nil, returned: 0, expectedPageCount: 2),
+            "later Openverse page cannot drop authoritative pagination")
+        verify(AudioSourceFinder.openversePageConsistent(
+            page: 1, pageCount: 1, returned: 1, expectedPageCount: nil),
+            "complete one-page Openverse search remains eligible")
+        verify(AudioSourceFinder.openversePageConsistent(
+            page: 2, pageCount: 2, returned: 1, expectedPageCount: 2),
+            "stable final Openverse page remains eligible")
+        verify(!AudioSourceFinder.openversePageConsistent(
+            page: 2, pageCount: 3, returned: 1, expectedPageCount: 2),
+            "changing Openverse totals invalidate uniqueness")
         print("Audio source discovery validation tests passed")
     }
 }
