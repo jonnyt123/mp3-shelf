@@ -1568,6 +1568,24 @@ enum AudioSourceFinderTests {
             "a twelve-second preview cannot auto-match a fifteen-second song")
         verify(abs(239.0 - 240.0) <= AudioSourceFinder.recordingDurationTolerance(240),
             "a full-length recording with one-second metadata drift stays eligible")
+        // The Spotify request can specify a particular edition even when an
+        // independently hosted file has the same base title and artist.
+        // Missing edition evidence must require review, not unattended import.
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song.mp3", requestedTitle: "Exact Song (Live)"),
+            "generic studio filename cannot satisfy requested live recording")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song.mp3", requestedTitle: "Exact Song (Remastered)"),
+            "generic filename cannot satisfy a requested remaster")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Live).mp3", requestedTitle: "Exact Song"),
+            "live filename cannot satisfy a requested studio recording")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Live).mp3", requestedTitle: "Exact Song (Live)"),
+            "matching live edition remains eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song.mp3", requestedTitle: "Exact Song"),
+            "ordinary unqualified recordings remain eligible")
         print("Audio source discovery validation tests passed")
     }
 }
