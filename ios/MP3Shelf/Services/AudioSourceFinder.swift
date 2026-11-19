@@ -264,7 +264,7 @@ enum AudioSourceFinder {
             let stem = (name as NSString).deletingPathExtension
                 .replacingOccurrences(of: "_", with: " ")
             let withoutTrackNumber = stem.replacingOccurrences(
-                of: #"^\\s*[0-9]{1,3}\\s*[._-]\\s*"#,
+                of: #"^\s*[0-9]{1,3}\s*[._-]\s*"#,
                 with: "", options: .regularExpression)
             let expectedTitle = MusicMatching.key(wish.title)
             let expectedArtistTitle = MusicMatching.key("\(wish.artist) - \(wish.title)")
