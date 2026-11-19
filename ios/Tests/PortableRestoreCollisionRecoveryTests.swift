@@ -49,7 +49,7 @@ try JSONEncoder().encode(baseline).write(to: manifestURL, options: .atomic)
 func load() throws -> ArchiveManifest {
     try JSONDecoder().decode(ArchiveManifest.self, from: Data(contentsOf: manifestURL))
 }
-func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
+func restore(_ archive: ArchiveManifest, failAfterCopy: Bool, failOnCopy: Int? = nil) throws {
     let ids = archive.tracks.map(\.id)
     guard Set(ids).count == ids.count,
           archive.tracks.allSatisfy({ safeAudioFilename($0.filename) }),
@@ -99,8 +99,18 @@ func restore(_ archive: ArchiveManifest, failAfterCopy: Bool) throws {
             pendingCopies.append((source, destination))
         }
     }
-    for (source, destination) in pendingCopies {
-        try fm.copyItem(at: source, to: destination)
+    // A mid-batch filesystem failure must not strand earlier uncommitted files.
+    // Only remove destinations created by this invocation, never pre-existing audio.
+    var created: [URL] = []
+    do {
+        for (index, pair) in pendingCopies.enumerated() {
+            if failOnCopy == index { throw RestoreFault.interrupted }
+            try fm.copyItem(at: pair.0, to: pair.1)
+            created.append(pair.1)
+        }
+    } catch {
+        for destination in created.reversed() { try? fm.removeItem(at: destination) }
+        throw error
     }
     if failAfterCopy { throw RestoreFault.interrupted }
     try JSONEncoder().encode(next).write(to: manifestURL, options: .atomic)
@@ -253,6 +263,36 @@ try check(Data(contentsOf: firstDestination) == newBytes &&
           "valid batch retry did not preserve both recordings")
 try check((try load()).playlists.last?.trackIDs == [firstNew.id, secondNew.id],
           "valid batch retry lost playlist order")
+
+// Simulate a failure after the first successful copy in a two-track batch.
+// A retry must be able to recover without orphan files or changed playlists.
+let rollbackFirst = ArchiveTrack(id: "rollback:first", filename: "rollback-first.mp3", digest: "r1")
+let rollbackSecond = ArchiveTrack(id: "rollback:second", filename: "rollback-second.mp3", digest: "r2")
+let rollbackArchive = ArchiveManifest(tracks: [rollbackFirst, rollbackSecond], playlists: [
+    ArchivePlaylist(id: "rollback:playlist", trackIDs: [rollbackSecond.id, rollbackFirst.id])
+])
+let rollbackOne = library.appendingPathComponent(rollbackFirst.filename)
+let rollbackTwo = library.appendingPathComponent(rollbackSecond.filename)
+try oldBytes.write(to: incoming.appendingPathComponent(rollbackFirst.filename))
+try newBytes.write(to: incoming.appendingPathComponent(rollbackSecond.filename))
+let beforeRollback = try Data(contentsOf: manifestURL)
+for iteration in 0..<48 {
+    var interrupted = false
+    do { try restore(rollbackArchive, failAfterCopy: false, failOnCopy: 1) }
+    catch RestoreFault.interrupted { interrupted = true }
+    try check(interrupted, "injected second-copy failure was ignored \\(iteration)")
+    try check(!fm.fileExists(atPath: rollbackOne.path) && !fm.fileExists(atPath: rollbackTwo.path),
+              "mid-batch failure left orphan audio \\(iteration)")
+    try check(Data(contentsOf: manifestURL) == beforeRollback,
+              "mid-batch failure published playlist or track metadata \\(iteration)")
+    try check(Data(contentsOf: original) == oldBytes,
+              "mid-batch rollback damaged pre-existing recording \\(iteration)")
+}
+try restore(rollbackArchive, failAfterCopy: false)
+try check(Data(contentsOf: rollbackOne) == oldBytes && Data(contentsOf: rollbackTwo) == newBytes,
+          "retry after mid-batch failure lost recording bytes")
+try check((try load()).playlists.last?.trackIDs == [rollbackSecond.id, rollbackFirst.id],
+          "retry after mid-batch failure changed playlist order")
 
 // Symlink path attacks: a lexically safe .mp3 basename may resolve outside
 // either the staging directory or the library. Reject before reading or
