@@ -613,7 +613,12 @@ enum AudioSourceFinder {
         // Never treat the remaining file as uniquely identified.
         guard safeIdentifier(identifier), let metadata = item.metadata,
               !item.hasMalformedFileRows else { return nil }
-        let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
+        // Competing originals in other formats invalidate uniqueness. A lone
+        // MP3 is not proof of a single recording when M4A/FLAC/WAV siblings exist.
+        let audioExtensions: Set<String> = ["mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "aiff", "wma"]
+        let audioFiles = (item.files ?? []).filter { file in
+            audioExtensions.contains((file.name as NSString).pathExtension.lowercased())
+        }
         let originals = audioFiles.filter { $0.source == "original" }
         let rawEligible = originals.isEmpty ? audioFiles : originals
         // Duplicate catalog rows do not create additional recordings. Count
@@ -636,6 +641,9 @@ enum AudioSourceFinder {
             }
         }) else { return nil }
         let eligible = grouped.keys.sorted().compactMap { grouped[$0]?.first }
+        // This importer supports MP3 only; another original audio format is
+        // competing evidence, not an alternative automatic download.
+        guard eligible.allSatisfy({ safeMP3File($0.name) }) else { return nil }
         let matches = eligible.filter { file in
             !file.hasInvalidSize && !file.hasInvalidLength && archiveFileCandidate(name: file.name, source: file.source, sizeBytes: file.size,
                                  itemTitle: metadata.title?.value ?? "",
