@@ -13,7 +13,11 @@ function sample(override={}){
   loaded:true,sourceRoot:root,now,
   latest:{schema:'mp3shelf-native-agent-run-v1',startedAt:new Date(now-120000).toISOString(),
     finishedAt:new Date(now-60000).toISOString(),status:'COMPLETED',
-    integration:'already-staged',candidateSha:'a'.repeat(40)},...override};
+    integration:'already-staged',candidateSha:'a'.repeat(40),
+    packaging:'EXISTING_VERIFIED_ARCHIVE',delivery:'ALREADY_DELIVERED',
+    sha256:'b'.repeat(64),
+    downloadURL:'https://github.com/jonnyt123/mp3-shelf/releases/download/mp3-shelf-ios-'+
+      'a'.repeat(40)+'/MP3-Shelf-Xcode-'+ 'a'.repeat(12)+'.zip'},...override};
 }
 test('verified loaded agent and recent Mac receipt distinguish agent health from Xcode success',()=>{
  const h=evaluateAgentHealth(sample());
@@ -88,4 +92,24 @@ test('bootstrap-only repair never requires killing a newly launched Xcode job',(
  const pending=evaluateAgentHealth(sample({loaded:true,latest:null}));
  assert.equal(pending.repair,'INSPECT_LAUNCHD_LOGS_AND_WAIT_FOR_RECEIPT');
  assert.equal(pending.status,'NEEDS_ATTENTION');
+});
+
+test('completed release health requires a canonical SHA-bound archive and published delivery',()=>{
+ const valid=sample().latest;
+ assert.equal(evaluateAgentHealth(sample()).checks.recentRun.status,'PASS');
+ for(const mutation of [
+  {delivery:'NOT_VERIFIED'},
+  {packaging:'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE'},
+  {packaging:'NOT_VERIFIED'},
+  {sha256:'not-a-digest'},
+  {downloadURL:'https://example.invalid/archive.zip'},
+  {downloadURL:valid.downloadURL+'?secret=1'},
+  {downloadURL:valid.downloadURL.replace('a'.repeat(40),'c'.repeat(40))},
+  {failureReason:'NATIVE_CYCLE_FAILED_REVIEW_LOCAL_LOGS'}
+ ]){
+  const health=evaluateAgentHealth(sample({latest:{...valid,...mutation}}));
+  assert.equal(health.status,'NEEDS_ATTENTION',JSON.stringify(mutation));
+  assert(health.blockers.includes('recentRun'),JSON.stringify(mutation));
+  assert.equal(health.agentStatus,'NOT_VERIFIED');
+ }
 });
