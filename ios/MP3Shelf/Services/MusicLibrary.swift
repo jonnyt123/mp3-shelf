@@ -633,7 +633,16 @@ final class MusicLibrary: ObservableObject {
                         indexCommittedIdentity(updatedTracks[index])
                     }
                     try Task.checkCancellation()
-                    try restoreMissingSidecars(for: archived, existingID: existing.id)
+                    // A failed optional sidecar write must not lose already committed audio
+                    // identity or its restored playlist membership.
+                    do {
+                        try restoreMissingSidecars(for: archived, existingID: existing.id)
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        if Task.isCancelled { throw CancellationError() }
+                        report.errors.append("\(archived.name): optional sidecar recovery failed (\(error.localizedDescription)); audio identity preserved.")
+                    }
                     restoredIDs[archived.id] = existing.id
                     report.skipped += 1
                     continue
@@ -715,7 +724,16 @@ final class MusicLibrary: ObservableObject {
                             refreshIndexedRecording(updatedTracks[index])
                         indexCommittedIdentity(updatedTracks[index])
                         }
-                        try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
+                        // A failed optional sidecar write must not lose already committed audio
+                        // identity or its restored playlist membership.
+                        do {
+                            try restoreMissingSidecars(for: archived, existingID: tracks[index].id)
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            if Task.isCancelled { throw CancellationError() }
+                            report.errors.append("\(archived.name): optional sidecar recovery failed (\(error.localizedDescription)); audio identity preserved.")
+                        }
                         restoredIDs[archived.id] = tracks[index].id
                         // A concurrent duplicate is a successful skip only
                         // after verified bytes and durable identity publication.
