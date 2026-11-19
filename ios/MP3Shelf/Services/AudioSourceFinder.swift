@@ -661,6 +661,11 @@ enum AudioSourceFinder {
             }
         }) else { return nil }
         let eligible = grouped.keys.sorted().compactMap { grouped[$0]?.first }
+        // A second unclassified audio file is a possible competing original,
+        // even when only the classified file matches the requested title.
+        // Do not promote a single matching filename into uniqueness evidence.
+        guard originals.isEmpty ||
+              !eligible.contains(where: { $0.source == nil }) else { return nil }
         // This importer supports MP3 only; another original audio format is
         // competing evidence, not an alternative automatic download.
         guard eligible.allSatisfy({ safeMP3File($0.name) }) else { return nil }
