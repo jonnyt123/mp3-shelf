@@ -203,13 +203,20 @@ final class MusicLibrary: ObservableObject {
     /// journal and is deliberately left alone, never silently resurrected.
     private func recoverInterruptedImports() {
         guard isLibraryPersistenceSafe else { return }
+        // Build recovery lookups once. A shelf with thousands of recordings and
+        // interrupted journals must not repeatedly scan and allocate the entire
+        // catalog for every pending entry (quadratic startup recovery).
+        // Update both indexes only after the atomic catalog commit succeeds.
+        var recoveredByID = Dictionary(tracks.map { ($0.id, $0) },
+                                       uniquingKeysWith: { first, _ in first })
+        var referencedAudioNames = Set(tracks.map(\.fileName))
         for journal in LocalAudioRecoveryRecord.pending(in: musicDirectory) {
             do {
                 let record = try LocalAudioRecoveryRecord.read(journal, in: musicDirectory)
                 let candidate = record.track
                 // The old catalog may already contain this recording: a crash
                 // after its atomic write must not duplicate it on relaunch.
-                if let existing = tracks.first(where: { $0.id == candidate.id }) {
+                if let existing = recoveredByID[candidate.id] {
                     // A committed catalog entry is not proof its audio is
                     // readable. Protected/missing files must retain recovery
                     // intent until staged bytes can be safely reattached.
@@ -224,8 +231,7 @@ final class MusicLibrary: ObservableObject {
                     if repaired { try? manager.removeItem(at: journal) }
                     continue
                 }
-                guard !LocalLibraryFileSafety.isReferenced(
-                    candidate.fileName, by: tracks.map(\.fileName)) else { continue }
+                guard !referencedAudioNames.contains(candidate.fileName) else { continue }
                 let audio = try record.restorePublication(in: musicDirectory) { file in
                     guard let probe = try? AVAudioPlayer(contentsOf: file) else {
                         return false
@@ -242,6 +248,8 @@ final class MusicLibrary: ObservableObject {
                     .write(to: databaseURL)
                 tracks = updatedTracks
                 playlists = updatedPlaylists
+                recoveredByID[candidate.id] = candidate
+                referencedAudioNames.insert(candidate.fileName)
                 try? manager.removeItem(at: journal)
             } catch {
                 // Keep unrecognized/invalid intents and original bytes for
