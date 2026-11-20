@@ -184,4 +184,33 @@ for committed in [false, true] {
     try require(!fm.fileExists(atPath: journalURL.path), "successful replay retained stale journal")
     try require(fm.fileExists(atPath: ownedURL.path) == committed, "commit state changed audio ownership")
 }
-print("PASS: 144 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
+// A journal or recording already shared with another pathname at the start of
+// replay must fail before the cleanup callback. These cases differ from the
+// mid-replay alias mutations above: no trusted exclusive inode ever existed.
+for committed in [false, true] {
+    for aliasJournal in [false, true] {
+        try? fm.removeItem(at: journalURL)
+        try? fm.removeItem(at: ownedURL)
+        let alias = root.appendingPathComponent(aliasJournal ? "initial-journal-peer.json" : "initial-audio-peer.mp3")
+        try? fm.removeItem(at: alias)
+        try originalAudio.write(to: ownedURL)
+        try journalBytes(RecoveryJournal(generation: UUID(), committed: committed, ownedNames: ["new.mp3"])).write(to: journalURL)
+        let protectedURL = aliasJournal ? journalURL : ownedURL
+        let expected = try Data(contentsOf: protectedURL)
+        try fm.linkItem(at: protectedURL, to: alias)
+        var callbackCalled = false
+        var rejected = false
+        do {
+            try verifyAndFinalize { callbackCalled = true }
+        } catch RecoveryFailure.unsafeJournal {
+            rejected = true
+        }
+        try require(rejected, "initial shared inode accepted (journal=\\(aliasJournal), committed=\\(committed))")
+        try require(!callbackCalled, "cleanup callback ran with initial shared inode")
+        try require(Data(contentsOf: protectedURL) == expected && Data(contentsOf: alias) == expected,
+                    "initial hard-link evidence changed during rejected replay")
+        try require(fm.fileExists(atPath: journalURL.path) && fm.fileExists(atPath: ownedURL.path),
+                    "initial shared inode caused destructive cleanup")
+    }
+}
+print("PASS: 144 journal/audio replacement/replay isolation scenarios; 4 initial-alias rejections; 2 uncontested controls")
