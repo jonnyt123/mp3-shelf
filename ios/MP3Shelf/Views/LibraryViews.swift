@@ -3918,8 +3918,21 @@ struct WebAudioDiscoveryView: View {
                                 .font(.caption.weight(.semibold))
                         }
                         if let issue = issues[wish.id] {
-                            Text(issue).font(.caption).foregroundStyle(.orange)
-                        } else if let found = results[wish.id] {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label("Latest web search failed", systemImage: "exclamationmark.triangle")
+                                    .font(.subheadline.weight(.semibold))
+                                    .accessibilityAddTraits(.isHeader)
+                                Text(issue).font(.caption)
+                                if results[wish.id] != nil {
+                                    Text("Previously discovered sources are still available below. Retry the search when ready.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .foregroundStyle(.orange)
+                            .accessibilityElement(children: .combine)
+                        }
+                        if let found = results[wish.id] {
                             if found.isEmpty {
                                 Text("No indexed download pages returned.")
                                     .font(.caption).foregroundStyle(.secondary)
