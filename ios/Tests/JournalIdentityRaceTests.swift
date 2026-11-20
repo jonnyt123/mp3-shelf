@@ -29,11 +29,19 @@ private func ownedIdentity() throws -> NSNumber {
           let inode = attributes[.systemFileNumber] as? NSNumber else { throw RecoveryFailure.unsafeJournal }
     return inode
 }
+private func journalIdentity() throws -> NSNumber {
+    guard (try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) == nil else { throw RecoveryFailure.unsafeJournal }
+    let attributes = try fm.attributesOfItem(atPath: journalURL.path)
+    guard (attributes[.type] as? FileAttributeType) == .typeRegular,
+          let inode = attributes[.systemFileNumber] as? NSNumber else { throw RecoveryFailure.unsafeJournal }
+    return inode
+}
 private func verifyAndFinalize(_ beforeFinalization: () throws -> Void) throws {
     guard (try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) == nil,
           let original = try? Data(contentsOf: journalURL),
           let record = try? JSONDecoder().decode(RecoveryJournal.self, from: original),
           record.ownedNames == ["new.mp3"] else { throw RecoveryFailure.unsafeJournal }
+    let originalJournalIdentity = try journalIdentity()
     let originalIdentity = try ownedIdentity()
     guard (try? Data(contentsOf: ownedURL)) == originalAudio else { throw RecoveryFailure.unsafeJournal }
     try beforeFinalization()
@@ -41,13 +49,14 @@ private func verifyAndFinalize(_ beforeFinalization: () throws -> Void) throws {
     // transaction must never inherit a previous transaction's ownership proof.
     guard (try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) == nil,
           let current = try? Data(contentsOf: journalURL), current == original,
+          (try? journalIdentity()) == originalJournalIdentity,
           (try? ownedIdentity()) == originalIdentity,
           (try? Data(contentsOf: ownedURL)) == originalAudio else { throw RecoveryFailure.journalChanged }
     if !record.committed { try fm.removeItem(at: ownedURL) }
     try fm.removeItem(at: journalURL)
 }
 for committed in [false, true] {
-    for mode in 0..<11 {
+    for mode in 0..<13 {
         for iteration in 0..<4 {
             try? fm.removeItem(at: journalURL)
             try? fm.removeItem(at: ownedURL)
@@ -79,6 +88,11 @@ for committed in [false, true] {
                         try originalAudio.write(to: twin)
                         try fm.removeItem(at: ownedURL)
                         try fm.createSymbolicLink(at: ownedURL, withDestinationURL: twin)
+                    case 11: try journalBytes(original).write(to: journalURL, options: .atomic) // identical bytes, new inode
+                    case 12:
+                        let twinJournal = root.appendingPathComponent("identical-recovery.json")
+                        try journalBytes(original).write(to: twinJournal)
+                        try fm.createSymbolicLink(at: journalURL, withDestinationURL: twinJournal)
                     default: break
                     }
                 }
@@ -90,6 +104,7 @@ for committed in [false, true] {
             else if mode == 10 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "same-byte symlink substitution removed") }
             else { try require(Data(contentsOf: ownedURL) == originalAudio, "stale replay deleted audio") }
             try require(Data(contentsOf: unrelatedURL) == unrelatedAudio, "stale replay damaged unrelated bytes")
+            if mode == 12 { try require((try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) != nil, "same-byte journal symlink substitution removed") }
             if mode == 3 { try require((try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) != nil, "symlink evidence lost") }
             if mode == 4 { var isDir: ObjCBool = false; try require(fm.fileExists(atPath: journalURL.path, isDirectory: &isDir) && isDir.boolValue, "directory substitution removed") }
         }
@@ -104,4 +119,4 @@ for committed in [false, true] {
     try require(!fm.fileExists(atPath: journalURL.path), "successful replay retained stale journal")
     try require(fm.fileExists(atPath: ownedURL.path) == committed, "commit state changed audio ownership")
 }
-print("PASS: 88 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
+print("PASS: 104 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
