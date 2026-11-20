@@ -258,3 +258,22 @@ test('a blocked to unverified transition sends once and persists its state',()=>
   assert.equal(sent.length,1);
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
+
+test('regression alerts prioritize all actionable blockers without truncating names',()=>{
+ const diff={baseline:false,cleared:['source','agent','native','playlist','playback','review','hardware','smoke','zip'],
+  blocked:['source','agent','native','playlist','playback','review','hardware','smoke','zip']};
+ const message=notificationMessage(diff);
+ assert(message.startsWith('Needs review: native source, Mac agent, Xcode build'));
+ assert(message.includes(' +4 more'));
+ assert(message.includes('Passed: native source, Mac agent, Xcode build, playlist +5 more'));
+ assert(message.length<=235);
+ assert(!message.endsWith(','));
+});
+
+test('a notification with only many blockers retains its complete summary',()=>{
+ const diff={baseline:false,cleared:[],
+  blocked:['source','agent','native','playlist','playback','review','hardware','smoke','zip']};
+ const message=notificationMessage(diff);
+ assert.match(message,/Needs review: native source, Mac agent, Xcode build, playlist, offline playback \\+4 more/);
+ assert(message.length<=235);
+});
