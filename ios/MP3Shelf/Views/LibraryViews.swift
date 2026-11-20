@@ -3602,6 +3602,7 @@ struct WebAudioDiscoveryView: View {
     @State private var issues: [UUID: String] = [:]
     @State private var searched = 0
     @State private var scanning = false
+    @State private var scanStopReason: String?
     @State private var scanTask: Task<Void, Never>?
     @State private var scanID = UUID()
 
@@ -3612,6 +3613,7 @@ struct WebAudioDiscoveryView: View {
         scanTask?.cancel()
         scanTask = nil
         scanning = false
+        scanStopReason = nil
         inspectionGeneration = UUID()
         for task in manualInspectionTasks.values { task.cancel() }
         manualInspectionTasks.removeAll()
@@ -3631,6 +3633,7 @@ struct WebAudioDiscoveryView: View {
         scanTask?.cancel()
         scanTask = nil
         scanning = false
+        scanStopReason = "Web search cancelled. Completed song results are still available below."
         inspectingPages = Set(manualPageOwners.keys).union(directInspectionTasks.keys)
     }
     @State private var selectedLink: WebAudioSelection?
@@ -3738,6 +3741,7 @@ struct WebAudioDiscoveryView: View {
                         issues = [:]
                         searched = 0
                         inspectedDuringSearch = 0
+                        scanStopReason = nil
                         scanning = true
                         let requestID = scanID
                         let currentBatch = batch
@@ -3785,8 +3789,12 @@ struct WebAudioDiscoveryView: View {
                                     // Do not repeatedly hit an invalid key or exhausted API quota.
                                     if let problem = error as? WebAudioSearch.SearchFailure {
                                         switch problem {
-                                        case .rejectedKey, .rateLimited:
+                                        case .rejectedKey:
                                             scannedStop = true
+                                            scanStopReason = "Search stopped: Brave rejected the API key. Check the key before trying again. Completed results remain available."
+                                        case .rateLimited:
+                                            scannedStop = true
+                                            scanStopReason = "Search stopped: Brave reported a rate limit. Wait before trying again to avoid repeated API requests. Completed results remain available."
                                         default: break
                                         }
                                     }
@@ -3813,6 +3821,12 @@ struct WebAudioDiscoveryView: View {
                         Text("\(searched) of \(batch.count) songs searched" +
                              (inspectPagesDuringSearch ? " · \(inspectedDuringSearch) source pages inspected" : ""))
                             .font(.caption.monospacedDigit())
+                    }
+                    if let scanStopReason {
+                        Text(scanStopReason)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .accessibilityAddTraits(.updatesFrequently)
                     }
                     if !wishes.isEmpty {
                         HStack(spacing: 16) {
