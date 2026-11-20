@@ -95,7 +95,7 @@ struct PlaybackOrder {
         let nextID: UUID
         if let first = candidates.first {
             nextID = first
-        } else if automatic && loop == .off {
+        } else if automatic && loop == .off && unavailableAnchor != currentID {
             return nil
         } else if let first = playableIDs.first {
             nextID = first
@@ -198,7 +198,9 @@ struct PlaybackOrder {
             return !remainingShuffle.isEmpty || (loop == .all && playableIDs.contains { $0 != currentID })
         }
         guard let index = queueIDs.firstIndex(of: currentID) else { return false }
-        return queueIDs.dropFirst(index + 1).contains { $0 != unavailableAnchor } || (loop == .all && !playableIDs.isEmpty)
+        return queueIDs.dropFirst(index + 1).contains { $0 != unavailableAnchor }
+            || (unavailableAnchor == currentID && !playableIDs.isEmpty)
+            || (loop == .all && !playableIDs.isEmpty)
     }
 
     func upcomingIDs(limit: Int, loop: PlaybackLoopMode) -> [UUID] {
