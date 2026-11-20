@@ -316,3 +316,20 @@ test('completed agent receipt retains only verified canonical ZIP identity for h
  assert.equal(failed.sha256,null);
  assert.equal(failed.downloadURL,null);
 });
+
+test('blocked packaging never produces a delivered ZIP receipt even with a forged delivery URL',()=>{
+ const base={startedAt:'2026-11-20T18:00:00Z',finishedAt:'2026-11-20T18:01:00Z'};
+ const url='https://github.com/jonnyt123/mp3-shelf/releases/download/mp3-shelf-ios-'+sha+
+  '/MP3-Shelf-Xcode-'+sha.slice(0,12)+'.zip';
+ for(const packaging of ['BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE',
+  'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION']){
+  const receipt=nativeAgentRunRecord({...base,result:{candidateSha:sha,
+   status:'already-staged',packaging,delivery:'ALREADY_DELIVERED',
+   sha256:'c'.repeat(64),downloadURL:url}});
+  assert.equal(receipt.status,'BLOCKED');
+  assert.equal(receipt.packaging,packaging);
+  assert.equal(receipt.delivery,'NOT_VERIFIED');
+  assert.equal(receipt.sha256,null);
+  assert.equal(receipt.downloadURL,null);
+ }
+});
