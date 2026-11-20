@@ -48,6 +48,10 @@ struct PlaybackOrder {
     }
 
     mutating func select(_ id: UUID) {
+        // A stale Now Playing/queue action must not revive a recording that
+        // disappeared from the catalog. Its UUID is only a position anchor
+        // until playback moves to a surviving recording.
+        guard id != unavailableAnchor else { return }
         if !queueIDs.contains(id) { queueIDs.append(id) }
         if let currentID, currentID != id && unavailableAnchor != currentID { playHistory.append(currentID) }
         finishSelection(id)
