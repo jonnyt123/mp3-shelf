@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, symlinkSync, linkSync, truncateSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, symlinkSync, linkSync, truncateSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readinessModel, readinessMarkdown, readinessHTML, writeReadiness, readSafe }
@@ -181,5 +181,18 @@ test('readiness evidence rejects symlinks, hardlinks, empty and oversized files 
   truncateSync(original,0);
   assert.equal(readSafe(original),null,'empty evidence is not a receipt');
   assert.equal(readSafe(original,0),null,'invalid limits must fail closed');
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('safe evidence read accepts exact bound and rejects post-stat growth',()=>{
+ const root=mkdtempSync(join(tmpdir(),'shelf-bounded-evidence-'));
+ try{
+  const path=join(root,'latest.json');
+  writeFileSync(path,'{"ok":true}');
+  assert.equal(readSafe(path,11),'{"ok":true}');
+  assert.equal(readSafe(path,10),null);
+  appendFileSync(path,' ');
+  assert.equal(readSafe(path,11),null);
+  assert.equal(readSafe(path,12),'{"ok":true} ');
  }finally{rmSync(root,{recursive:true,force:true});}
 });
