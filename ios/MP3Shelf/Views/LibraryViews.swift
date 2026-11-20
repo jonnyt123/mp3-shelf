@@ -3623,6 +3623,16 @@ struct WebAudioDiscoveryView: View {
         inspectingPages.removeAll()
         inspectingWishes.removeAll()
     }
+    // Cancelling a billable web scan must not cancel a separate, user-initiated
+    // publisher inspection for another song. Preserve those task identities and
+    // reconstruct only their active progress indicators.
+    private func cancelWebSearch() {
+        scanID = UUID()
+        scanTask?.cancel()
+        scanTask = nil
+        scanning = false
+        inspectingPages = Set(manualPageOwners.keys).union(directInspectionTasks.keys)
+    }
     @State private var selectedLink: WebAudioSelection?
     @State private var inspectingWish: PlaylistWish?
     @State private var inspectingPages: Set<String> = []
@@ -3796,7 +3806,7 @@ struct WebAudioDiscoveryView: View {
                     }
                     .disabled(scanning || apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || batch.isEmpty)
                     if scanning {
-                        Button("Cancel web search") { cancelScan() }
+                        Button("Cancel web search") { cancelWebSearch() }
                             .frame(minHeight: 44)
                             .accessibilityHint("Stops remaining web searches and keeps results already found")
                         ProgressView(value: Double(searched), total: Double(max(1, batch.count)))
