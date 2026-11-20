@@ -64,7 +64,8 @@ for committed in [false, true] {
             try unrelatedAudio.write(to: unrelatedURL)
             let original = RecoveryJournal(generation: UUID(), committed: committed, ownedNames: ["new.mp3"])
             try journalBytes(original).write(to: journalURL, options: .atomic)
-            var rejected = false
+            var rejectedForIdentity = false
+            var mutationCompleted = false
             do {
                 try verifyAndFinalize {
                     try fm.removeItem(at: journalURL)
@@ -113,9 +114,15 @@ for committed in [false, true] {
                         try fm.createSymbolicLink(at: journalURL, withDestinationURL: twinJournal)
                     default: break
                     }
+                    mutationCompleted = true
                 }
-            } catch { rejected = true }
-            try require(rejected, "stale replay accepted journal replacement mode \(mode), iteration \(iteration)")
+            } catch RecoveryFailure.journalChanged {
+                rejectedForIdentity = true
+            } catch {
+                throw NSError(domain: "JournalIdentityQA", code: 2, userInfo: [NSLocalizedDescriptionKey: "mode \(mode), iteration \(iteration) failed during setup or with unexpected error: \(error)"])
+            }
+            try require(mutationCompleted, "mutation never completed for mode \(mode), iteration \(iteration)")
+            try require(rejectedForIdentity, "stale replay accepted journal replacement mode \(mode), iteration \(iteration)")
             if mode == 14 { try require(Data(contentsOf: ownedURL) == originalAudio, "hard-linked replacement audio deleted") }
             else if mode == 15 { try require(Data(contentsOf: ownedURL).isEmpty, "empty replacement audio overwritten") }
             else if mode == 6 { try require(Data(contentsOf: ownedURL) == Data(repeating: 0x99, count: 8192), "replacement audio overwritten") }
@@ -124,6 +131,12 @@ for committed in [false, true] {
             else if mode == 10 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "same-byte symlink substitution removed") }
             else { try require(Data(contentsOf: ownedURL) == originalAudio, "stale replay deleted audio") }
             try require(Data(contentsOf: unrelatedURL) == unrelatedAudio, "stale replay damaged unrelated bytes")
+            if mode == 13 {
+                let twinJournal = root.appendingPathComponent("hardlinked-recovery.json")
+                try require(fm.fileExists(atPath: journalURL.path), "hard-linked journal substitution removed")
+                try require(fm.fileExists(atPath: twinJournal.path), "hard-link source journal removed")
+            }
+            if mode == 11 { try require(Data(contentsOf: journalURL) == journalBytes(original), "same-byte journal replacement damaged") }
             if mode == 12 { try require((try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) != nil, "same-byte journal symlink substitution removed") }
             if mode == 3 { try require((try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) != nil, "symlink evidence lost") }
             if mode == 4 { var isDir: ObjCBool = false; try require(fm.fileExists(atPath: journalURL.path, isDirectory: &isDir) && isDir.boolValue, "directory substitution removed") }
