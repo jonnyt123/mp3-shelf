@@ -4,7 +4,7 @@
  * report NEVER grants authorization to publish an archive.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, lstatSync, fstatSync, openSync, closeSync, constants, mkdirSync, readdirSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, readSync, lstatSync, fstatSync, openSync, closeSync, constants, mkdirSync, readdirSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -28,10 +28,21 @@ export function readSafe(path,max=1024*1024){
   fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
   const info=fstatSync(fd);
   if(!info.isFile()||info.nlink!==1||info.size<1||info.size>max)return null;
-  const bytes=readFileSync(fd);
-  // Reject evidence modified while reading, rather than trusting a partial
-  // or oversized JSON document from a concurrent writer.
-  if(bytes.length!==info.size||bytes.length>max)return null;
+  // Bound the actual read, not just the pre-read stat: another writer may
+  // grow this inode after fstat. A single descriptor avoids path swaps.
+  const bytes=Buffer.allocUnsafe(info.size);
+  let offset=0;
+  while(offset<bytes.length){
+   const n=readSync(fd,bytes,offset,bytes.length-offset,offset);
+   if(n===0)return null;
+   offset+=n;
+  }
+  const after=fstatSync(fd);
+  if(!after.isFile()||after.nlink!==1||after.size!==info.size||
+     after.mtimeMs!==info.mtimeMs||after.ctimeMs!==info.ctimeMs)return null;
+  // Reject appended data even when it arrives after the original size.
+  const extra=Buffer.allocUnsafe(1);
+  if(readSync(fd,extra,0,1,bytes.length)!==0)return null;
   return bytes.toString('utf8');
  }catch{return null;}
  finally{if(fd!==undefined)closeSync(fd);}
