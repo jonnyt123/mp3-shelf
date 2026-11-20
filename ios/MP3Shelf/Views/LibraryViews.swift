@@ -3592,6 +3592,7 @@ private struct WebAudioSelection: Identifiable {
 struct WebAudioDiscoveryView: View {
     let wishes: [PlaylistWish]
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var apiKey = WebAudioSearch.loadKey() ?? ""
     @AppStorage("MP3Shelf.automaticWebFallback") private var automaticWebFallback = true
     @State private var searchDepth: WebAudioSearch.SearchDepth = .quick
@@ -3627,6 +3628,14 @@ struct WebAudioDiscoveryView: View {
         inspectingPages.removeAll()
         inspectingWishes.removeAll()
     }
+    // Inactive scenes must not keep user-initiated webpage requests running.
+    // Preserve discovered links and per-song results for an explicit foreground retry.
+    private func suspendForInactiveScene() {
+        guard scanning || !manualInspectionTasks.isEmpty || !directInspectionTasks.isEmpty else { return }
+        cancelScan()
+        scanStopReason = "Web search and page inspections paused while MP3 Shelf is inactive. Previous results remain available; retry after returning."
+    }
+
     // Cancelling a billable web scan must not cancel a separate, user-initiated
     // publisher inspection for another song. Preserve those task identities and
     // reconstruct only their active progress indicators.
@@ -4048,6 +4057,7 @@ struct WebAudioDiscoveryView: View {
                                         }
                                     } else {
                                         Button {
+                                            guard scenePhase == .active, directInspectionTasks[hit.id] == nil else { return }
                                             let page = hit.url
                                             inspectingPages.insert(hit.id)
                                             inspectionErrors.removeValue(forKey: hit.id)
@@ -4079,7 +4089,7 @@ struct WebAudioDiscoveryView: View {
                                                 .font(.caption.weight(.medium))
                                                 .frame(minHeight: 44, alignment: .leading)
                                         }
-                                        .disabled(inspectingPages.contains(hit.id))
+                                        .disabled(scenePhase != .active || inspectingPages.contains(hit.id))
                                         if directInspectionTasks[hit.id] != nil {
                                             Button("Cancel this page inspection") {
                                                 directInspectionTasks[hit.id]?.cancel()
@@ -4158,6 +4168,9 @@ struct WebAudioDiscoveryView: View {
                 searched = 0
             }
             .onDisappear { cancelScan() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { suspendForInactiveScene() }
+            }
             .alert("Web Search", isPresented: Binding(
                 get: { message != nil },
                 set: { if !$0 { message = nil } }
