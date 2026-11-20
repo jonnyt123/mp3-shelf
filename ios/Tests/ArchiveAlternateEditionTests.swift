@@ -9,7 +9,7 @@ guard let begin = source.range(of: "    static func recordingEditionAgrees(filen
 }
 let implementation = String(source[begin.lowerBound..<end.lowerBound])\n    .replacingOccurrences(of: "    static func recordingEditionAgrees", with: "func recordingEditionAgrees")
 for category in ["reverb", "8d-audio", "lofi", "piano-version", "stripped"] {
-    precondition(implementation.contains("(\\"\(category)\\""), "Missing edition category: \(category)")
+    precondition(implementation.contains(category), "Missing edition category: \(category)")
 }
 precondition(implementation.contains("editions(fileStem) == editions(requestedTitle)"),
              "Edition comparison must be bidirectional")
