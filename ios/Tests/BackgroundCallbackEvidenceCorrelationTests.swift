@@ -75,7 +75,8 @@ for (name, scenario) in negative { try expectRejected(name, scenario) }
 try expectRejected("bad digest syntax", good, digest: String(repeating: "Z", count: 64))
 try expectRejected("empty task", good, task: "")
 let boundary = [event("backgroundWake", 1), event("downloadCompleted", 2), event("recordingStaged", 1801, hash: digest)]
-precondition(try correlate(boundary, session: "S", process: "P", task: "T", digest: digest).count == 3)
+let boundaryCorrelated = try correlate(boundary, session: "S", process: "P", task: "T", digest: digest)
+precondition(boundaryCorrelated.count == 3)
 let root = FileManager.default.temporaryDirectory.appendingPathComponent("callback-qa-\(UUID().uuidString)")
 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: root) }
@@ -103,7 +104,8 @@ func permutations(_ events: [CallbackEvent]) -> [[CallbackEvent]] {
 }
 var acceptedOrders = 0
 for order in permutations(good) {
-    precondition(try correlate(order, session: "S", process: "P", task: "T", digest: digest).map(\.timestamp) == [100, 110, 120])
+    let ordered = try correlate(order, session: "S", process: "P", task: "T", digest: digest)
+    precondition(ordered.map(\.timestamp) == [100, 110, 120])
     acceptedOrders += 1
 }
 precondition(acceptedOrders == 6)
@@ -114,8 +116,9 @@ for index in 0..<7 {
     let contaminant = event(good[index % 3].kind, 105, session: index < 3 ? "prior" : "S",
                             process: index >= 3 && index < 6 ? "prior" : "P",
                             task: index == 6 ? "other" : "T", hash: index % 3 == 2 ? digest : nil)
-    precondition(try correlate([good[2], contaminant, good[0], good[1]],
-                               session: "S", process: "P", task: "T", digest: digest).count == 3)
+    let isolated = try correlate([good[2], contaminant, good[0], good[1]],
+                                session: "S", process: "P", task: "T", digest: digest)
+    precondition(isolated.count == 3)
 }
 var noise: [CallbackEvent] = []
 noise.reserveCapacity(50_003)
@@ -129,5 +132,6 @@ let largeLog = root.appendingPathComponent("large-events.json")
 try JSONEncoder().encode(noise).write(to: largeLog, options: .atomic)
 let restoredLarge = try JSONDecoder().decode([CallbackEvent].self, from: Data(contentsOf: largeLog))
 precondition(restoredLarge.count == 50_003)
-precondition(try correlate(restoredLarge, session: "S", process: "P", task: "T", digest: digest).count == 3)
+let largeCorrelated = try correlate(restoredLarge, session: "S", process: "P", task: "T", digest: digest)
+precondition(largeCorrelated.count == 3)
 print("PASS: callback ordering (6), replay isolation (7), duplicate rejection (3), persisted 50k-event noise")
