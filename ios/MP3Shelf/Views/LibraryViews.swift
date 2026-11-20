@@ -4194,6 +4194,8 @@ struct PublisherPageInspectorView: View {
     @State private var pageText = ""
     @State private var isInspecting = false
     @State private var candidates: [URL] = []
+    // Bind retained results to the exact inspected page, not merely a sheet session.
+    @State private var candidatePageURL: URL?
     @State private var error: String?
     @State private var chosenAudio: WebAudioSelection?
     @State private var inspectionTask: Task<Void, Never>?
@@ -4226,6 +4228,7 @@ struct PublisherPageInspectorView: View {
         if !preservingResults {
             // A different URL must never inherit candidates from the old page.
             candidates = []
+            candidatePageURL = nil
             candidateFilter = ""
             visibleLinkLimit = 40
             excludedLinkCount = 0
@@ -4262,9 +4265,11 @@ struct PublisherPageInspectorView: View {
             inspectionFeedbackFocused = true
             return
         }
-        // A retry against the same URL keeps verified, previously found links
-        // visible until a replacement result succeeds. URL edits still clear them.
-        invalidateInspection(preservingResults: true)
+        // A retry may retain results only for the identical source URL. This
+        // also protects against an edit/submit racing SwiftUI onChange delivery.
+        // Never present another publisher’s links as results for this page.
+        let isSamePage = candidatePageURL == pageURL
+        invalidateInspection(preservingResults: isSamePage)
         inspectionNotice = nil
         let requestID = inspectionID
         isInspecting = true
@@ -4287,6 +4292,7 @@ struct PublisherPageInspectorView: View {
                     return canonical
                 }
                 candidates = safeLinks
+                candidatePageURL = pageURL
                 candidateFilter = ""
                 visibleLinkLimit = 40
                 excludedLinkCount = found.count - safeLinks.count
