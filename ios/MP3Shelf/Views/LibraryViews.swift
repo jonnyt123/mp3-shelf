@@ -1622,10 +1622,33 @@ struct MusicTrackRow: View {
                     Text("Create a playlist first to add songs")
                 } else {
                     Menu("Add to Playlist", systemImage: "text.badge.plus") {
-                        ForEach(library.playlists) { list in
-                            Button(list.name) { library.addTrack(track.id, to: list.id) }
+                        // Restored archives may contain duplicate playlist IDs.
+                        // Never let a menu action silently mutate the first match.
+                        // Enumerated positions keep SwiftUI menu identity distinct
+                        // even when the persisted UUIDs collide.
+                        ForEach(Array(library.playlists.enumerated()), id: \.offset) { _, list in
+                            let matchingCount = library.playlists.filter { $0.id == list.id }.count
+                            Button {
+                                // Revalidate at tap time: imports and restores can
+                                // change identities while the menu is presented.
+                                guard !library.isImporting,
+                                      library.playlists.filter({ $0.id == list.id }).count == 1,
+                                      library.tracks.filter({ $0.id == track.id }).count == 1
+                                else { return }
+                                library.addTrack(track.id, to: list.id)
+                            } label: {
+                                Label(list.name,
+                                      systemImage: matchingCount == 1 ? "text.badge.plus" : "exclamationmark.triangle")
+                            }
+                            .disabled(matchingCount != 1 || library.isImporting)
+                            .accessibilityHint(matchingCount != 1
+                                ? "Duplicate playlist identity. Adding songs is unavailable until repaired."
+                                : library.isImporting
+                                ? "Wait until the audio import finishes."
+                                : "Add this recording to the selected playlist.")
                         }
                     }
+                    .disabled(library.isImporting)
                 }
                 Button("Edit Details", systemImage: "pencil") { renaming = track }
                 if audioAvailability == true {
