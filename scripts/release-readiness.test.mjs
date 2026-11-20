@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, symlinkSync, linkSync, truncateSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readinessModel, readinessMarkdown, readinessHTML, writeReadiness }
+import { readinessModel, readinessMarkdown, readinessHTML, writeReadiness, readSafe }
   from './release-readiness.mjs';
 const sha='a'.repeat(40),tooling='b'.repeat(40),hash='c'.repeat(64);
 test('empty evidence dashboard stays not release ready with concrete blockers',()=>{
@@ -162,4 +162,24 @@ test('completed review handoff is visible without silently granting owner hardwa
  assert.equal(ready.status,'NOT_RELEASE_READY');
  const forged=readinessModel({...params,reviewHandoff:{...reviewHandoff,ownerApproval:'PASS'}});
  assert.equal(forged.gates.find(g=>g.key==='review').status,'UNVERIFIED');
+});
+
+test('readiness evidence rejects symlinks, hardlinks, empty and oversized files without following redirects',()=>{
+ const root=mkdtempSync(join(tmpdir(),'shelf-evidence-'));
+ try{
+  const original=join(root,'original.json'),alias=join(root,'alias.json'),hard=join(root,'hard.json');
+  writeFileSync(original,'{"verified":true}');
+  assert.equal(readSafe(original),'{"verified":true}');
+  symlinkSync(original,alias);
+  assert.equal(readSafe(alias),null);
+  linkSync(original,hard);
+  assert.equal(readSafe(hard),null);
+  assert.equal(readSafe(original),null,'hardlink count must invalidate the original too');
+  rmSync(hard);
+  assert.equal(readSafe(original),'{"verified":true}');
+  assert.equal(readSafe(original,4),null,'oversized evidence must be rejected');
+  truncateSync(original,0);
+  assert.equal(readSafe(original),null,'empty evidence is not a receipt');
+  assert.equal(readSafe(original,0),null,'invalid limits must fail closed');
+ }finally{rmSync(root,{recursive:true,force:true});}
 });
