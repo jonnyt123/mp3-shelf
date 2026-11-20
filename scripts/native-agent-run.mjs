@@ -52,7 +52,7 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
     'INCOMPLETE_OUTPUT_REQUIRES_REVIEW','BLOCKED_UNSAFE_OUTPUT_DESTINATION'];
   const verifiedArchiveStates = ['EXISTING_VERIFIED_ARCHIVE',
     'PACKAGED_VERIFIED_NATIVE_SOURCE'];
-  const verifiedDelivery = verifiedIntegration &&
+  const verifiedDelivery = verifiedIntegration && !packagingBlocked &&
     verifiedArchiveStates.includes(result?.packaging) &&
     ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(result?.delivery) &&
     /^[0-9a-f]{64}$/.test(result?.sha256 ?? '') &&
