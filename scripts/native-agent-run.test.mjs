@@ -287,3 +287,32 @@ test('missing lock is never silently recreated or treated as successful cleanup'
   assert.equal(existsSync(lock),false);
  }finally {release?.();rmSync(home,{recursive:true,force:true});}
 });
+
+test('completed agent receipt retains only verified canonical ZIP identity for health diagnostics',()=>{
+ const base={startedAt:'2026-11-20T00:00:00Z',finishedAt:'2026-11-20T00:01:00Z'};
+ const url='https://github.com/jonnyt123/mp3-shelf/releases/download/mp3-shelf-ios-'+sha+
+  '/MP3-Shelf-Xcode-'+sha.slice(0,12)+'.zip';
+ const valid={candidateSha:sha,status:'already-staged',
+  packaging:'EXISTING_VERIFIED_ARCHIVE',delivery:'ALREADY_DELIVERED',
+  sha256:'b'.repeat(64),downloadURL:url};
+ const completed=nativeAgentRunRecord({...base,result:valid});
+ assert.equal(completed.status,'COMPLETED');
+ assert.equal(completed.sha256,'b'.repeat(64));
+ assert.equal(completed.downloadURL,url);
+ for(const changed of [
+  {downloadURL:'https://other.example/private.zip'},
+  {sha256:'invalid'},
+  {packaging:'BLOCKED_AWAITING_NATIVE_OR_HARDWARE_EVIDENCE'},
+  {delivery:'NOT_VERIFIED'}
+ ]){
+  const blocked=nativeAgentRunRecord({...base,result:{...valid,...changed}});
+  assert.equal(blocked.status,'BLOCKED');
+  assert.equal(blocked.sha256,null);
+  assert.equal(blocked.downloadURL,null);
+  assert(!JSON.stringify(blocked).includes('other.example'));
+ }
+ const failed=nativeAgentRunRecord({...base,result:valid,error:Error('build failed')});
+ assert.equal(failed.status,'FAILED');
+ assert.equal(failed.sha256,null);
+ assert.equal(failed.downloadURL,null);
+});
