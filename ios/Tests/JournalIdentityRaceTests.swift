@@ -26,7 +26,8 @@ private func ownedIdentity() throws -> NSNumber {
     guard (try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) == nil else { throw RecoveryFailure.unsafeJournal }
     let attributes = try fm.attributesOfItem(atPath: ownedURL.path)
     guard (attributes[.type] as? FileAttributeType) == .typeRegular,
-          let inode = attributes[.systemFileNumber] as? NSNumber else { throw RecoveryFailure.unsafeJournal }
+          let inode = attributes[.systemFileNumber] as? NSNumber,
+          (attributes[.referenceCount] as? NSNumber)?.intValue == 1 else { throw RecoveryFailure.unsafeJournal }
     return inode
 }
 private func journalIdentity() throws -> NSNumber {
@@ -56,7 +57,7 @@ private func verifyAndFinalize(_ beforeFinalization: () throws -> Void) throws {
     try fm.removeItem(at: journalURL)
 }
 for committed in [false, true] {
-    for mode in 0..<16 {
+    for mode in 0..<18 {
         for iteration in 0..<4 {
             try? fm.removeItem(at: journalURL)
             try? fm.removeItem(at: ownedURL)
@@ -108,6 +109,20 @@ for committed in [false, true] {
                     case 15:
                         // An empty replacement is never valid owned audio.
                         try Data().write(to: ownedURL, options: .atomic)
+                    case 16:
+                        // A different hard link to the *same* journal inode can
+                        // disappear and reappear while the recovery owns it.
+                        // Identity checks must not accidentally delete its peer.
+                        let peer = root.appendingPathComponent("peer-recovery.json")
+                        try? fm.removeItem(at: peer)
+                        try fm.linkItem(at: journalURL, to: peer)
+                    case 17:
+                        // The owned audio gains a second filesystem name during
+                        // finalization. Never delete a file whose ownership is
+                        // no longer exclusive, even when its bytes are unchanged.
+                        let peer = root.appendingPathComponent("peer-audio.mp3")
+                        try? fm.removeItem(at: peer)
+                        try fm.linkItem(at: ownedURL, to: peer)
                     case 12:
                         let twinJournal = root.appendingPathComponent("identical-recovery.json")
                         try journalBytes(original).write(to: twinJournal)
@@ -123,7 +138,8 @@ for committed in [false, true] {
             }
             try require(mutationCompleted, "mutation never completed for mode \(mode), iteration \(iteration)")
             try require(rejectedForIdentity, "stale replay accepted journal replacement mode \(mode), iteration \(iteration)")
-            if mode == 14 { try require(Data(contentsOf: ownedURL) == originalAudio, "hard-linked replacement audio deleted") }
+            if mode == 17 { try require(Data(contentsOf: ownedURL) == originalAudio, "linked audio was deleted") }
+            else if mode == 14 { try require(Data(contentsOf: ownedURL) == originalAudio, "hard-linked replacement audio deleted") }
             else if mode == 15 { try require(Data(contentsOf: ownedURL).isEmpty, "empty replacement audio overwritten") }
             else if mode == 6 { try require(Data(contentsOf: ownedURL) == Data(repeating: 0x99, count: 8192), "replacement audio overwritten") }
             else if mode == 7 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "replacement audio symlink removed") }
@@ -131,6 +147,14 @@ for committed in [false, true] {
             else if mode == 10 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "same-byte symlink substitution removed") }
             else { try require(Data(contentsOf: ownedURL) == originalAudio, "stale replay deleted audio") }
             try require(Data(contentsOf: unrelatedURL) == unrelatedAudio, "stale replay damaged unrelated bytes")
+            if mode == 16 {
+                let peer = root.appendingPathComponent("peer-recovery.json")
+                try require(fm.fileExists(atPath: journalURL.path) && fm.fileExists(atPath: peer.path), "shared journal inode deleted")
+            }
+            if mode == 17 {
+                let peer = root.appendingPathComponent("peer-audio.mp3")
+                try require(fm.fileExists(atPath: peer.path) && Data(contentsOf: peer) == originalAudio, "shared audio inode deleted")
+            }
             if mode == 13 {
                 let twinJournal = root.appendingPathComponent("hardlinked-recovery.json")
                 try require(fm.fileExists(atPath: journalURL.path), "hard-linked journal substitution removed")
@@ -152,4 +176,4 @@ for committed in [false, true] {
     try require(!fm.fileExists(atPath: journalURL.path), "successful replay retained stale journal")
     try require(fm.fileExists(atPath: ownedURL.path) == committed, "commit state changed audio ownership")
 }
-print("PASS: 128 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
+print("PASS: 144 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
