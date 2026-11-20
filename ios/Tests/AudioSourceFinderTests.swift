@@ -443,15 +443,15 @@ enum AudioSourceFinderTests {
         for alternate in alternateEditions {
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: alternate, requestedTitle: "The Song"),
-                "alternate edition must not silently match studio: \\(alternate)")
+                "alternate edition must not silently match studio: \(alternate)")
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: "The Song.mp3",
                 requestedTitle: (alternate as NSString).deletingPathExtension),
-                "studio file must not match requested alternate: \\(alternate)")
+                "studio file must not match requested alternate: \(alternate)")
             verify(AudioSourceFinder.recordingEditionAgrees(
                 filename: alternate,
                 requestedTitle: (alternate as NSString).deletingPathExtension),
-                "identical alternate edition remains eligible: \\(alternate)")
+                "identical alternate edition remains eligible: \(alternate)")
         }
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "The Radio Song.mp3", requestedTitle: "The Radio Song"),
