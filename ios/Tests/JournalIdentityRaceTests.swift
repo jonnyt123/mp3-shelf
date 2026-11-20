@@ -21,23 +21,33 @@ private func require(_ condition: @autoclosure () throws -> Bool, _ description:
     if try !condition() { throw NSError(domain: "JournalIdentityQA", code: 1, userInfo: [NSLocalizedDescriptionKey: description]) }
 }
 private func journalBytes(_ value: RecoveryJournal) throws -> Data { try JSONEncoder().encode(value) }
+// Byte equality alone cannot prove ownership when an identical file replaces it.
+private func ownedIdentity() throws -> NSNumber {
+    guard (try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) == nil else { throw RecoveryFailure.unsafeJournal }
+    let attributes = try fm.attributesOfItem(atPath: ownedURL.path)
+    guard (attributes[.type] as? FileAttributeType) == .typeRegular,
+          let inode = attributes[.systemFileNumber] as? NSNumber else { throw RecoveryFailure.unsafeJournal }
+    return inode
+}
 private func verifyAndFinalize(_ beforeFinalization: () throws -> Void) throws {
     guard (try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) == nil,
           let original = try? Data(contentsOf: journalURL),
           let record = try? JSONDecoder().decode(RecoveryJournal.self, from: original),
           record.ownedNames == ["new.mp3"] else { throw RecoveryFailure.unsafeJournal }
+    let originalIdentity = try ownedIdentity()
     guard (try? Data(contentsOf: ownedURL)) == originalAudio else { throw RecoveryFailure.unsafeJournal }
     try beforeFinalization()
     // Revalidate the exact journal bytes before destructive cleanup: a new
     // transaction must never inherit a previous transaction's ownership proof.
     guard (try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) == nil,
           let current = try? Data(contentsOf: journalURL), current == original,
+          (try? ownedIdentity()) == originalIdentity,
           (try? Data(contentsOf: ownedURL)) == originalAudio else { throw RecoveryFailure.journalChanged }
     if !record.committed { try fm.removeItem(at: ownedURL) }
     try fm.removeItem(at: journalURL)
 }
 for committed in [false, true] {
-    for mode in 0..<9 {
+    for mode in 0..<11 {
         for iteration in 0..<4 {
             try? fm.removeItem(at: journalURL)
             try? fm.removeItem(at: ownedURL)
@@ -63,6 +73,12 @@ for committed in [false, true] {
                     case 8:
                         try fm.removeItem(at: ownedURL)
                         try fm.createDirectory(at: ownedURL, withIntermediateDirectories: false)
+                    case 9: try originalAudio.write(to: ownedURL, options: .atomic)
+                    case 10:
+                        let twin = root.appendingPathComponent("identical.mp3")
+                        try originalAudio.write(to: twin)
+                        try fm.removeItem(at: ownedURL)
+                        try fm.createSymbolicLink(at: ownedURL, withDestinationURL: twin)
                     default: break
                     }
                 }
@@ -71,6 +87,7 @@ for committed in [false, true] {
             if mode == 6 { try require(Data(contentsOf: ownedURL) == Data(repeating: 0x99, count: 8192), "replacement audio overwritten") }
             else if mode == 7 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "replacement audio symlink removed") }
             else if mode == 8 { var isDir: ObjCBool = false; try require(fm.fileExists(atPath: ownedURL.path, isDirectory: &isDir) && isDir.boolValue, "replacement audio directory removed") }
+            else if mode == 10 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "same-byte symlink substitution removed") }
             else { try require(Data(contentsOf: ownedURL) == originalAudio, "stale replay deleted audio") }
             try require(Data(contentsOf: unrelatedURL) == unrelatedAudio, "stale replay damaged unrelated bytes")
             if mode == 3 { try require((try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) != nil, "symlink evidence lost") }
@@ -87,4 +104,4 @@ for committed in [false, true] {
     try require(!fm.fileExists(atPath: journalURL.path), "successful replay retained stale journal")
     try require(fm.fileExists(atPath: ownedURL.path) == committed, "commit state changed audio ownership")
 }
-print("PASS: 72 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
+print("PASS: 88 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
