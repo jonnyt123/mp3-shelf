@@ -3755,7 +3755,9 @@ struct WebAudioDiscoveryView: View {
                         }
                         let currentBatch = requestedBatch
                         guard !currentBatch.isEmpty else { return }
-                        cancelScan()
+                        // Restart only the billable search. A separately initiated
+                        // publisher inspection must retain its task and progress.
+                        cancelWebSearch()
                         // A full rescan applies only to the visible batch. Never erase
                         // previously searched pages or manually inspected links from
                         // other batches; the user may have spent API credits finding them.
@@ -3806,7 +3808,10 @@ struct WebAudioDiscoveryView: View {
                                                 inspectionErrors[hit.id] = error.localizedDescription
                                             }
                                             guard scanID == requestID else { break }
-                                            inspectingPages.remove(hit.id)
+                                            if manualPageOwners[hit.id] == nil &&
+                                       directInspectionTasks[hit.id] == nil {
+                                        inspectingPages.remove(hit.id)
+                                    }
                                             inspectedDuringSearch = inspectedPages
                                         }
                                     }
@@ -3835,6 +3840,11 @@ struct WebAudioDiscoveryView: View {
                             if scanID == requestID {
                                 scanning = false
                                 scanTask = nil
+                                // Automatic page probes may have stopped early.
+                                // Keep progress only for independently running
+                                // manual/direct inspections, never stale scan hits.
+                                inspectingPages = Set(manualPageOwners.keys)
+                                    .union(directInspectionTasks.keys)
                             }
                         }
                     } label: {
