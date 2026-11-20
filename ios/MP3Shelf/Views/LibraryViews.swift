@@ -3809,9 +3809,9 @@ struct WebAudioDiscoveryView: View {
                                             }
                                             guard scanID == requestID else { break }
                                             if manualPageOwners[hit.id] == nil &&
-                                       directInspectionTasks[hit.id] == nil {
-                                        inspectingPages.remove(hit.id)
-                                    }
+                                                directInspectionTasks[hit.id] == nil {
+                                                inspectingPages.remove(hit.id)
+                                            }
                                             inspectedDuringSearch = inspectedPages
                                         }
                                     }
