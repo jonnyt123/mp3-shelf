@@ -3656,6 +3656,23 @@ struct WebAudioDiscoveryView: View {
     @State private var inspectionErrors: [String: String] = [:]
     @State private var message: String?
 
+    // Publisher HTML can advertise repeated links, fragments and credential-bearing
+    // URLs. Normalize before rendering to keep ForEach identities unique and prevent
+    // unsafe links from reaching recording review. No network request is made here.
+    private func reviewableAudioLinks(_ links: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return links.compactMap { link in
+            guard var parts = URLComponents(url: link, resolvingAgainstBaseURL: false),
+                  parts.scheme?.lowercased() == "https",
+                  let host = parts.host, !host.isEmpty,
+                  parts.user == nil, parts.password == nil else { return nil }
+            parts.fragment = nil
+            guard let url = parts.url,
+                  seen.insert(url.absoluteString).inserted else { return nil }
+            return url
+        }
+    }
+
     // Keep every scan under 100 Brave API requests, regardless of depth.
     // Pagination makes songs beyond the first 100 accessible without silent cost.
     private var pageSize: Int { max(1, 100 / searchDepth.rawValue) }
@@ -3975,20 +3992,34 @@ struct WebAudioDiscoveryView: View {
                                         }
                                         .disabled(inspectingPages.contains(hit.id))
                                         if let discovered = extractedLinks[hit.id] {
-                                            if discovered.isEmpty {
-                                                Text("No direct audio files advertised by this page.")
+                                            let safeLinks = reviewableAudioLinks(discovered)
+                                            if safeLinks.isEmpty {
+                                                Text(discovered.isEmpty
+                                                     ? "No direct audio files advertised by this page."
+                                                     : "No safe, unique HTTPS audio links available for review.")
                                                     .font(.caption2)
                                                     .foregroundStyle(.secondary)
                                             } else {
-                                                ForEach(discovered, id: \.absoluteString) { file in
+                                                if safeLinks.count < discovered.count {
+                                                    Text("\(discovered.count - safeLinks.count) duplicate or unsafe links excluded.")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                                ForEach(safeLinks, id: \.absoluteString) { file in
                                                     Button {
+                                                        // Recheck the current result snapshot before
+                                                        // opening review; a later search may replace it.
+                                                        guard reviewableAudioLinks(extractedLinks[hit.id] ?? []).contains(file) else { return }
                                                         selectedLink = WebAudioSelection(wish: wish, url: file)
                                                     } label: {
                                                         Label("Review \(file.lastPathComponent)",
                                                               systemImage: "waveform.circle")
                                                             .font(.caption.weight(.semibold))
                                                             .lineLimit(2)
+                                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                                            .frame(minHeight: 44)
                                                     }
+                                                    .accessibilityHint("Review the recording before any download begins")
                                                 }
                                             }
                                         }
