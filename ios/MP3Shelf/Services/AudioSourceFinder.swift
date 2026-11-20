@@ -152,9 +152,10 @@ enum AudioSourceFinder {
     }
 
     private static func safeIdentifier(_ value: String) -> Bool {
-        !value.isEmpty && value.count <= 128 &&
-        value.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil &&
-        !value.contains("..")
+        !value.isEmpty && value.utf8.count <= 128 &&
+        value.unicodeScalars.allSatisfy { scalar in
+            CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-").contains(scalar)
+        } && !value.contains("..")
     }
 
     private static func safeMP3File(_ value: String) -> Bool {
