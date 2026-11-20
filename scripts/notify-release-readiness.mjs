@@ -4,7 +4,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { lstatSync,readFileSync,renameSync,writeFileSync,openSync,closeSync,unlinkSync,fstatSync } from 'node:fs';
+import { constants,lstatSync,readFileSync,renameSync,writeFileSync,openSync,closeSync,unlinkSync,fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -12,8 +12,20 @@ const SHA=/^[0-9a-f]{40}$/;
 const KEYS=['source','agent','native','playlist','playback','review','hardware','smoke','zip'];
 const STATUS=new Set(['PASS','BLOCKED','UNVERIFIED']);
 function safeRead(path,max=128*1024){
- try{const st=lstatSync(path);if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1||
-   st.size<2||st.size>max)return null;return JSON.parse(readFileSync(path,'utf8'));}catch{return null;}
+ // Open the evidence itself, not a pathname checked earlier with lstat:
+ // an attacker or concurrent process could swap a symlink between those calls.
+ let fd;
+ try{
+  fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  const st=fstatSync(fd);
+  if(!st.isFile()||st.nlink!==1||st.size<2||st.size>max)return null;
+  const bytes=readFileSync(fd);
+  // A concurrent writer may grow a file after fstat. Never parse oversized
+  // evidence or trust a truncated read as an authoritative gate snapshot.
+  if(bytes.length!==st.size||bytes.length>max)return null;
+  return JSON.parse(bytes.toString('utf8'));
+ }catch{return null;}
+ finally{if(fd!==undefined)closeSync(fd);}
 }
 export function normalizedGateState(model,{now=Date.now()}={}){
  if(model?.schema!=='mp3shelf-release-readiness-v1'||
