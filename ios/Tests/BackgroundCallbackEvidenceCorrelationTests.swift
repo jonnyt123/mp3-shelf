@@ -90,3 +90,44 @@ do {
     fatalError("corrupt evidence accepted")
 } catch is DecodingError { }
 print("PASS: callback evidence correlation (1 positive, \(negative.count + 2) negative, persistence/corruption)")
+
+
+ // Exercise every arrival order, same-identity replay, and a large persisted log.
+func permutations(_ events: [CallbackEvent]) -> [[CallbackEvent]] {
+    if events.isEmpty { return [[]] }
+    return events.indices.flatMap { i -> [[CallbackEvent]] in
+        var rest = events
+        let first = rest.remove(at: i)
+        return permutations(rest).map { [first] + $0 }
+    }
+}
+var acceptedOrders = 0
+for order in permutations(good) {
+    precondition(try correlate(order, session: "S", process: "P", task: "T", digest: digest).map(\.timestamp) == [100, 110, 120])
+    acceptedOrders += 1
+}
+precondition(acceptedOrders == 6)
+for callback in good {
+    try expectRejected("same identity replay \(callback.kind)", good + [callback])
+}
+for index in 0..<7 {
+    let contaminant = event(good[index % 3].kind, 105, session: index < 3 ? "prior" : "S",
+                            process: index >= 3 && index < 6 ? "prior" : "P",
+                            task: index == 6 ? "other" : "T", hash: index % 3 == 2 ? digest : nil)
+    precondition(try correlate([good[2], contaminant, good[0], good[1]],
+                               session: "S", process: "P", task: "T", digest: digest).count == 3)
+}
+var noise: [CallbackEvent] = []
+noise.reserveCapacity(50_003)
+for index in 0..<50_000 {
+    noise.append(event(index % 2 == 0 ? "downloadCompleted" : "recordingStaged",
+                       index, session: "historical-\(index % 23)", process: "old-\(index % 19)",
+                       task: "other-\(index % 11)", hash: index % 2 == 0 ? nil : digest))
+}
+noise.insert(contentsOf: good, at: 25_000)
+let largeLog = root.appendingPathComponent("large-events.json")
+try JSONEncoder().encode(noise).write(to: largeLog, options: .atomic)
+let restoredLarge = try JSONDecoder().decode([CallbackEvent].self, from: Data(contentsOf: largeLog))
+precondition(restoredLarge.count == 50_003)
+precondition(try correlate(restoredLarge, session: "S", process: "P", task: "T", digest: digest).count == 3)
+print("PASS: callback ordering (6), replay isolation (7), duplicate rejection (3), persisted 50k-event noise")
