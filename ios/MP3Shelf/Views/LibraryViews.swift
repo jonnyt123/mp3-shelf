@@ -4164,6 +4164,7 @@ struct WebAudioDiscoveryView: View {
 struct PublisherPageInspectorView: View {
     let wish: PlaylistWish
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var pageText = ""
     @State private var isInspecting = false
     @State private var candidates: [URL] = []
@@ -4477,6 +4478,15 @@ struct PublisherPageInspectorView: View {
             .onChange(of: pageText) { _, _ in
                 invalidateInspection()
                 inspectionNotice = nil
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // A foreground-only publisher inspection must not keep using
+                // cellular data after the app becomes inactive or backgrounded.
+                // Keep previously reviewed links; resumption is user initiated.
+                if phase != .active && isInspecting {
+                    cancelInspection()
+                    inspectionNotice = "Page inspection paused when MP3 Shelf left the foreground. Previously found links remain available. Inspect again when ready."
+                }
             }
             .onDisappear { invalidateInspection() }
         }
