@@ -24,11 +24,12 @@ func correlate(_ events: [CallbackEvent], session: String, process: String, task
     let matching = events.filter { $0.session == session && $0.process == process && $0.task == task }
     guard matching.count == 3 else { throw EvidenceError.incomplete }
     let sorted = matching.sorted { $0.timestamp < $1.timestamp }
+    let (elapsed, overflow) = sorted[2].timestamp.subtractingReportingOverflow(sorted[0].timestamp)
     guard sorted.map(\.kind) == ["backgroundWake", "downloadCompleted", "recordingStaged"],
           sorted[0].timestamp >= 0,
           sorted[0].timestamp < sorted[1].timestamp,
           sorted[1].timestamp < sorted[2].timestamp,
-          sorted[2].timestamp - sorted[0].timestamp <= maximumCallbackWindowSeconds,
+          !overflow, elapsed <= maximumCallbackWindowSeconds,
           sorted[2].fileDigest == digest,
           sorted[0].fileDigest == nil,
           sorted[1].fileDigest == nil else { throw EvidenceError.ambiguous }
@@ -58,6 +59,7 @@ let negative: [(String, [CallbackEvent])] = [
     ("stage before callback", [good[0], event("recordingStaged", 105, hash: digest), good[1]]),
     ("same timestamp", [good[0], event("downloadCompleted", 100), good[2]]),
     ("negative clock", [event("backgroundWake", -1), good[1], good[2]]),
+    ("overflowed clock", [event("backgroundWake", 0), event("downloadCompleted", 1), event("recordingStaged", Int.max, hash: digest)]),
     ("stale wake", [event("backgroundWake", 100), event("downloadCompleted", 2000), event("recordingStaged", 2010, hash: digest)]),
     ("stale completion", [good[0], good[1], event("recordingStaged", 2000, hash: digest)]),
     ("window boundary exceeded", [event("backgroundWake", 1), event("downloadCompleted", 2), event("recordingStaged", 1802, hash: digest)]),
