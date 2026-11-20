@@ -37,7 +37,7 @@ private func verifyAndFinalize(_ beforeFinalization: () throws -> Void) throws {
     try fm.removeItem(at: journalURL)
 }
 for committed in [false, true] {
-    for mode in 0..<6 {
+    for mode in 0..<9 {
         for iteration in 0..<4 {
             try? fm.removeItem(at: journalURL)
             try? fm.removeItem(at: ownedURL)
@@ -55,12 +55,23 @@ for committed in [false, true] {
                     case 2: try Data("{".utf8).write(to: journalURL)
                     case 3: try fm.createSymbolicLink(at: journalURL, withDestinationURL: unrelatedURL)
                     case 4: try fm.createDirectory(at: journalURL, withIntermediateDirectories: false)
+                    case 5: break // removed journal
+                    case 6: try Data(repeating: 0x99, count: 8192).write(to: ownedURL, options: .atomic)
+                    case 7:
+                        try fm.removeItem(at: ownedURL)
+                        try fm.createSymbolicLink(at: ownedURL, withDestinationURL: unrelatedURL)
+                    case 8:
+                        try fm.removeItem(at: ownedURL)
+                        try fm.createDirectory(at: ownedURL, withIntermediateDirectories: false)
                     default: break
                     }
                 }
             } catch { rejected = true }
             try require(rejected, "stale replay accepted journal replacement mode \(mode), iteration \(iteration)")
-            try require(Data(contentsOf: ownedURL) == originalAudio, "stale replay deleted audio")
+            if mode == 6 { try require(Data(contentsOf: ownedURL) == Data(repeating: 0x99, count: 8192), "replacement audio overwritten") }
+            else if mode == 7 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "replacement audio symlink removed") }
+            else if mode == 8 { var isDir: ObjCBool = false; try require(fm.fileExists(atPath: ownedURL.path, isDirectory: &isDir) && isDir.boolValue, "replacement audio directory removed") }
+            else { try require(Data(contentsOf: ownedURL) == originalAudio, "stale replay deleted audio") }
             try require(Data(contentsOf: unrelatedURL) == unrelatedAudio, "stale replay damaged unrelated bytes")
             if mode == 3 { try require((try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) != nil, "symlink evidence lost") }
             if mode == 4 { var isDir: ObjCBool = false; try require(fm.fileExists(atPath: journalURL.path, isDirectory: &isDir) && isDir.boolValue, "directory substitution removed") }
@@ -76,4 +87,4 @@ for committed in [false, true] {
     try require(!fm.fileExists(atPath: journalURL.path), "successful replay retained stale journal")
     try require(fm.fileExists(atPath: ownedURL.path) == committed, "commit state changed audio ownership")
 }
-print("PASS: 48 journal replacement/replay isolation scenarios; 2 uncontested controls")
+print("PASS: 72 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
