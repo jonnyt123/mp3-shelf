@@ -4354,7 +4354,9 @@ struct PublisherPageInspectorView: View {
                 }
                 if !candidates.isEmpty {
                     Section("POSSIBLE AUDIO FILES") {
-                        Text("\(candidates.count) possible audio links found. Review the recording and publisher before downloading.")
+                        Text(isInspecting
+                             ? "\(candidates.count) previously found audio links remain available for review while this page is inspected again."
+                             : "\(candidates.count) possible audio links found. Review the recording and publisher before downloading.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         if excludedLinkCount > 0 {
@@ -4418,7 +4420,7 @@ struct PublisherPageInspectorView: View {
                                 Button {
                                     // Only a URL still present in the current completed
                                     // inspection may advance to recording review.
-                                    guard !isInspecting, completedInspection,
+                                    guard completedInspection,
                                           candidates.contains(file),
                                           let components = URLComponents(url: file, resolvingAgainstBaseURL: false),
                                           components.scheme?.lowercased() == "https",
