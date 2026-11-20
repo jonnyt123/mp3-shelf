@@ -179,7 +179,25 @@ struct LocalAudioRecoveryRecord: Codable {
         guard !FileManager.default.fileExists(atPath: destination.path),
               let staged = eligible(stagingName) else { return nil }
         try FileManager.default.linkItem(at: staged, to: destination)
-        return eligible(track.fileName)
+        if let verified = eligible(track.fileName) { return verified }
+
+        // The post-publication check can fail if the file becomes unreadable,
+        // truncated or otherwise invalid between validation and publication.
+        // Do not strand an invalid destination that blocks every later retry.
+        // Unlink only when it is still the hard link we just created; a file
+        // replaced by another actor is never ours to remove.
+        let stagedAttributes = try? FileManager.default.attributesOfItem(atPath: staged.path)
+        let publishedAttributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
+        if let stagedAttributes, let publishedAttributes,
+           let stagedInode = stagedAttributes[.systemFileNumber] as? NSNumber,
+           let publishedInode = publishedAttributes[.systemFileNumber] as? NSNumber,
+           let stagedDevice = stagedAttributes[.systemNumber] as? NSNumber,
+           let publishedDevice = publishedAttributes[.systemNumber] as? NSNumber,
+           stagedInode == publishedInode, stagedDevice == publishedDevice {
+            try? FileManager.default.removeItem(at: destination)
+        }
+        // Keep the journal and staging file for the next recovery attempt.
+        return nil
     }
 }
 
