@@ -90,7 +90,10 @@ struct PlaybackOrder {
         if automatic && loop == .one && unavailableAnchor != currentID { return currentID }
         if isShuffled {
             if remainingShuffle.isEmpty {
-                if automatic && loop == .off { return nil }
+                // A deleted current recording is not a completed shuffle cycle.
+                // Recover from the surviving library even with Repeat Off, for
+                // example after the last pending song was removed from the queue.
+                if automatic && loop == .off && unavailableAnchor != currentID { return nil }
                 remainingShuffle = playableIDs.filter { $0 != currentID }.shuffled()
             }
             guard !remainingShuffle.isEmpty else {
@@ -202,7 +205,9 @@ struct PlaybackOrder {
         // A removed current recording cannot repeat; advance to survivors.
         if loop == .one && unavailableAnchor != currentID { return false }
         if isShuffled {
-            return !remainingShuffle.isEmpty || (loop == .all && playableIDs.contains { $0 != currentID })
+            return !remainingShuffle.isEmpty
+                || (unavailableAnchor == currentID && playableIDs.contains { $0 != currentID })
+                || (loop == .all && playableIDs.contains { $0 != currentID })
         }
         guard let index = queueIDs.firstIndex(of: currentID) else { return false }
         return queueIDs.dropFirst(index + 1).contains { $0 != unavailableAnchor }
@@ -211,8 +216,16 @@ struct PlaybackOrder {
     }
 
     func upcomingIDs(limit: Int, loop: PlaybackLoopMode) -> [UUID] {
-        guard limit > 0, let currentID, !queueIDs.isEmpty, loop != .one else { return [] }
-        if isShuffled { return Array(remainingShuffle.prefix(limit)) }
+        guard limit > 0, let currentID, !queueIDs.isEmpty else { return [] }
+        if loop == .one && unavailableAnchor != currentID { return [] }
+        if isShuffled {
+            if remainingShuffle.isEmpty && unavailableAnchor == currentID {
+                // The exact order is selected when advancement occurs; expose
+                // surviving candidates instead of an incorrectly empty queue.
+                return Array(playableIDs.filter { $0 != currentID }.prefix(limit))
+            }
+            return Array(remainingShuffle.prefix(limit))
+        }
         guard let index = queueIDs.firstIndex(of: currentID) else { return [] }
         var result = Array(queueIDs.dropFirst(index + 1).filter { $0 != unavailableAnchor }.prefix(limit))
         if result.count < limit && loop == .all {
