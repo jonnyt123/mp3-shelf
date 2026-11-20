@@ -79,4 +79,30 @@ try Data("old-moved".utf8).write(to: journal, options: .atomic)
 try fm.removeItem(at: live)
 do { try recover(); fatalError("missing original accepted") } catch {}
 check(fm.fileExists(atPath: journal.path), "missing original journal discarded")
-print("PASS: 6 crash-journal model cases")
+
+// Repeating recovery after a completed install must not remove the committed audio.
+try reset()
+try Data("installed".utf8).write(to: journal, options: .atomic)
+try fm.moveItem(at: live, to: backup)
+try fm.moveItem(at: stage, to: live)
+try recover()
+try recover()
+check(matches(live, next) && !fm.fileExists(atPath: backup.path), "installed recovery idempotence")
+// Repeating rollback must preserve both the original recording and its index.
+try reset()
+try Data("old-moved".utf8).write(to: journal, options: .atomic)
+try fm.moveItem(at: live, to: backup)
+try recover()
+try recover()
+check(matches(live, old) && !fm.fileExists(atPath: stage.path), "rollback idempotence")
+// A corrupted backup must remain available for diagnosis rather than being discarded.
+try reset()
+try Data("old-moved".utf8).write(to: journal, options: .atomic)
+try fm.moveItem(at: live, to: backup)
+try Data("corrupt".utf8).write(to: backup.appendingPathComponent("song.mp3"), options: .atomic)
+var rejectedCorruptBackup = false
+do { try recover() } catch { rejectedCorruptBackup = true }
+check(rejectedCorruptBackup && fm.fileExists(atPath: journal.path) &&
+      fm.fileExists(atPath: backup.path) && !fm.fileExists(atPath: live.path),
+      "corrupt backup destroyed evidence")
+print("PASS: 9 crash-journal model cases")
