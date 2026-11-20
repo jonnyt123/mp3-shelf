@@ -3756,16 +3756,14 @@ struct WebAudioDiscoveryView: View {
                         let currentBatch = requestedBatch
                         guard !currentBatch.isEmpty else { return }
                         cancelScan()
-                        if !onlySearchIncomplete {
-                            results = [:]
-                            issues = [:]
-                            extractedLinks = [:]
-                            inspectionErrors = [:]
-                            inspectedCount = [:]
-                        } else {
-                            // Keep completed results and manually inspected links.
-                            // Remove only obsolete errors for the songs being retried.
-                            for wish in currentBatch { issues.removeValue(forKey: wish.id) }
+                        // A full rescan applies only to the visible batch. Never erase
+                        // previously searched pages or manually inspected links from
+                        // other batches; the user may have spent API credits finding them.
+                        // Keep existing results visible until a replacement search
+                        // succeeds, so cancellation, network loss, or rate limiting
+                        // cannot destroy the last usable source candidates.
+                        for wish in currentBatch {
+                            issues.removeValue(forKey: wish.id)
                         }
                         searched = 0
                         activeScanTotal = currentBatch.count
@@ -3785,6 +3783,9 @@ struct WebAudioDiscoveryView: View {
                                     let found = try await WebAudioSearch.search(for: wish, using: key, depth: depth)
                                     guard !Task.isCancelled, scanID == requestID else { break }
                                     results[wish.id] = found
+                                    // The new successful response supersedes any
+                                    // previous error for this song, not other batches.
+                                    issues.removeValue(forKey: wish.id)
                                     if inspectPages && inspectedPages < 12 {
                                         let candidates = WebAudioSearch.pagesWorthInspecting(
                                             found, for: wish, limit: 1)
