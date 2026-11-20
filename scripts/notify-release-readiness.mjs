@@ -59,7 +59,7 @@ export function notificationChanges(previous,current){
   const before=previous.gates[key],after=current.gates[key];
   if(after===before)continue;
   if(after==='PASS')cleared.push(key);
-  else if(before==='PASS'||after==='BLOCKED')blocked.push(key);
+  else if(before!==after)blocked.push(key);
  }
  return {baseline:false,cleared,blocked};
 }
