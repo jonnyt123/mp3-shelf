@@ -365,14 +365,13 @@ enum AudioSourceFinder {
                 return []
             }
             return Set(words.filter {
-                $0.count == 4 && $0.allSatisfy(\\.isNumber) &&
+                $0.count == 4 && $0.allSatisfy(\.isNumber) &&
                     (Int($0) ?? 0) >= 1900 && (Int($0) ?? 0) <= 2100
             })
         }
         let requestedYears = remasterYears(requestedTitle)
         let fileYears = remasterYears(fileStem)
-        return requestedYears.isEmpty || fileYears.isEmpty ||
-            requestedYears == fileYears
+        return requestedYears == fileYears
     }
 
     // Avoid spending an entire iOS background processing window on up to
