@@ -3890,9 +3890,17 @@ struct WebAudioDiscoveryView: View {
                                                 } catch is CancellationError {
                                                     break
                                                 } catch {
-                                                    guard !Task.isCancelled, inspectionGeneration == generation else { break }
+                                                    // A cancelled song inspection can finish with a
+                                                    // transport error rather than CancellationError.
+                                                    // Never publish it into a newer inspection.
+                                                    guard !Task.isCancelled,
+                                                          inspectionGeneration == generation,
+                                                          wishInspectionIDs[wish.id] == inspectionID else { break }
                                                     inspectionErrors[hit.id] = error.localizedDescription
                                                 }
+                                                guard !Task.isCancelled,
+                                                      inspectionGeneration == generation,
+                                                      wishInspectionIDs[wish.id] == inspectionID else { break }
                                                 endManualPage(hit.id, for: wish.id)
                                                 inspectedCount[wish.id, default: 0] += 1
                                             }
