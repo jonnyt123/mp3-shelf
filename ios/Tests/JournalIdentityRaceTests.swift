@@ -205,7 +205,7 @@ for committed in [false, true] {
         } catch RecoveryFailure.unsafeJournal {
             rejected = true
         }
-        try require(rejected, "initial shared inode accepted (journal=\\(aliasJournal), committed=\\(committed))")
+        try require(rejected, "initial shared inode accepted (journal=\(aliasJournal), committed=\(committed))")
         try require(!callbackCalled, "cleanup callback ran with initial shared inode")
         try require(Data(contentsOf: protectedURL) == expected && Data(contentsOf: alias) == expected,
                     "initial hard-link evidence changed during rejected replay")
