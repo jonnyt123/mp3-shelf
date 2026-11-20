@@ -274,6 +274,6 @@ test('a notification with only many blockers retains its complete summary',()=>{
  const diff={baseline:false,cleared:[],
   blocked:['source','agent','native','playlist','playback','review','hardware','smoke','zip']};
  const message=notificationMessage(diff);
- assert.match(message,/Needs review: native source, Mac agent, Xcode build, playlist, offline playback \\+4 more/);
+ assert.match(message,/Needs review: native source, Mac agent, Xcode build, playlist, offline playback \+4 more/);
  assert(message.length<=235);
 });
