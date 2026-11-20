@@ -4221,6 +4221,14 @@ struct PublisherPageInspectorView: View {
     }
 
     private func inspectPage() {
+        // A retry can be invoked from a still-visible sheet during scene
+        // deactivation. Never start a network request until foregrounded.
+        guard scenePhase == .active else {
+            inspectionNotice = "Return to MP3 Shelf to inspect this page. Previously found audio links remain available."
+            inspectionFeedbackFocused = true
+            return
+        }
+        guard !isInspecting else { return }
         let input = pageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let pageURL = WebAudioSearch.sanitizedResultURL(input) else {
             invalidateInspection()
@@ -4289,7 +4297,7 @@ struct PublisherPageInspectorView: View {
                         Label(isInspecting ? "Reading source page…" : "Find downloadable audio on this page",
                               systemImage: "doc.text.magnifyingglass")
                     }
-                    .disabled(isInspecting || pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(isInspecting || scenePhase != .active || pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     if isInspecting {
                         HStack(spacing: 12) {
                             ProgressView()
@@ -4313,6 +4321,7 @@ struct PublisherPageInspectorView: View {
                                 .accessibilityFocused($inspectionFeedbackFocused)
                             Button("Inspect page again") { inspectPage() }
                                 .frame(minHeight: 44)
+                                .disabled(isInspecting || scenePhase != .active)
                                 .accessibilityHint("Restart the cancelled inspection without changing the URL")
                         }
                     }
@@ -4330,7 +4339,7 @@ struct PublisherPageInspectorView: View {
                                 Label("Retry page inspection", systemImage: "arrow.clockwise")
                                     .frame(minHeight: 44)
                             }
-                            .disabled(isInspecting)
+                            .disabled(isInspecting || scenePhase != .active)
                             .accessibilityHint("Try the same webpage again while retaining previously found audio links")
                         }
                         .foregroundStyle(.orange)
@@ -4349,6 +4358,7 @@ struct PublisherPageInspectorView: View {
                                 Label("Inspect page again", systemImage: "arrow.clockwise")
                                     .frame(minHeight: 44)
                             }
+                            .disabled(isInspecting || scenePhase != .active)
                             .accessibilityHint("Repeat the inspection of this webpage")
                         }
                     }
