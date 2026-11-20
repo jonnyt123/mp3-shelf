@@ -709,8 +709,8 @@ enum AudioSourceFinder {
             let titleStem = normalized.hasPrefix(artistPrefix)
                 ? String(normalized.dropFirst(artistPrefix.count)) : normalized
             return !requestedBase.isEmpty &&
-                titleStem != requestedBase &&
-                titleStem.hasPrefix(requestedBase + " ") &&
+                (titleStem == requestedBase ||
+                 titleStem.hasPrefix(requestedBase + " ")) &&
                 !recordingEditionAgrees(filename: file.name, requestedTitle: wish.title)
         }
         guard !competingEdition else { return nil }
