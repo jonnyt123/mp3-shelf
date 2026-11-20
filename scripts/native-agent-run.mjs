@@ -75,6 +75,10 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
       ? (result?.integration ?? result?.status) : 'NOT_VERIFIED',
     packaging,
     delivery: verifiedDelivery ? result.delivery : 'NOT_VERIFIED',
+    // Only persist canonical, validated public release identity. Never copy
+    // arbitrary URLs or hashes from failed/blocked cycles into local receipts.
+    sha256: verifiedDelivery ? result.sha256 : null,
+    downloadURL: verifiedDelivery ? result.downloadURL : null,
     failureReason: reason,
     // Staging metadata is not a cryptographically verified native receipt.
     // The independent native evidence verifier owns the COMPILED verdict.
