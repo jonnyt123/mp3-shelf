@@ -2164,6 +2164,11 @@ struct PlaylistsView: View {
             Button("Create") {
                 let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return }
+                guard !library.isImporting else {
+                    failedPlaylistEdit = .create
+                    playlistActionFeedback = "Finish importing audio before creating a playlist. Your name is saved for retry."
+                    return
+                }
                 let existingIDs = Set(library.playlists.map(\.id))
                 library.createPlaylist(name)
                 if library.playlists.contains(where: { !existingIDs.contains($0.id) }) {
@@ -2177,7 +2182,7 @@ struct PlaylistsView: View {
                         ?? "Could not create this playlist. Your existing playlists were preserved."
                 }
             }
-            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || library.isImporting)
             Button("Cancel", role: .cancel) {
                 newName = ""
                 failedPlaylistEdit = nil
@@ -2339,7 +2344,20 @@ struct PlaylistsView: View {
 
     private func playlistGrid(_ playlists: [MusicPlaylist]) -> some View {
         LazyVGrid(columns: columns, spacing: 13) {
-            ForEach(Array(playlists.enumerated()), id: \.element.id) { index, list in
+            // Use the visible position as identity: restored archives can contain
+            // duplicate playlist UUIDs, which otherwise break SwiftUI diffing.
+            ForEach(Array(playlists.enumerated()), id: \.offset) { index, list in
+                if uniquePlaylist(withID: list.id) == nil {
+                    VStack(alignment: .leading, spacing: 8) {
+                        playlistCard(list, index: index)
+                        Label("Duplicate playlist identity. Editing and opening are unavailable until the library is repaired.", systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(ShelfTheme.coral)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(list.name). Duplicate playlist identity; cannot safely open or edit.")
+                } else {
                 NavigationLink { PlaylistDetailView(playlistID: list.id) } label: {
                     playlistCard(list, index: index)
                 }
@@ -2369,6 +2387,7 @@ struct PlaylistsView: View {
                     Button(role: .destructive) {
                         pendingDelete = list
                     } label: { Label("Delete Playlist", systemImage: "trash") }
+                }
                 }
             }
         }
