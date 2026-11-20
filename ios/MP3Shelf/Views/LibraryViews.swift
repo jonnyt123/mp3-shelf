@@ -4052,7 +4052,11 @@ struct WebAudioDiscoveryView: View {
                                                 guard directInspectionIDs[hit.id] == requestID else { return }
                                                 directInspectionIDs.removeValue(forKey: hit.id)
                                                 directInspectionTasks.removeValue(forKey: hit.id)
-                                                inspectingPages.remove(hit.id)
+                                                // A separate song or automatic scan may still
+                                                // own this page's progress indicator.
+                                                if manualPageOwners[hit.id] == nil && !scanning {
+                                                    inspectingPages.remove(hit.id)
+                                                }
                                             }
                                         } label: {
                                             Label(inspectingPages.contains(hit.id)
@@ -4060,8 +4064,23 @@ struct WebAudioDiscoveryView: View {
                                                 : "Find audio files linked on this page",
                                                 systemImage: "doc.text.magnifyingglass")
                                                 .font(.caption.weight(.medium))
+                                                .frame(minHeight: 44, alignment: .leading)
                                         }
                                         .disabled(inspectingPages.contains(hit.id))
+                                        if directInspectionTasks[hit.id] != nil {
+                                            Button("Cancel this page inspection") {
+                                                directInspectionTasks[hit.id]?.cancel()
+                                                directInspectionTasks.removeValue(forKey: hit.id)
+                                                directInspectionIDs.removeValue(forKey: hit.id)
+                                                // Invalidate late callbacks without cancelling
+                                                // unrelated manual or automatic inspections.
+                                                if manualPageOwners[hit.id] == nil && !scanning {
+                                                    inspectingPages.remove(hit.id)
+                                                }
+                                            }
+                                            .frame(minHeight: 44)
+                                            .accessibilityHint("Stops this page inspection; previously found audio links remain available")
+                                        }
                                         if let discovered = extractedLinks[hit.id] {
                                             let safeLinks = reviewableAudioLinks(discovered)
                                             if safeLinks.isEmpty {
