@@ -4291,9 +4291,13 @@ struct PublisherPageInspectorView: View {
                           seen.insert(canonical.absoluteString).inserted else { return nil }
                     return canonical
                 }
+                // Keep the user's filter while refreshing the same page.
+                // A late successful response must not unexpectedly reset the
+                // search they entered while the network request was pending.
+                let retainedFilter = candidateFilter
                 candidates = safeLinks
                 candidatePageURL = pageURL
-                candidateFilter = ""
+                candidateFilter = isSamePage ? retainedFilter : ""
                 visibleLinkLimit = 40
                 excludedLinkCount = found.count - safeLinks.count
                 completedInspection = true
@@ -4529,10 +4533,9 @@ struct PublisherPageInspectorView: View {
             .onChange(of: candidateFilter) { _, _ in
                 visibleLinkLimit = 40
             }
-            .onChange(of: pageText) { _, _ in
-                invalidateInspection()
-                inspectionNotice = nil
-            }
+            // The URL field's binding invalidates synchronously. A second
+            // deferred change observer could cancel a newly started request
+            // immediately after the user pastes a URL and taps Inspect.
             .onChange(of: scenePhase) { _, phase in
                 // A foreground-only publisher inspection must not keep using
                 // cellular data after the app becomes inactive or backgrounded.
