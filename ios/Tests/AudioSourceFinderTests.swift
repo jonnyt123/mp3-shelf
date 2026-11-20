@@ -1640,6 +1640,14 @@ enum AudioSourceFinderTests {
                 recording: invalid, audio: nil, wish: numericWish),
                 "invalid or conflicting JSON-LD duration must not auto-match: \\(invalid)")
         }
+        // An implausibly long ISO-8601 claim must not be treated as usable
+        // metadata even when a second field claims the correct duration.
+        for invalid in ["PT25H3M", "PT24H1S", "PT999999999999999999999H",
+                        "PT24H0M1S", "PT23H59M59.999S"] {
+            verify(!AutomaticWebAudioFinder.recordingDurationEvidenceMatches(
+                recording: invalid, audio: "180", wish: numericWish),
+                "unreasonable duration evidence fails closed: \\(invalid)")
+        }
         verify(!AutomaticWebAudioFinder.recordingDurationEvidenceMatches(
             recording: "180", audio: "PT2M", wish: numericWish),
             "conflicting recording and audio duration claims fail closed")
