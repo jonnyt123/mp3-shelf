@@ -22,7 +22,7 @@ func matches(_ url: URL, _ bytes: Data) -> Bool {
     (try? Data(contentsOf: url.appendingPathComponent("index.json"))) == Data("library-index".utf8)
 }
 func reset() throws {
-    for url in [live, stage, backup, journal] where fm.fileExists(atPath: url.path) {
+    for url in [live, stage, backup, journal] where (try? fm.attributesOfItem(atPath: url.path)) != nil {
         try fm.removeItem(at: url)
     }
     try make(live, old)
@@ -147,4 +147,45 @@ var rejectedStage = false
 do { try recover() } catch { rejectedStage = true }
 check(rejectedStage && matches(live, old) && matches(outsideStage, next) &&
       fm.fileExists(atPath: journal.path), "stage symlink altered transaction")
-print("PASS: 12 crash-journal model cases")
+
+// A redirected live library must never be deleted, replaced, or used for rollback.
+try reset()
+let outsideLive = root.appendingPathComponent("outside-live")
+try make(outsideLive, old)
+try fm.removeItem(at: live)
+try fm.createSymbolicLink(at: live, withDestinationURL: outsideLive)
+try Data("prepared".utf8).write(to: journal, options: .atomic)
+var rejectedLive = false
+do { try recover() } catch { rejectedLive = true }
+check(rejectedLive && matches(outsideLive, old) && matches(stage, next) &&
+      fm.fileExists(atPath: journal.path), "live symlink modified external audio")
+
+// A dangling journal link must be rejected rather than silently interpreted as
+// an absent journal, which would conceal an incomplete transaction.
+try reset()
+let missingJournal = root.appendingPathComponent("missing-journal-target")
+try fm.createSymbolicLink(at: journal, withDestinationURL: missingJournal)
+var rejectedDangling = false
+do { try recover() } catch { rejectedDangling = true }
+check(rejectedDangling && matches(live, old) && matches(stage, next) &&
+      isSymbolicLink(journal), "dangling journal symlink was ignored")
+
+// An invalid journal object must not be read as a valid phase or cleaned up.
+try reset()
+try fm.createDirectory(at: journal, withIntermediateDirectories: false)
+var rejectedJournalDirectory = false
+do { try recover() } catch { rejectedJournalDirectory = true }
+check(rejectedJournalDirectory && matches(live, old) && matches(stage, next) &&
+      fm.fileExists(atPath: journal.path), "journal directory was consumed")
+
+// A backup with valid-looking metadata but damaged audio cannot be restored.
+try reset()
+try Data("old-moved".utf8).write(to: journal, options: .atomic)
+try fm.moveItem(at: live, to: backup)
+try Data().write(to: backup.appendingPathComponent("song.mp3"), options: .atomic)
+var rejectedTruncated = false
+do { try recover() } catch { rejectedTruncated = true }
+check(rejectedTruncated && fm.fileExists(atPath: journal.path) &&
+      fm.fileExists(atPath: backup.path) && !fm.fileExists(atPath: live.path),
+      "truncated backup destroyed recovery evidence")
+print("PASS: 16 crash-journal model cases")
