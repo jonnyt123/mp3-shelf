@@ -430,6 +430,35 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.archiveCandidate(safeDerivative,
             identifier: "original-and-derivative", for: wish) != nil,
             "explicit derivative alongside original does not block a valid match")
+        // Alternative edition labels must not collapse into a studio original.
+        // Test both directions: requested alternate vs plain file and vice versa.
+        let alternateEditions = [
+            "The Song (Radio Version).mp3",
+            "The Song (Single Edit).mp3",
+            "The Song (Extended Version).mp3",
+            "The Song (Extended Edit).mp3",
+            "The Song (Pitch Shifted).mp3",
+            "The Song (Chopped and Screwed).mp3"
+        ]
+        for alternate in alternateEditions {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: alternate, requestedTitle: "The Song"),
+                "alternate edition must not silently match studio: \\(alternate)")
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song.mp3",
+                requestedTitle: (alternate as NSString).deletingPathExtension),
+                "studio file must not match requested alternate: \\(alternate)")
+            verify(AudioSourceFinder.recordingEditionAgrees(
+                filename: alternate,
+                requestedTitle: (alternate as NSString).deletingPathExtension),
+                "identical alternate edition remains eligible: \\(alternate)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Radio Song.mp3", requestedTitle: "The Radio Song"),
+            "ordinary title containing radio is not an edition marker")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Extended Family.mp3", requestedTitle: "Extended Family"),
+            "ordinary title containing extended is not an edition marker")
         // One Archive item can include both studio and live/remix editions
         // with matching artist/title metadata. Never auto-select the studio
         // file just because the alternate edition fails its individual gate.
