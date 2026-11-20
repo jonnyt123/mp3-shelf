@@ -4,7 +4,7 @@
  * report NEVER grants authorization to publish an archive.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, lstatSync, fstatSync, openSync, closeSync, constants, mkdirSync, readdirSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -19,12 +19,22 @@ const REPO='jonnyt123/mp3-shelf';
 const CATEGORIES=['Signing / installation','Offline playback','Background licensed downloads',
   'Failure handling','Spotify metadata integration','Portable backup interoperability',
   'Accessible responsive UI','Policy/source audit','Final acceptance'];
-function readSafe(path,max=1024*1024){
+export function readSafe(path,max=1024*1024){
+ // Open the actual evidence inode without following a last-component symlink.
+ // lstat(path) followed by readFile(path) permits a replacement race.
+ if(!Number.isSafeInteger(max)||max<1)return null;
+ let fd;
  try{
-  const info=lstatSync(path);
-  if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.size<1||info.size>max)return null;
-  return readFileSync(path,'utf8');
+  fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  const info=fstatSync(fd);
+  if(!info.isFile()||info.nlink!==1||info.size<1||info.size>max)return null;
+  const bytes=readFileSync(fd);
+  // Reject evidence modified while reading, rather than trusting a partial
+  // or oversized JSON document from a concurrent writer.
+  if(bytes.length!==info.size||bytes.length>max)return null;
+  return bytes.toString('utf8');
  }catch{return null;}
+ finally{if(fd!==undefined)closeSync(fd);}
 }
 function json(path,max){try{const text=readSafe(path,max);return text?JSON.parse(text):null;}catch{return null;}}
 function ghJSON(path){
