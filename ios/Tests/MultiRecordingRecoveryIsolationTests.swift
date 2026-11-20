@@ -21,6 +21,16 @@ final class RecoveryModel {
               attributes[.type] as? FileAttributeType == .typeRegular else { return false }
         return true
     }
+    func safeDirectories() -> Bool {
+        // The journal and audio roots must be real directories, not aliases to external data.
+        for relative in ["stage", "live"] {
+            let directory = path(relative)
+            guard (try? fm.destinationOfSymbolicLink(atPath: directory.path)) == nil,
+                  let attributes = try? fm.attributesOfItem(atPath: directory.path),
+                  attributes[.type] as? FileAttributeType == .typeDirectory else { return false }
+        }
+        return true
+    }
     func prepare(_ intent: Intent) throws {
         try JSONEncoder().encode(intent).write(to: path("intent.json"), options: .atomic)
         for record in intent.records {
@@ -28,7 +38,7 @@ final class RecoveryModel {
         }
     }
     func recover(generation: Int) throws {
-        guard regular(path("intent.json")),
+        guard safeDirectories(), regular(path("intent.json")),
               let intent = try? JSONDecoder().decode(Intent.self, from: Data(contentsOf: path("intent.json"))),
               intent.generation == generation, !intent.records.isEmpty else { throw RecoveryError.invalid }
         var names = Set<String>()
@@ -150,5 +160,41 @@ try scenario("symlinked-second-destination") { m in
     catch RecoveryError.invalid {}
     try verify(!fm.fileExists(atPath: m.path("live/first.mp3").path), "partial publish")
     try verify(Data(contentsOf: outside) == second, "outside audio changed")
+}
+try scenario("symlinked-live-directory") { m in
+    try m.prepare(intent)
+    let outside = root.appendingPathComponent("external-live-" + UUID().uuidString)
+    try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: outside) }
+    try fm.removeItem(at: m.path("live"))
+    try fm.createSymbolicLink(at: m.path("live"), withDestinationURL: outside)
+    do { try m.recover(generation: 44); fatalError("accepted symlink live root") }
+    catch RecoveryError.invalid {}
+    try verify(!fm.fileExists(atPath: outside.appendingPathComponent("first.mp3").path), "escaped live root")
+}
+try scenario("symlinked-stage-directory") { m in
+    try m.prepare(intent)
+    let outside = root.appendingPathComponent("external-stage-" + UUID().uuidString)
+    try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: outside) }
+    try fm.removeItem(at: m.path("stage"))
+    try fm.createSymbolicLink(at: m.path("stage"), withDestinationURL: outside)
+    do { try m.recover(generation: 44); fatalError("accepted symlink stage root") }
+    catch RecoveryError.invalid {}
+    try verify(!fm.fileExists(atPath: m.path("live/first.mp3").path), "published from escaped stage")
+}
+try scenario("corrupt-journal") { m in
+    try m.prepare(intent)
+    try Data("{broken-json".utf8).write(to: m.path("intent.json"), options: .atomic)
+    do { try m.recover(generation: 44); fatalError("accepted corrupt journal") }
+    catch RecoveryError.invalid {}
+    try verify(!fm.fileExists(atPath: m.path("live/first.mp3").path), "published with corrupt journal")
+}
+try scenario("existing-matching-recording") { m in
+    try m.prepare(intent)
+    try first.write(to: m.path("live/first.mp3"))
+    try m.recover(generation: 44)
+    try verify(Data(contentsOf: m.path("live/first.mp3")) == first, "matching recording changed")
+    try verify(Data(contentsOf: m.path("live/second.mp3")) == second, "missing second recording")
 }
 print("PASS: \(passed) multi-recording crash/replay filesystem scenarios")
