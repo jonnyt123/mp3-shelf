@@ -30,11 +30,13 @@ private func ownedIdentity() throws -> NSNumber {
           (attributes[.referenceCount] as? NSNumber)?.intValue == 1 else { throw RecoveryFailure.unsafeJournal }
     return inode
 }
+// Reject shared journal inodes: aliases can mutate evidence during replay.
 private func journalIdentity() throws -> NSNumber {
     guard (try? fm.destinationOfSymbolicLink(atPath: journalURL.path)) == nil else { throw RecoveryFailure.unsafeJournal }
     let attributes = try fm.attributesOfItem(atPath: journalURL.path)
     guard (attributes[.type] as? FileAttributeType) == .typeRegular,
-          let inode = attributes[.systemFileNumber] as? NSNumber else { throw RecoveryFailure.unsafeJournal }
+          let inode = attributes[.systemFileNumber] as? NSNumber,
+          (attributes[.referenceCount] as? NSNumber)?.intValue == 1 else { throw RecoveryFailure.unsafeJournal }
     return inode
 }
 private func verifyAndFinalize(_ beforeFinalization: () throws -> Void) throws {
