@@ -4191,27 +4191,31 @@ struct PublisherPageInspectorView: View {
     // Editing the URL or leaving this sheet invalidates the in-flight response.
     // A cancelled network request may still complete; only its matching ID
     // may publish results into the current source-page review.
-    private func invalidateInspection() {
+    private func invalidateInspection(preservingResults: Bool = false) {
         inspectionTask?.cancel()
         inspectionTask = nil
         inspectionID = UUID()
         isInspecting = false
-        candidates = []
-        candidateFilter = ""
-        visibleLinkLimit = 40
-        excludedLinkCount = 0
+        if !preservingResults {
+            // A different URL must never inherit candidates from the old page.
+            candidates = []
+            candidateFilter = ""
+            visibleLinkLimit = 40
+            excludedLinkCount = 0
+            completedInspection = false
+        }
         error = nil
-        completedInspection = false
         inspectionFeedbackFocused = false
-        // A pending review belongs to the previous page's result set.
-        // Never carry it into a different URL or a restarted inspection.
+        // A pending review belongs to the previous inspection session.
         chosenAudio = nil
     }
 
     private func cancelInspection() {
         guard isInspecting else { return }
-        invalidateInspection()
-        inspectionNotice = "Page inspection cancelled. You can inspect this URL again."
+        invalidateInspection(preservingResults: true)
+        inspectionNotice = candidates.isEmpty
+            ? "Page inspection cancelled. You can inspect this URL again."
+            : "Page inspection cancelled. Previously found audio links are still available."
         inspectionFeedbackFocused = true
     }
 
@@ -4223,7 +4227,9 @@ struct PublisherPageInspectorView: View {
             inspectionFeedbackFocused = true
             return
         }
-        invalidateInspection()
+        // A retry against the same URL keeps verified, previously found links
+        // visible until a replacement result succeeds. URL edits still clear them.
+        invalidateInspection(preservingResults: true)
         inspectionNotice = nil
         let requestID = inspectionID
         isInspecting = true
@@ -4246,6 +4252,8 @@ struct PublisherPageInspectorView: View {
                     return canonical
                 }
                 candidates = safeLinks
+                candidateFilter = ""
+                visibleLinkLimit = 40
                 excludedLinkCount = found.count - safeLinks.count
                 completedInspection = true
                 inspectionFeedbackFocused = safeLinks.isEmpty
@@ -4292,7 +4300,7 @@ struct PublisherPageInspectorView: View {
                                 cancelInspection()
                             }
                             .frame(minHeight: 44)
-                            .accessibilityHint("Stop inspecting this page without changing the URL")
+                            .accessibilityHint("Stop inspecting this page and keep previously found audio links")
                         }
                         .accessibilityElement(children: .contain)
                     }
@@ -4322,7 +4330,7 @@ struct PublisherPageInspectorView: View {
                                     .frame(minHeight: 44)
                             }
                             .disabled(isInspecting)
-                            .accessibilityHint("Try the same webpage again without losing its address")
+                            .accessibilityHint("Try the same webpage again while retaining previously found audio links")
                         }
                         .foregroundStyle(.orange)
                     } else if completedInspection && candidates.isEmpty {
