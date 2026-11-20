@@ -174,20 +174,27 @@ final class PlaybackController: NSObject, ObservableObject {
         // A delayed Now Playing or playlist action may retain a MusicTrack
         // value after library reconciliation deleted its catalog entry.
         // Do not open an orphaned recording or reset a healthy playback queue.
-        guard library.song(with: track.id) != nil else {
+        guard let catalogTrack = library.song(with: track.id) else {
             playbackError = "This song is no longer in your library. Choose another song."
             return
         }
         var nextOrder = playbackOrder
         if let songs {
-            nextOrder.reset(queue: songs.map(\.id), current: track.id, shuffled: isShuffled)
+            // UI snapshots may contain tracks removed by a concurrent import
+            // or library repair. Queue only identities still owned by the
+            // current catalog, while keeping the requested selection present.
+            let available = Set(library.tracks.map(\.id))
+            nextOrder.reset(queue: songs.map(\.id).filter { available.contains($0) },
+                            current: catalogTrack.id, shuffled: isShuffled)
         } else if nextOrder.queueIDs.isEmpty || !nextOrder.queueIDs.contains(track.id) {
             nextOrder.reset(queue: library.tracks.map(\.id), current: track.id, shuffled: isShuffled)
         } else {
             nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
             nextOrder.select(track.id)
         }
-        beginPlayback(track, using: nextOrder, transition: transition)
+        // The caller's MusicTrack may predate a restored filename or metadata
+        // repair. Always open the current catalog value, never stale file paths.
+        beginPlayback(catalogTrack, using: nextOrder, transition: transition)
     }
 
     /// Playback order commits only after AVAudioPlayer successfully starts.
@@ -199,13 +206,15 @@ final class PlaybackController: NSObject, ObservableObject {
         // Every entry point (manual selection, queue advance, retry, crossfade)
         // must obey the same catalog ownership check. An open audio file can
         // survive deletion, but a new player must not resurrect that entry.
-        guard library.song(with: track.id) != nil else {
+        guard let catalogTrack = library.song(with: track.id) else {
             playbackError = "This song is no longer in your library. Choose another song."
             return false
         }
         do {
             try activateAudio()
-            let player = try AVAudioPlayer(contentsOf: library.fileURL(for: track))
+            // Re-resolve at the shared open boundary as well: queued playback,
+            // retries and crossfade can all carry older MusicTrack snapshots.
+            let player = try AVAudioPlayer(contentsOf: library.fileURL(for: catalogTrack))
             player.delegate = relay
             guard player.prepareToPlay(), player.duration.isFinite, player.duration > 0 else {
                 throw CocoaError(.fileReadCorruptFile)
