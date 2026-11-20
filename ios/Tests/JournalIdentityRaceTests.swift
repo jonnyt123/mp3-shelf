@@ -69,7 +69,12 @@ for committed in [false, true] {
             var mutationCompleted = false
             do {
                 try verifyAndFinalize {
-                    try fm.removeItem(at: journalURL)
+                    // Audio-only mutations must retain the *original* journal
+                    // inode; otherwise a missing journal masks an audio
+                    // identity regression and yields a false-positive PASS.
+                    if ![6, 7, 8, 9, 10, 14, 15, 17].contains(mode) {
+                        try fm.removeItem(at: journalURL)
+                    }
                     switch mode {
                     case 0: try journalBytes(RecoveryJournal(generation: UUID(), committed: committed, ownedNames: ["new.mp3"])).write(to: journalURL)
                     case 1: try journalBytes(RecoveryJournal(generation: original.generation, committed: !committed, ownedNames: ["new.mp3"])).write(to: journalURL)
