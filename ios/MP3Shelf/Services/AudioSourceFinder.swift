@@ -2074,7 +2074,11 @@ enum AutomaticWebAudioFinder {
                 let secondsField = number(3)
                 guard hours.isFinite, minutes.isFinite, secondsField.isFinite,
                       hours >= 0, minutes >= 0, secondsField >= 0,
-                      minutes < 60, secondsField < 60 else { return false }
+                      minutes < 60, secondsField < 60,
+                      // Reject a duration claim that cannot represent a sane track.
+                      // Otherwise a huge numeric ISO field can overflow the
+                      // summed duration and silently contaminate matching.
+                      hours <= 24, hours * 3600 + minutes * 60 + secondsField <= 86_400 else { return false }
                 seconds = hours * 3600 + minutes * 60 + secondsField
             }
         } else { return false }
