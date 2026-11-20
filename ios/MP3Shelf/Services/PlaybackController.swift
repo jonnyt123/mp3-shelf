@@ -315,6 +315,25 @@ final class PlaybackController: NSObject, ObservableObject {
             if failedTrackID != nil { retryFailedPlayback() }
             return
         }
+        // A paused AVAudioPlayer can retain an open descriptor after its
+        // catalog entry has been deleted. Resuming it would resurrect a song
+        // that no longer belongs to the library (including from lock screen).
+        // Recover through the queue instead, using the same bounded candidate
+        // selection as automatic completion. Never reopen the orphaned file.
+        if let currentTrackID, library?.song(with: currentTrackID) == nil {
+            relay.invalidatePendingCompletions()
+            positionTimer?.invalidate()
+            positionTimer = nil
+            cancelFade()
+            audioPlayer.stop()
+            self.audioPlayer = nil
+            isPlaying = false
+            failedTrackID = nil
+            failedPlaybackOrder = nil
+            interruptionState.cancelResume()
+            advance(automatically: true)
+            return
+        }
         // A decode-error delegate leaves the old AVAudioPlayer allocated but
         // unusable. Reopen the recording on retry so a repaired/reimported file
         // is actually read. A failed manual selection is different: its ID is
@@ -381,8 +400,15 @@ final class PlaybackController: NSObject, ObservableObject {
     func next() { advance(automatically: false) }
 
     func previous() {
-        if currentTime > 3 { seek(to: 0); return }
         guard let library else { return }
+        // An open player is not evidence that its recording still belongs to
+        // the library. Never restart an orphaned track when pressing Previous
+        // after a deletion; resolve the surviving queue first.
+        if currentTime > 3, let currentTrackID,
+           library.song(with: currentTrackID) != nil {
+            seek(to: 0)
+            return
+        }
         var nextOrder = playbackOrder
         nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
         // A stale queue entry or a damaged local recording must not strand
