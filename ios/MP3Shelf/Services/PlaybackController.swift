@@ -527,7 +527,12 @@ final class PlaybackController: NSObject, ObservableObject {
                 }
                 break
             }
-            candidateID = nextOrder.next(automatic: true, loop: loopMode)
+            // A failed candidate must not inherit Repeat One's replay-current
+            // rule: that would select the same corrupt file again and strand
+            // other playable recordings. Probe the next distinct queue entry
+            // once, without changing the user's configured repeat preference.
+            let recoveryLoop: PlaybackLoopMode = loopMode == .one ? .all : loopMode
+            candidateID = nextOrder.next(automatic: true, loop: recoveryLoop)
         }
         if automatically && !crossfading && !failedToOpenRecording {
             // No candidate could even be opened. An old failedTrackID from a
