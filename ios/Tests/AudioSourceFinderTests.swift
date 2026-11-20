@@ -1833,6 +1833,37 @@ enum AudioSourceFinderTests {
             filename: "Exact Song (Nightcore).mp3",
             requestedTitle: "Exact Song (Sped Up)"),
             "nightcore and sped-up editions are not interchangeable")
+        // Recording variants can share the same base title and duration.
+        for (file, requested) in [
+            ("Exact Song (Clean).mp3", "Exact Song"),
+            ("Exact Song (Explicit).mp3", "Exact Song"),
+            ("Exact Song (Censored).mp3", "Exact Song"),
+            ("Exact Song (Deluxe Edition).mp3", "Exact Song"),
+            ("Exact Song (Anniversary Edition).mp3", "Exact Song"),
+            ("Exact Song (Session Version).mp3", "Exact Song"),
+            ("Exact Song (Alternate Mix).mp3", "Exact Song"),
+            ("Exact Song.mp3", "Exact Song (Clean)"),
+            ("Exact Song.mp3", "Exact Song (Deluxe)")
+        ] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: file, requestedTitle: requested),
+                "different recording variants require review: \\(file)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Uncensored).mp3",
+            requestedTitle: "Exact Song (Explicit)"),
+            "explicit and uncensored labels are equivalent")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Deluxe).mp3",
+            requestedTitle: "Exact Song (Deluxe Edition)"),
+            "equivalent deluxe labels remain eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Clean Edit).mp3",
+            requestedTitle: "Exact Song (Clean)"),
+            "equivalent clean edit labels remain eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Deliver.mp3", requestedTitle: "Deliver"),
+            "edition words must be matched as whole tokens")
         // An Openverse page without authoritative page_count may be a
         // truncated result set, hiding another version of the same recording.
         verify(!AudioSourceFinder.openversePageConsistent(
