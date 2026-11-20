@@ -56,7 +56,7 @@ private func verifyAndFinalize(_ beforeFinalization: () throws -> Void) throws {
     try fm.removeItem(at: journalURL)
 }
 for committed in [false, true] {
-    for mode in 0..<13 {
+    for mode in 0..<16 {
         for iteration in 0..<4 {
             try? fm.removeItem(at: journalURL)
             try? fm.removeItem(at: ownedURL)
@@ -89,6 +89,24 @@ for committed in [false, true] {
                         try fm.removeItem(at: ownedURL)
                         try fm.createSymbolicLink(at: ownedURL, withDestinationURL: twin)
                     case 11: try journalBytes(original).write(to: journalURL, options: .atomic) // identical bytes, new inode
+                    case 13:
+                        // A hard link is not a symlink; content-only checks accept
+                        // the substituted journal even though its inode changed.
+                        let twinJournal = root.appendingPathComponent("hardlinked-recovery.json")
+                        try? fm.removeItem(at: twinJournal)
+                        try journalBytes(original).write(to: twinJournal)
+                        try fm.linkItem(at: twinJournal, to: journalURL)
+                    case 14:
+                        // Same-byte hard-link substitution of user audio must not
+                        // be treated as the transaction's original owned file.
+                        let twinAudio = root.appendingPathComponent("hardlinked-audio.mp3")
+                        try? fm.removeItem(at: twinAudio)
+                        try originalAudio.write(to: twinAudio)
+                        try fm.removeItem(at: ownedURL)
+                        try fm.linkItem(at: twinAudio, to: ownedURL)
+                    case 15:
+                        // An empty replacement is never valid owned audio.
+                        try Data().write(to: ownedURL, options: .atomic)
                     case 12:
                         let twinJournal = root.appendingPathComponent("identical-recovery.json")
                         try journalBytes(original).write(to: twinJournal)
@@ -98,7 +116,9 @@ for committed in [false, true] {
                 }
             } catch { rejected = true }
             try require(rejected, "stale replay accepted journal replacement mode \(mode), iteration \(iteration)")
-            if mode == 6 { try require(Data(contentsOf: ownedURL) == Data(repeating: 0x99, count: 8192), "replacement audio overwritten") }
+            if mode == 14 { try require(Data(contentsOf: ownedURL) == originalAudio, "hard-linked replacement audio deleted") }
+            else if mode == 15 { try require(Data(contentsOf: ownedURL).isEmpty, "empty replacement audio overwritten") }
+            else if mode == 6 { try require(Data(contentsOf: ownedURL) == Data(repeating: 0x99, count: 8192), "replacement audio overwritten") }
             else if mode == 7 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "replacement audio symlink removed") }
             else if mode == 8 { var isDir: ObjCBool = false; try require(fm.fileExists(atPath: ownedURL.path, isDirectory: &isDir) && isDir.boolValue, "replacement audio directory removed") }
             else if mode == 10 { try require((try? fm.destinationOfSymbolicLink(atPath: ownedURL.path)) != nil, "same-byte symlink substitution removed") }
@@ -119,4 +139,4 @@ for committed in [false, true] {
     try require(!fm.fileExists(atPath: journalURL.path), "successful replay retained stale journal")
     try require(fm.fileExists(atPath: ownedURL.path) == committed, "commit state changed audio ownership")
 }
-print("PASS: 104 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
+print("PASS: 128 journal/audio replacement/replay isolation scenarios; 2 uncontested controls")
