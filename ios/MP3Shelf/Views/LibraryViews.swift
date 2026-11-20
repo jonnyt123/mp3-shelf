@@ -4317,7 +4317,18 @@ struct PublisherPageInspectorView: View {
                 Section("SOURCE PAGE") {
                     Text(wish.title).font(.headline)
                     Text(wish.artist).font(.subheadline).foregroundStyle(.secondary)
-                    TextField("https://artist.example/music/song", text: $pageText)
+                    TextField("https://artist.example/music/song", text: Binding(
+                        get: { pageText },
+                        set: { newValue in
+                            // Invalidate synchronously, before another tap can review
+                            // results from a different publisher page.
+                            if newValue != pageText {
+                                invalidateInspection()
+                                inspectionNotice = nil
+                                pageText = newValue
+                            }
+                        }
+                    ))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -4464,6 +4475,7 @@ struct PublisherPageInspectorView: View {
                                     // Only a URL still present in the current completed
                                     // inspection may advance to recording review.
                                     guard completedInspection,
+                                          candidatePageURL == WebAudioSearch.sanitizedResultURL(pageText.trimmingCharacters(in: .whitespacesAndNewlines)),
                                           candidates.contains(file),
                                           let components = URLComponents(url: file, resolvingAgainstBaseURL: false),
                                           components.scheme?.lowercased() == "https",
