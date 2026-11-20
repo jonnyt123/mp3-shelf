@@ -17,9 +17,18 @@ func make(_ url: URL, _ bytes: Data) throws {
     try bytes.write(to: url.appendingPathComponent("song.mp3"), options: .atomic)
     try Data("library-index".utf8).write(to: url.appendingPathComponent("index.json"), options: .atomic)
 }
+func isRegularUnredirectedFile(_ url: URL) -> Bool {
+    guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+          let kind = attrs[.type] as? FileAttributeType else { return false }
+    return kind == .typeRegular
+}
 func matches(_ url: URL, _ bytes: Data) -> Bool {
-    (try? Data(contentsOf: url.appendingPathComponent("song.mp3"))) == bytes &&
-    (try? Data(contentsOf: url.appendingPathComponent("index.json"))) == Data("library-index".utf8)
+    let song = url.appendingPathComponent("song.mp3")
+    let index = url.appendingPathComponent("index.json")
+    // Do not follow redirected metadata/audio inside a seemingly valid backup.
+    return isRegularUnredirectedFile(song) && isRegularUnredirectedFile(index) &&
+        (try? Data(contentsOf: song)) == bytes &&
+        (try? Data(contentsOf: index)) == Data("library-index".utf8)
 }
 func reset() throws {
     for url in [live, stage, backup, journal] where (try? fm.attributesOfItem(atPath: url.path)) != nil {
@@ -188,4 +197,33 @@ do { try recover() } catch { rejectedTruncated = true }
 check(rejectedTruncated && fm.fileExists(atPath: journal.path) &&
       fm.fileExists(atPath: backup.path) && !fm.fileExists(atPath: live.path),
       "truncated backup destroyed recovery evidence")
-print("PASS: 16 crash-journal model cases")
+// A backup's top-level directory can be genuine while its audio points outside.
+// The recovery model must not follow that link or discard the journal.
+try reset()
+let externalAudio = root.appendingPathComponent("external-audio.mp3")
+try old.write(to: externalAudio, options: .atomic)
+try Data("old-moved".utf8).write(to: journal, options: .atomic)
+try fm.moveItem(at: live, to: backup)
+try fm.removeItem(at: backup.appendingPathComponent("song.mp3"))
+try fm.createSymbolicLink(at: backup.appendingPathComponent("song.mp3"), withDestinationURL: externalAudio)
+var rejectedLinkedAudio = false
+do { try recover() } catch { rejectedLinkedAudio = true }
+check(rejectedLinkedAudio && !fm.fileExists(atPath: live.path) &&
+      fm.fileExists(atPath: journal.path) && isSymbolicLink(backup.appendingPathComponent("song.mp3")) &&
+      (try Data(contentsOf: externalAudio)) == old, "nested audio symlink accepted")
+
+// Index metadata must be equally protected, even when the recording is intact.
+try reset()
+let externalIndex = root.appendingPathComponent("external-index.json")
+try Data("library-index".utf8).write(to: externalIndex, options: .atomic)
+try Data("old-moved".utf8).write(to: journal, options: .atomic)
+try fm.moveItem(at: live, to: backup)
+try fm.removeItem(at: backup.appendingPathComponent("index.json"))
+try fm.createSymbolicLink(at: backup.appendingPathComponent("index.json"), withDestinationURL: externalIndex)
+var rejectedLinkedIndex = false
+do { try recover() } catch { rejectedLinkedIndex = true }
+check(rejectedLinkedIndex && !fm.fileExists(atPath: live.path) &&
+      fm.fileExists(atPath: journal.path) && isSymbolicLink(backup.appendingPathComponent("index.json")) &&
+      (try Data(contentsOf: externalIndex)) == Data("library-index".utf8), "nested index symlink accepted")
+
+print("PASS: 18 crash-journal model cases")
