@@ -171,6 +171,13 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func play(_ track: MusicTrack, queue songs: [MusicTrack]? = nil, transition: TimeInterval = 0) {
         guard let library else { return }
+        // A delayed Now Playing or playlist action may retain a MusicTrack
+        // value after library reconciliation deleted its catalog entry.
+        // Do not open an orphaned recording or reset a healthy playback queue.
+        guard library.song(with: track.id) != nil else {
+            playbackError = "This song is no longer in your library. Choose another song."
+            return
+        }
         var nextOrder = playbackOrder
         if let songs {
             nextOrder.reset(queue: songs.map(\.id), current: track.id, shuffled: isShuffled)
@@ -189,6 +196,13 @@ final class PlaybackController: NSObject, ObservableObject {
                                transition: TimeInterval = 0,
                                preserveExistingOnFailure: Bool = true) -> Bool {
         guard let library else { return false }
+        // Every entry point (manual selection, queue advance, retry, crossfade)
+        // must obey the same catalog ownership check. An open audio file can
+        // survive deletion, but a new player must not resurrect that entry.
+        guard library.song(with: track.id) != nil else {
+            playbackError = "This song is no longer in your library. Choose another song."
+            return false
+        }
         do {
             try activateAudio()
             let player = try AVAudioPlayer(contentsOf: library.fileURL(for: track))
