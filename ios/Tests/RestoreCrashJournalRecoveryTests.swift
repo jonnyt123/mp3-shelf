@@ -28,7 +28,13 @@ func reset() throws {
     try make(live, old)
     try make(stage, next)
 }
+func isSymbolicLink(_ url: URL) -> Bool {
+    (try? fm.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeSymbolicLink
+}
 func recover() throws {
+    for url in [live, stage, backup, journal] where isSymbolicLink(url) {
+        throw NSError(domain: "redirected-transaction-path", code: 5)
+    }
     guard fm.fileExists(atPath: journal.path) else { return }
     let phase = try String(contentsOf: journal, encoding: .utf8)
     guard ["prepared", "old-moved", "installed"].contains(phase) else {
@@ -105,4 +111,40 @@ do { try recover() } catch { rejectedCorruptBackup = true }
 check(rejectedCorruptBackup && fm.fileExists(atPath: journal.path) &&
       fm.fileExists(atPath: backup.path) && !fm.fileExists(atPath: live.path),
       "corrupt backup destroyed evidence")
-print("PASS: 9 crash-journal model cases")
+// Journal redirection must not authorize changes to outside transaction metadata.
+try reset()
+let outsideJournal = root.appendingPathComponent("outside-journal")
+try Data("prepared".utf8).write(to: outsideJournal, options: .atomic)
+try fm.createSymbolicLink(at: journal, withDestinationURL: outsideJournal)
+var rejectedJournal = false
+do { try recover() } catch { rejectedJournal = true }
+check(rejectedJournal && matches(live, old) && matches(stage, next) &&
+      (try Data(contentsOf: outsideJournal)) == Data("prepared".utf8),
+      "journal symlink changed outside data")
+try fm.removeItem(at: journal)
+
+// Backup redirection must not be treated as a legitimate original recording.
+try reset()
+let outsideBackup = root.appendingPathComponent("outside-backup")
+try make(outsideBackup, old)
+try Data("old-moved".utf8).write(to: journal, options: .atomic)
+try fm.removeItem(at: live)
+try fm.createSymbolicLink(at: backup, withDestinationURL: outsideBackup)
+var rejectedBackup = false
+do { try recover() } catch { rejectedBackup = true }
+check(rejectedBackup && matches(outsideBackup, old) &&
+      fm.fileExists(atPath: journal.path) && !fm.fileExists(atPath: live.path),
+      "backup symlink consumed outside audio")
+
+// Stage redirection must not be cleaned up as an ordinary transaction directory.
+try reset()
+let outsideStage = root.appendingPathComponent("outside-stage")
+try make(outsideStage, next)
+try fm.removeItem(at: stage)
+try fm.createSymbolicLink(at: stage, withDestinationURL: outsideStage)
+try Data("prepared".utf8).write(to: journal, options: .atomic)
+var rejectedStage = false
+do { try recover() } catch { rejectedStage = true }
+check(rejectedStage && matches(live, old) && matches(outsideStage, next) &&
+      fm.fileExists(atPath: journal.path), "stage symlink altered transaction")
+print("PASS: 12 crash-journal model cases")
