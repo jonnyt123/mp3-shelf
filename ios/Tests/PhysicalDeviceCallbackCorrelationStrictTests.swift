@@ -9,7 +9,7 @@ struct CallbackEvent: Codable {
     let time: Int
     let source: String
 }
-enum CallbackVerdict: Equatable { case verified, missingWake, missingCompletion, missingStage, invalidEvidence }
+enum CallbackVerdict: Equatable { case verified, missingArm, missingWake, missingCompletion, missingStage, invalidEvidence }
 func assessCallbacks(_ events: [CallbackEvent], session: String, installedCommit: String) -> CallbackVerdict {
     guard installedCommit.count == 40, installedCommit.allSatisfy({ $0.isHexDigit }),
           !session.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .invalidEvidence }
@@ -19,6 +19,8 @@ func assessCallbacks(_ events: [CallbackEvent], session: String, installedCommit
         ($0.task == nil || !$0.task!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }) else {
         return .invalidEvidence
     }
+    let arms = scoped.filter { $0.kind == "auditArmed" && $0.task == nil }
+    guard !arms.isEmpty else { return .missingArm }
     let wakes = scoped.filter { $0.kind == "osBackgroundWake" && $0.task != nil }
     guard !wakes.isEmpty else { return .missingWake }
     let completions = scoped.filter { $0.kind == "urlSessionCompletion" && $0.task != nil }
@@ -26,6 +28,7 @@ func assessCallbacks(_ events: [CallbackEvent], session: String, installedCommit
     let stages = scoped.filter { $0.kind == "durableStaging" && $0.task != nil }
     guard !stages.isEmpty else { return .missingStage }
     for wake in wakes {
+        guard arms.contains(where: { $0.process != wake.process && $0.time < wake.time }) else { continue }
         guard let task = wake.task else { continue }
         for completion in completions where completion.process == wake.process &&
             completion.task == task && completion.time > wake.time {
@@ -46,29 +49,33 @@ func expectCallback(_ events: [CallbackEvent], _ verdict: CallbackVerdict, _ lab
     let actual = assessCallbacks(events, session: session, installedCommit: sha)
     precondition(actual == verdict, "\(label): expected \(verdict), got \(actual)")
 }
+let arm = CallbackEvent(kind: "auditArmed", session: "s1", process: "original-process", task: nil, time: 5, source: "production")
 let good = [event("osBackgroundWake"), event("urlSessionCompletion", time: 20),
             event("durableStaging", time: 30)]
-expectCallback(good, .verified, "ordered same-process task")
-expectCallback(Array(good.dropFirst()), .missingWake, "missing OS wake")
-expectCallback([good[0], good[2]], .missingCompletion, "missing completion")
-expectCallback(Array(good.prefix(2)), .missingStage, "missing durable stage")
-expectCallback([good[0], event("urlSessionCompletion", "p2", time: 20), good[2]], .invalidEvidence, "cross-process completion")
-expectCallback([good[0], event("urlSessionCompletion", task: "t2", time: 20), good[2]], .invalidEvidence, "cross-task completion")
-expectCallback([good[0], good[1], event("durableStaging", "p2", time: 30)], .invalidEvidence, "cross-process stage")
-expectCallback([good[0], good[1], event("durableStaging", task: "t2", time: 30)], .invalidEvidence, "cross-task stage")
-expectCallback([good[0], event("urlSessionCompletion", time: 9), good[2]], .invalidEvidence, "old completion")
-expectCallback([good[0], good[1], event("durableStaging", time: 19)], .invalidEvidence, "old stage")
-expectCallback([good[0], event("urlSessionCompletion", time: 20, session: "old"), good[2]], .missingCompletion, "old session")
-expectCallback([good[0], event("urlSessionCompletion", time: 20, source: "mock"), good[2]], .invalidEvidence, "mock callback")
-expectCallback(good, .invalidEvidence, "unverified SHA", sha: "stale")
-expectCallback(good, .missingWake, "wrong session", session: "s2")
+expectCallback([arm] + good, .verified, "ordered cross-process arm/wake/completion/stage")
+expectCallback(good, .missingArm, "unarmed callbacks cannot prove restart")
+expectCallback([event("auditArmed", "p1", time: 5)] + good, .invalidEvidence, "same-process arm cannot prove restart")
+expectCallback([event("auditArmed", "original-process", time: 10)] + good, .invalidEvidence, "arm must precede wake")
+expectCallback([arm] + Array(good.dropFirst()), .missingWake, "missing OS wake")
+expectCallback([arm] + [good[0], good[2]], .missingCompletion, "missing completion")
+expectCallback([arm] + Array(good.prefix(2)), .missingStage, "missing durable stage")
+expectCallback([arm] + [good[0], event("urlSessionCompletion", "p2", time: 20), good[2]], .invalidEvidence, "cross-process completion")
+expectCallback([arm] + [good[0], event("urlSessionCompletion", task: "t2", time: 20), good[2]], .invalidEvidence, "cross-task completion")
+expectCallback([arm] + [good[0], good[1], event("durableStaging", "p2", time: 30)], .invalidEvidence, "cross-process stage")
+expectCallback([arm] + [good[0], good[1], event("durableStaging", task: "t2", time: 30)], .invalidEvidence, "cross-task stage")
+expectCallback([arm] + [good[0], event("urlSessionCompletion", time: 9), good[2]], .invalidEvidence, "old completion")
+expectCallback([arm] + [good[0], good[1], event("durableStaging", time: 19)], .invalidEvidence, "old stage")
+expectCallback([arm] + [good[0], event("urlSessionCompletion", time: 20, session: "old"), good[2]], .missingCompletion, "old session")
+expectCallback([arm] + [good[0], event("urlSessionCompletion", time: 20, source: "mock"), good[2]], .invalidEvidence, "mock callback")
+expectCallback([arm] + good, .invalidEvidence, "unverified SHA", sha: "stale")
+expectCallback([arm] + good, .missingWake, "wrong session", session: "s2")
 // Equal timestamps cannot establish event order; blank identities cannot correlate.
-expectCallback([good[0], event("urlSessionCompletion", time: 10), good[2]], .invalidEvidence, "simultaneous wake/callback")
-expectCallback([good[0], good[1], event("durableStaging", time: 20)], .invalidEvidence, "simultaneous callback/stage")
-expectCallback([event("osBackgroundWake", task: ""), event("urlSessionCompletion", task: "", time: 20), event("durableStaging", task: "", time: 30)], .invalidEvidence, "empty task")
-expectCallback([event("osBackgroundWake", task: "  "), event("urlSessionCompletion", task: "  ", time: 20), event("durableStaging", task: "  ", time: 30)], .invalidEvidence, "whitespace task")
-expectCallback([event("osBackgroundWake", " "), event("urlSessionCompletion", " ", time: 20), event("durableStaging", " ", time: 30)], .invalidEvidence, "whitespace process")
-expectCallback(good, .invalidEvidence, "whitespace session", session: " ")
+expectCallback([arm] + [good[0], event("urlSessionCompletion", time: 10), good[2]], .invalidEvidence, "simultaneous wake/callback")
+expectCallback([arm] + [good[0], good[1], event("durableStaging", time: 20)], .invalidEvidence, "simultaneous callback/stage")
+expectCallback([arm] + [event("osBackgroundWake", task: ""), event("urlSessionCompletion", task: "", time: 20), event("durableStaging", task: "", time: 30)], .invalidEvidence, "empty task")
+expectCallback([arm] + [event("osBackgroundWake", task: "  "), event("urlSessionCompletion", task: "  ", time: 20), event("durableStaging", task: "  ", time: 30)], .invalidEvidence, "whitespace task")
+expectCallback([arm] + [event("osBackgroundWake", " "), event("urlSessionCompletion", " ", time: 20), event("durableStaging", " ", time: 30)], .invalidEvidence, "whitespace process")
+expectCallback([arm] + good, .invalidEvidence, "whitespace session", session: " ")
 let wrongTask = [good[0], event("urlSessionCompletion", task: "t2", time: 20), good[2]]
 for index in 0..<128 {
     let noise = event(index.isMultiple(of: 2) ? "urlSessionCompletion" : "durableStaging",
