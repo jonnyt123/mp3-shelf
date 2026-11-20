@@ -154,7 +154,12 @@ struct PlaybackOrder {
         guard limit > 0, let currentID else { return [] }
         if isShuffled { return Array(remainingShuffle.prefix(limit)) }
         guard let position = queueIDs.firstIndex(of: currentID) else { return [] }
-        return Array(queueIDs.dropFirst(position + 1).filter { $0 != unavailableAnchor }.prefix(limit))
+        let pending = queueIDs.dropFirst(position + 1).filter { $0 != unavailableAnchor }
+        if !pending.isEmpty { return Array(pending.prefix(limit)) }
+        // If the last selected song was deleted, Next wraps to surviving
+        // recordings even with Repeat Off. Expose that recovery queue to the
+        // editor rather than showing an empty queue while Next can advance.
+        return unavailableAnchor == currentID ? Array(playableIDs.prefix(limit)) : []
     }
 
     /// Reorder the currently pending queue without resetting listening history.
@@ -232,6 +237,12 @@ struct PlaybackOrder {
         }
         guard let index = queueIDs.firstIndex(of: currentID) else { return [] }
         var result = Array(queueIDs.dropFirst(index + 1).filter { $0 != unavailableAnchor }.prefix(limit))
+        // Recovery after deleting the last selected recording wraps to the
+        // surviving queue even with Repeat Off. Keep the preview consistent
+        // with next(automatic:loop:) and canAdvanceAutomatically(loop:).
+        if result.isEmpty && unavailableAnchor == currentID {
+            return Array(playableIDs.prefix(limit))
+        }
         if result.count < limit && loop == .all {
             result += Array(playableIDs.prefix(limit - result.count))
         }
