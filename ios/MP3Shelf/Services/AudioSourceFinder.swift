@@ -328,6 +328,13 @@ enum AudioSourceFinder {
             var result = Set<String>()
             let variants: [(String, [[String]])] = [
                 ("karaoke", [["karaoke"]]),
+                ("acapella", [["acapella"], ["a", "cappella"], ["a", "capella"]]),
+                ("rehearsal", [["rehearsal"]]),
+                ("bootleg", [["bootleg"]]),
+                ("bass-boosted", [["bass", "boosted"], ["bassboosted"]]),
+                ("club-mix", [["club", "mix"]]),
+                ("dub-mix", [["dub", "mix"], ["dub", "version"]]),
+                ("vocal-version", [["vocal", "version"], ["vocal", "mix"]]),
                 ("clean-edit", [["clean"], ["clean", "edit"], ["radio", "clean"]]),
                 ("explicit-edit", [["explicit"], ["uncensored"]]),
                 ("censored-edit", [["censored"], ["censor"], ["bleeped"]]),
