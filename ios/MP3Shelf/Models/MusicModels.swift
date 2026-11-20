@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -50,6 +53,32 @@ struct LocalAudioRecoveryRecord: Codable {
     let track: MusicTrack
     let stagingName: String
     let audioLength: Int64
+    let audioSHA256: String?
+
+    init(version: Int, track: MusicTrack, stagingName: String, audioLength: Int64,
+         audioSHA256: String? = nil) {
+        self.version = version
+        self.track = track
+        self.stagingName = stagingName
+        self.audioLength = audioLength
+        self.audioSHA256 = audioSHA256
+    }
+
+    static func audioDigest(at url: URL) throws -> String? {
+        #if canImport(CryptoKit)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let chunk = try handle.read(upToCount: 64 * 1024) ?? Data()
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        #else
+        return nil
+        #endif
+    }
 
     static func journalName(for id: UUID) -> String {
         ".mp3shelf-recovery-\(id.uuidString).json"
@@ -79,7 +108,10 @@ struct LocalAudioRecoveryRecord: Codable {
         }
         let record = try JSONDecoder().decode(Self.self, from: bytes)
         let allowed = ["mp3", "m4a", "aac", "wav", "aif", "aiff"]
-        guard record.version == 1,
+        guard (record.version == 1 || record.version == 2),
+              (record.version == 1 && record.audioSHA256 == nil ||
+               record.version == 2 && record.audioSHA256?.count == 64 &&
+               record.audioSHA256!.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }),
               journal.lastPathComponent == journalName(for: record.track.id),
               LocalLibraryFileSafety.validName(record.track.fileName),
               LocalLibraryFileSafety.validName(record.stagingName),
@@ -134,6 +166,10 @@ struct LocalAudioRecoveryRecord: Codable {
                       atPath: file.path),
                   (attributes[.size] as? NSNumber)?.int64Value == audioLength,
                   verify(file) else { return nil }
+            if let expected = audioSHA256 {
+                guard let actual = try? Self.audioDigest(at: file),
+                      actual == expected else { return nil }
+            }
             return file
         }
         if let published = eligible(track.fileName) { return published }
@@ -195,9 +231,11 @@ enum LocalAudioImportTransaction {
             guard size > 0, size <= PortableShelfArchive.maxTrackBytes else {
                 throw PortableShelfArchive.ArchiveError.oversized
             }
+            let digest = try LocalAudioRecoveryRecord.audioDigest(at: staging)
             let record = LocalAudioRecoveryRecord(
-                version: 1, track: track,
-                stagingName: staging.lastPathComponent, audioLength: size)
+                version: digest == nil ? 1 : 2, track: track,
+                stagingName: staging.lastPathComponent, audioLength: size,
+                audioSHA256: digest)
             let bytes = try JSONEncoder().encode(record)
             guard bytes.count <= 64 * 1024 else {
                 throw PortableShelfArchive.ArchiveError.oversized
