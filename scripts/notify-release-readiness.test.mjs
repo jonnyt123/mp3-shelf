@@ -229,3 +229,32 @@ test('multi-day Mac agent downtime resets notification baseline without replayin
    {now:now+25*3600000+60000});
  assert.deepEqual(notificationChanges(after,recent).cleared,['native']);
 });
+
+test('a blocked gate losing its supporting evidence is an actionable transition',()=>{
+ const prior=normalizedGateState(model({native:'BLOCKED',hardware:'BLOCKED'}),{now});
+ const current=normalizedGateState({...model({native:'UNVERIFIED',hardware:'UNVERIFIED'}),
+  generatedAt:new Date(now+60000).toISOString()},{now:now+60000});
+ const change=notificationChanges(prior,current);
+ assert.equal(change.baseline,false);
+ assert.deepEqual(change.blocked,['native','hardware']);
+ assert.match(notificationMessage(change),/Needs review: Xcode build, hardware approval/);
+ const repeat=notificationChanges(current,current);
+ assert.deepEqual(repeat.blocked,[]);
+ assert.equal(notificationMessage(repeat),null);
+});
+test('a blocked to unverified transition sends once and persists its state',()=>{
+ const x=dir(),sent=[];
+ try{
+  writeFileSync(x.latest,JSON.stringify(model({native:'BLOCKED'})));
+  deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',send:s=>sent.push(s)});
+  writeFileSync(x.latest,JSON.stringify(model({native:'UNVERIFIED'})));
+  const changed=deliverChangeOnlyNotification({home:x.home,now:now+1000,
+   platform:'darwin',send:s=>sent.push(s)});
+  assert.equal(changed.status,'CHANGE_NOTIFIED');
+  assert.deepEqual(changed.blocked,['native']);
+  assert.equal(sent.length,1);
+  assert.equal(deliverChangeOnlyNotification({home:x.home,now:now+2000,
+   platform:'darwin',send:s=>sent.push(s)}).status,'NO_CHANGE');
+  assert.equal(sent.length,1);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
