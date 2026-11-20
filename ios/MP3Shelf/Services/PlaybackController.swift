@@ -412,7 +412,13 @@ final class PlaybackController: NSObject, ObservableObject {
 
     private func advance(automatically: Bool, crossfading: Bool = false) {
         guard let library else { return }
-        if automatically && repeatMode == .one {
+        // Repeat One is only valid while the selected recording still exists
+        // in the library. An already-open audio player can outlive catalog
+        // deletion; replaying it here would strand surviving queued songs.
+        // Fall through to PlaybackOrder's deleted-current recovery instead.
+        if automatically && repeatMode == .one,
+           let currentTrackID,
+           library.song(with: currentTrackID) != nil {
             seek(to: 0)
             resume()
             return
