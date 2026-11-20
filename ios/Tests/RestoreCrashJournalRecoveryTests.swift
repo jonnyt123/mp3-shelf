@@ -226,4 +226,32 @@ check(rejectedLinkedIndex && !fm.fileExists(atPath: live.path) &&
       fm.fileExists(atPath: journal.path) && isSymbolicLink(backup.appendingPathComponent("index.json")) &&
       (try Data(contentsOf: externalIndex)) == Data("library-index".utf8), "nested index symlink accepted")
 
-print("PASS: 18 crash-journal model cases")
+
+// A valid rollback copy must not overwrite an unrelated live recording.
+try reset()
+try Data("installed".utf8).write(to: journal, options: .atomic)
+try fm.moveItem(at: live, to: backup)
+let foreign = Data(repeating: 0x63, count: 16384)
+try make(live, foreign)
+var rejectedForeignInstall = false
+do { try recover() } catch { rejectedForeignInstall = true }
+check(rejectedForeignInstall && matches(live, foreign) && matches(backup, old) &&
+      matches(stage, next) && fm.fileExists(atPath: journal.path),
+      "installed phase overwrote unrelated live audio")
+var rejectedForeignInstallRetry = false
+do { try recover() } catch { rejectedForeignInstallRetry = true }
+check(rejectedForeignInstallRetry && matches(live, foreign) && matches(backup, old) &&
+      matches(stage, next) && fm.fileExists(atPath: journal.path),
+      "repeated recovery consumed foreign live or rollback evidence")
+
+// Missing backup must not silently classify a new live recording as original.
+try reset()
+try Data("installed".utf8).write(to: journal, options: .atomic)
+try fm.removeItem(at: live)
+try make(live, next)
+var rejectedMissingBackup = false
+do { try recover() } catch { rejectedMissingBackup = true }
+check(rejectedMissingBackup && matches(live, next) &&
+      fm.fileExists(atPath: journal.path), "missing backup silently committed unknown live")
+
+print("PASS: 21 crash-journal model cases")
