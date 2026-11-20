@@ -1904,6 +1904,22 @@ enum AudioSourceFinderTests {
         verify(!AudioSourceFinder.openversePageConsistent(
             page: 2, pageCount: 3, returned: 1, expectedPageCount: 2),
             "changing Openverse totals invalidate uniqueness")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (2020 Anniversary Edition).mp3",
+            requestedTitle: "Exact Song (2025 Anniversary Edition)"),
+            "different anniversary years cannot auto-match")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Anniversary Edition).mp3",
+            requestedTitle: "Exact Song (2025 Anniversary Edition)"),
+            "missing anniversary year cannot silently match a dated edition")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (2025 Anniversary Edition).mp3",
+            requestedTitle: "Exact Song (Anniversary Edition 2025)"),
+            "equivalent anniversary edition year positions remain eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "1999 (Anniversary Edition).mp3",
+            requestedTitle: "1999 (Anniversary Edition)"),
+            "numeric song title must not trigger a false edition mismatch")
         print("Audio source discovery validation tests passed")
     }
 }
