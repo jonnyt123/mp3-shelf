@@ -1742,6 +1742,22 @@ enum AudioSourceFinderTests {
             requestedTitle: "Exact Song (Sped Up)"),
             "sped-up spelling variants agree without matching studio audio")
         verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (2011 Remaster).mp3",
+            requestedTitle: "Exact Song (2024 Remaster)"),
+            "different remaster years must not auto-match")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Remastered).mp3",
+            requestedTitle: "Exact Song (2024 Remaster)"),
+            "missing requested remaster year requires review")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (2024 Remastered).mp3",
+            requestedTitle: "Exact Song (2024 Remaster)"),
+            "equivalent remaster labels with identical years match")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Remastered).mp3",
+            requestedTitle: "Exact Song (Remaster)"),
+            "yearless remaster aliases remain eligible")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
             filename: "Exact Song (Remastered Live).mp3",
             requestedTitle: "Exact Song (Remaster)"),
             "a live remaster cannot match a studio remaster")
