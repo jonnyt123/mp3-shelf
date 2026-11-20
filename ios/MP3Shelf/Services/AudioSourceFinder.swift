@@ -395,7 +395,28 @@ enum AudioSourceFinder {
         }
         let requestedYears = remasterYears(requestedTitle)
         let fileYears = remasterYears(fileStem)
-        return requestedYears == fileYears
+        guard requestedYears == fileYears else { return false }
+
+        // Anniversary editions are frequently indexed with an edition year
+        // rather than a unique recording identifier. Do not silently select
+        // a different anniversary master just because the base title and
+        // running time agree. Only years adjacent to the edition marker count;
+        // an ordinary numeric song title must not become edition evidence.
+        func anniversaryYears(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            var result = Set<String>()
+            for (index, word) in words.enumerated() where word == "anniversary" {
+                let start = max(0, index - 2)
+                let end = min(words.count, index + 3)
+                for candidate in words[start..<end] where candidate.count == 4 &&
+                    candidate.allSatisfy(\\.isNumber) &&
+                    (Int(candidate) ?? 0) >= 1900 && (Int(candidate) ?? 0) <= 2100 {
+                    result.insert(candidate)
+                }
+            }
+            return result
+        }
+        return anniversaryYears(fileStem) == anniversaryYears(requestedTitle)
     }
 
     // Avoid spending an entire iOS background processing window on up to
