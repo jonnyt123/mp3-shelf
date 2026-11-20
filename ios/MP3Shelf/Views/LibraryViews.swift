@@ -4280,9 +4280,20 @@ struct PublisherPageInspectorView: View {
         let requestID = inspectionID
         isInspecting = true
         inspectionTask = Task {
+            // The scene can deactivate after the tap but before this task runs.
+            // Recheck inside the task to avoid initiating an unwanted request.
+            guard !Task.isCancelled, inspectionID == requestID else { return }
+            guard scenePhase == .active else {
+                invalidateInspection(preservingResults: isSamePage)
+                inspectionNotice = "Page inspection paused while MP3 Shelf is inactive. Return to the app to retry."
+                inspectionFeedbackFocused = true
+                return
+            }
             do {
                 let found = try await AudioLandingPageInspector.inspect(pageURL)
-                guard !Task.isCancelled, inspectionID == requestID else { return }
+                // Scene notifications and network completions can be delivered in
+                // either order. Never publish a result while the app is inactive.
+                guard !Task.isCancelled, inspectionID == requestID, scenePhase == .active else { return }
                 // Publisher pages can advertise the same URL in multiple tags,
                 // including URLs with fragments or embedded credentials. Keep
                 // only distinct public HTTPS links before exposing review actions.
@@ -4311,7 +4322,7 @@ struct PublisherPageInspectorView: View {
             } catch is CancellationError {
                 return
             } catch {
-                guard !Task.isCancelled, inspectionID == requestID else { return }
+                guard !Task.isCancelled, inspectionID == requestID, scenePhase == .active else { return }
                 self.error = error.localizedDescription
                 inspectionFeedbackFocused = true
             }
