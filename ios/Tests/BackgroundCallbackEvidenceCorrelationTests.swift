@@ -11,6 +11,9 @@ struct CallbackEvent: Codable {
     let fileDigest: String?
 }
 enum EvidenceError: Error { case invalid, ambiguous, incomplete }
+// A callback chain must be from one bounded foreground/background observation,
+// not three independently replayed events collected days apart.
+let maximumCallbackWindowSeconds = 30 * 60
 
 func correlate(_ events: [CallbackEvent], session: String, process: String, task: String, digest: String) throws -> [CallbackEvent] {
     guard !session.isEmpty, !process.isEmpty, !task.isEmpty,
@@ -22,8 +25,10 @@ func correlate(_ events: [CallbackEvent], session: String, process: String, task
     guard matching.count == 3 else { throw EvidenceError.incomplete }
     let sorted = matching.sorted { $0.timestamp < $1.timestamp }
     guard sorted.map(\.kind) == ["backgroundWake", "downloadCompleted", "recordingStaged"],
+          sorted[0].timestamp >= 0,
           sorted[0].timestamp < sorted[1].timestamp,
           sorted[1].timestamp < sorted[2].timestamp,
+          sorted[2].timestamp - sorted[0].timestamp <= maximumCallbackWindowSeconds,
           sorted[2].fileDigest == digest,
           sorted[0].fileDigest == nil,
           sorted[1].fileDigest == nil else { throw EvidenceError.ambiguous }
@@ -52,6 +57,10 @@ let negative: [(String, [CallbackEvent])] = [
     ("different session completion", [good[0], event("downloadCompleted", 110, session: "other"), good[2]]),
     ("stage before callback", [good[0], event("recordingStaged", 105, hash: digest), good[1]]),
     ("same timestamp", [good[0], event("downloadCompleted", 100), good[2]]),
+    ("negative clock", [event("backgroundWake", -1), good[1], good[2]]),
+    ("stale wake", [event("backgroundWake", 100), event("downloadCompleted", 2000), event("recordingStaged", 2010, hash: digest)]),
+    ("stale completion", [good[0], good[1], event("recordingStaged", 2000, hash: digest)]),
+    ("window boundary exceeded", [event("backgroundWake", 1), event("downloadCompleted", 2), event("recordingStaged", 1802, hash: digest)]),
     ("duplicate completion", good + [good[1]]),
     ("duplicate stage", good + [good[2]]),
     ("foreign digest", [good[0], good[1], event("recordingStaged", 120, hash: String(repeating: "b", count: 64))]),
@@ -63,6 +72,8 @@ let negative: [(String, [CallbackEvent])] = [
 for (name, scenario) in negative { try expectRejected(name, scenario) }
 try expectRejected("bad digest syntax", good, digest: String(repeating: "Z", count: 64))
 try expectRejected("empty task", good, task: "")
+let boundary = [event("backgroundWake", 1), event("downloadCompleted", 2), event("recordingStaged", 1801, hash: digest)]
+precondition(try correlate(boundary, session: "S", process: "P", task: "T", digest: digest).count == 3)
 let root = FileManager.default.temporaryDirectory.appendingPathComponent("callback-qa-\(UUID().uuidString)")
 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: root) }
