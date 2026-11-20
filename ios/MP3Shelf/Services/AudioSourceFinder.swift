@@ -658,6 +658,21 @@ enum AudioSourceFinder {
         // A malformed explicit source classification is not a legacy missing value.
         // It cannot prove whether a file is an original or a derivative.
         guard audioFiles.allSatisfy({ !$0.hasInvalidSource }) else { return nil }
+        // A derivative and an original claiming the same physical path are
+        // contradictory catalog evidence, even if filtering derivatives would
+        // otherwise leave a single eligible MP3. Never let row ordering or
+        // source classification silently authorize the ambiguous download.
+        let allByPath = Dictionary(grouping: audioFiles, by: {
+            $0.name.precomposedStringWithCanonicalMapping.lowercased()
+        })
+        guard allByPath.values.allSatisfy({ rows in
+            guard let first = rows.first else { return false }
+            return rows.allSatisfy {
+                $0.name == first.name && $0.source == first.source &&
+                $0.size == first.size && $0.length == first.length &&
+                !$0.hasInvalidSize && !$0.hasInvalidLength
+            }
+        }) else { return nil }
         let originals = audioFiles.filter { $0.source == "original" }
         // An unclassified file may be an independently uploaded original. When
         // classified originals exist, do not discard unclassified siblings:
