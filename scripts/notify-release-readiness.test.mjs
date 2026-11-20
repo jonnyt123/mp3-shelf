@@ -277,3 +277,30 @@ test('a notification with only many blockers retains its complete summary',()=>{
  assert.match(message,/Needs review: native source, Mac agent, Xcode build, playlist, offline playback \+4 more/);
  assert(message.length<=235);
 });
+
+test('symlinked readiness evidence never establishes a baseline or delivers an alert',()=>{
+ const x=dir(),sent=[];
+ try{
+  const outside=join(x.home,'external-evidence.json');
+  writeFileSync(outside,JSON.stringify(model({native:'PASS'})));
+  symlinkSync(outside,x.latest);
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now,
+   platform:'darwin',send:s=>sent.push(s)}),/Missing latest/);
+  assert.deepEqual(sent,[]);
+  assert.equal(existsSync(x.state),false);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
+test('oversized and nonregular readiness evidence fail closed without state changes',()=>{
+ const x=dir(),sent=[];
+ try{
+  writeFileSync(x.latest,' '.repeat(128*1024+1));
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now,
+   platform:'darwin',send:s=>sent.push(s)}),/Missing latest/);
+  rmSync(x.latest);
+  mkdirSync(x.latest);
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now,
+   platform:'darwin',send:s=>sent.push(s)}),/Missing latest/);
+  assert.deepEqual(sent,[]);
+  assert.equal(existsSync(x.state),false);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
