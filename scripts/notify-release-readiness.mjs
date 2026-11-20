@@ -68,10 +68,15 @@ export function notificationMessage(diff){
  const names={source:'native source',agent:'Mac agent',native:'Xcode build',
   playlist:'playlist',playback:'offline playback',review:'iPhone review',
   hardware:'hardware approval',smoke:'draft upload',zip:'verified ZIP'};
+ // Prioritize regressions: a long list of cleared gates must never truncate
+ // the actionable blocker section out of a Notification Center message.
+ // Summarize excess names rather than cutting a gate name mid-word.
+ const summary=(keys,limit)=>keys.slice(0,limit).map(k=>names[k]).join(', ')+
+   (keys.length>limit?' +'+(keys.length-limit)+' more':'');
  const groups=[];
- if(diff.cleared.length)groups.push('Passed: '+diff.cleared.map(k=>names[k]).join(', '));
- if(diff.blocked.length)groups.push('Needs review: '+diff.blocked.map(k=>names[k]).join(', '));
- return groups.join(' | ').slice(0,235);
+ if(diff.blocked.length)groups.push('Needs review: '+summary(diff.blocked,5));
+ if(diff.cleared.length)groups.push('Passed: '+summary(diff.cleared,4));
+ return groups.join(' | ');
 }
 function notifySystem(message) {
  execFileSync('osascript',['-e','on run argv',
