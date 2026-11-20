@@ -115,6 +115,7 @@ for committed in [false, true] {
                         // Identity checks must not accidentally delete its peer.
                         let peer = root.appendingPathComponent("peer-recovery.json")
                         try? fm.removeItem(at: peer)
+                        try journalBytes(original).write(to: journalURL)
                         try fm.linkItem(at: journalURL, to: peer)
                     case 17:
                         // The owned audio gains a second filesystem name during
