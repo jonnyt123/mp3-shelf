@@ -500,6 +500,26 @@ enum AudioSourceFinderTests {
                 item, identifier: "competing-edition", for: wish) == nil,
                 "competing edition in same Archive item requires review")
         }
+        // An Archive item may include a second original in a non-MP3 audio
+        // container. Treat it as a competing recording, not an image/sidecar.
+        // Reversing row order must never change the unattended decision.
+        for extensionName in ["mp4", "m4b", "webm", "caf", "ape", "oga", "aif", "wave", "alac"] {
+            let alternate = """
+            {"name":"The Song.\(extensionName)","source":"original",
+             "size":5120000,"length":"212"}
+            """
+            for rows in [[validDuplicate, alternate], [alternate, validDuplicate]] {
+                let json = """
+                {"metadata":{"title":"The Song","creator":"The Artist"},
+                 "files":[\(rows.joined(separator: ","))]}
+                """
+                let item = try JSONDecoder().decode(
+                    AudioSourceFinder.ArchiveItem.self, from: Data(json.utf8))
+                verify(AudioSourceFinder.archiveCandidate(
+                    item, identifier: "competing-container", for: wish) == nil,
+                    "non-MP3 original container must not be ignored: \(extensionName)")
+            }
+        }
         let unrelatedAlbum = """
         {"metadata":{"title":"The Song","creator":"The Artist"},
          "files":[{"name":"The Song.mp3","source":"original",

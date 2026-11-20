@@ -696,7 +696,7 @@ enum AudioSourceFinder {
               !item.hasMalformedFileRows else { return nil }
         // Competing originals in other formats invalidate uniqueness. A lone
         // MP3 is not proof of a single recording when M4A/FLAC/WAV siblings exist.
-        let audioExtensions: Set<String> = ["mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "aiff", "wma"]
+        let audioExtensions: Set<String> = ["mp3", "m4a", "m4b", "mp4", "aac", "flac", "wav", "wave", "ogg", "oga", "opus", "aiff", "aif", "caf", "alac", "ape", "webm", "wma"]
         let audioFiles = (item.files ?? []).filter { file in
             audioExtensions.contains((file.name as NSString).pathExtension.lowercased())
         }
