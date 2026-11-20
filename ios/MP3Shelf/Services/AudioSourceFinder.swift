@@ -353,7 +353,26 @@ enum AudioSourceFinder {
             }
             return result
         }
-        return editions((filename as NSString).deletingPathExtension) == editions(requestedTitle)
+        let fileStem = (filename as NSString).deletingPathExtension
+        guard editions(fileStem) == editions(requestedTitle) else { return false }
+        // A remaster from a different year is a different master, even when
+        // the generic title normalizer considers both titles equivalent.
+        // When both sides explicitly name an edition year, require agreement.
+        // A year in the ordinary song title is not itself edition evidence.
+        func remasterYears(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            guard words.contains("remaster") || words.contains("remastered") else {
+                return []
+            }
+            return Set(words.filter {
+                $0.count == 4 && $0.allSatisfy(\\.isNumber) &&
+                    (Int($0) ?? 0) >= 1900 && (Int($0) ?? 0) <= 2100
+            })
+        }
+        let requestedYears = remasterYears(requestedTitle)
+        let fileYears = remasterYears(fileStem)
+        return requestedYears.isEmpty || fileYears.isEmpty ||
+            requestedYears == fileYears
     }
 
     // Avoid spending an entire iOS background processing window on up to
