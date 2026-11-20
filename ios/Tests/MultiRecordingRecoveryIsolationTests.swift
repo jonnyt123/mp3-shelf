@@ -166,6 +166,7 @@ try scenario("symlinked-live-directory") { m in
     let outside = root.appendingPathComponent("external-live-" + UUID().uuidString)
     try fm.createDirectory(at: outside, withIntermediateDirectories: true)
     defer { try? fm.removeItem(at: outside) }
+    try unrelated.write(to: outside.appendingPathComponent("unrelated.mp3"))
     try fm.removeItem(at: m.path("live"))
     try fm.createSymbolicLink(at: m.path("live"), withDestinationURL: outside)
     do { try m.recover(generation: 44); fatalError("accepted symlink live root") }
