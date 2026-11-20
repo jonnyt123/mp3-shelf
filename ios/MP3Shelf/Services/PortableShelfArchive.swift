@@ -937,6 +937,28 @@ enum PortableShelfArchive {
                       artworkParts: artworkParts)
     }
 
+    /// Read every payload byte before the first catalog mutation. A backup on
+    /// a disconnected Files provider can expose a valid manifest but fail at a
+    /// later media range; without preflight earlier songs would be committed
+    /// before that failure is discovered. This is bounded-memory and read-only.
+    static func preflightReadablePayload(_ archive: Opened) throws {
+        let input = try FileHandle(forReadingFrom: archive.url)
+        defer { try? input.close() }
+        let size = try verifyArchive(input, from: archive)
+        guard size >= archive.payloadOffset else { throw ArchiveError.invalidRange }
+        try input.seek(toOffset: archive.payloadOffset)
+        var remaining = size - archive.payloadOffset
+        while remaining > 0 {
+            try Task.checkCancellation()
+            let count = Int(min(remaining, UInt64(64 * 1024)))
+            guard let chunk = try input.read(upToCount: count), !chunk.isEmpty,
+                  chunk.count <= count else { throw ArchiveError.invalidRange }
+            remaining -= UInt64(chunk.count)
+        }
+        try Task.checkCancellation()
+        _ = try verifyArchive(input, from: archive)
+    }
+
     /// Only restore slices declared in the inspected manifest. A caller must
     /// not be able to extract a different song's bytes (or arbitrary offsets)
     /// by constructing a Part with otherwise valid bounds.

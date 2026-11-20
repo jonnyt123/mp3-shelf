@@ -394,6 +394,9 @@ final class MusicLibrary: ObservableObject {
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         try Task.checkCancellation()
         let archive = try PortableShelfArchive.open(url)
+        // A late unreadable/truncated payload must fail before any earlier
+        // recording or playlist identity is durably restored.
+        try PortableShelfArchive.preflightReadablePayload(archive)
         try Task.checkCancellation()
         var report = ImportReport()
         var restoredIDs: [String: UUID] = [:]
