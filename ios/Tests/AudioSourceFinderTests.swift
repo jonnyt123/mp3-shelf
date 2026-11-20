@@ -658,6 +658,22 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.archiveCandidate(conflictingSingle,
             identifier: "single-conflict", for: wish) == nil,
             "conflicting duplicate rows cannot choose an arbitrary recording")
+        // MusicMatching may strip edition suffixes. A studio and live take
+        // sharing the same normalized title must not auto-select either.
+        let studioAndLiveJSON = #"{\"metadata\":{\"title\":\"The Song\",\"creator\":\"The Artist\"},\"files\":[{\"name\":\"The Song.mp3\",\"source\":\"original\",\"length\":\"212\",\"size\":\"5000000\"},{\"name\":\"The Song (Live).mp3\",\"source\":\"original\",\"length\":\"212\",\"size\":\"5000000\"}]}"#
+        let studioAndLive = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+            from: Data(studioAndLiveJSON.utf8))
+        verify(AudioSourceFinder.archiveCandidate(studioAndLive,
+            identifier: "studio-live-ambiguous", for: wish) == nil,
+            "studio/live alternatives sharing normalized title require review")
+        let liveAndStudioJSON = studioAndLiveJSON.replacingOccurrences(
+            of: #"{\"name\":\"The Song.mp3\",\"source\":\"original\",\"length\":\"212\",\"size\":\"5000000\"},{\"name\":\"The Song (Live).mp3\",\"source\":\"original\",\"length\":\"212\",\"size\":\"5000000\"}"#,
+            with: #"{\"name\":\"The Song (Live).mp3\",\"source\":\"original\",\"length\":\"212\",\"size\":\"5000000\"},{\"name\":\"The Song.mp3\",\"source\":\"original\",\"length\":\"212\",\"size\":\"5000000\"}"#)
+        let liveAndStudio = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+            from: Data(liveAndStudioJSON.utf8))
+        verify(AudioSourceFinder.archiveCandidate(liveAndStudio,
+            identifier: "live-studio-ambiguous", for: wish) == nil,
+            "edition ambiguity is independent of Archive file ordering")
         let publicMatch = AudioSourceFinder.archiveCandidate(archiveItem,
             identifier: "public-recording", for: wish)
         verify(publicMatch?.downloadURL.lastPathComponent == "song.mp3" &&
