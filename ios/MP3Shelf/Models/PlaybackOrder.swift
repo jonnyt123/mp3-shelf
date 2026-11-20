@@ -173,7 +173,17 @@ struct PlaybackOrder {
             return true
         }
         guard let currentID, let currentIndex = queueIDs.firstIndex(of: currentID),
-              let index = queueIDs.firstIndex(of: id), index > currentIndex else { return false }
+              let index = queueIDs.firstIndex(of: id), id != unavailableAnchor else { return false }
+        // A deleted final selection remains as a positional anchor. The
+        // editable recovery queue exposes survivors before that anchor;
+        // permit adjacent reordering within that wrapped segment.
+        if unavailableAnchor == currentID && index < currentIndex {
+            let destination = earlier ? index - 1 : index + 1
+            guard destination >= 0, destination < currentIndex else { return false }
+            queueIDs.swapAt(index, destination)
+            return true
+        }
+        guard index > currentIndex else { return false }
         let destination = earlier ? index - 1 : index + 1
         guard destination > currentIndex, queueIDs.indices.contains(destination) else { return false }
         queueIDs.swapAt(index, destination)
