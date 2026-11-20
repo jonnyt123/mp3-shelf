@@ -34,11 +34,23 @@ struct PlaybackOrder {
         remainingShuffle = shuffled ? queueIDs.filter { $0 != current }.shuffled() : []
     }
 
-    mutating func select(_ id: UUID) {
-        if !queueIDs.contains(id) { queueIDs.append(id) }
-        if let currentID, currentID != id { playHistory.append(currentID) }
+    // Once playback moves away from a deleted recording, discard its positional
+    // anchor permanently. Otherwise clearing unavailableAnchor alone makes the
+    // deleted UUID playable again on a later repeat or shuffle rebuild.
+    private mutating func finishSelection(_ id: UUID) {
+        if let removed = unavailableAnchor, removed != id {
+            queueIDs.removeAll { $0 == removed }
+            remainingShuffle.removeAll { $0 == removed }
+            playHistory.removeAll { $0 == removed }
+        }
         currentID = id
         unavailableAnchor = nil
+    }
+
+    mutating func select(_ id: UUID) {
+        if !queueIDs.contains(id) { queueIDs.append(id) }
+        if let currentID, currentID != id && unavailableAnchor != currentID { playHistory.append(currentID) }
+        finishSelection(id)
         if isShuffled { remainingShuffle.removeAll { $0 == id } }
     }
 
@@ -86,8 +98,7 @@ struct PlaybackOrder {
             }
             let nextID = remainingShuffle.removeFirst()
             if unavailableAnchor != currentID { playHistory.append(currentID) }
-            self.currentID = nextID
-            unavailableAnchor = nil
+            finishSelection(nextID)
             return nextID
         }
         guard let index = queueIDs.firstIndex(of: currentID) else { return nil }
@@ -102,8 +113,7 @@ struct PlaybackOrder {
         } else {
             return nil
         }
-        self.currentID = nextID
-        unavailableAnchor = nil
+        finishSelection(nextID)
         return nextID
     }
 
@@ -112,8 +122,7 @@ struct PlaybackOrder {
         if isShuffled {
             guard let previousID = playHistory.popLast() else {
                 guard unavailableAnchor == currentID, let survivor = playableIDs.first else { return currentID }
-                self.currentID = survivor
-                unavailableAnchor = nil
+                finishSelection(survivor)
                 remainingShuffle.removeAll { $0 == survivor }
                 return survivor
             }
@@ -121,16 +130,14 @@ struct PlaybackOrder {
             if !remainingShuffle.contains(currentID) {
                 if unavailableAnchor != currentID { remainingShuffle.insert(currentID, at: 0) }
             }
-            self.currentID = previousID
-            unavailableAnchor = nil
+            finishSelection(previousID)
             return previousID
         }
         guard let index = queueIDs.firstIndex(of: currentID) else { return nil }
         let preceding = queueIDs.prefix(index).filter { $0 != unavailableAnchor }
         let previousID = preceding.last ?? (loop == .all ? playableIDs.last : playableIDs.first)
         guard let previousID else { return nil }
-        self.currentID = previousID
-        unavailableAnchor = nil
+        finishSelection(previousID)
         return previousID
     }
 
