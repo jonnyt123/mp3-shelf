@@ -79,6 +79,29 @@ enum AudioSourceFinderTests {
             itemTitle: "The Song", itemCreator: "The Artist",
             audioFileCount: 1, wish: wish),
             "single-file original edition remains eligible")
+        // Additional independent-file edition labels are not interchangeable
+        // with the studio recording even if title/artist/duration agree.
+        for edition in ["A Cappella", "Acapella", "Rehearsal", "Bootleg",
+                        "Bass Boosted", "Club Mix", "Dub Version", "Vocal Mix"] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song - \(edition).mp3", requestedTitle: "The Song"),
+                "alternate recording cannot be silently selected: \(edition)")
+            verify(AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song - \(edition).mp3",
+                requestedTitle: "The Song (\(edition))"),
+                "same explicitly requested edition remains eligible: \(edition)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song - A Capella.mp3",
+            requestedTitle: "The Song (A Cappella)"),
+            "a cappella spelling variants describe the same edition")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song - Bassboosted.mp3",
+            requestedTitle: "The Song (Bass Boosted)"),
+            "bass boosted spelling variants describe the same edition")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Club.mp3", requestedTitle: "The Club"),
+            "ordinary title containing club is not an alternate mix")
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "Deliver.mp3", requestedTitle: "Deliver"),
             "embedded live letters are not a live-edition marker")
