@@ -110,7 +110,13 @@ struct PlaybackOrder {
     mutating func previous(loop: PlaybackLoopMode) -> UUID? {
         guard let currentID, !queueIDs.isEmpty else { return nil }
         if isShuffled {
-            guard let previousID = playHistory.popLast() else { return currentID }
+            guard let previousID = playHistory.popLast() else {
+                guard unavailableAnchor == currentID, let survivor = playableIDs.first else { return currentID }
+                self.currentID = survivor
+                unavailableAnchor = nil
+                remainingShuffle.removeAll { $0 == survivor }
+                return survivor
+            }
             remainingShuffle.removeAll { $0 == previousID }
             if !remainingShuffle.contains(currentID) {
                 if unavailableAnchor != currentID { remainingShuffle.insert(currentID, at: 0) }
@@ -185,7 +191,9 @@ struct PlaybackOrder {
     }
 
     func canAdvanceAutomatically(loop: PlaybackLoopMode) -> Bool {
-        guard let currentID, !queueIDs.isEmpty, loop != .one else { return false }
+        guard let currentID, !queueIDs.isEmpty else { return false }
+        // A removed current recording cannot repeat; advance to survivors.
+        if loop == .one && unavailableAnchor != currentID { return false }
         if isShuffled {
             return !remainingShuffle.isEmpty || (loop == .all && playableIDs.contains { $0 != currentID })
         }
