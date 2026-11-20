@@ -397,6 +397,21 @@ enum AudioSourceFinderTests {
         // An unclassified sibling can be a second uploaded recording, even
         // when the catalog also contains a confidently classified original.
         // Ignoring it would falsely authorize an unattended exact match.
+        // A duplicate physical filename with contradictory derivative metadata
+        // must not be treated as one confidently identified original.
+        let originalRow = #"{\"name\":\"The Song.mp3\",\"source\":\"original\",\"size\":5120000,\"length\":\"212\"}"#
+        let derivativeRow = #"{\"name\":\"The Song.mp3\",\"source\":\"derivative\",\"size\":5120000,\"length\":\"212\"}"#
+        for rows in [[originalRow, derivativeRow], [derivativeRow, originalRow]] {
+            let json = """
+            {\"metadata\":{\"title\":\"The Song\",\"creator\":\"The Artist\"},
+             \"files\":[\\(rows.joined(separator: ","))]}
+            """
+            let item = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
+                                                from: Data(json.utf8))
+            verify(AudioSourceFinder.archiveCandidate(item,
+                identifier: "conflicting-source", for: wish) == nil,
+                "same-path original/derivative conflict rejects both row orders")
+        }
         let originalAndUnknown = """
         {"metadata":{"title":"The Song","creator":"The Artist"},
          "files":[{"name":"The Song.mp3","source":"original","size":5120000,"length":"212"},
