@@ -3603,6 +3603,8 @@ struct WebAudioDiscoveryView: View {
     @State private var searched = 0
     @State private var scanning = false
     @State private var scanStopReason: String?
+    @State private var onlySearchIncomplete = true
+    @State private var activeScanTotal = 0
     @State private var scanTask: Task<Void, Never>?
     @State private var scanID = UUID()
 
@@ -3692,6 +3694,14 @@ struct WebAudioDiscoveryView: View {
     private var batch: [PlaylistWish] {
         Array(wishes.dropFirst(pageStart).prefix(pageSize))
     }
+    // A failed, cancelled, or never-attempted song has no stored result.
+    // An empty result array still represents a completed paid search.
+    private var incompleteBatch: [PlaylistWish] {
+        batch.filter { results[$0.id] == nil }
+    }
+    private var requestedBatch: [PlaylistWish] {
+        onlySearchIncomplete ? incompleteBatch : batch
+    }
 
     var body: some View {
         NavigationStack {
@@ -3729,22 +3739,40 @@ struct WebAudioDiscoveryView: View {
                         Text("After finding search results, inspect up to 12 relevant source pages per batch, one per song, for direct audio links. This sends additional public webpage requests but does not download audio. Longer playlists may require another batch or manual inspection.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    Text("This batch contains \(batch.count) songs and can make up to \(batch.count * searchDepth.rawValue) billable Brave API searches. Extensive mode combines general, store, direct-file, official and archive searches.")
+                    Toggle("Skip songs already searched", isOn: $onlySearchIncomplete)
+                        .disabled(scanning)
+                        .accessibilityHint("Preserves completed results and avoids repeating paid API searches for those songs")
+                    Text("This run includes \(requestedBatch.count) of \(batch.count) songs and can make up to \(requestedBatch.count * searchDepth.rawValue) billable Brave API searches. Extensive mode combines general, store, direct-file, official and archive searches.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if requestedBatch.isEmpty {
+                        Text("Every song in this batch already has search results. Turn off Skip songs already searched to search again.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Button {
                         guard WebAudioSearch.saveKey(apiKey) else {
                             message = "Could not securely save the search key to Keychain."
                             return
                         }
+                        let currentBatch = requestedBatch
+                        guard !currentBatch.isEmpty else { return }
                         cancelScan()
-                        results = [:]
-                        issues = [:]
+                        if !onlySearchIncomplete {
+                            results = [:]
+                            issues = [:]
+                            extractedLinks = [:]
+                            inspectionErrors = [:]
+                            inspectedCount = [:]
+                        } else {
+                            // Keep completed results and manually inspected links.
+                            // Remove only obsolete errors for the songs being retried.
+                            for wish in currentBatch { issues.removeValue(forKey: wish.id) }
+                        }
                         searched = 0
+                        activeScanTotal = currentBatch.count
                         inspectedDuringSearch = 0
                         scanStopReason = nil
                         scanning = true
                         let requestID = scanID
-                        let currentBatch = batch
                         let depth = searchDepth
                         let inspectPages = inspectPagesDuringSearch
                         scanTask = Task {
@@ -3812,13 +3840,13 @@ struct WebAudioDiscoveryView: View {
                         Label(scanning ? "Searching web…" : "Find downloadable sources for missing songs",
                               systemImage: "magnifyingglass")
                     }
-                    .disabled(scanning || apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || batch.isEmpty)
+                    .disabled(scanning || apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || requestedBatch.isEmpty)
                     if scanning {
                         Button("Cancel web search") { cancelWebSearch() }
                             .frame(minHeight: 44)
                             .accessibilityHint("Stops remaining web searches and keeps results already found")
-                        ProgressView(value: Double(searched), total: Double(max(1, batch.count)))
-                        Text("\(searched) of \(batch.count) songs searched" +
+                        ProgressView(value: Double(searched), total: Double(max(1, activeScanTotal)))
+                        Text("\(searched) of \(activeScanTotal) songs searched this run" +
                              (inspectPagesDuringSearch ? " · \(inspectedDuringSearch) source pages inspected" : ""))
                             .font(.caption.monospacedDigit())
                     }
