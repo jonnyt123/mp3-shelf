@@ -756,7 +756,9 @@ struct LibraryView: View {
         bulkSkippedRecordingCount = 0
         partialQueueShuffle = nil
         partialQueueNeedsRefresh = false
-        playbackSelectionSnapshot = songs.map { RecordingPlaybackSnapshot($0, url: library.fileURL(for: $0)) }
+        playbackSelectionSnapshot = zip(songs, locations).map { song, location in
+            RecordingPlaybackSnapshot(song, url: location.1)
+        }
         bulkRetryShuffle = shuffled
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
@@ -808,16 +810,21 @@ struct LibraryView: View {
             var queue: [MusicTrack] = []
             queue.reserveCapacity(songs.count)
             for (index, song) in songs.enumerated() {
-                // A missing file is deliberately excluded from the queue. It must
-                // not prevent otherwise playable results from starting.
-                guard availability[index] else { continue }
+                // Validate every selected recording, including those whose file
+                // was missing during the scan. A restore may replace a missing
+                // recording with a different song while the scan is suspended.
+                // Skipping validation for unavailable entries would authorize a
+                // partial queue from a stale library snapshot.
                 let originalURL = locations[index].1
                 guard let match = currentByLocation[RecordingLocationKey(id: song.id, url: originalURL)],
                       RecordingPlaybackSnapshot(match, url: originalURL) == playbackSelectionSnapshot?[index] else {
-                    bulkPlaybackNotice = "Some recordings changed while preparing playback. Retry to use the current library."
-                    bulkRetryShuffle = shuffled
+                    bulkPlaybackNotice = "Some recordings changed while preparing playback. Choose Play or Shuffle to use the current library."
+                    bulkRetryShuffle = nil
                     return
                 }
+                // Missing audio is excluded without changing the user's library
+                // or the order of the remaining playable recordings.
+                guard availability[index] else { continue }
                 queue.append(match)
             }
             guard let first = shuffled ? queue.randomElement() : queue.first else {
