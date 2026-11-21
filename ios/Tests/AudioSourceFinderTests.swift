@@ -80,6 +80,24 @@ enum AudioSourceFinderTests {
             "different dated re-recordings require review")
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        // Dated artist-owned re-recordings are distinct masters even when
+        // the same performer, base title and duration match Spotify metadata.
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Taylor's Version) (2021).mp3",
+            requestedTitle: "The Song (Taylor's Version) (2023)"),
+            "different Taylor's Version years cannot auto-match")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Taylor's Version) (2021).mp3",
+            requestedTitle: "The Song (Taylor's Version)"),
+            "dated artist re-recording cannot replace an undated request")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Taylor's Version) (2021).mp3",
+            requestedTitle: "The Song (Taylor's Version) (2021)"),
+            "matching dated artist re-recording remains eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "1999 (Taylor's Version).mp3",
+            requestedTitle: "1999 (Taylor's Version)"),
+            "numeric song title is not mistaken for an edition year")
         // Single-file Archive items often hide a different recording edition
         // in the physical filename despite exact item-level title/artist.
         for alternate in ["The Song (Karaoke).mp3", "The Song - Live.mp3",
