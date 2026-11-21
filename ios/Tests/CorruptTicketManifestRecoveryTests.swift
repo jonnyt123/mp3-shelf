@@ -71,7 +71,10 @@ for name in barrierNames {
           checksBarrier("if \(name) { return }", name),
           !checksBarrier("// guard !\(name) else { return }", "unrelatedFlag"),
           !checksBarrier("if unrelatedFlag { return }", name),
-          !checksBarrier("let flag = \(name)", name) else {
+          !checksBarrier("let flag = \(name)", name),
+          !checksBarrier("// guard !\(name) else { return }", name),
+          !checksBarrier("/* if \(name) { return } */", name),
+          !checksBarrier("if \(name) { logOnly() }", name) else {
         fatalError("FAIL: barrier source-contract mutation controls failed")
     }
 }
