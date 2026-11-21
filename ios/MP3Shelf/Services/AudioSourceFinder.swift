@@ -1760,12 +1760,19 @@ enum AudioLandingPageInspector {
     ]
 
     static func isVerifiedAudioResponse(_ response: HTTPURLResponse) -> Bool {
-        guard (200...299).contains(response.statusCode),
+        // A HEAD probe is only evidence of a complete, nonempty file.
+        // 206/204 and explicit zero-length bodies previously passed as audio,
+        // causing the queue to schedule phantom or truncated downloads.
+        guard response.statusCode == 200,
               let mime = response.mimeType?.lowercased(),
               supportedMIMEs.contains(mime),
-              response.expectedContentLength <= 100 * 1024 * 1024
+              response.value(forHTTPHeaderField: "Content-Range") == nil
         else { return false }
-        return true
+        let length = response.expectedContentLength
+        guard length != 0, length <= 100 * 1024 * 1024 else { return false }
+        // URLSession reports -1 when the server omits Content-Length.
+        // The checked downloader must still verify actual bytes and duration.
+        return length == -1 || length > 0
     }
 
     static func candidateURL(_ value: String, relativeTo page: URL,
