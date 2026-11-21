@@ -404,7 +404,7 @@ final class PlaybackController: NSObject, ObservableObject {
         // An open player is not evidence that its recording still belongs to
         // the library. Never restart an orphaned track when pressing Previous
         // after a deletion; resolve the surviving queue first.
-        if currentTime > 3, let currentTrackID,
+        if currentTime > 3, audioPlayer != nil, let currentTrackID,
            library.song(with: currentTrackID) != nil {
             seek(to: 0)
             return
@@ -447,9 +447,17 @@ final class PlaybackController: NSObject, ObservableObject {
             if id == currentTrackID {
                 // No earlier playable entry: restart the current recording
                 // without altering its queue position.
-                restoreSelectionState()
-                seek(to: 0)
-                return
+                if audioPlayer != nil {
+                    restoreSelectionState()
+                    seek(to: 0)
+                    return
+                }
+                // Automatic advancement may retire the player after a failed
+                // successor. Previous must reopen the still-cataloged track
+                // instead of seeking a nil player and doing nothing.
+                guard let target = library.song(with: id) else { continue }
+                if beginPlayback(target, using: nextOrder) { return }
+                continue
             }
             guard let target = library.song(with: id) else { continue }
             if beginPlayback(target, using: nextOrder) { return }
