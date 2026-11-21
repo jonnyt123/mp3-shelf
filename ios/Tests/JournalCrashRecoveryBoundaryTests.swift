@@ -55,6 +55,19 @@ func readJournal(_ url: URL) throws -> Manifest {
 func publish(_ value: Manifest, at url: URL, interruptBeforeRename: Bool = false) throws {
     guard let attributes = try? fm.attributesOfItem(atPath: url.path),
           attributes[.type] as? FileAttributeType == .typeRegular else { throw JournalError.unsafePath }
+    // A normal immediate parent can still live below a symlinked ancestor.
+    // Reject every symlink between the fixture's owned root and the journal.
+    let canonicalRoot = root.standardizedFileURL.path
+    let canonicalTarget = url.standardizedFileURL.path
+    guard canonicalTarget.hasPrefix(canonicalRoot + "/") else { throw JournalError.unsafePath }
+    var ancestor = url.deletingLastPathComponent()
+    while ancestor.standardizedFileURL.path != canonicalRoot {
+        guard ancestor.standardizedFileURL.path.hasPrefix(canonicalRoot + "/"),
+              (try? fm.destinationOfSymbolicLink(atPath: ancestor.path)) == nil else {
+            throw JournalError.unsafePath
+        }
+        ancestor.deleteLastPathComponent()
+    }
     let parent = url.deletingLastPathComponent()
     let parentAttributes = try fm.attributesOfItem(atPath: parent.path)
     guard parentAttributes[.type] as? FileAttributeType == .typeDirectory else { throw JournalError.unsafePath }
@@ -115,7 +128,7 @@ try checked(try readJournal(external) == old)
 // A hostile replacement of the journal's parent with a symlink must not
 // redirect publication outside the owned staging directory. The fixture
 // deliberately uses a separate directory to preserve the live journal.
-let outside = fm.temporaryDirectory.appendingPathComponent("mp3-journal-outside-\\(UUID().uuidString)")
+let outside = fm.temporaryDirectory.appendingPathComponent("mp3-journal-outside-\(UUID().uuidString)")
 try fm.createDirectory(at: outside, withIntermediateDirectories: true)
 defer { try? fm.removeItem(at: outside) }
 let outsideJournal = outside.appendingPathComponent("active.json")
@@ -128,6 +141,17 @@ let redirectedJournal = linkedParent.appendingPathComponent("active.json")
 // implementation changes its write strategy.
 try expectFailure("symlink parent") { try publish(next, at: redirectedJournal) }
 try checked(try readJournal(outsideJournal) == old)
+try checked(try Data(contentsOf: audio) == audioBytes)
+// The immediate parent is a real directory, but its grandparent is a link.
+// A one-level-only check incorrectly permits this redirection.
+let nested = linkedParent.appendingPathComponent("nested")
+try fm.createDirectory(at: outside.appendingPathComponent("nested"), withIntermediateDirectories: true)
+let nestedJournal = outside.appendingPathComponent("nested/active.json")
+try encoder.encode(old).write(to: nestedJournal)
+try expectFailure("symlink ancestor") {
+    try publish(next, at: nested.appendingPathComponent("active.json"))
+}
+try checked(try readJournal(nestedJournal) == old)
 try checked(try Data(contentsOf: audio) == audioBytes)
 let collision = root.appendingPathComponent("collision.json")
 try fm.createDirectory(at: collision, withIntermediateDirectories: true)
