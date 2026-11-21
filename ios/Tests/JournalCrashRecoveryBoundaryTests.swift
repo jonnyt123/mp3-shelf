@@ -112,6 +112,23 @@ let link = root.appendingPathComponent("link.json")
 try fm.createSymbolicLink(at: link, withDestinationURL: external)
 try expectFailure("symlink journal") { try publish(next, at: link) }
 try checked(try readJournal(external) == old)
+// A hostile replacement of the journal's parent with a symlink must not
+// redirect publication outside the owned staging directory. The fixture
+// deliberately uses a separate directory to preserve the live journal.
+let outside = fm.temporaryDirectory.appendingPathComponent("mp3-journal-outside-\\(UUID().uuidString)")
+try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+defer { try? fm.removeItem(at: outside) }
+let outsideJournal = outside.appendingPathComponent("active.json")
+try encoder.encode(old).write(to: outsideJournal)
+let linkedParent = root.appendingPathComponent("linked-parent")
+try fm.createSymbolicLink(at: linkedParent, withDestinationURL: outside)
+let redirectedJournal = linkedParent.appendingPathComponent("active.json")
+// The existing publish helper only checks the immediate parent attributes;
+// this adversarial case must remain a negative regression even if a future
+// implementation changes its write strategy.
+try expectFailure("symlink parent") { try publish(next, at: redirectedJournal) }
+try checked(try readJournal(outsideJournal) == old)
+try checked(try Data(contentsOf: audio) == audioBytes)
 let collision = root.appendingPathComponent("collision.json")
 try fm.createDirectory(at: collision, withIntermediateDirectories: true)
 try expectFailure("directory journal") { try publish(next, at: collision) }
