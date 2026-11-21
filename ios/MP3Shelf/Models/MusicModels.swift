@@ -276,9 +276,39 @@ enum LocalAudioImportTransaction {
             // Only this transaction published the destination. A killed process
             // leaves the journal for recovery; ordinary failures roll back.
             // A failed unlink must NOT erase the only recovery intent.
-            do {
-                try rollbackPublished(destination)
-            } catch {
+            // The destination pathname may have been replaced after our
+            // no-replace link succeeded. Never invoke a pathname-based rollback
+            // against another recording, even when the callback would succeed.
+            // Retain the durable intent and staging bytes if ownership is
+            // uncertain, so a later recovery can inspect the conflict safely.
+            let stagedIdentity = try? manager.attributesOfItem(atPath: staging.path)
+            let destinationIdentity = try? manager.attributesOfItem(atPath: destination.path)
+            let stillOurLink: Bool = {
+                guard let stagedIdentity, let destinationIdentity,
+                      let stagedInode = stagedIdentity[.systemFileNumber] as? NSNumber,
+                      let destinationInode = destinationIdentity[.systemFileNumber] as? NSNumber,
+                      let stagedDevice = stagedIdentity[.systemNumber] as? NSNumber,
+                      let destinationDevice = destinationIdentity[.systemNumber] as? NSNumber else {
+                    return false
+                }
+                return stagedInode == destinationInode && stagedDevice == destinationDevice
+            }()
+            if stillOurLink {
+                do {
+                    try rollbackPublished(destination)
+                } catch {
+                    mayRemoveJournal = false
+                    preserveStagingForRecovery = journal != nil
+                }
+                // A rollback callback can return without unlinking. Do not
+                // discard the only recovery intent while the file remains.
+                if manager.fileExists(atPath: destination.path) {
+                    mayRemoveJournal = false
+                    preserveStagingForRecovery = journal != nil
+                }
+            } else {
+                // Missing or substituted destination: keep recovery material
+                // when there is a journal; never delete an unidentified file.
                 mayRemoveJournal = false
                 preserveStagingForRecovery = journal != nil
             }
