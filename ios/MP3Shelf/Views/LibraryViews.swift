@@ -24,6 +24,29 @@ private struct RecordingLocationKey: Hashable {
 // Rows need occurrence identity independent of a potentially duplicated UUID.
 // Including position and URL forces SwiftUI to discard stale row-local delete
 // confirmations when a search, sort or restore replaces the visible recording.
+private struct RecentRetryIdentity: Equatable {
+    let id: UUID
+    let url: URL
+    let title: String
+    let artist: String
+    let album: String
+    let duration: TimeInterval
+
+    init(_ track: MusicTrack, url: URL) {
+        id = track.id
+        self.url = url
+        title = track.title
+        artist = track.artist
+        album = track.album
+        duration = track.duration
+    }
+
+    func matches(_ track: MusicTrack) -> Bool {
+        track.id == id && track.title == title && track.artist == artist &&
+            track.album == album && track.duration == duration
+    }
+}
+
 private struct RecordingRowIdentity: Hashable {
     let position: Int
     let id: UUID
@@ -60,7 +83,7 @@ struct LibraryView: View {
     @State private var recentPlaybackGeneration: UUID?
     @State private var missingRecentRecording = false
     @State private var recentPlaybackNotice: String?
-    @State private var recentRetrySelection: (id: UUID, url: URL)?
+    @State private var recentRetrySelection: RecentRetryIdentity?
     @State private var bulkPlaybackPending = false
     @State private var bulkPlaybackNotice: String?
     @State private var bulkPlaybackTask: Task<Void, Never>?
@@ -92,7 +115,7 @@ struct LibraryView: View {
         recentPlaybackGeneration = generation
         recentPlaybackCheck = track.id
         let selectedURL = library.fileURL(for: track)
-        recentRetrySelection = (track.id, selectedURL)
+        recentRetrySelection = RecentRetryIdentity(track, url: selectedURL)
         recentPlaybackNotice = nil
         missingRecentRecording = false
         // Snapshot the visible queue and URLs before leaving the UI actor.
@@ -297,7 +320,7 @@ struct LibraryView: View {
         if let selection = recentRetrySelection {
             let matches = library.tracks.filter { $0.id == selection.id }
             selectionIsValid = matches.count == 1 &&
-                matches.first.map { library.fileURL(for: $0) == selection.url } == true
+                matches.first.map { selection.matches($0) && library.fileURL(for: $0) == selection.url } == true
         } else {
             selectionIsValid = false
         }
@@ -319,7 +342,8 @@ struct LibraryView: View {
             if !wasPreparing, let selection = recentRetrySelection {
                 let matches = library.tracks.filter { $0.id == selection.id }
                 uniqueReplacement = matches.count == 1 &&
-                    recentlyAdded.contains(where: { $0.id == selection.id })
+                    recentlyAdded.contains(where: { selection.matches($0) }) &&
+                    matches.first.map { selection.matches($0) } == true
             } else {
                 uniqueReplacement = false
             }
@@ -379,8 +403,15 @@ struct LibraryView: View {
             recentRetrySelection = nil
             return
         }
-        let exact = candidates.first { library.fileURL(for: $0) == selection.url }
-        guard let current = exact ?? (candidates.count == 1 ? candidates[0] : nil) else {
+        // A restore can reuse a UUID and URL for a different song. Retry must
+        // never authorize that replacement, even when its local bytes exist.
+        guard selection.matches(allMatches[0]) else {
+            recentPlaybackNotice = "This recording's details changed. Choose the current song again."
+            recentRetrySelection = nil
+            return
+        }
+        let exact = candidates.first { selection.matches($0) && library.fileURL(for: $0) == selection.url }
+        guard let current = exact ?? (candidates.count == 1 && selection.matches(candidates[0]) ? candidates[0] : nil) else {
             recentPlaybackNotice = candidates.isEmpty
                 ? "This song is no longer in Recently Added. Choose another recording."
                 : "Multiple recordings match this song. Choose the correct recording to play."
