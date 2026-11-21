@@ -2122,6 +2122,28 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "Fearless.mp3", requestedTitle: "Fearless"),
             "ordinary original recording remains eligible")
+        // Extended and pitch-altered recordings are different masters even
+        // when uploader metadata repeats the original artist/title/duration.
+        for (filename, requested) in [
+            ("Exact Song (Extended Mix).mp3", "Exact Song"),
+            ("Exact Song.mp3", "Exact Song (Extended Version)"),
+            ("Exact Song (Pitch Shifted).mp3", "Exact Song"),
+            ("Exact Song (Pitched Up).mp3", "Exact Song"),
+            ("Exact Song (Speeded Up).mp3", "Exact Song"),
+            ("Exact Song (Extended Mix).mp3", "Exact Song (Radio Mix)")
+        ] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: filename, requestedTitle: requested),
+                "alternate extended/pitch edition must require review: \\(filename)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Extended Edit).mp3",
+            requestedTitle: "Exact Song (Extended Mix)"),
+            "equivalent extended edition labels remain eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Speeded Up).mp3",
+            requestedTitle: "Exact Song (Sped Up)"),
+            "equivalent speed-up edition labels remain eligible")
         print("Audio source discovery validation tests passed")
     }
 }
