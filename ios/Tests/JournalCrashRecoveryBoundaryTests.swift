@@ -90,8 +90,13 @@ try checked(try Data(contentsOf: audio) == audioBytes)
 let readerQueue = DispatchQueue(label: "mp3-journal-reader")
 let writerQueue = DispatchQueue(label: "mp3-journal-writer")
 let group = DispatchGroup()
-let lock = NSLock()
-var observedFailure: String?
+final class FailureRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failure: String?
+    func record(_ message: String) { lock.lock(); defer { lock.unlock() }; if failure == nil { failure = message } }
+    var message: String? { lock.lock(); defer { lock.unlock() }; return failure }
+}
+let recorder = FailureRecorder()
 let versions = (0..<256).map { generation in
     Manifest(generation: 100 + generation, tickets: [
         Ticket(id: "ticket-A", state: generation.isMultiple(of: 2) ? "queued" : "completed",
@@ -107,7 +112,7 @@ readerQueue.async {
         do {
             let value = try readJournal(journal)
             if !versions.contains(value) {
-                lock.lock(); observedFailure = "reader saw unexpected complete manifest"; lock.unlock()
+                recorder.record("reader saw unexpected complete manifest")
                 break
             }
         } catch {
@@ -135,7 +140,7 @@ writerQueue.async {
     }
 }
 group.wait()
-try checked(observedFailure == nil)
+try checked(recorder.message == nil)
 try checked(versions.contains(try readJournal(journal)))
 try checked(try Data(contentsOf: audio) == audioBytes)
 let pendingFiles = try fm.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix(".pending-") }
