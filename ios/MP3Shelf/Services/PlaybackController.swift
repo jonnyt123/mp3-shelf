@@ -313,6 +313,10 @@ final class PlaybackController: NSObject, ObservableObject {
     private func recoverDeletedCurrentTrack() -> Bool {
         guard let currentTrackID, let library,
               library.song(with: currentTrackID) == nil else { return false }
+        // Library deletion can be discovered from a paused seek or a lock-screen
+        // transport command. Recover the queue without unexpectedly starting
+        // audio when the listener deliberately paused playback.
+        let shouldRemainPaused = !isPlaying
         relay.invalidatePendingCompletions()
         positionTimer?.invalidate()
         positionTimer = nil
@@ -324,6 +328,9 @@ final class PlaybackController: NSObject, ObservableObject {
         failedPlaybackOrder = nil
         interruptionState.cancelResume()
         advance(automatically: true)
+        if shouldRemainPaused && isPlaying {
+            pause()
+        }
         return true
     }
 
