@@ -121,17 +121,19 @@ enum SpotifyPaginationSlotTests {
             from: #"{"items":[{"item":{"name":"Episode","type":"episode","artists":[{"name":"Host"}]},"track":{"name":"Studio Song","type":"track","artists":[{"name":"Artist"}],"duration_ms":201000}},{"item":{"name":123,"artists":[]},"track":{"name":"Fallback","type":"track","artists":[{"name":"Second Artist"}]}},{"track":{"name":"Credits","type":"track","artists":[null,{"name":9},{"name":"Valid Artist"}],"album":{"name":42},"duration_ms":"unknown","external_urls":[]}},{"item":{"name":"Missing Artist","type":"track","artists":[null]}},null],"next":"?limit=5&offset=5"}"#.data(using: .utf8)!)
         check(mixed.rawItemCount == 5 && mixed.items.count == 4,
               "nested decoder retains raw positions and skips null entries")
-        let selected = mixed.items.compactMap { entry -> SpotifyTrack? in
-            [entry.item, entry.track].compactMap { $0 }.first {
-                $0.type == "track" &&
-                !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                ($0.artists ?? []).contains {
-                    !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }
-            }
-        }
+        let selected = mixed.items.compactMap(\.usableTrack)
         check(selected.map(\.name) == ["Studio Song", "Fallback", "Credits"],
               "episode and malformed primary envelopes fall back to usable recordings")
+        // A provider migration may include both envelope formats. Conflicting
+        // track identities must be review/unavailable, never auto-imported.
+        let conflicting = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,
+            from: #"{"items":[{"item":{"name":"Studio","type":"track","artists":[{"name":"Artist"}],"duration_ms":200000},"track":{"name":"Live","type":"track","artists":[{"name":"Artist"}],"duration_ms":200000}},{"item":{"name":"Same","type":"track","artists":[{"name":"Artist"}],"duration_ms":200000},"track":{"name":"Same","type":"track","artists":[{"name":"Artist"}],"duration_ms":201000}},{"item":{"name":"Same","type":"track","artists":[{"name":"Artist"}]},"track":{"name":"Same","type":"track","artists":[{"name":"Different Artist"}]}},{"item":{"name":"Same","type":"track","artists":[{"name":"Artist"}]},"track":{"name":"same","type":"track","artists":[{"name":"artist"}]}}],"next":null}"#.data(using: .utf8)!)
+        check(conflicting.rawItemCount == 4 && conflicting.items.count == 4,
+              "conflicting envelopes preserve raw playlist positions")
+        check(conflicting.items.prefix(3).allSatisfy { $0.usableTrack == nil },
+              "conflicting titles, durations and artists never auto-select")
+        check(conflicting.items[3].usableTrack?.name == "Same",
+              "equivalent envelope spelling preserves valid recording")
         check(selected[2].artists?.map(\.name) == ["Valid Artist"] &&
               selected[2].album == nil && selected[2].duration_ms == nil &&
               selected[2].external_urls == nil,
