@@ -228,6 +228,54 @@ for (index, broken) in [Data(), Data("[{".utf8), Data("null".utf8),
         }
     }
 }
+// Fault injection for quarantine name collisions and interrupted recovery.
+// A prior quarantined journal is evidence, not a disposable cache entry. A
+// second corrupt manifest must never replace it, and no staged audio may be
+// removed when a destination already exists.
+for (index, prior) in [Data("older-corrupt-journal".utf8), Data()].enumerated() {
+    let fixtureDir = dir.appendingPathComponent("collision-\(index)", isDirectory: true)
+    try fm.createDirectory(at: fixtureDir, withIntermediateDirectories: true)
+    let active = fixtureDir.appendingPathComponent("tickets.json")
+    let quarantined = fixtureDir.appendingPathComponent("tickets.corrupt")
+    let audioFile = fixtureDir.appendingPathComponent("recording.mp3")
+    let newer = Data("{broken-new-manifest".utf8)
+    try newer.write(to: active, options: .atomic)
+    try prior.write(to: quarantined, options: .atomic)
+    try audio.write(to: audioFile, options: .atomic)
+    do {
+        _ = try quarantineFixture(newer, in: fixtureDir)
+        fatalError("FAIL: quarantine replaced pre-existing evidence")
+    } catch {
+        guard try Data(contentsOf: quarantined) == prior,
+              try Data(contentsOf: active) == newer,
+              try Data(contentsOf: audioFile) == audio else {
+            fatalError("FAIL: collision destroyed journal evidence or staged audio")
+        }
+    }
+}
+// Model a crash after quarantine but before the replacement manifest is
+// committed. Restart must not interpret the missing active manifest as proof
+// that the queued transfers finished, or destroy the only remaining journal.
+let crashDir = dir.appendingPathComponent("crash-after-quarantine", isDirectory: true)
+try fm.createDirectory(at: crashDir, withIntermediateDirectories: true)
+let crashActive = crashDir.appendingPathComponent("tickets.json")
+let crashAudio = crashDir.appendingPathComponent("recording.mp3")
+let crashBytes = Data("[{truncated".utf8)
+try crashBytes.write(to: crashActive, options: .atomic)
+try audio.write(to: crashAudio, options: .atomic)
+let crashQuarantine = try quarantineFixture(crashBytes, in: crashDir)
+guard !fm.fileExists(atPath: crashActive.path),
+      try Data(contentsOf: crashQuarantine) == crashBytes,
+      try Data(contentsOf: crashAudio) == audio else {
+    fatalError("FAIL: interrupted quarantine lost pending transfer evidence")
+}
+// A valid empty manifest is not a substitute for reconciliation of the
+// quarantined tickets; this test deliberately leaves the quarantine intact.
+try Data("[]".utf8).write(to: crashActive, options: .atomic)
+guard try Data(contentsOf: crashQuarantine) == crashBytes,
+      try Data(contentsOf: crashAudio) == audio else {
+    fatalError("FAIL: empty checkpoint erased quarantined ownership evidence")
+}
 // This is a filesystem reference fixture, not evidence that the production
 // downloader already implements quarantine or crash-safe reconciliation.
 // Missing manifests and valid empty arrays must not be mistaken for corruption.
