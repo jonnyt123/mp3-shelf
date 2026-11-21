@@ -1621,13 +1621,20 @@ struct MusicTrackRow: View {
                 if library.playlists.isEmpty {
                     Text("Create a playlist first to add songs")
                 } else {
+                    // A restored library can contain thousands of playlists and
+                    // duplicate UUIDs. Count once per menu evaluation rather than
+                    // scanning the whole collection for every destination.
+                    // Include hidden/unfiltered destinations in collision checks.
+                    let playlistIdentityCounts = library.playlists.reduce(into: [UUID: Int]()) { counts, playlist in
+                        counts[playlist.id, default: 0] += 1
+                    }
                     Menu("Add to Playlist", systemImage: "text.badge.plus") {
                         // Restored archives may contain duplicate playlist IDs.
                         // Never let a menu action silently mutate the first match.
                         // Enumerated positions keep SwiftUI menu identity distinct
                         // even when the persisted UUIDs collide.
                         ForEach(Array(library.playlists.enumerated()), id: \.offset) { _, list in
-                            let matchingCount = library.playlists.filter { $0.id == list.id }.count
+                            let matchingCount = playlistIdentityCounts[list.id, default: 0]
                             Button {
                                 // Revalidate at tap time: imports and restores can
                                 // change identities while the menu is presented.
