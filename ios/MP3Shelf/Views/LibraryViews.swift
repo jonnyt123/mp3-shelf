@@ -2244,24 +2244,41 @@ struct PlaylistsView: View {
 
     private enum FailedPlaylistEdit {
         case create
-        case rename(id: UUID)
+        case rename(snapshot: MusicPlaylist)
     }
 
     // Restore the original input when a failed write is retried instead of
     // requiring the user to reconstruct a playlist name.
     private func retryPlaylistEdit() {
         guard let failedPlaylistEdit else { return }
-        playlistActionFeedback = nil
-        self.failedPlaylistEdit = nil
+        // A retry must not silently apply an old desired name to a playlist
+        // restored or edited after the failed write. Keep the failure visible
+        // until the user explicitly reviews the latest playlist state.
         switch failedPlaylistEdit {
         case .create:
+            playlistActionFeedback = nil
+            self.failedPlaylistEdit = nil
             showCreate = true
-        case .rename(let id):
-            guard let playlist = uniquePlaylist(withID: id) else {
-                playlistActionFeedback = "This playlist is no longer available to rename."
+        case .rename(let snapshot):
+            guard !library.isImporting else {
+                playlistActionFeedback = "Finish importing audio before retrying this rename."
                 return
             }
-            pendingRename = playlist
+            guard let current = uniquePlaylist(withID: snapshot.id) else {
+                self.failedPlaylistEdit = nil
+                playlistActionFeedback = "This playlist is no longer available. Review your playlists before renaming."
+                return
+            }
+            guard current.name == snapshot.name,
+                  current.trackIDs == snapshot.trackIDs,
+                  current.missingTracks == snapshot.missingTracks else {
+                self.failedPlaylistEdit = nil
+                playlistActionFeedback = "This playlist changed after the failed rename. Review its latest name and songs before editing again."
+                return
+            }
+            playlistActionFeedback = nil
+            self.failedPlaylistEdit = nil
+            pendingRename = current
         }
     }
 
@@ -2542,7 +2559,7 @@ struct PlaylistsView: View {
                             failedPlaylistEdit = nil
                             playlistActionFeedback = "Renamed playlist to \(name)."
                         } else {
-                            failedPlaylistEdit = .rename(id: current.id)
+                            failedPlaylistEdit = .rename(snapshot: current)
                             playlistActionFeedback = "Could not rename this playlist. Its previous name was preserved."
                         }
                     }
