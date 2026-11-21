@@ -381,7 +381,18 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func seek(to seconds: TimeInterval) {
-        guard let audioPlayer, seconds.isFinite else { return }
+        guard seconds.isFinite else { return }
+        // A decode failure can leave an AVAudioPlayer allocated but unable to
+        // decode any more frames. Seeking its clock would appear successful
+        // while the listener still hears silence. Reopen the catalog-owned
+        // recording first; never seek a retired decoder or a missing file.
+        // retryFailedPlayback clears failedTrackID only after a real play()
+        // succeeds, so a failed reopen leaves the retry identity intact.
+        if failedTrackID != nil, failedTrackID == currentTrackID {
+            retryFailedPlayback()
+            guard failedTrackID == nil, audioPlayer != nil else { return }
+        }
+        guard let audioPlayer else { return }
         // AVAudioPlayer can enqueue a completion before a seek, particularly
         // when scrubbing backwards at the end of a recording. That completion
         // belongs to the old playback position, not the newly sought position.
