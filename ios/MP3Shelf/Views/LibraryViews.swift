@@ -809,8 +809,15 @@ struct LibraryView: View {
                   sortMode == requestedSort,
                   playbackSelectionIsCurrent(),
                   availability.count == songs.count else {
-                bulkPlaybackNotice = "Your library results changed while checking offline recordings. Retry to use the updated songs."
-                bulkRetryShuffle = shuffled
+                // The previous retry belonged to the old visible selection.
+                // Do not offer it for a different search, sort, or restored
+                // recording: the listener must explicitly choose the new queue.
+                bulkRetryShuffle = nil
+                bulkSkippedRecordingCount = 0
+                partialQueueShuffle = nil
+                partialQueueNeedsRefresh = false
+                playbackSelectionSnapshot = nil
+                bulkPlaybackNotice = "Your library results changed while checking offline recordings. Choose Play or Shuffle to check the current songs."
                 return
             }
             // Resolve the exact original file location, not just its ID.
