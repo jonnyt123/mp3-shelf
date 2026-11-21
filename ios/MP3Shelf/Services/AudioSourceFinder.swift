@@ -327,6 +327,7 @@ enum AudioSourceFinder {
             let words = tokens(value)
             var result = Set<String>()
             let variants: [(String, [[String]])] = [
+                ("artist-re-recording", [["taylor", "s", "version"], ["taylors", "version"]]),
                 ("re-recorded", [["re", "recorded"], ["rerecorded"], ["re", "recording"], ["rerecording"]]),
                 ("original-mix", [["original", "mix"]]),
                 ("mono-mix", [["mono"], ["mono", "mix"]]),
