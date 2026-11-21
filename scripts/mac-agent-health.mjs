@@ -1,0 +1,119 @@
+#!/usr/bin/env node
+/** Read-only launchd/Xcode health inspection; --repair may bootstrap ONLY our verified LaunchAgent. */
+import { execFileSync } from 'node:child_process';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const LABEL='com.jonnyt.mp3shelf.native-preflight';
+const SHA=/^[0-9a-f]{40}$/;
+function command(exe,args,timeout=12000){
+ try{return {ok:true,stdout:execFileSync(exe,args,{encoding:'utf8',timeout,maxBuffer:512*1024,
+   stdio:['ignore','pipe','pipe']}).trim()};}
+ catch(e){return {ok:false,reason:e?.code==='ENOENT'?'COMMAND_MISSING':'COMMAND_FAILED'};}
+}
+function safeJSON(path,max=128*1024){
+ try {const s=lstatSync(path);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size<2||s.size>max)return null;
+  return JSON.parse(readFileSync(path,'utf8'));}catch{return null;}
+}
+export function evaluateAgentHealth({platform='darwin',node=null,xcode=null,developerDir=null,
+ plist=null,loaded=false,latest=null,now=Date.now(),sourceRoot=null}={}){
+ const checks={},put=(key,ok,detail)=>{checks[key]={status:ok?'PASS':'BLOCKED',detail};};
+ put('macOS',platform==='darwin','Physical Mac is required for native verification.');
+ put('node',typeof node==='string'&&node.length>0,'Node executable is available for launchd.');
+ put('xcode',typeof xcode==='string'&&/^Xcode \d/.test(xcode)&&
+   typeof developerDir==='string'&&/\/Xcode[^/]*\.app\/Contents\/Developer$/.test(developerDir),
+   'Full Xcode is selected; Command Line Tools alone are insufficient.');
+ const args=plist?.ProgramArguments;
+ const expectedEntry=typeof sourceRoot==='string'?resolve(sourceRoot,'scripts','native-agent-run.mjs'):null;
+ const sameNode=(()=>{try{return args?.[0]===node ||
+   realpathSync(args?.[0])===realpathSync(node);}catch{return false;}})();
+ const owned=plist?.Label===LABEL&&Array.isArray(args)&&args.length===3&&
+   sameNode&&args[1]===expectedEntry&&args[2]===sourceRoot&&
+   plist.RunAtLoad===true&&plist.StartInterval===3600&&plist.WorkingDirectory===sourceRoot;
+ put('plist',owned,'The exact MP3 Shelf hourly launchd plist is owned and correctly configured.');
+ put('launchd',owned&&loaded,'The MP3 Shelf user LaunchAgent is loaded by launchctl.');
+ // A recent timestamp alone is not evidence of a completed invocation. Validate
+ // both ends of the interval and the candidate identity before reporting health.
+ // A malformed or contradictory receipt must never be promoted to a healthy Mac.
+ const started=Date.parse(latest?.startedAt??'');
+ const finished=Date.parse(latest?.finishedAt??'');
+ const validInterval=Number.isFinite(started)&&Number.isFinite(finished)&&
+   started<=finished&&started<=now+300000&&finished<=now+300000&&
+   finished-started<=24*3600000;
+ const validIdentity=SHA.test(latest?.candidateSha??'')||
+   (latest?.status!=='COMPLETED'&&latest?.candidateSha==null);
+ // A completed run must carry the canonical, exact-SHA published ZIP identity.
+ // Otherwise an arbitrary or stale local receipt could appear healthy even
+ // though no verified release asset was delivered.
+ const expectedURL=SHA.test(latest?.candidateSha??'')
+   ? 'https://github.com/jonnyt123/mp3-shelf/releases/download/mp3-shelf-ios-'+
+     latest.candidateSha+'/MP3-Shelf-Xcode-'+latest.candidateSha.slice(0,12)+'.zip'
+   : null;
+ const validOutcome=latest?.status!=='COMPLETED'||
+   (['already-staged','staged-draft-only'].includes(latest?.integration)&&
+    ['EXISTING_VERIFIED_ARCHIVE','PACKAGED_VERIFIED_NATIVE_SOURCE'].includes(latest?.packaging)&&
+    ['DELIVERED_VERIFIED_XCODE_ZIP','ALREADY_DELIVERED'].includes(latest?.delivery)&&
+    latest?.downloadURL===expectedURL&&
+    /^[0-9a-f]{64}$/.test(latest?.sha256??'')&&
+    latest?.failureReason==null);
+ const fresh=latest?.schema==='mp3shelf-native-agent-run-v1'&&
+   ['COMPLETED','FAILED','BLOCKED'].includes(latest.status)&&
+   validInterval&&validIdentity&&validOutcome&&now-finished<=2*3600000;
+ put('recentRun',fresh,'A recent, internally consistent native-agent receipt exists.');
+ const failed=latest?.status==='FAILED'||latest?.status==='BLOCKED';
+ const blockers=Object.entries(checks).filter(([,v])=>v.status!=='PASS').map(([k])=>k);
+ return {schema:'mp3shelf-mac-agent-health-v1',generatedAt:new Date(now).toISOString(),
+   status:blockers.length||failed?'NEEDS_ATTENTION':'AGENT_RUNNING_RECENTLY',
+   checks,blockers,agentStatus:fresh?latest.status:'NOT_VERIFIED',
+   candidateSHA:SHA.test(latest?.candidateSha??'')?latest.candidateSha:null,
+   xcodeBuild:'NOT_ATTESTED_BY_HEALTH_CHECK',
+   repair:platform!=='darwin'?'REQUIRES_MAC':!owned?'RUN_TRUSTED_INSTALLER':
+      checks.xcode.status!=='PASS'?'REQUIRES_XCODE':
+      !loaded?'BOOTSTRAP_OWNED_AGENT':!fresh?'INSPECT_LAUNCHD_LOGS_AND_WAIT_FOR_RECEIPT':'NO_REPAIR_NEEDED',
+   note:'Agent health is not a passing Xcode build or physical-iPhone acceptance.'};
+}
+export function inspectMacAgent({home=homedir(),root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),
+ repair=false,platform=process.platform,runner=command}={}){
+ const plistPath=join(home,'Library','LaunchAgents',LABEL+'.plist');
+ const nodePath=process.execPath;
+ const xcode=runner('xcodebuild',['-version']);
+ const selected=runner('xcode-select',['-p']);
+ const plistFile=(()=>{
+  try{
+   const s=lstatSync(plistPath);
+   if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1)return null;
+   const p=runner('plutil',['-convert','json','-o','-',plistPath]);
+   return p.ok?JSON.parse(p.stdout):null;
+  }catch{return null;}
+ })();
+ const target='gui/'+process.getuid()+'/'+LABEL;
+ let loaded=runner('launchctl',['print',target]).ok;
+ let report=evaluateAgentHealth({platform,node:nodePath,xcode:xcode.ok?xcode.stdout:null,
+  developerDir:selected.ok?selected.stdout:null,plist:plistFile,loaded,
+  latest:safeJSON(join(home,'Library','Logs','MP3Shelf','NativeAgent','latest-run.json')),
+  sourceRoot:root});
+ if(repair && report.repair==='BOOTSTRAP_OWNED_AGENT'){
+  const boot=runner('launchctl',['bootstrap','gui/'+process.getuid(),plistPath]);
+  if(!boot.ok)throw Error('launchd bootstrap did not succeed; inspect private launchd diagnostics.');
+  loaded=runner('launchctl',['print',target]).ok;
+  if(!loaded)throw Error('launchd bootstrap did not confirm loaded status.');
+  // RunAtLoad=true already starts the registered job. A forced kickstart -k
+  // terminates a possibly active native build and can invalidate its evidence.
+  // Do not kickstart or kill a process merely to diagnose a missing receipt.
+  // The next scheduled invocation can collect its own exact-SHA evidence.
+  report=evaluateAgentHealth({platform,node:nodePath,xcode:xcode.ok?xcode.stdout:null,
+    developerDir:selected.ok?selected.stdout:null,plist:plistFile,loaded,
+    latest:safeJSON(join(home,'Library','Logs','MP3Shelf','NativeAgent','latest-run.json')),
+    sourceRoot:root});
+ }
+ return report;
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
+ const args=process.argv.slice(2),repair=args.includes('--repair');
+ if(args.length>1||args.some(x=>x!=='--repair')){console.error('Usage: node scripts/mac-agent-health.mjs [--repair]');process.exitCode=2;}
+ else try{const result=inspectMacAgent({root:resolve(dirname(fileURLToPath(import.meta.url)),'..'),repair});
+  console.log(JSON.stringify(result,null,2));
+  if(result.status!=='AGENT_RUNNING_RECENTLY')process.exitCode=1;
+ }catch(e){console.error('MAC_NATIVE_AGENT_HEALTH_BLOCKED: '+e.message);process.exitCode=1;}
+}
