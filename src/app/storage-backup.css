@@ -40,3 +40,16 @@
 @media (prefers-reduced-motion: no-preference) {
   .storage-small:active, .storage-sheet .backup-actions button:active { transform: scale(.98); }
 }
+
+.save-backup {
+  display: block;
+  margin: 12px 0;
+  padding: 14px 18px;
+  border-radius: 16px;
+  background: var(--gold-bright);
+  color: #171513;
+  text-align: center;
+  font-weight: 700;
+  text-decoration: none;
+}
+.save-backup:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }

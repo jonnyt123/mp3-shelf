@@ -1,0 +1,397 @@
+import Foundation
+// Standalone failure-injection model, not production importer or device proof.
+// swift ios/Tests/RestoreJournalOwnershipReplayTests.swift
+private struct Entry: Codable { let name: String; let bytes: Data; let owned: Bool }
+private struct Journal: Codable { let entries: [Entry]; let committed: Bool }
+private enum Rejection: Error { case unsafe, changed }
+private let fm = FileManager.default
+private let root = fm.temporaryDirectory.appendingPathComponent("restore-replay-\(UUID())")
+try fm.createDirectory(at: root, withIntermediateDirectories: true)
+defer { try? fm.removeItem(at: root) }
+private let audio = root.appendingPathComponent("audio")
+try fm.createDirectory(at: audio, withIntermediateDirectories: true)
+private let journal = root.appendingPathComponent("journal.json")
+private let manifest = root.appendingPathComponent("manifest.json")
+private let old = Data("before".utf8), new = Data("after".utf8)
+private let borrowed = Data(repeating: 0x55, count: 4096)
+private let created = Data(repeating: 0x99, count: 8192)
+private let unrelated = Data(repeating: 0xAA, count: 2048)
+private func path(_ name: String) -> URL { audio.appendingPathComponent(name) }
+private func assert(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+    if try !condition() { throw NSError(domain: "JournalQA", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+}
+private func reset() throws {
+    for name in ["borrowed.mp3", "new.mp3", "unrelated.mp3"] {
+        if fm.fileExists(atPath: path(name).path) { try fm.removeItem(at: path(name)) }
+    }
+    try borrowed.write(to: path("borrowed.mp3"))
+    try unrelated.write(to: path("unrelated.mp3"))
+    try old.write(to: manifest, options: .atomic)
+}
+private let entries = [Entry(name: "borrowed.mp3", bytes: borrowed, owned: false),
+                       Entry(name: "new.mp3", bytes: created, owned: true)]
+private func replay(beforeCleanup: (() throws -> Void)? = nil) throws {
+    let record = try JSONDecoder().decode(Journal.self, from: Data(contentsOf: journal))
+    guard !record.entries.isEmpty else { throw Rejection.unsafe }
+    var names = Set<String>()
+    for entry in record.entries {
+        guard !entry.name.isEmpty, !entry.name.hasPrefix("."),
+              !entry.name.contains("/"), !entry.name.contains("\\"),
+              !entry.name.contains(":"), names.insert(entry.name).inserted
+        else { throw Rejection.unsafe }
+        let file = path(entry.name)
+        guard (try? fm.destinationOfSymbolicLink(atPath: file.path)) == nil
+        else { throw Rejection.unsafe }
+        var directory: ObjCBool = false
+        if fm.fileExists(atPath: file.path, isDirectory: &directory) {
+            guard !directory.boolValue, (try? Data(contentsOf: file)) == entry.bytes
+            else { throw Rejection.changed }
+        } else if !entry.owned { throw Rejection.changed }
+    }
+    guard (try? Data(contentsOf: manifest)) == (record.committed ? new : old)
+    else { throw Rejection.changed }
+    try beforeCleanup?()
+    // Finalization must not discard the journal if another writer changed
+    // the manifest after initial validation.
+    guard (try? fm.destinationOfSymbolicLink(atPath: manifest.path)) == nil
+    else { throw Rejection.unsafe }
+    guard (try? Data(contentsOf: manifest)) == (record.committed ? new : old)
+    else { throw Rejection.changed }
+    // Recheck every owned destination after the validation/cleanup boundary.
+    // A concurrent replacement must never be unlinked using stale validation.
+    for entry in record.entries {
+        let file = path(entry.name)
+        guard (try? fm.destinationOfSymbolicLink(atPath: file.path)) == nil else { throw Rejection.unsafe }
+        if fm.fileExists(atPath: file.path) {
+            guard (try? Data(contentsOf: file)) == entry.bytes else { throw Rejection.changed }
+        } else if !entry.owned || record.committed { throw Rejection.changed }
+    }
+    if !record.committed {
+        for entry in record.entries where entry.owned {
+            if fm.fileExists(atPath: path(entry.name).path) { try fm.removeItem(at: path(entry.name)) }
+        }
+    }
+    try fm.removeItem(at: journal)
+}
+private func persist(_ record: Journal) throws {
+    try JSONEncoder().encode(record).write(to: journal, options: .atomic)
+}
+for _ in 0..<24 {
+    try reset()
+    try created.write(to: path("new.mp3"))
+    try persist(Journal(entries: entries, committed: false))
+    try replay()
+    try assert(!fm.fileExists(atPath: path("new.mp3").path), "uncommitted audio survived")
+    try assert(Data(contentsOf: manifest) == old, "uncommitted manifest changed")
+    try assert(Data(contentsOf: path("borrowed.mp3")) == borrowed, "borrowed audio removed")
+    try created.write(to: path("new.mp3"))
+    try new.write(to: manifest, options: .atomic)
+    try persist(Journal(entries: entries, committed: true))
+    try replay()
+    try assert(Data(contentsOf: path("new.mp3")) == created, "committed audio removed")
+    try assert(Data(contentsOf: manifest) == new, "committed manifest lost")
+    try reset()
+    try created.write(to: path("new.mp3"))
+    for name in ["../unrelated.mp3", "/tmp/new.mp3", "dir/new.mp3", "dir\\new.mp3", ".hidden", "C:new.mp3", "borrowed.mp3"] {
+        try persist(Journal(entries: entries + [Entry(name: name, bytes: created, owned: true)], committed: false))
+        var rejected = false
+        do { try replay() } catch Rejection.unsafe { rejected = true }
+        try assert(rejected, "unsafe or duplicate journal entry accepted")
+        try assert(Data(contentsOf: path("new.mp3")) == created, "unsafe journal removed audio")
+        try assert(fm.fileExists(atPath: journal.path), "unsafe journal lost evidence")
+    }
+    try Data(repeating: 0x11, count: 7).write(to: path("new.mp3"))
+    try persist(Journal(entries: entries, committed: false))
+    var conflict = false
+    do { try replay() } catch Rejection.changed { conflict = true }
+    try assert(conflict, "foreign replacement accepted")
+    try assert(Data(contentsOf: path("new.mp3")) == Data(repeating: 0x11, count: 7), "foreign bytes deleted")
+    try assert(Data(contentsOf: path("borrowed.mp3")) == borrowed, "borrowed bytes changed")
+    try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "unrelated bytes changed")
+}
+print("PASS: 24 rollback, 24 committed replay, 168 hostile journal, 24 foreign replacement scenarios")
+
+
+// Recovery must fail closed on torn journals, missing owned media and filesystem
+// substitutions. Rejected replay leaves the journal available for investigation.
+for _ in 0..<16 {
+    try reset()
+    try created.write(to: path("new.mp3"))
+    for damaged in [Data(), Data("{".utf8), Data("null".utf8),
+                    Data(#"{"entries":[]}"#.utf8)] {
+        try damaged.write(to: journal, options: .atomic)
+        var rejected = false
+        do { try replay() } catch { rejected = true }
+        try assert(rejected, "corrupt journal was accepted")
+        try assert(Data(contentsOf: path("new.mp3")) == created, "corrupt journal deleted audio")
+        try assert(Data(contentsOf: manifest) == old, "corrupt journal changed manifest")
+        try assert(fm.fileExists(atPath: journal.path), "corrupt journal was discarded")
+    }
+    try persist(Journal(entries: entries, committed: false))
+    try fm.removeItem(at: path("new.mp3"))
+    var missingRejected = false
+    do { try replay() } catch Rejection.changed { missingRejected = true }
+    // Missing owned audio is safe to roll back, while missing borrowed media is not.
+    try assert(!missingRejected, "missing owned media prevented safe rollback")
+    try assert(!fm.fileExists(atPath: journal.path), "rollback left stale journal")
+
+    try reset()
+    try created.write(to: path("new.mp3"))
+    try persist(Journal(entries: entries, committed: false))
+    try fm.removeItem(at: path("new.mp3"))
+    try fm.createSymbolicLink(at: path("new.mp3"), withDestinationURL: path("unrelated.mp3"))
+    var linkRejected = false
+    do { try replay() } catch Rejection.unsafe { linkRejected = true }
+    try assert(linkRejected, "symlink substitution accepted")
+    try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "symlink target changed")
+    try assert(fm.fileExists(atPath: journal.path), "symlink rejection discarded journal")
+    try fm.removeItem(at: path("new.mp3"))
+
+    try fm.createDirectory(at: path("new.mp3"), withIntermediateDirectories: false)
+    var dirRejected = false
+    do { try replay() } catch Rejection.changed { dirRejected = true }
+    try assert(dirRejected, "directory substitution accepted")
+    try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "directory replay changed unrelated audio")
+    try assert(fm.fileExists(atPath: journal.path), "directory rejection discarded journal")
+    try fm.removeItem(at: path("new.mp3"))
+}
+print("PASS: 64 torn journal, 16 missing owned media, 16 symlink and 16 directory substitution scenarios")
+
+
+// A failed validation must be all-or-nothing. In particular, the importer must
+// never delete an owned file before noticing that a later borrowed entry or the
+// manifest has changed. Exercise both entry orderings and committed recovery.
+for committed in [false, true] {
+    for ownedFirst in [false, true] {
+        for failure in 0..<5 {
+            try reset()
+            try created.write(to: path("new.mp3"))
+            if committed { try new.write(to: manifest, options: .atomic) }
+            let ordered = ownedFirst ? entries : Array(entries.reversed())
+            try persist(Journal(entries: ordered, committed: committed))
+            switch failure {
+            case 0: // A borrowed file is absent.
+                try fm.removeItem(at: path("borrowed.mp3"))
+            case 1: // A borrowed file has been replaced.
+                try Data("replacement".utf8).write(to: path("borrowed.mp3"))
+            case 2: // An owned file has been replaced by foreign bytes.
+                try Data("foreign".utf8).write(to: path("new.mp3"))
+            case 3: // The manifest is stale or unexpectedly advanced.
+                try Data("unexpected".utf8).write(to: manifest)
+            default: // A borrowed file has become a symlink.
+                try fm.removeItem(at: path("borrowed.mp3"))
+                try fm.createSymbolicLink(at: path("borrowed.mp3"), withDestinationURL: path("unrelated.mp3"))
+            }
+            let ownedBefore = try Data(contentsOf: path("new.mp3"))
+            let manifestBefore = try Data(contentsOf: manifest)
+            var rejected = false
+            do { try replay() } catch { rejected = true }
+            try assert(rejected, "changed recovery input was accepted")
+            try assert(Data(contentsOf: path("new.mp3")) == ownedBefore,
+                       "validation failure deleted or changed owned audio")
+            try assert(Data(contentsOf: manifest) == manifestBefore,
+                       "validation failure changed the manifest")
+            try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated,
+                       "validation failure changed unrelated audio")
+            try assert(fm.fileExists(atPath: journal.path),
+                       "validation failure discarded the recovery journal")
+        }
+    }
+}
+print("PASS: 20 ordered rollback/commit validation-failure isolation scenarios")
+
+// Invalid journal structures must never authorize deletion or evidence cleanup.
+for committed in [false, true] {
+    try reset()
+    try created.write(to: path("new.mp3"))
+    if committed { try new.write(to: manifest, options: .atomic) }
+    let before = try Data(contentsOf: path("new.mp3"))
+    for candidate in [
+        Journal(entries: [], committed: committed),
+        Journal(entries: [entries[0], entries[0]], committed: committed),
+        Journal(entries: [entries[1], entries[1]], committed: committed)
+    ] {
+        try persist(candidate)
+        var rejected = false
+        do { try replay() } catch { rejected = true }
+        try assert(rejected, "invalid journal accepted")
+        try assert(fm.fileExists(atPath: journal.path), "invalid journal erased evidence")
+        try assert(Data(contentsOf: path("new.mp3")) == before, "invalid journal changed owned media")
+        try assert(Data(contentsOf: manifest) == (committed ? new : old), "invalid journal changed manifest")
+    }
+}
+print("PASS: 6 empty/duplicate journal isolation scenarios")
+
+// Deterministic validation-to-cleanup replacement race. A journal replay
+// must not unlink audio that appeared after its initial ownership check.
+for mode in 0..<3 {
+    try reset()
+    try created.write(to: path("new.mp3"))
+    try persist(Journal(entries: entries, committed: false))
+    let foreign = Data(repeating: 0xD4, count: 16384)
+    var rejected = false
+    do {
+        try replay(beforeCleanup: {
+            try fm.removeItem(at: path("new.mp3"))
+            switch mode {
+            case 0: try foreign.write(to: path("new.mp3"))
+            case 1: try fm.createSymbolicLink(at: path("new.mp3"), withDestinationURL: path("unrelated.mp3"))
+            default: try fm.createDirectory(at: path("new.mp3"), withIntermediateDirectories: false)
+            }
+        })
+    } catch { rejected = true }
+    try assert(rejected, "concurrent destination replacement was accepted")
+    try assert(fm.fileExists(atPath: journal.path), "race discarded recovery evidence")
+    try assert(Data(contentsOf: manifest) == old, "race changed manifest")
+    try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "race changed unrelated media")
+    if mode == 0 { try assert(Data(contentsOf: path("new.mp3")) == foreign, "race deleted foreign audio") }
+    if mode == 1 { try assert((try? fm.destinationOfSymbolicLink(atPath: path("new.mp3").path)) != nil, "race removed substituted symlink") }
+    if mode == 2 { var directory: ObjCBool = false; try assert(fm.fileExists(atPath: path("new.mp3").path, isDirectory: &directory) && directory.boolValue, "race removed substituted directory") }
+}
+print("PASS: 3 validation-to-cleanup replacement isolation scenarios")
+
+
+// Multi-entry rollback must validate the *entire* journal before unlinking the
+// first owned recording. A late conflict in the second owned recording must
+// preserve both recordings and the journal, regardless of journal ordering.
+for reverse in [false, true] {
+    for substitution in 0..<3 {
+        try reset()
+        let second = path("second.mp3")
+        let secondBytes = Data(repeating: 0xB2, count: 3072)
+        let foreign = Data(repeating: 0xE1, count: 6144)
+        try created.write(to: path("new.mp3"))
+        try secondBytes.write(to: second)
+        let secondEntry = Entry(name: "second.mp3", bytes: secondBytes, owned: true)
+        let ordered = reverse ? [secondEntry, entries[1], entries[0]] : [entries[0], entries[1], secondEntry]
+        try persist(Journal(entries: ordered, committed: false))
+        var rejected = false
+        do {
+            try replay(beforeCleanup: {
+                try fm.removeItem(at: second)
+                switch substitution {
+                case 0: try foreign.write(to: second)
+                case 1: try fm.createSymbolicLink(at: second, withDestinationURL: path("unrelated.mp3"))
+                default: try fm.createDirectory(at: second, withIntermediateDirectories: false)
+                }
+            })
+        } catch { rejected = true }
+        try assert(rejected, "multi-entry rollback accepted late ownership conflict")
+        try assert(Data(contentsOf: path("new.mp3")) == created,
+                   "multi-entry rollback partially deleted valid owned audio")
+        try assert(Data(contentsOf: path("borrowed.mp3")) == borrowed,
+                   "multi-entry rollback modified borrowed audio")
+        try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated,
+                   "multi-entry rollback modified unrelated audio")
+        try assert(Data(contentsOf: manifest) == old, "multi-entry rollback changed manifest")
+        try assert(fm.fileExists(atPath: journal.path), "multi-entry rollback lost recovery evidence")
+        if substitution == 0 {
+            try assert(Data(contentsOf: second) == foreign, "multi-entry rollback deleted foreign replacement")
+        } else if substitution == 1 {
+            try assert((try? fm.destinationOfSymbolicLink(atPath: second.path)) != nil,
+                       "multi-entry rollback deleted substituted link")
+        } else {
+            var isDirectory: ObjCBool = false
+            try assert(fm.fileExists(atPath: second.path, isDirectory: &isDirectory) && isDirectory.boolValue,
+                       "multi-entry rollback deleted substituted directory")
+        }
+        try fm.removeItem(at: second)
+    }
+}
+print("PASS: 6 multi-entry late-conflict all-or-nothing rollback scenarios")
+
+// Borrowed recordings are part of the rollback ownership contract too. If a
+// second tab replaces a borrowed recording after the initial validation,
+// abort before removing any newly imported recording or the recovery journal.
+for reverse in [false, true] {
+    for substitution in 0..<3 {
+        try reset()
+        try created.write(to: path("new.mp3"))
+        try persist(Journal(entries: reverse ? Array(entries.reversed()) : entries, committed: false))
+        let foreign = Data(repeating: 0xC7, count: 1234)
+        var rejected = false
+        do {
+            try replay(beforeCleanup: {
+                try fm.removeItem(at: path("borrowed.mp3"))
+                switch substitution {
+                case 0: try foreign.write(to: path("borrowed.mp3"))
+                case 1: try fm.createSymbolicLink(at: path("borrowed.mp3"), withDestinationURL: path("unrelated.mp3"))
+                default: try fm.createDirectory(at: path("borrowed.mp3"), withIntermediateDirectories: false)
+                }
+            })
+        } catch { rejected = true }
+        try assert(rejected, "borrowed recording replacement accepted after validation")
+        try assert(Data(contentsOf: path("new.mp3")) == created, "borrowed race deleted newly owned audio")
+        try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated, "borrowed race damaged unrelated audio")
+        try assert(Data(contentsOf: manifest) == old, "borrowed race changed manifest")
+        try assert(fm.fileExists(atPath: journal.path), "borrowed race erased journal evidence")
+        if substitution == 0 {
+            try assert(Data(contentsOf: path("borrowed.mp3")) == foreign, "borrowed race changed foreign bytes")
+        } else if substitution == 1 {
+            try assert((try? fm.destinationOfSymbolicLink(atPath: path("borrowed.mp3").path)) != nil, "borrowed race removed symlink")
+        } else {
+            var directory: ObjCBool = false
+            try assert(fm.fileExists(atPath: path("borrowed.mp3").path, isDirectory: &directory) && directory.boolValue, "borrowed race removed directory")
+        }
+    }
+}
+print("PASS: 6 borrowed-recording late-substitution rollback isolation scenarios")
+
+
+// A committed journal is a finalization marker, not permission to overwrite
+// concurrent edits. A late replacement of either owned or borrowed media,
+// or the manifest, must retain the journal and every pre-existing byte.
+for reverse in [false, true] {
+    for target in ["new.mp3", "borrowed.mp3", "manifest"] {
+        for substitution in 0..<3 {
+            try reset()
+            try created.write(to: path("new.mp3"))
+            try new.write(to: manifest, options: .atomic)
+            try persist(Journal(entries: reverse ? Array(entries.reversed()) : entries, committed: true))
+            let foreign = Data(repeating: 0xF3, count: 5001)
+            let destination = target == "manifest" ? manifest : path(target)
+            var rejected = false
+            do {
+                try replay(beforeCleanup: {
+                    try fm.removeItem(at: destination)
+                    switch substitution {
+                    case 0: try foreign.write(to: destination)
+                    case 1: try fm.createSymbolicLink(at: destination, withDestinationURL: path("unrelated.mp3"))
+                    default: try fm.createDirectory(at: destination, withIntermediateDirectories: false)
+                    }
+                })
+            } catch { rejected = true }
+            try assert(rejected, "committed replay accepted a late substitution: \(target), \(substitution)")
+            try assert(fm.fileExists(atPath: journal.path), "committed replay erased contested journal")
+            try assert(Data(contentsOf: path("unrelated.mp3")) == unrelated,
+                       "committed replay changed unrelated recording")
+            if target != "new.mp3" {
+                try assert(Data(contentsOf: path("new.mp3")) == created,
+                           "committed replay changed owned recording")
+            }
+            if target != "borrowed.mp3" {
+                try assert(Data(contentsOf: path("borrowed.mp3")) == borrowed,
+                           "committed replay changed borrowed recording")
+            }
+            if target != "manifest" {
+                try assert(Data(contentsOf: manifest) == new,
+                           "committed replay changed committed manifest")
+            }
+            if substitution == 0 {
+                try assert(Data(contentsOf: destination) == foreign,
+                           "committed replay overwrote foreign replacement")
+            } else if substitution == 1 {
+                try assert((try? fm.destinationOfSymbolicLink(atPath: destination.path)) != nil,
+                           "committed replay unlinked foreign symlink")
+            } else {
+                var isDirectory: ObjCBool = false
+                try assert(fm.fileExists(atPath: destination.path, isDirectory: &isDirectory) && isDirectory.boolValue,
+                           "committed replay removed foreign directory")
+            }
+            if target == "manifest" {
+                try fm.removeItem(at: manifest)
+            }
+        }
+    }
+}
+print("PASS: 18 committed-journal late-substitution isolation scenarios")
