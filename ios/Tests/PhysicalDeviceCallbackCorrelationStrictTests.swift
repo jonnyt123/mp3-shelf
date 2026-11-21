@@ -110,9 +110,9 @@ let decodedEvidence = try decoder.decode([CallbackEvent].self, from: encodedEvid
 expectCallback(decodedEvidence, .verified, "serialized production evidence round-trip")
 for malformed in [
     Data("{}".utf8),
-    Data("[{\\"kind\\":\\"auditArmed\\"}]".utf8),
+    Data(#"[{"kind":"auditArmed"}]"#.utf8),
     Data("[null]".utf8),
-    Data("[{\\"kind\\":1}]".utf8)
+    Data(#"[{"kind":1}]"#.utf8),
 ] {
     do {
         _ = try decoder.decode([CallbackEvent].self, from: malformed)
