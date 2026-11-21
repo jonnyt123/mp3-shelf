@@ -430,6 +430,29 @@ enum AudioSourceFinder {
         }
         guard anniversaryYears(fileStem) == anniversaryYears(requestedTitle) else { return false }
 
+        // Artist-owned re-recordings can have distinct release years despite
+        // identical artist/title and duration. Never substitute one dated
+        // "Taylor's Version" master for another or for an undated edition.
+        func artistVersionYears(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            guard contains(["taylor", "s", "version"], in: words) ||
+                  contains(["taylors", "version"], in: words) else { return [] }
+            var years = Set<String>()
+            for (index, word) in words.enumerated() where word == "version" {
+                let lower = max(0, index - 3)
+                let upper = min(words.count, index + 4)
+                for candidate in words[lower..<upper] where candidate.count == 4 &&
+                    candidate.allSatisfy(\.isNumber) &&
+                    (Int(candidate) ?? 0) >= 1900 && (Int(candidate) ?? 0) <= 2100 {
+                    years.insert(candidate)
+                }
+            }
+            return years
+        }
+        guard artistVersionYears(fileStem) == artistVersionYears(requestedTitle) else {
+            return false
+        }
+
         // Two live performances from different years are not interchangeable.
         // Likewise, an explicit "2021 re-recording" must not auto-match a
         // different dated re-recording. A bare year in an ordinary title is
