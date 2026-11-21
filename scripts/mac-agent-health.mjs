@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Read-only launchd/Xcode health inspection; --repair may bootstrap ONLY our verified LaunchAgent. */
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { constants, lstatSync, openSync, closeSync, fstatSync, readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,10 +12,32 @@ function command(exe,args,timeout=12000){
    stdio:['ignore','pipe','pipe']}).trim()};}
  catch(e){return {ok:false,reason:e?.code==='ENOENT'?'COMMAND_MISSING':'COMMAND_FAILED'};}
 }
-function safeJSON(path,max=128*1024){
- try {const s=lstatSync(path);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size<2||s.size>max)return null;
-  return JSON.parse(readFileSync(path,'utf8'));}catch{return null;}
+export function safeJSON(path,max=128*1024){
+ // Read the opened inode, not a path previously checked with lstat.
+ // A symlink swap, FIFO or growing file must never block the hourly agent.
+ let fd;
+ try{
+  fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  const before=fstatSync(fd);
+  if(!before.isFile()||before.nlink!==1||before.size<2||before.size>max)return null;
+  const bytes=Buffer.alloc(before.size);
+  let offset=0;
+  while(offset<bytes.length){
+   const n=readSync(fd,bytes,offset,bytes.length-offset,offset);
+   if(n===0)return null;
+   offset+=n;
+  }
+  const extra=Buffer.alloc(1);
+  if(readSync(fd,extra,0,1,bytes.length)!==0)return null;
+  const after=fstatSync(fd);
+  if(before.dev!==after.dev||before.ino!==after.ino||
+     before.size!==after.size||before.mtimeMs!==after.mtimeMs||
+     before.ctimeMs!==after.ctimeMs)return null;
+  return JSON.parse(bytes.toString('utf8'));
+ }catch{return null;}
+ finally{if(fd!==undefined)closeSync(fd);}
 }
+
 export function evaluateAgentHealth({platform='darwin',node=null,xcode=null,developerDir=null,
  plist=null,loaded=false,latest=null,now=Date.now(),sourceRoot=null}={}){
  const checks={},put=(key,ok,detail)=>{checks[key]={status:ok?'PASS':'BLOCKED',detail};};
