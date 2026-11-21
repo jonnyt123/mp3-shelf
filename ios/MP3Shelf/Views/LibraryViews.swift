@@ -1652,6 +1652,10 @@ struct MusicTrackRow: View {
                                       let currentTrack = library.tracks.first(where: { $0.id == track.id }),
                                       library.tracks.filter({ $0.id == track.id }).count == 1,
                                       library.fileURL(for: currentTrack) == library.fileURL(for: track),
+                                      currentTrack.title == track.title,
+                                      currentTrack.artist == track.artist,
+                                      currentTrack.album == track.album,
+                                      currentTrack.duration == track.duration,
                                       scenePhase == .active,
                                       !importBlocked
                                 else {
@@ -1667,8 +1671,16 @@ struct MusicTrackRow: View {
                                     return
                                 }
                                 library.addTrack(track.id, to: list.id)
-                                if library.playlists.filter({ $0.id == list.id }).count == 1,
-                                   library.playlists.first(where: { $0.id == list.id })?.trackIDs.contains(track.id) == true {
+                                // A restore/import can replace the destination while the
+                                // action is running. Do not report success unless the
+                                // exact destination snapshot still owns the new song.
+                                let destinations = library.playlists.filter { $0.id == list.id }
+                                let expectedTrackIDs = currentPlaylist.trackIDs + [track.id]
+                                if destinations.count == 1,
+                                   let saved = destinations.first,
+                                   saved.name == currentPlaylist.name,
+                                   saved.missingTracks == currentPlaylist.missingTracks,
+                                   saved.trackIDs == expectedTrackIDs {
                                     playbackNotice = "Added \(currentTrack.title) to \(currentPlaylist.name)."
                                 } else {
                                     playbackNotice = "Could not add the song to this playlist. Review the library and retry."
