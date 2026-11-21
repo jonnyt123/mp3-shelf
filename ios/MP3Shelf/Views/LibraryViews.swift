@@ -47,6 +47,26 @@ private struct RecentRetryIdentity: Equatable {
     }
 }
 
+// Bind a pending Play/Shuffle request to the complete recording, not just its
+// UUID and location. Restores can reuse both while changing the actual song.
+private struct RecordingPlaybackSnapshot: Equatable {
+    let id: UUID
+    let url: URL
+    let title: String
+    let artist: String
+    let album: String
+    let duration: TimeInterval
+
+    init(_ track: MusicTrack, url: URL) {
+        id = track.id
+        self.url = url
+        title = track.title
+        artist = track.artist
+        album = track.album
+        duration = track.duration
+    }
+}
+
 private struct RecordingRowIdentity: Hashable {
     let position: Int
     let id: UUID
@@ -99,7 +119,7 @@ struct LibraryView: View {
     @State private var partialQueueNeedsRefresh = false
     // A retry or partial-queue refresh belongs to an exact visible selection.
     // Library edits can change it without changing search, Favorites or sorting.
-    @State private var playbackSelectionSnapshot: [RecordingLocationKey]?
+    @State private var playbackSelectionSnapshot: [RecordingPlaybackSnapshot]?
 
     // Import completion is asynchronous: never scan or queue a file while the
     // importer may still be replacing it on disk.
@@ -284,7 +304,7 @@ struct LibraryView: View {
     // playback of the newly selected results on large libraries.
     private func playbackSelectionIsCurrent() -> Bool {
         guard let playbackSelectionSnapshot, !isSearchUpdating else { return false }
-        let current = displayed.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }
+        let current = displayed.map { RecordingPlaybackSnapshot($0, url: library.fileURL(for: $0)) }
         // An ID collision can make a restored recording ambiguous even when
         // its visible position and file URL appear unchanged. Never authorize
         // recovery of a queue whose recording identities are not unique.
@@ -736,7 +756,7 @@ struct LibraryView: View {
         bulkSkippedRecordingCount = 0
         partialQueueShuffle = nil
         partialQueueNeedsRefresh = false
-        playbackSelectionSnapshot = locations.map { RecordingLocationKey(id: $0.0, url: $0.1) }
+        playbackSelectionSnapshot = songs.map { RecordingPlaybackSnapshot($0, url: library.fileURL(for: $0)) }
         bulkRetryShuffle = shuffled
         bulkPlaybackPending = true
         bulkPlaybackTask = Task {
@@ -771,7 +791,7 @@ struct LibraryView: View {
                   settledSearchText == requestedQuery,
                   favoritesOnly == requestedFavorites,
                   sortMode == requestedSort,
-                  displayed.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) } == locations.map { RecordingLocationKey(id: $0.0, url: $0.1) },
+                  playbackSelectionIsCurrent(),
                   availability.count == songs.count else {
                 bulkPlaybackNotice = "Your library results changed while checking offline recordings. Retry to use the updated songs."
                 bulkRetryShuffle = shuffled
@@ -792,7 +812,8 @@ struct LibraryView: View {
                 // not prevent otherwise playable results from starting.
                 guard availability[index] else { continue }
                 let originalURL = locations[index].1
-                guard let match = currentByLocation[RecordingLocationKey(id: song.id, url: originalURL)] else {
+                guard let match = currentByLocation[RecordingLocationKey(id: song.id, url: originalURL)],
+                      RecordingPlaybackSnapshot(match, url: originalURL) == playbackSelectionSnapshot?[index] else {
                     bulkPlaybackNotice = "Some recordings changed while preparing playback. Retry to use the current library."
                     bulkRetryShuffle = shuffled
                     return
@@ -1246,7 +1267,7 @@ struct LibraryView: View {
         .onChange(of: searchText) { _, _ in browsingScopeDidChange() }
         .onChange(of: favoritesOnly) { _, _ in browsingScopeDidChange() }
         .onChange(of: sortMode) { _, _ in browsingScopeDidChange() }
-        .onChange(of: library.tracks.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }) { _, _ in
+        .onChange(of: library.tracks.map { RecordingPlaybackSnapshot($0, url: library.fileURL(for: $0)) }) { _, _ in
             // A Files import is an intentional library mutation. Preserve its
             // partial-queue recovery until the import report is available;
             // completion will bind recovery to the new visible selection.
