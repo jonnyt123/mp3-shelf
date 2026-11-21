@@ -83,4 +83,62 @@ let restored = try readJournal(journal)
 precondition(restored == large)
 precondition(restored.tickets.first?.id == "ticket-0" && restored.tickets.last?.id == "ticket-19999")
 try checked(try Data(contentsOf: audio) == audioBytes)
-print("PASS: interrupted update, atomic publish, corruption, symlink, directory, 20k ticket round-trip, audio preservation")
+
+// Recovery stress: interrupted writes and valid atomic replacements must never
+// expose a partial JSON document to a concurrent reader. This is a filesystem
+// contract, not a claim about iOS process termination or fsync durability.
+let readerQueue = DispatchQueue(label: "mp3-journal-reader")
+let writerQueue = DispatchQueue(label: "mp3-journal-writer")
+let group = DispatchGroup()
+let lock = NSLock()
+var observedFailure: String?
+let versions = (0..<256).map { generation in
+    Manifest(generation: 100 + generation, tickets: [
+        Ticket(id: "ticket-A", state: generation.isMultiple(of: 2) ? "queued" : "completed",
+               recording: "recording.mp3"),
+        Ticket(id: "ticket-\\(generation)", state: "queued", recording: "other.mp3")
+    ])
+}
+try publish(versions[0], at: journal)
+group.enter()
+readerQueue.async {
+    defer { group.leave() }
+    for _ in 0..<4096 {
+        do {
+            let value = try readJournal(journal)
+            if !versions.contains(value) {
+                lock.lock(); observedFailure = "reader saw unexpected complete manifest"; lock.unlock()
+                break
+            }
+        } catch {
+            lock.lock(); observedFailure = "reader saw partial or invalid journal: \\(error)"; lock.unlock()
+            break
+        }
+    }
+}
+group.enter()
+writerQueue.async {
+    defer { group.leave() }
+    for (index, version) in versions.enumerated().dropFirst() {
+        do {
+            if index.isMultiple(of: 3) {
+                try expectFailure("stress interrupted publish") {
+                    try publish(version, at: journal, interruptBeforeRename: true)
+                }
+            } else {
+                try publish(version, at: journal)
+            }
+        } catch {
+            lock.lock(); observedFailure = "writer failed: \\(error)"; lock.unlock()
+            break
+        }
+    }
+}
+group.wait()
+try checked(observedFailure == nil)
+try checked(versions.contains(try readJournal(journal)))
+try checked(try Data(contentsOf: audio) == audioBytes)
+let pendingFiles = try fm.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix(".pending-") }
+try checked(pendingFiles.isEmpty)
+
+print("PASS: crash boundaries, 20k ticket round-trip, 256-version concurrent atomic read/write, no pending files, audio preserved")
