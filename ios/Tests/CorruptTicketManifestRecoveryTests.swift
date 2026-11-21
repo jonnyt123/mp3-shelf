@@ -19,9 +19,35 @@ let hasFailureBranch = initializer.contains("catch ") || initializer.contains("e
 let hasRecovery = initializer.contains("quarantine") || initializer.contains("checkpoint") || initializer.contains("recoverCorrupt")
 // Recovery without a persistent write barrier still allows a subsequent
 // persist() to replace the only corrupt ticket evidence with an empty queue.
-let hasWriteBarrier = source.contains("manifestRecoveryBlocked") ||
-    source.contains("manifestWriteBlocked") ||
-    source.contains("corruptManifestPendingRecovery")
+// Merely declaring a flag is insufficient: persistence must actually consult
+// it before writing the manifest. Limit the search to the persist() function
+// body, so unrelated comments or recovery helpers cannot satisfy the gate.
+let barrierNames = ["manifestRecoveryBlocked", "manifestWriteBlocked",
+                    "corruptManifestPendingRecovery"]
+func functionBody(_ signature: String) -> String? {
+    guard let signatureRange = source.range(of: signature),
+          let opening = source[signatureRange.upperBound...].firstIndex(of: "{") else {
+        return nil
+    }
+    var depth = 0
+    for index in source[opening...].indices {
+        if source[index] == "{" { depth += 1 }
+        if source[index] == "}" {
+            depth -= 1
+            if depth == 0 { return String(source[opening...index]) }
+        }
+    }
+    return nil
+}
+let persistBody = functionBody("private func persist()") ??
+                  functionBody("func persist()") ?? ""
+let hasWriteBarrier = barrierNames.contains { name in
+    source.contains(name) && persistBody.contains(name) &&
+    (persistBody.contains("guard !\\(name)") ||
+     persistBody.contains("if !\\(name)") ||
+     persistBody.contains("guard \\(name) == false") ||
+     persistBody.contains("if \\(name) { return"))
+}
 if !hasFailureBranch || !hasRecovery || !hasWriteBarrier {
     fputs("FAIL: corrupt ticket manifest silently becomes empty in BackgroundAudioDownloader.init; preserve corrupt bytes and fail closed before reconciliation\n", stderr)
     exit(1)
