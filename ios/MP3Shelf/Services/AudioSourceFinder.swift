@@ -431,7 +431,7 @@ enum AudioSourceFinder {
                 let lower = max(0, index - 2)
                 let upper = min(words.count, index + 3)
                 for candidate in words[lower..<upper] where candidate.count == 4 &&
-                    candidate.allSatisfy(\\.isNumber) &&
+                    candidate.allSatisfy(\.isNumber) &&
                     (Int(candidate) ?? 0) >= 1900 && (Int(candidate) ?? 0) <= 2100 {
                     years.insert(candidate)
                 }
