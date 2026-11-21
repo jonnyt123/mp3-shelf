@@ -2241,11 +2241,17 @@ extension AudioSourceFinder {
         private var current: CCMixterFeedTrack?
         private var activeField = ""
         private var characters = ""
+        // XMLParser reports nested markup as separate elements. Retain text
+        // until the enclosing metadata field closes, rather than letting a
+        // nested element erase the recording's title or creator.
+        private var elementDepth = 0
+        private var fieldDepth = 0
 
         func parser(_ parser: XMLParser, didStartElement elementName: String,
                     namespaceURI: String?, qualifiedName qName: String?,
                     attributes attributeDict: [String: String] = [:]) {
             let field = String(elementName.split(separator: ":").last ?? "").lowercased()
+            elementDepth += 1
             if field == "item" {
                 current = CCMixterFeedTrack()
             } else if field == "enclosure", current != nil {
@@ -2266,8 +2272,12 @@ extension AudioSourceFinder {
                     current?.licenseURL = url
                 }
             }
-            activeField = current == nil ? "" : field
-            characters = ""
+            if current != nil, activeField.isEmpty,
+               ["title", "creator", "author", "link", "license"].contains(field) {
+                activeField = field
+                fieldDepth = elementDepth
+                characters = ""
+            }
         }
 
         func parser(_ parser: XMLParser, foundCharacters string: String) {
@@ -2279,6 +2289,11 @@ extension AudioSourceFinder {
         func parser(_ parser: XMLParser, didEndElement elementName: String,
                     namespaceURI: String?, qualifiedName qName: String?) {
             let field = String(elementName.split(separator: ":").last ?? "").lowercased()
+            defer { elementDepth -= 1 }
+            // Only the matching enclosing element commits its text. A nested
+            // <span> or other markup must not clear the active metadata field.
+            guard field == activeField, elementDepth == fieldDepth ||
+                  (field == "item" && current != nil) else { return }
             let content = characters.trimmingCharacters(in: .whitespacesAndNewlines)
             if current != nil {
                 switch field {
@@ -2311,8 +2326,11 @@ extension AudioSourceFinder {
                 default: break
                 }
             }
-            activeField = ""
-            characters = ""
+            if field == activeField {
+                activeField = ""
+                fieldDepth = 0
+                characters = ""
+            }
         }
 
         func read(_ data: Data) -> [CCMixterFeedTrack]? {
