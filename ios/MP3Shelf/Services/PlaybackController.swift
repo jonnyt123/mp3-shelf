@@ -382,6 +382,26 @@ final class PlaybackController: NSObject, ObservableObject {
 
     func seek(to seconds: TimeInterval) {
         guard seconds.isFinite else { return }
+        // A queued track can be removed while its AVAudioPlayer still owns an
+        // open descriptor. Scrubbing must not revive or continue publishing
+        // progress for that orphaned recording. Reconcile through the same
+        // bounded queue recovery used by lock-screen Resume; do not seek the
+        // stale player or mutate a user-owned audio file.
+        if let currentTrackID, let library,
+           library.song(with: currentTrackID) == nil {
+            relay.invalidatePendingCompletions()
+            positionTimer?.invalidate()
+            positionTimer = nil
+            cancelFade()
+            audioPlayer?.stop()
+            audioPlayer = nil
+            isPlaying = false
+            failedTrackID = nil
+            failedPlaybackOrder = nil
+            interruptionState.cancelResume()
+            advance(automatically: true)
+            return
+        }
         // A decode failure can leave an AVAudioPlayer allocated but unable to
         // decode any more frames. Seeking its clock would appear successful
         // while the listener still hears silence. Reopen the catalog-owned
