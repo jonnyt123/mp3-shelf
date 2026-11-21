@@ -1671,8 +1671,7 @@ struct MusicTrackRow: View {
                                    library.playlists.first(where: { $0.id == list.id })?.trackIDs.contains(track.id) == true {
                                     playbackNotice = "Added \(currentTrack.title) to \(currentPlaylist.name)."
                                 } else {
-                                    playbackNotice = library.libraryStorageError
-                                        ?? "Could not add the song to this playlist. Review the library and retry."
+                                    playbackNotice = "Could not add the song to this playlist. Review the library and retry."
                                 }
                             } label: {
                                 Label(list.name,
@@ -2086,8 +2085,7 @@ struct PlaylistsView: View {
             revealPlaylists()
             playlistActionFeedback = "Created \(copy.name)."
         } else {
-            playlistActionFeedback = library.libraryStorageError
-                ?? "Could not copy this playlist. Your existing playlists were preserved."
+            playlistActionFeedback = "Could not copy this playlist. Your existing playlists were preserved."
         }
     }
 
@@ -2114,8 +2112,7 @@ struct PlaylistsView: View {
         }
         library.deletePlaylist(requested.id)
         if library.playlists.contains(where: { $0.id == requested.id }) {
-            playlistActionFeedback = library.libraryStorageError
-                ?? "Could not delete this playlist. Your existing playlists were preserved."
+            playlistActionFeedback = "Could not delete this playlist. Your existing playlists were preserved."
         } else {
             revealPlaylists()
             playlistActionFeedback = "Deleted \(requested.name). Your songs remain in your library."
@@ -2239,8 +2236,7 @@ struct PlaylistsView: View {
                     playlistActionFeedback = "Created \(name)."
                 } else {
                     failedPlaylistEdit = .create
-                    playlistActionFeedback = library.libraryStorageError
-                        ?? "Could not create this playlist. Your existing playlists were preserved."
+                    playlistActionFeedback = "Could not create this playlist. Your existing playlists were preserved."
                 }
             }
             .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || library.isImporting)
@@ -2289,8 +2285,7 @@ struct PlaylistsView: View {
                             playlistActionFeedback = "Renamed playlist to \(name)."
                         } else {
                             failedPlaylistEdit = .rename(id: current.id)
-                            playlistActionFeedback = library.libraryStorageError
-                                ?? "Could not rename this playlist. Its previous name was preserved."
+                            playlistActionFeedback = "Could not rename this playlist. Its previous name was preserved."
                         }
                     }
                 }
