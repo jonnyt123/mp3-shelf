@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import {strict as assert} from 'node:assert';
 import {evaluateAgentHealth,safeJSON} from './mac-agent-health.mjs';
-import {mkdtempSync,writeFileSync,symlinkSync,linkSync,appendFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,symlinkSync,linkSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const root='/Users/example/mp3-shelf';
