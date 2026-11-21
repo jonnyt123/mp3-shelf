@@ -253,6 +253,50 @@ for (index, prior) in [Data("older-corrupt-journal".utf8), Data()].enumerated() 
         }
     }
 }
+// A quarantine destination may be a symbolic link into another directory.
+// Recovery must neither follow that link nor replace its target, even when
+// a second corrupt manifest is present. The active journal and staged audio
+// must remain available for an explicit retry after the collision is fixed.
+let linkDir = dir.appendingPathComponent("symlink-collision", isDirectory: true)
+try fm.createDirectory(at: linkDir, withIntermediateDirectories: true)
+let linkActive = linkDir.appendingPathComponent("tickets.json")
+let linkQuarantine = linkDir.appendingPathComponent("tickets.corrupt")
+let linkAudio = linkDir.appendingPathComponent("recording.mp3")
+let externalEvidence = dir.appendingPathComponent("external-evidence")
+let externalBytes = Data("prior-evidence-must-survive".utf8)
+let linkBytes = Data("{invalid-ticket-manifest".utf8)
+try externalBytes.write(to: externalEvidence, options: .atomic)
+try linkBytes.write(to: linkActive, options: .atomic)
+try audio.write(to: linkAudio, options: .atomic)
+try fm.createSymbolicLink(at: linkQuarantine, withDestinationURL: externalEvidence)
+do {
+    _ = try quarantineFixture(linkBytes, in: linkDir)
+    fatalError("FAIL: quarantine followed or replaced a symlink destination")
+} catch {
+    guard try Data(contentsOf: externalEvidence) == externalBytes,
+          try Data(contentsOf: linkActive) == linkBytes,
+          try Data(contentsOf: linkAudio) == audio else {
+        fatalError("FAIL: symlink collision changed external evidence or active ownership")
+    }
+    let attributes = try fm.attributesOfItem(atPath: linkQuarantine.path)
+    guard (attributes[.type] as? FileAttributeType) == .typeSymbolicLink else {
+        fatalError("FAIL: recovery replaced an existing quarantine symlink")
+    }
+}
+// A caller can safely retry after removing only the known symlink. It must
+// not delete the target evidence or the audio while clearing the collision.
+try fm.removeItem(at: linkQuarantine)
+guard try Data(contentsOf: externalEvidence) == externalBytes else {
+    fatalError("FAIL: removing quarantine link deleted external evidence")
+}
+let recovered = try quarantineFixture(linkBytes, in: linkDir)
+guard !fm.fileExists(atPath: linkActive.path),
+      try Data(contentsOf: recovered) == linkBytes,
+      try Data(contentsOf: externalEvidence) == externalBytes,
+      try Data(contentsOf: linkAudio) == audio else {
+    fatalError("FAIL: safe retry did not preserve all ownership evidence")
+}
+
 // Model a crash after quarantine but before the replacement manifest is
 // committed. Restart must not interpret the missing active manifest as proof
 // that the queued transfers finished, or destroy the only remaining journal.
