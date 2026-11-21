@@ -48,14 +48,14 @@ func checksBarrier(_ body: String, _ name: String) -> Bool {
     // Remove line/block comments before matching: a commented-out guard must
     // never allow a corrupt ticket journal to pass the release contract.
     let withoutBlocks = body.replacingOccurrences(
-        of: #"/\\*[\\s\\S]*?\\*/"#, with: " ", options: .regularExpression)
+        of: #"/\*[\s\S]*?\*/"#, with: " ", options: .regularExpression)
     let executable = withoutBlocks.replacingOccurrences(
-        of: #"(?m)//[^\\n]*"#, with: " ", options: .regularExpression)
+        of: #"(?m)//[^\n]*"#, with: " ", options: .regularExpression)
     let escapedName = NSRegularExpression.escapedPattern(for: name)
     let patterns = [
-        #"\\bguard\\s+!"# + escapedName + #"\\s+else\\s*\\{\\s*return\\b"#,
-        #"\\bguard\\s+"# + escapedName + #"\\s*==\\s*false\\s+else\\s*\\{\\s*return\\b"#,
-        #"\\bif\\s+"# + escapedName + #"\\s*(?:==\\s*true)?\\s*\\{\\s*return\\b"#
+        #"\bguard\s+!"# + escapedName + #"\s+else\s*\{\s*return\b"#,
+        #"\bguard\s+"# + escapedName + #"\s*==\s*false\s+else\s*\{\s*return\b"#,
+        #"\bif\s+"# + escapedName + #"\s*(?:==\s*true)?\s*\{\s*return\b"#
     ]
     return patterns.contains {
         executable.range(of: $0, options: .regularExpression) != nil
@@ -74,7 +74,9 @@ for name in barrierNames {
           !checksBarrier("let flag = \(name)", name),
           !checksBarrier("// guard !\(name) else { return }", name),
           !checksBarrier("/* if \(name) { return } */", name),
-          !checksBarrier("if \(name) { logOnly() }", name) else {
+          !checksBarrier("if \(name) { logOnly() }", name),
+          !checksBarrier("if \(name) { /* return */ logOnly() }", name),
+          !checksBarrier("if unrelatedFlag { return }; let \(name) = false", name) else {
         fatalError("FAIL: barrier source-contract mutation controls failed")
     }
 }
