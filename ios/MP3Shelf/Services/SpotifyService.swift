@@ -325,6 +325,7 @@ final class SpotifyService: NSObject, ObservableObject {
         var authorizationRetries = 0
         var rateLimitRetries = 0
         var transientServerRetries = 0
+        var transientTransportRetries = 0
         while true {
             try Task.checkCancellation()
             // ensureValidToken(), a 401 refresh, or a 429 sleep may suspend
@@ -335,7 +336,22 @@ final class SpotifyService: NSObject, ObservableObject {
             var request = URLRequest(url: url)
             request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 30
-            let (data, response) = try await apiSession.data(for: request)
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await apiSession.data(for: request)
+            } catch {
+                // A lost connection during playlist pagination must not discard
+                // an entire import on its first transient transport failure.
+                // Only idempotent metadata GETs use this bounded retry path.
+                // Never retry cancellation, TLS failures or other security errors.
+                guard !Task.isCancelled,
+                      transientTransportRetries < 2,
+                      SpotifyTransportRetryPolicy.isTransient(error) else { throw error }
+                transientTransportRetries += 1
+                try await Task.sleep(nanoseconds: UInt64(transientTransportRetries) * 1_000_000_000)
+                continue
+            }
             try Task.checkCancellation()
             guard generation == authorizationGeneration, self.token != nil else { throw SpotifyError.notConnected }
             guard let response = response as? HTTPURLResponse else { throw SpotifyError.api("No HTTP response.") }
@@ -821,5 +837,22 @@ private final class SpotifyAPIRedirectGuard: NSObject, URLSessionTaskDelegate {
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
+    }
+}
+
+ 
+// Explicitly enumerate recoverable URLSession transport errors. A blanket
+// URLError retry would also replay certificate, authentication and policy
+// failures, hiding permanent failures behind repeated network requests.
+enum SpotifyTransportRetryPolicy {
+    static func isTransient(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .timedOut, .networkConnectionLost, .cannotConnectToHost,
+             .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet:
+            return true
+        default:
+            return false
+        }
     }
 }
