@@ -230,6 +230,14 @@ enum SourceDiscoveryJobTests {
                         "a usable fallback proceeds despite a primary lookup timeout")
         verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(nil, hasCandidates: false) == nil,
                         "a healthy search with no matches remains a genuine unavailable result")
+        let wrappedCancelledLookup = NSError(domain: "MP3Shelf.CatalogAdapter", code: 1,
+            userInfo: [NSUnderlyingErrorKey: URLError(.cancelled) as NSError])
+        verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(
+            wrappedCancelledLookup, hasCandidates: false) == nil,
+            "wrapped cancelled lookup is not rescheduled as a transient outage")
+        verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(
+            wrappedCancelledLookup, hasCandidates: true) == nil,
+            "cancelled lookup cannot override already available candidates")
         verifyDiscovery(SourceLookupRetryPolicy.failureToRetry(
             ClassifiedLookupFailure(shouldRetrySourceLookup: true), hasCandidates: false) != nil &&
                         SourceLookupRetryPolicy.failureToRetry(
