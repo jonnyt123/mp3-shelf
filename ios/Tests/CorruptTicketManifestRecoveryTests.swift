@@ -15,8 +15,25 @@ let initializer = String(source[begin.lowerBound..<end.upperBound])
 // Malformed persisted tickets must not be interpreted as an empty queue:
 // reconciliation can otherwise discard ownership evidence. Require explicit
 // failure handling and a quarantine or checkpoint recovery strategy.
-let hasFailureBranch = initializer.contains("catch ") || initializer.contains("else {")
-let hasRecovery = initializer.contains("quarantine") || initializer.contains("checkpoint") || initializer.contains("recoverCorrupt")
+// Comments and string literals cannot establish a recovery contract.
+func executableSwift(_ text: String) -> String {
+    let patterns = [
+        #"/\*[\s\S]*?\*/"#,
+        #"(?m)//[^\n]*"#,
+        #""(?:\\.|[^"\\])*""#
+    ]
+    return patterns.reduce(text) { result, pattern in
+        result.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+    }
+}
+let executableInit = executableSwift(initializer)
+let hasFailureBranch = executableInit.range(
+    of: #"\b(?:catch|else)\s*\{"#, options: .regularExpression) != nil
+let recoveryNames = ["quarantine", "checkpoint", "recoverCorrupt"]
+let hasRecovery = recoveryNames.contains { name in
+    executableInit.range(of: #"\b"# + name + #"\w*\s*\("#,
+                         options: .regularExpression) != nil
+}
 // Recovery without a persistent write barrier still allows a subsequent
 // persist() to replace the only corrupt ticket evidence with an empty queue.
 // Merely declaring a flag is insufficient: persistence must actually consult
@@ -64,6 +81,27 @@ func checksBarrier(_ body: String, _ name: String) -> Bool {
 let hasWriteBarrier = barrierNames.contains { name in
     source.contains(name) && checksBarrier(persistBody, name)
 }
+// Inert recovery mentions must not satisfy the source contract.
+for inert in [
+    "else { /* quarantineCorrupt() */ }",
+    #"else { let note = "quarantineCorrupt()" }"#,
+    "else { return } // checkpointRecovery()",
+    "catch { logOnly() }"
+] {
+    let clean = executableSwift(inert)
+    let fakeRecovery = recoveryNames.contains { name in
+        clean.range(of: #"\b"# + name + #"\w*\s*\("#,
+                    options: .regularExpression) != nil
+    }
+    guard !fakeRecovery else {
+        fatalError("FAIL: inert recovery text passed mutation control")
+    }
+}
+guard executableSwift("else { quarantineCorruptManifest() }")
+    .contains("quarantineCorruptManifest()") else {
+    fatalError("FAIL: executable recovery was stripped")
+}
+
 // Mutation controls: unrelated mentions, negated guards without an else,
 // and unrelated flags must never satisfy the production write-barrier gate.
 for name in barrierNames {
