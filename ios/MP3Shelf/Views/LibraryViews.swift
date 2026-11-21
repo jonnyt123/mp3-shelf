@@ -1651,13 +1651,29 @@ struct MusicTrackRow: View {
                                       currentPlaylist.missingTracks == list.missingTracks,
                                       let currentTrack = library.tracks.first(where: { $0.id == track.id }),
                                       library.tracks.filter({ $0.id == track.id }).count == 1,
-                                      library.fileURL(for: currentTrack) == library.fileURL(for: track)
+                                      library.fileURL(for: currentTrack) == library.fileURL(for: track),
+                                      scenePhase == .active,
+                                      !importBlocked
                                 else {
-                                    recoveryReason = "The library changed while choosing a playlist. Reopen the menu to select the current recording and destination."
+                                    recoveryReason = "The library or app state changed while choosing a playlist. Return to MP3 Shelf and reopen the menu to select the current recording and destination."
                                     missingRecordingAlert = true
                                     return
                                 }
+                                // An already-saved song is not a new addition.
+                                // Tell the user what happened rather than silently closing
+                                // the menu, especially when using VoiceOver.
+                                if currentPlaylist.trackIDs.contains(track.id) {
+                                    playbackNotice = "\(currentTrack.title) is already in \(currentPlaylist.name)."
+                                    return
+                                }
                                 library.addTrack(track.id, to: list.id)
+                                if library.playlists.filter({ $0.id == list.id }).count == 1,
+                                   library.playlists.first(where: { $0.id == list.id })?.trackIDs.contains(track.id) == true {
+                                    playbackNotice = "Added \(currentTrack.title) to \(currentPlaylist.name)."
+                                } else {
+                                    playbackNotice = library.libraryStorageError
+                                        ?? "Could not add the song to this playlist. Review the library and retry."
+                                }
                             } label: {
                                 Label(list.name,
                                       systemImage: matchingCount == 1 ? "text.badge.plus" : "exclamationmark.triangle")
