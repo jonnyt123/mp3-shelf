@@ -19,6 +19,9 @@ func assessCallbacks(_ events: [CallbackEvent], session: String, installedCommit
         ($0.task == nil || !$0.task!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }) else {
         return .invalidEvidence
     }
+    let knownKinds: Set<String> = ["auditArmed", "osBackgroundWake", "urlSessionCompletion", "durableStaging"]
+    guard scoped.allSatisfy({ knownKinds.contains($0.kind) &&
+        (($0.kind == "auditArmed") == ($0.task == nil)) }) else { return .invalidEvidence }
     let arms = scoped.filter { $0.kind == "auditArmed" && $0.task == nil }
     guard !arms.isEmpty else { return .missingArm }
     let wakes = scoped.filter { $0.kind == "osBackgroundWake" && $0.task != nil }
@@ -68,7 +71,10 @@ expectCallback([arm] + [good[0], good[1], event("durableStaging", time: 19)], .i
 expectCallback([arm] + [good[0], event("urlSessionCompletion", time: 20, session: "old"), good[2]], .missingCompletion, "old session")
 expectCallback([arm] + [good[0], event("urlSessionCompletion", time: 20, source: "mock"), good[2]], .invalidEvidence, "mock callback")
 expectCallback([arm] + good, .invalidEvidence, "unverified SHA", sha: "stale")
-expectCallback([arm] + good, .missingWake, "wrong session", session: "s2")
+expectCallback([arm] + good + [event("unexpectedCallback", time: 40)], .invalidEvidence, "unknown event kind")
+expectCallback([arm] + good + [CallbackEvent(kind: "durableStaging", session: "s1", process: "p1", task: nil, time: 40, source: "production")], .invalidEvidence, "staging missing task")
+expectCallback([arm] + good + [CallbackEvent(kind: "auditArmed", session: "s1", process: "p2", task: "t2", time: 6, source: "production")], .invalidEvidence, "malformed arm")
+expectCallback([arm] + good, .missingArm, "wrong session", session: "s2")
 // Equal timestamps cannot establish event order; blank identities cannot correlate.
 expectCallback([arm] + [good[0], event("urlSessionCompletion", time: 10), good[2]], .invalidEvidence, "simultaneous wake/callback")
 expectCallback([arm] + [good[0], good[1], event("durableStaging", time: 20)], .invalidEvidence, "simultaneous callback/stage")
@@ -83,4 +89,4 @@ for index in 0..<128 {
     expectCallback([arm] + good + [noise], .verified, "unrelated session noise \(index)")
     expectCallback([arm] + wrongTask + [noise], .invalidEvidence, "noise cannot repair task mismatch \(index)")
 }
-print("PASS: 20 deterministic correlation cases and 256 cross-session noise assertions; fixture only")
+print("PASS: strict callback correlation cases and 256 cross-session noise assertions; fixture only")
