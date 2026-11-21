@@ -489,10 +489,16 @@ enum AudioSourceFinder {
     // A short page before the reported total is exhausted may indicate a
     // truncated index response. Treat it as incomplete, not a final page.
     static func archivePageComplete(page: Int, rows: Int, reportedTotal: Int?) -> Bool {
-        guard page > 0, rows >= 0, rows <= 20 else { return false }
-        guard let reportedTotal else { return rows < 20 }
+        // An index with no authoritative total cannot establish that the
+        // returned rows exhaust all recording versions. Never treat a short
+        // uncounted page as proof of a unique automatic download.
+        guard page > 0, page <= maxArchiveSearchPages,
+              rows >= 0, rows <= 20,
+              let reportedTotal, reportedTotal >= 0 else { return false }
         let preceding = (page - 1) * 20
         guard reportedTotal >= preceding + rows else { return false }
+        // A short nonfinal page may hide a competing live/remix/remaster.
+        // The index must return exactly the number of rows it claims.
         return rows == min(20, max(0, reportedTotal - preceding))
     }
 
