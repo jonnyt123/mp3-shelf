@@ -1517,30 +1517,12 @@ struct MusicTrackRow: View {
             guard playable.count == queueSnapshot.count,
                   context.map({ RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) }) == requestedQueue,
                   let currentTrack = library.tracks.first(where: {
-                      $0.id == track.id && library.fileURL(for: $0) == selectedURL
+                      $0.id == track.id && library.fileURL(for: $0) == selectedURL &&
+                      $0.title == track.title && $0.artist == track.artist &&
+                      $0.album == track.album && $0.duration == track.duration
                   }) else {
                 audioAvailability = false
                 recoveryReason = "The song or its location changed while checking offline audio. Retry to use the current library."
-                missingRecordingAlert = true
-                return
-            }
-            // A restored library may reuse both UUID and URL. Never start
-            // playback using an old row's metadata or a changed queue entry.
-            guard context.count == queueMetadata.count,
-                  context.indices.allSatisfy({ index in
-                      let entry = context[index]
-                      let metadata = queueMetadata[index]
-                      return entry.title == metadata.0 &&
-                          entry.artist == metadata.1 &&
-                          entry.album == metadata.2 &&
-                          entry.duration == metadata.3
-                  }),
-                  currentTrack.title == track.title,
-                  currentTrack.artist == track.artist,
-                  currentTrack.album == track.album,
-                  currentTrack.duration == track.duration else {
-                audioAvailability = false
-                recoveryReason = "The recording details changed during playback preparation. Reopen the current song and try again."
                 missingRecordingAlert = true
                 return
             }
@@ -1595,6 +1577,14 @@ struct MusicTrackRow: View {
                 guard let current = currentByLocation[
                     RecordingLocationKey(id: entry.id, url: originalURL)
                 ] else {
+                    changedRecording = true
+                    break
+                }
+                let metadata = queueMetadata[index]
+                guard current.title == metadata.0,
+                      current.artist == metadata.1,
+                      current.album == metadata.2,
+                      current.duration == metadata.3 else {
                     changedRecording = true
                     break
                 }
