@@ -304,6 +304,29 @@ final class PlaybackController: NSObject, ObservableObject {
         updateNowPlaying()
     }
 
+    /// Retire an open decoder whose selected track has been removed from the
+    /// catalog. AVAudioPlayer may keep playing an unlinked file descriptor.
+    /// The queue is advanced only after retiring the orphan, so lock-screen
+    /// state and the playback clock cannot continue advertising deleted audio.
+    /// Returns true when the caller must stop using its previous player.
+    @discardableResult
+    private func recoverDeletedCurrentTrack() -> Bool {
+        guard let currentTrackID, let library,
+              library.song(with: currentTrackID) == nil else { return false }
+        relay.invalidatePendingCompletions()
+        positionTimer?.invalidate()
+        positionTimer = nil
+        cancelFade()
+        audioPlayer?.stop()
+        audioPlayer = nil
+        isPlaying = false
+        failedTrackID = nil
+        failedPlaybackOrder = nil
+        interruptionState.cancelResume()
+        advance(automatically: true)
+        return true
+    }
+
     func resume() {
         relay.invalidatePendingCompletions()
         interruptionState.cancelResume()
@@ -320,20 +343,7 @@ final class PlaybackController: NSObject, ObservableObject {
         // that no longer belongs to the library (including from lock screen).
         // Recover through the queue instead, using the same bounded candidate
         // selection as automatic completion. Never reopen the orphaned file.
-        if let currentTrackID, library?.song(with: currentTrackID) == nil {
-            relay.invalidatePendingCompletions()
-            positionTimer?.invalidate()
-            positionTimer = nil
-            cancelFade()
-            audioPlayer.stop()
-            self.audioPlayer = nil
-            isPlaying = false
-            failedTrackID = nil
-            failedPlaybackOrder = nil
-            interruptionState.cancelResume()
-            advance(automatically: true)
-            return
-        }
+        if recoverDeletedCurrentTrack() { return }
         // A decode-error delegate leaves the old AVAudioPlayer allocated but
         // unusable. Reopen the recording on retry so a repaired/reimported file
         // is actually read. A failed manual selection is different: its ID is
@@ -387,21 +397,7 @@ final class PlaybackController: NSObject, ObservableObject {
         // progress for that orphaned recording. Reconcile through the same
         // bounded queue recovery used by lock-screen Resume; do not seek the
         // stale player or mutate a user-owned audio file.
-        if let currentTrackID, let library,
-           library.song(with: currentTrackID) == nil {
-            relay.invalidatePendingCompletions()
-            positionTimer?.invalidate()
-            positionTimer = nil
-            cancelFade()
-            audioPlayer?.stop()
-            audioPlayer = nil
-            isPlaying = false
-            failedTrackID = nil
-            failedPlaybackOrder = nil
-            interruptionState.cancelResume()
-            advance(automatically: true)
-            return
-        }
+        if recoverDeletedCurrentTrack() { return }
         // A decode failure can leave an AVAudioPlayer allocated but unable to
         // decode any more frames. Seeking its clock would appear successful
         // while the listener still hears silence. Reopen the catalog-owned
@@ -674,6 +670,12 @@ final class PlaybackController: NSObject, ObservableObject {
                 guard let self, let observedPlayer, timer.isValid,
                       self.positionTimer === timer,
                       self.isPlaying, self.audioPlayer === observedPlayer else { return }
+                // Library repair or deletion can remove a catalog entry while
+                // the decoder is actively playing. The open file descriptor
+                // may remain audible indefinitely without this check.
+                // Never publish another clock tick or begin a crossfade from
+                // an orphaned player; recover through the surviving queue.
+                if self.recoverDeletedCurrentTrack() { return }
                 let player = observedPlayer
                 self.currentTime = player.currentTime
                 if self.isPlaying && self.playbackError == nil && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
