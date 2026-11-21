@@ -304,3 +304,20 @@ test('oversized and nonregular readiness evidence fail closed without state chan
   assert.equal(existsSync(x.state),false);
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
+
+test('a growing readiness snapshot is rejected rather than trusting its prefix',()=>{
+ const x=dir(),sent=[];
+ try{
+  const base=JSON.stringify(model());
+  writeFileSync(x.latest,base);
+  assert.equal(deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+   send:m=>sent.push(m)}).status,'BASELINE_SAVED');
+  // A complete JSON prefix followed by bytes is not a valid evidence record.
+  // The bounded reader must not treat only the original prefix as authoritative.
+  writeFileSync(x.latest,base+'\\n'+JSON.stringify(model({native:'PASS'})));
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now:now+1000,
+   platform:'darwin',send:m=>sent.push(m)}),/Missing latest/);
+  assert.deepEqual(sent,[]);
+  assert.equal(JSON.parse(readFileSync(x.state,'utf8')).gates.native,'UNVERIFIED');
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
