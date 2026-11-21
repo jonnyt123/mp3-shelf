@@ -855,6 +855,22 @@ enum AudioSourceFinderTests {
                ccMixterMatches?.first?.sourceName == "ccMixter" &&
                ccMixterMatches?.first?.downloadURL.pathExtension == "mp3",
                "ccMixter RSS exact recording with declared CC license is eligible")
+        // Publisher RSS can include inline markup inside metadata. The
+        // recording identity must survive nested parser callbacks without
+        // becoming a false unavailable result or a different title.
+        let nestedMetadataFeed = ccMixterFeed
+            .replacingOccurrences(of: "<title>The Song</title>",
+                                  with: "<title>The <span>Song</span></title>")
+            .replacingOccurrences(of: "<dc:creator>The Artist</dc:creator>",
+                                  with: "<dc:creator>The <span>Artist</span></dc:creator>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(nestedMetadataFeed.utf8), matching: wish)?.count == 1,
+               "nested RSS markup preserves exact title and artist metadata")
+        let nestedWrongVersionFeed = nestedMetadataFeed.replacingOccurrences(
+            of: "<span>Song</span>", with: "<span>Song (Live)</span>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(nestedWrongVersionFeed.utf8), matching: wish)?.isEmpty == true,
+               "nested alternate edition cannot become an automatic match")
         verify(AudioSourceFinder.ccMixterCandidates(
             in: Data("not xml".utf8), matching: wish) == nil,
                "malformed publisher RSS cannot create any MP3 candidates")
