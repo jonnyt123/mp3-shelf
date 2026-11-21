@@ -780,6 +780,21 @@ struct LibraryView: View {
         guard scenePhase == .active, !audioImportBusy, !isSearchUpdating, !bulkPlaybackPending else { return }
         let songs = displayed
         guard !songs.isEmpty else { return }
+        // PlaybackController resolves tracks by UUID. A restored library can
+        // contain duplicate IDs even when the visible results show only one of
+        // them (for example under Favorites or a search query). Fail before
+        // starting filesystem work; otherwise the scan may eventually queue an
+        // ambiguous recording or leave the listener waiting unnecessarily.
+        let allIDs = library.tracks.map(\.id)
+        guard Set(allIDs).count == allIDs.count else {
+            bulkRetryShuffle = nil
+            bulkSkippedRecordingCount = 0
+            partialQueueShuffle = nil
+            partialQueueNeedsRefresh = false
+            playbackSelectionSnapshot = nil
+            bulkPlaybackNotice = "Duplicate recording identities were found in your library. Resolve the duplicates before playing."
+            return
+        }
         // A search, filter, sort or library edit during disk I/O invalidates
         // the requested results. Never start playback from an obsolete snapshot.
         let requestedQuery = settledSearchText
