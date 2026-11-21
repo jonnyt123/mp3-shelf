@@ -2381,11 +2381,18 @@ struct PlaylistsView: View {
     }
 
     private func playlistGrid(_ playlists: [MusicPlaylist]) -> some View {
-        LazyVGrid(columns: columns, spacing: 13) {
+        // Compute identity conflicts once for the entire restored library.
+        // Filtering can hide a duplicate, so counting visible results alone
+        // would incorrectly enable destructive actions on an ambiguous ID.
+        // Avoid rescanning every playlist for every visible card (O(n²)).
+        let identityCounts = library.playlists.reduce(into: [UUID: Int]()) { counts, playlist in
+            counts[playlist.id, default: 0] += 1
+        }
+        return LazyVGrid(columns: columns, spacing: 13) {
             // Use the visible position as identity: restored archives can contain
             // duplicate playlist UUIDs, which otherwise break SwiftUI diffing.
             ForEach(Array(playlists.enumerated()), id: \.offset) { index, list in
-                if uniquePlaylist(withID: list.id) == nil {
+                if identityCounts[list.id] != 1 {
                     VStack(alignment: .leading, spacing: 8) {
                         playlistCard(list, index: index)
                         Label("Duplicate playlist identity. Editing and opening are unavailable until the library is repaired.", systemImage: "exclamationmark.triangle")
