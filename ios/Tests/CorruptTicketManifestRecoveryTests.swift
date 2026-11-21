@@ -45,11 +45,11 @@ let persistBody = functionBody("private func persist()") ??
 // Swift string interpolation must be evaluated: a literal backslash-name
 // pattern would make every valid guard fail the regression.
 func checksBarrier(_ body: String, _ name: String) -> Bool {
-    let compact = body.replacingOccurrences(of: #"\\s+"#, with: " ", options: .regularExpression)
-    return compact.contains("guard !\\(name) else") ||
-           compact.contains("guard \\(name) == false else") ||
-           compact.contains("if \\(name) { return") ||
-           compact.contains("if \\(name) == true { return")
+    let compact = body.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    return compact.contains("guard !\(name) else") ||
+           compact.contains("guard \(name) == false else") ||
+           compact.contains("if \(name) { return") ||
+           compact.contains("if \(name) == true { return")
 }
 let hasWriteBarrier = barrierNames.contains { name in
     source.contains(name) && checksBarrier(persistBody, name)
@@ -57,11 +57,11 @@ let hasWriteBarrier = barrierNames.contains { name in
 // Mutation controls: unrelated mentions, negated guards without an else,
 // and unrelated flags must never satisfy the production write-barrier gate.
 for name in barrierNames {
-    guard checksBarrier("guard !\\(name) else { return }", name),
-          checksBarrier("if \\(name) { return }", name),
-          !checksBarrier("// guard !\\(name) else { return }", "unrelatedFlag"),
+    guard checksBarrier("guard !\(name) else { return }", name),
+          checksBarrier("if \(name) { return }", name),
+          !checksBarrier("// guard !\(name) else { return }", "unrelatedFlag"),
           !checksBarrier("if unrelatedFlag { return }", name),
-          !checksBarrier("let flag = \\(name)", name) else {
+          !checksBarrier("let flag = \(name)", name) else {
         fatalError("FAIL: barrier source-contract mutation controls failed")
     }
 }
