@@ -61,6 +61,23 @@ enum AudioSourceFinderTests {
                "Commons continuation prevents first-page automatic selection")
         verify(!AudioSourceFinder.commonsSearchComplete(commonsMalformed),
                "malformed Commons page cannot authorize a recording")
+        // Dated live takes and re-recordings must not silently cross-match.
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Live 2019).mp3", requestedTitle: "The Song (Live 2021)"),
+            "different live performance years require review")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Live 2019).mp3", requestedTitle: "The Song (Live)"),
+            "undated live request cannot authorize a dated take")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Live 2019).mp3", requestedTitle: "The Song (Live 2019)"),
+            "matching dated live recording remains eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "1999 (Live).mp3", requestedTitle: "1999 (Live)"),
+            "ordinary numeric song title does not become a conflicting edition")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Re-recorded 2022).mp3",
+            requestedTitle: "The Song (Re-recorded 2024)"),
+            "different dated re-recordings require review")
         let wish = PlaylistWish(title: "The Song", artist: "The Artist",
                                 album: "The Album", spotifyURL: nil, durationSeconds: 212)
         // Single-file Archive items often hide a different recording edition
