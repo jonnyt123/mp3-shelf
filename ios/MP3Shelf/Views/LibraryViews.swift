@@ -1631,10 +1631,25 @@ struct MusicTrackRow: View {
                             Button {
                                 // Revalidate at tap time: imports and restores can
                                 // change identities while the menu is presented.
+                                // The menu can remain open across a library restore.
+                                // Recheck both the recording's on-disk identity and
+                                // the destination snapshot before mutating user data.
+                                // A reused UUID must never authorize a different
+                                // recording or a replacement playlist.
                                 guard !library.isImporting,
+                                      let currentPlaylist = library.playlists.first(where: { $0.id == list.id }),
                                       library.playlists.filter({ $0.id == list.id }).count == 1,
-                                      library.tracks.filter({ $0.id == track.id }).count == 1
-                                else { return }
+                                      currentPlaylist.name == list.name,
+                                      currentPlaylist.trackIDs == list.trackIDs,
+                                      currentPlaylist.missingTracks == list.missingTracks,
+                                      let currentTrack = library.tracks.first(where: { $0.id == track.id }),
+                                      library.tracks.filter({ $0.id == track.id }).count == 1,
+                                      library.fileURL(for: currentTrack) == library.fileURL(for: track)
+                                else {
+                                    recoveryReason = "The library changed while choosing a playlist. Reopen the menu to select the current recording and destination."
+                                    missingRecordingAlert = true
+                                    return
+                                }
                                 library.addTrack(track.id, to: list.id)
                             } label: {
                                 Label(list.name,
