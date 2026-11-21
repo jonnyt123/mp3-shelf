@@ -125,6 +125,29 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "The Song - Live.mp3", requestedTitle: "The Song (Live)"),
             "explicit matching live edition remains eligible")
+        // Different masters/takes may share artist, base title and duration.
+        // They must never be silently substituted for the requested recording.
+        for edition in ["Re-recorded", "Rerecorded", "Re Recording",
+                        "Original Mix", "Mono", "Stereo Mix", "Alternate Take", "Alt Take"] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song - \\(edition).mp3", requestedTitle: "The Song"),
+                "alternate master/take is not an automatic studio match: \\(edition)")
+            verify(AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song - \\(edition).mp3",
+                requestedTitle: "The Song (\\(edition))"),
+                "explicit requested master/take remains eligible: \\(edition)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song - Rerecorded.mp3",
+            requestedTitle: "The Song (Re-recorded)"),
+            "equivalent rerecording spelling remains eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song - Alt Take.mp3",
+            requestedTitle: "The Song (Alternate Take)"),
+            "alternate take abbreviations remain equivalent")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Monopoly.mp3", requestedTitle: "Monopoly"),
+            "mono marker must match a whole token")
         // Archive may contain one broken file entry among usable recordings.
         // Preserve the valid original instead of discarding the whole item.
         // One invalid search row must not abort a whole playlist lookup.
