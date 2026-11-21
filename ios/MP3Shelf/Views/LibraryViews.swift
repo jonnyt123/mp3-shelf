@@ -71,6 +71,20 @@ private struct RecordingRowIdentity: Hashable {
     let position: Int
     let id: UUID
     let url: URL
+    let title: String
+    let artist: String
+    let album: String
+    let duration: TimeInterval
+
+    init(position: Int, track: MusicTrack, url: URL) {
+        self.position = position
+        id = track.id
+        self.url = url
+        title = track.title
+        artist = track.artist
+        album = track.album
+        duration = track.duration
+    }
 }
 
 struct LibraryView: View {
@@ -921,7 +935,7 @@ struct LibraryView: View {
                                 ForEach(Array(visibleTracks.enumerated()), id: \.offset) { offset, track in
                                     MusicTrackRow(track: track, context: visibleTracks, importBlocked: audioImportBusy,
                                                   renaming: $renaming)
-                                        .id(RecordingRowIdentity(position: offset, id: track.id,
+                                        .id(RecordingRowIdentity(position: offset, track: track,
                                                                  url: library.fileURL(for: track)))
                                 }
                             }
@@ -1196,7 +1210,7 @@ struct LibraryView: View {
                                 ForEach(Array(visibleTracks.enumerated()), id: \.offset) { offset, track in
                                     MusicTrackRow(track: track, context: visibleTracks, importBlocked: audioImportBusy,
                                                   renaming: $renaming)
-                                        .id(RecordingRowIdentity(position: offset, id: track.id,
+                                        .id(RecordingRowIdentity(position: offset, track: track,
                                                                  url: library.fileURL(for: track)))
                                 }
                             }
