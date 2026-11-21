@@ -310,13 +310,13 @@ final class PlaybackController: NSObject, ObservableObject {
     /// state and the playback clock cannot continue advertising deleted audio.
     /// Returns true when the caller must stop using its previous player.
     @discardableResult
-    private func recoverDeletedCurrentTrack() -> Bool {
+    private func recoverDeletedCurrentTrack(allowAutoplay: Bool = false) -> Bool {
         guard let currentTrackID, let library,
               library.song(with: currentTrackID) == nil else { return false }
         // Library deletion can be discovered from a paused seek or a lock-screen
         // transport command. Recover the queue without unexpectedly starting
         // audio when the listener deliberately paused playback.
-        let shouldRemainPaused = !isPlaying
+        let shouldRemainPaused = !isPlaying && !allowAutoplay
         relay.invalidatePendingCompletions()
         positionTimer?.invalidate()
         positionTimer = nil
@@ -343,7 +343,7 @@ final class PlaybackController: NSObject, ObservableObject {
         // A deleted selection can have no decoder after failed advancement.
         // Reconcile it before the nil-player retry branch so lock-screen Play
         // cannot repeatedly retry an ID absent from the current catalog.
-        if recoverDeletedCurrentTrack() { return }
+        if recoverDeletedCurrentTrack(allowAutoplay: true) { return }
         guard let audioPlayer else {
             if failedTrackID != nil { retryFailedPlayback() }
             return
