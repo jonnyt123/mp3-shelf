@@ -23,6 +23,11 @@ function safeRead(path,max=128*1024){
   // A concurrent writer may grow a file after fstat. Never parse oversized
   // evidence or trust a truncated read as an authoritative gate snapshot.
   if(bytes.length!==st.size||bytes.length>max)return null;
+  // A same-size in-place rewrite can race the read without changing length.
+  // Require the opened inode and its metadata to remain stable throughout.
+  const after=fstatSync(fd);
+  if(after.dev!==st.dev||after.ino!==st.ino||after.size!==st.size||
+     after.mtimeMs!==st.mtimeMs||after.ctimeMs!==st.ctimeMs)return null;
   return JSON.parse(bytes.toString('utf8'));
  }catch{return null;}
  finally{if(fd!==undefined)closeSync(fd);}
