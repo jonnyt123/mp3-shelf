@@ -261,13 +261,7 @@ final class SpotifyService: NSObject, ObservableObject {
                 // redacted track even when a usable legacy "track" envelope
                 // is present. Select the first *usable recording*, rather
                 // than allowing a non-track item to hide a valid fallback.
-                let track = [entry.item, entry.track].compactMap { $0 }.first { candidate in
-                    candidate.type == "track" &&
-                    !candidate.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                    (candidate.artists ?? []).contains {
-                        !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    }
-                }
+                let track = entry.usableTrack
                 guard let track else { continue }
                 // Spotify may return unavailable, partially redacted, or malformed
                 // playlist entries. Never feed missing artist/title identities to
@@ -743,6 +737,40 @@ private struct SpotifyPlaylistItem: Decodable {
     let track: SpotifyTrack?
 
     private enum CodingKeys: String, CodingKey { case item, track }
+
+    // Both Spotify envelope formats can coexist during API migrations.
+    // A contradictory pair must never authorize unattended discovery of
+    // either recording. A malformed/episode envelope still permits fallback.
+    var usableTrack: SpotifyTrack? {
+        func valid(_ candidate: SpotifyTrack?) -> SpotifyTrack? {
+            guard let candidate, candidate.type == "track",
+                  !candidate.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  (candidate.artists ?? []).contains(where: {
+                      !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                  }) else { return nil }
+            return candidate
+        }
+        let primary = valid(item)
+        let legacy = valid(track)
+        guard let primary else { return legacy }
+        guard let legacy else { return primary }
+        func normalized(_ value: String) -> String {
+            value.trimmingCharacters(in: .whitespacesAndNewlines)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        }
+        let primaryArtists = (primary.artists ?? []).map { normalized($0.name) }
+            .filter { !$0.isEmpty }
+        let legacyArtists = (legacy.artists ?? []).map { normalized($0.name) }
+            .filter { !$0.isEmpty }
+        guard normalized(primary.name) == normalized(legacy.name),
+              primaryArtists == legacyArtists,
+              primary.duration_ms == nil || legacy.duration_ms == nil ||
+                  primary.duration_ms == legacy.duration_ms,
+              primary.album?.name == nil || legacy.album?.name == nil ||
+                  normalized(primary.album!.name) == normalized(legacy.album!.name)
+        else { return nil }
+        return primary
+    }
 
     init(from decoder: Decoder) throws {
         // Spotify can return unavailable, deleted or partially redacted
