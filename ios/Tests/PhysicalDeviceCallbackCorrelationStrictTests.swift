@@ -100,4 +100,39 @@ for index in 0..<128 {
     expectCallback([arm] + good + [noise], .verified, "unrelated session noise \(index)")
     expectCallback([arm] + wrongTask + [noise], .invalidEvidence, "noise cannot repair task mismatch \(index)")
 }
-print("PASS: strict callback correlation cases and 256 cross-session noise assertions; fixture only")
+// Audit evidence is transported as JSON. Verify that the policy evaluates decoded
+// records, rejects malformed payloads, and never joins independent process/task
+// streams even when their timestamps and event kinds are identical.
+let encoder = JSONEncoder()
+let decoder = JSONDecoder()
+let encodedEvidence = try encoder.encode([arm] + good)
+let decodedEvidence = try decoder.decode([CallbackEvent].self, from: encodedEvidence)
+expectCallback(decodedEvidence, .verified, "serialized production evidence round-trip")
+for malformed in [
+    Data("{}".utf8),
+    Data("[{\\"kind\\":\\"auditArmed\\"}]".utf8),
+    Data("[null]".utf8),
+    Data("[{\\"kind\\":1}]".utf8)
+] {
+    do {
+        _ = try decoder.decode([CallbackEvent].self, from: malformed)
+        preconditionFailure("malformed audit JSON was decoded as valid evidence")
+    } catch is DecodingError {
+        // Expected: incomplete or incorrectly typed evidence is not admissible.
+    }
+}
+for index in 0..<128 {
+    let task = "foreign-task-\\(index)"
+    let process = "foreign-process-\\(index)"
+    let foreign = [
+        event("osBackgroundWake", process, task: task, time: 11),
+        event("urlSessionCompletion", process, task: task, time: 21),
+        event("durableStaging", process, task: task, time: 31)
+    ]
+    expectCallback([arm] + good + foreign, .verified,
+                   "unrelated complete callback chain cannot break valid evidence \\(index)")
+    let incomplete = [good[0], event("urlSessionCompletion", task: task, time: 20), good[2]]
+    expectCallback([arm] + incomplete + foreign, .invalidEvidence,
+                   "foreign complete chain cannot repair missing matching callback \\(index)")
+}
+print("PASS: strict callback correlation, JSON transport, malformed payload and 512 noise assertions; fixture only")
