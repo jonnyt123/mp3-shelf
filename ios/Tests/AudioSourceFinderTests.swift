@@ -1948,6 +1948,34 @@ enum AudioSourceFinderTests {
             filename: "1999 (Anniversary Edition).mp3",
             requestedTitle: "1999 (Anniversary Edition)"),
             "numeric song title must not trigger a false edition mismatch")
+        // HEAD preflight must not queue a phantom zero-byte object or a
+        // partial representation as a complete recording.
+        let audioProbeURL = URL(string: "https://example.org/Exact%20Song.mp3")!
+        func audioProbe(_ status: Int, _ headers: [String: String]) -> HTTPURLResponse {
+            HTTPURLResponse(url: audioProbeURL, statusCode: status,
+                            httpVersion: nil, headerFields: headers)!
+        }
+        let fullAudio = audioProbe(200, ["Content-Type": "audio/mpeg",
+                                          "Content-Length": "5120000"])
+        verify(AudioLandingPageInspector.isVerifiedAudioResponse(fullAudio),
+               "complete nonempty audio HEAD is eligible for checked download")
+        for status in [204, 206] {
+            verify(!AudioLandingPageInspector.isVerifiedAudioResponse(
+                audioProbe(status, ["Content-Type": "audio/mpeg",
+                                    "Content-Length": "1024"])),
+                "partial or bodyless audio HEAD cannot schedule an automatic download")
+        }
+        verify(!AudioLandingPageInspector.isVerifiedAudioResponse(
+            audioProbe(200, ["Content-Type": "audio/mpeg", "Content-Length": "0"])),
+            "empty audio object cannot become a queued recording")
+        verify(!AudioLandingPageInspector.isVerifiedAudioResponse(
+            audioProbe(200, ["Content-Type": "audio/mpeg",
+                             "Content-Length": "5120000",
+                             "Content-Range": "bytes 0-1023/5120000"])),
+            "contradictory partial-content header cannot authorize automatic selection")
+        verify(AudioLandingPageInspector.isVerifiedAudioResponse(
+            audioProbe(200, ["Content-Type": "audio/mpeg"])),
+            "unknown-length complete response may proceed to strict byte validation")
         print("Audio source discovery validation tests passed")
     }
 }
