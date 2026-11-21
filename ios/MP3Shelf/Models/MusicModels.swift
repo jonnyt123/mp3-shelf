@@ -66,13 +66,62 @@ struct LocalAudioRecoveryRecord: Codable {
 
     static func audioDigest(at url: URL) throws -> String? {
         #if canImport(CryptoKit)
+        // Bind the digest to one unchanged, ordinary file. A pathname may be
+        // replaced or a hard-linked recording modified while hashing; hashing
+        // whatever bytes happen to be readable is not integrity evidence.
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
+        func identity() throws -> (stat, stat) {
+            var opened = stat()
+            var named = stat()
+            guard fstat(handle.fileDescriptor, &opened) == 0,
+                  lstat(url.path, &named) == 0,
+                  (opened.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  (named.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  opened.st_dev == named.st_dev,
+                  opened.st_ino == named.st_ino else {
+                throw PortableShelfArchive.ArchiveError.invalidFile
+            }
+            return (opened, named)
+        }
+        func unchanged(_ a: stat, _ b: stat) -> Bool {
+            guard a.st_dev == b.st_dev, a.st_ino == b.st_ino,
+                  a.st_size == b.st_size else { return false }
+            #if canImport(Darwin)
+            return a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec &&
+                a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec &&
+                a.st_ctimespec.tv_sec == b.st_ctimespec.tv_sec &&
+                a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec
+            #else
+            return a.st_mtim.tv_sec == b.st_mtim.tv_sec &&
+                a.st_mtim.tv_nsec == b.st_mtim.tv_nsec &&
+                a.st_ctim.tv_sec == b.st_ctim.tv_sec &&
+                a.st_ctim.tv_nsec == b.st_ctim.tv_nsec
+            #endif
+        }
+        let (before, beforePath) = try identity()
+        guard unchanged(before, beforePath), before.st_size > 0,
+              Int64(before.st_size) <= PortableShelfArchive.maxTrackBytes else {
+            throw PortableShelfArchive.ArchiveError.invalidFile
+        }
         var hasher = SHA256()
-        while true {
-            let chunk = try handle.read(upToCount: 64 * 1024) ?? Data()
-            if chunk.isEmpty { break }
+        var bytesRead: Int64 = 0
+        while bytesRead < Int64(before.st_size) {
+            try Task.checkCancellation()
+            let remaining = Int64(before.st_size) - bytesRead
+            let chunk = try handle.read(upToCount: Int(min(remaining, 64 * 1024))) ?? Data()
+            guard !chunk.isEmpty else {
+                throw PortableShelfArchive.ArchiveError.invalidFile
+            }
+            bytesRead += Int64(chunk.count)
             hasher.update(data: chunk)
+        }
+        guard (try handle.read(upToCount: 1) ?? Data()).isEmpty else {
+            throw PortableShelfArchive.ArchiveError.invalidFile
+        }
+        let (after, afterPath) = try identity()
+        guard unchanged(before, after), unchanged(before, afterPath) else {
+            throw PortableShelfArchive.ArchiveError.invalidFile
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
         #else
