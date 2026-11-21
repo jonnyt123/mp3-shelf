@@ -2089,6 +2089,21 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "8bit.mp3", requestedTitle: "8bit"),
             "a numeric title alone remains a valid exact edition")
+        // Artist-branded re-recordings are distinct masters even when the
+        // normalized title, artist and duration otherwise agree.
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Fearless.mp3", requestedTitle: "Fearless (Taylor's Version)"),
+            "original master cannot replace an artist re-recording")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Fearless (Taylor's Version).mp3", requestedTitle: "Fearless"),
+            "artist re-recording cannot replace the original master")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Fearless (Taylors Version).mp3",
+            requestedTitle: "Fearless (Taylor's Version)"),
+            "punctuation variants of the same artist edition remain eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Fearless.mp3", requestedTitle: "Fearless"),
+            "ordinary original recording remains eligible")
         print("Audio source discovery validation tests passed")
     }
 }
