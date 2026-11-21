@@ -149,6 +149,23 @@ struct LibraryView: View {
         recentPlaybackGeneration = generation
         recentPlaybackCheck = track.id
         let selectedURL = library.fileURL(for: track)
+        // PlaybackController resolves recordings by UUID. Reject duplicate IDs
+        // before scheduling disk work, even when the tapped row has a distinct
+        // file URL. An ambiguous ID must never select another recording.
+        let matches = library.tracks.filter { $0.id == track.id }
+        guard matches.count == 1,
+              matches[0].title == track.title,
+              matches[0].artist == track.artist,
+              matches[0].album == track.album,
+              matches[0].duration == track.duration,
+              library.fileURL(for: matches[0]) == selectedURL else {
+            recentPlaybackGeneration = nil
+            recentPlaybackCheck = nil
+            recentRetrySelection = nil
+            missingRecentRecording = true
+            recentPlaybackNotice = "This song has an ambiguous or outdated recording identity. Choose a current library entry."
+            return
+        }
         recentRetrySelection = RecentRetryIdentity(track, url: selectedURL)
         recentPlaybackNotice = nil
         missingRecentRecording = false
@@ -159,7 +176,12 @@ struct LibraryView: View {
         // Capture the visible metadata before asynchronous file inspection.
         let metadata = recent.map { ($0.title, $0.artist, $0.album, $0.duration) }
         let locations = recent.map { ($0.id, library.fileURL(for: $0)) }
-        guard let selectedIndex = locations.firstIndex(where: { $0.0 == track.id && $0.1 == selectedURL }) else {
+        guard let selectedIndex = recent.indices.first(where: { index in
+            let candidate = recent[index]
+            return candidate.id == track.id && locations[index].1 == selectedURL &&
+                candidate.title == track.title && candidate.artist == track.artist &&
+                candidate.album == track.album && candidate.duration == track.duration
+        }) else {
             recentPlaybackCheck = nil
             recentPlaybackGeneration = nil
             missingRecentRecording = true
@@ -1257,7 +1279,7 @@ struct LibraryView: View {
             }
             Button("OK", role: .cancel) {}
         } message: {
-            Text("The selected recording is unavailable or the Recently Added queue changed. Your library entry is preserved. Retry after restoring the recording.")
+            Text(recentPlaybackNotice ?? "The selected recording is unavailable or the Recently Added queue changed. Your library entry is preserved. Retry after restoring the recording.")
         }
          .onDisappear {
             cancelRecentPlaybackPreparation(showFeedback: false)
