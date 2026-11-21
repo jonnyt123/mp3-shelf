@@ -45,11 +45,21 @@ let persistBody = functionBody("private func persist()") ??
 // Swift string interpolation must be evaluated: a literal backslash-name
 // pattern would make every valid guard fail the regression.
 func checksBarrier(_ body: String, _ name: String) -> Bool {
-    let compact = body.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-    return compact.contains("guard !\(name) else") ||
-           compact.contains("guard \(name) == false else") ||
-           compact.contains("if \(name) { return") ||
-           compact.contains("if \(name) == true { return")
+    // Remove line/block comments before matching: a commented-out guard must
+    // never allow a corrupt ticket journal to pass the release contract.
+    let withoutBlocks = body.replacingOccurrences(
+        of: #"/\\*[\\s\\S]*?\\*/"#, with: " ", options: .regularExpression)
+    let executable = withoutBlocks.replacingOccurrences(
+        of: #"(?m)//[^\\n]*"#, with: " ", options: .regularExpression)
+    let escapedName = NSRegularExpression.escapedPattern(for: name)
+    let patterns = [
+        #"\\bguard\\s+!"# + escapedName + #"\\s+else\\s*\\{\\s*return\\b"#,
+        #"\\bguard\\s+"# + escapedName + #"\\s*==\\s*false\\s+else\\s*\\{\\s*return\\b"#,
+        #"\\bif\\s+"# + escapedName + #"\\s*(?:==\\s*true)?\\s*\\{\\s*return\\b"#
+    ]
+    return patterns.contains {
+        executable.range(of: $0, options: .regularExpression) != nil
+    }
 }
 let hasWriteBarrier = barrierNames.contains { name in
     source.contains(name) && checksBarrier(persistBody, name)
