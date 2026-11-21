@@ -229,6 +229,8 @@ enum LocalAudioImportTransaction {
         try manager.copyItem(at: source, to: staging)
         try validate(staging)
         var journal: URL?
+        var expectedPublishedDigest: String?
+        var expectedPublishedLength: Int64?
         // Retain the intent when an attempted rollback cannot remove the
         // published file. On relaunch the durable journal can safely reattach
         // that recording instead of leaving inaccessible user-owned bytes.
@@ -250,6 +252,8 @@ enum LocalAudioImportTransaction {
                 throw PortableShelfArchive.ArchiveError.oversized
             }
             let digest = try LocalAudioRecoveryRecord.audioDigest(at: staging)
+            expectedPublishedDigest = digest
+            expectedPublishedLength = size
             let record = LocalAudioRecoveryRecord(
                 version: digest == nil ? 1 : 2, track: track,
                 stagingName: staging.lastPathComponent, audioLength: size,
@@ -271,6 +275,22 @@ enum LocalAudioImportTransaction {
         // Never overwrite an earlier recording, even on a filename collision.
         try manager.linkItem(at: staging, to: destination)
         do {
+            // The staged hard link can be modified between validation and
+            // publication. Never commit catalog metadata for bytes that no
+            // longer match the durable recovery intent.
+            if let expectedPublishedLength {
+                let publishedSize = (try manager.attributesOfItem(
+                    atPath: destination.path)[.size] as? NSNumber)?.int64Value
+                guard publishedSize == expectedPublishedLength else {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
+            }
+            if let expectedPublishedDigest {
+                guard try LocalAudioRecoveryRecord.audioDigest(at: destination) ==
+                    expectedPublishedDigest else {
+                    throw PortableShelfArchive.ArchiveError.invalidManifest
+                }
+            }
             try persist()
         } catch {
             // Only this transaction published the destination. A killed process
