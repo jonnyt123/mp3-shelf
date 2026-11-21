@@ -2392,7 +2392,9 @@ struct PlaylistsView: View {
         .background(PremiumBackdrop())
         .searchable(text: $playlistQuery, prompt: "Find playlists")
         .navigationTitle("Playlists")
-        .overlay(alignment: .bottom) {
+        // Reserve space for action feedback instead of covering the final
+        // playlist card or the search keyboard with a floating overlay.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             if let playlistActionFeedback {
                 HStack(spacing: 12) {
                     Text(playlistActionFeedback)
@@ -2422,6 +2424,7 @@ struct PlaylistsView: View {
                 .background(ShelfTheme.background, in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("playlist-action-feedback")
             }
         }
