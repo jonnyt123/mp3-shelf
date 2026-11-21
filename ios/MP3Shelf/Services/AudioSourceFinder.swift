@@ -2290,10 +2290,19 @@ extension AudioSourceFinder {
                     namespaceURI: String?, qualifiedName qName: String?) {
             let field = String(elementName.split(separator: ":").last ?? "").lowercased()
             defer { elementDepth -= 1 }
-            // Only the matching enclosing element commits its text. A nested
-            // <span> or other markup must not clear the active metadata field.
-            guard field == activeField, elementDepth == fieldDepth ||
-                  (field == "item" && current != nil) else { return }
+            // The item boundary is not a metadata field. Finalize it even
+            // when the last metadata field has already closed; otherwise
+            // every well-formed RSS item is silently dropped.
+            if field == "item" {
+                if let entry = current { tracks.append(entry) }
+                current = nil
+                activeField = ""
+                fieldDepth = 0
+                characters = ""
+                return
+            }
+            // Nested markup must not prematurely commit an enclosing field.
+            guard field == activeField, elementDepth == fieldDepth else { return }
             let content = characters.trimmingCharacters(in: .whitespacesAndNewlines)
             if current != nil {
                 switch field {
@@ -2320,9 +2329,6 @@ extension AudioSourceFinder {
                     if !content.isEmpty { current?.landingURL = content }
                 case "license":
                     if !content.isEmpty { current?.licenseURL = content }
-                case "item":
-                    if let entry = current { tracks.append(entry) }
-                    current = nil
                 default: break
                 }
             }
