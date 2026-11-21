@@ -57,8 +57,19 @@ let good = [event("osBackgroundWake"), event("urlSessionCompletion", time: 20),
             event("durableStaging", time: 30)]
 expectCallback([arm] + good, .verified, "ordered cross-process arm/wake/completion/stage")
 expectCallback(good, .missingArm, "unarmed callbacks cannot prove restart")
-expectCallback([event("auditArmed", "p1", time: 5)] + good, .invalidEvidence, "same-process arm cannot prove restart")
-expectCallback([event("auditArmed", "original-process", time: 10)] + good, .invalidEvidence, "arm must precede wake")
+expectCallback([CallbackEvent(kind: "auditArmed", session: "s1", process: "p1", task: nil, time: 5, source: "production")] + good, .invalidEvidence, "valid same-process arm cannot prove restart")
+expectCallback([CallbackEvent(kind: "auditArmed", session: "s1", process: "original-process", task: nil, time: 10, source: "production")] + good, .invalidEvidence, "valid arm at wake timestamp cannot prove restart")
+// Exercise structurally valid audit arms: malformed task-bearing arms are tested separately.
+// A valid arm in the callback process, or one recorded after the wake, must never
+// be accepted as evidence of a cross-process offline relaunch.
+let sameProcessArm = CallbackEvent(kind: "auditArmed", session: "s1", process: "p1", task: nil, time: 5, source: "production")
+let lateArm = CallbackEvent(kind: "auditArmed", session: "s1", process: "previous", task: nil, time: 11, source: "production")
+expectCallback([sameProcessArm] + good, .invalidEvidence, "same-process valid arm is not a restart")
+expectCallback([lateArm] + good, .invalidEvidence, "late valid arm is not a restart")
+expectCallback([arm, sameProcessArm] + good, .verified, "valid independent arm remains sufficient despite same-process arm")
+expectCallback([arm, lateArm] + good, .verified, "later unrelated arm does not invalidate earlier correlated arm")
+expectCallback([arm] + [event("osBackgroundWake", "p2", task: "t2"), good[1], good[2]], .invalidEvidence, "different-process wake cannot borrow callback chain")
+expectCallback([arm] + [event("osBackgroundWake", task: "t2"), good[1], good[2]], .invalidEvidence, "different-task wake cannot borrow callback chain")
 expectCallback([arm] + Array(good.dropFirst()), .missingWake, "missing OS wake")
 expectCallback([arm] + [good[0], good[2]], .missingCompletion, "missing completion")
 expectCallback([arm] + Array(good.prefix(2)), .missingStage, "missing durable stage")
