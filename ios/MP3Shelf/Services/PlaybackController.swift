@@ -201,7 +201,8 @@ final class PlaybackController: NSObject, ObservableObject {
     /// A corrupted or missing file cannot consume shuffle history.
     private func beginPlayback(_ track: MusicTrack, using nextOrder: PlaybackOrder,
                                transition: TimeInterval = 0,
-                               preserveExistingOnFailure: Bool = true) -> Bool {
+                               preserveExistingOnFailure: Bool = true,
+                               startPaused: Bool = false) -> Bool {
         guard let library else { return false }
         // Every entry point (manual selection, queue advance, retry, crossfade)
         // must obey the same catalog ownership check. An open audio file can
@@ -219,7 +220,7 @@ final class PlaybackController: NSObject, ObservableObject {
             guard player.prepareToPlay(), player.duration.isFinite, player.duration > 0 else {
                 throw CocoaError(.fileReadCorruptFile)
             }
-            if transition > 0, let previous = audioPlayer, previous.isPlaying {
+            if !startPaused, transition > 0, let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
                 guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
                 cancelFade()
@@ -229,7 +230,9 @@ final class PlaybackController: NSObject, ObservableObject {
                 startFade(duration: transition, from: previous, to: player)
             } else {
                 player.volume = 1
-                guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
+                if !startPaused {
+                    guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
+                }
                 cancelFade()
                 audioPlayer?.stop()
                 audioPlayer = player
@@ -244,8 +247,13 @@ final class PlaybackController: NSObject, ObservableObject {
             currentTrackID = track.id
             duration = player.duration
             currentTime = 0
-            isPlaying = true
-            startTimer()
+            isPlaying = !startPaused
+            if startPaused {
+                positionTimer?.invalidate()
+                positionTimer = nil
+            } else {
+                startTimer()
+            }
             updateNowPlaying()
             return true
         } catch {
@@ -327,10 +335,7 @@ final class PlaybackController: NSObject, ObservableObject {
         failedTrackID = nil
         failedPlaybackOrder = nil
         interruptionState.cancelResume()
-        advance(automatically: true)
-        if shouldRemainPaused && isPlaying {
-            pause()
-        }
+        advance(automatically: true, startPaused: shouldRemainPaused)
         return true
     }
 
@@ -510,7 +515,8 @@ final class PlaybackController: NSObject, ObservableObject {
         restoreSelectionState()
     }
 
-    private func advance(automatically: Bool, crossfading: Bool = false) {
+    private func advance(automatically: Bool, crossfading: Bool = false,
+                         startPaused: Bool = false) {
         guard let library else { return }
         // Repeat One is only valid while the selected recording still exists
         // in the library. An already-open audio player can outlive catalog
@@ -592,7 +598,8 @@ final class PlaybackController: NSObject, ObservableObject {
             if let target = library.song(with: id) {
                 if beginPlayback(target, using: nextOrder,
                                  transition: crossfading ? crossfadeSeconds : 0,
-                                 preserveExistingOnFailure: preserveOutgoing) { return }
+                                 preserveExistingOnFailure: preserveOutgoing,
+                                 startPaused: startPaused) { return }
                 failedToOpenRecording = true
             }
             // Manual Next and speculative crossfade must never skip over a
