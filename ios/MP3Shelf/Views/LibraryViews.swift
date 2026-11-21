@@ -2239,6 +2239,7 @@ struct PlaylistsView: View {
     @State private var pendingDelete: MusicPlaylist?
     @State private var playlistActionFeedback: String?
     @State private var failedPlaylistEdit: FailedPlaylistEdit?
+    @AccessibilityFocusState private var playlistFeedbackFocused: Bool
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private enum FailedPlaylistEdit {
@@ -2340,6 +2341,46 @@ struct PlaylistsView: View {
         }
     }
 
+    // Keep the message readable at accessibility sizes and on narrow phones.
+    // The controls are separate VoiceOver targets; no error is hidden behind
+    // a single combined accessibility element.
+    private var playlistFeedbackMessage: some View {
+        Text(playlistActionFeedback ?? "")
+            .font(.subheadline)
+            .foregroundStyle(.white)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityAddTraits(.updatesFrequently)
+            .accessibilityFocused($playlistFeedbackFocused)
+    }
+
+    private var playlistFeedbackActions: some View {
+        HStack(spacing: 8) {
+            if failedPlaylistEdit != nil {
+                Button("Retry", action: retryPlaylistEdit)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(ShelfTheme.accent)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityHint("Reopen the playlist editor with your previous name")
+            }
+            Button {
+                playlistActionFeedback = nil
+                failedPlaylistEdit = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .accessibilityLabel("Dismiss playlist confirmation")
+        }
+    }
+
+    private var playlistFeedbackContent: some View {
+        HStack(spacing: 12) {
+            playlistFeedbackMessage
+            Spacer(minLength: 0)
+            playlistFeedbackActions
+        }
+    }
+
     private var hasPlaylistQuery: Bool {
         !playlistQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -2396,28 +2437,12 @@ struct PlaylistsView: View {
         // playlist card or the search keyboard with a floating overlay.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let playlistActionFeedback {
-                HStack(spacing: 12) {
-                    Text(playlistActionFeedback)
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityAddTraits(.updatesFrequently)
-                    Spacer(minLength: 0)
-                    if failedPlaylistEdit != nil {
-                        Button("Retry", action: retryPlaylistEdit)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(ShelfTheme.accent)
-                            .frame(minWidth: 44, minHeight: 44)
-                            .accessibilityHint("Reopen the playlist editor with your previous name")
+                ViewThatFits(in: .horizontal) {
+                    playlistFeedbackContent
+                    VStack(alignment: .leading, spacing: 8) {
+                        playlistFeedbackMessage
+                        playlistFeedbackActions
                     }
-                    Button {
-                        self.playlistActionFeedback = nil
-                        self.failedPlaylistEdit = nil
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .frame(minWidth: 44, minHeight: 44)
-                    }
-                    .accessibilityLabel("Dismiss playlist confirmation")
                 }
                 .padding(.leading, 14)
                 .padding(.trailing, 4)
@@ -2426,6 +2451,15 @@ struct PlaylistsView: View {
                 .padding(.bottom, 12)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("playlist-action-feedback")
+            }
+        }
+        .onChange(of: playlistActionFeedback) { _, message in
+            // Announce actionable failures without moving focus away from
+            // the playlist grid for routine success confirmations.
+            if message != nil && failedPlaylistEdit != nil {
+                playlistFeedbackFocused = true
+            } else if message == nil {
+                playlistFeedbackFocused = false
             }
         }
         .navigationBarTitleDisplayMode(.inline)
