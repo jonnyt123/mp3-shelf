@@ -1486,6 +1486,9 @@ struct MusicTrackRow: View {
         playbackCheckGeneration = generation
         let selectedURL = library.fileURL(for: track)
         let queueSnapshot = context.map { ($0.id, library.fileURL(for: $0)) }
+        // Restores can reuse a recording UUID and URL while replacing metadata.
+        // Capture the complete visible selection before the asynchronous scan.
+        let queueMetadata = context.map { ($0.title, $0.artist, $0.album, $0.duration) }
         // Capture the complete visible queue identity. A restore can retain a
         // UUID while relocating its file, so comparing IDs alone is insufficient.
         let requestedQueue = queueSnapshot.map { RecordingLocationKey(id: $0.0, url: $0.1) }
@@ -1518,6 +1521,26 @@ struct MusicTrackRow: View {
                   }) else {
                 audioAvailability = false
                 recoveryReason = "The song or its location changed while checking offline audio. Retry to use the current library."
+                missingRecordingAlert = true
+                return
+            }
+            // A restored library may reuse both UUID and URL. Never start
+            // playback using an old row's metadata or a changed queue entry.
+            guard context.count == queueMetadata.count,
+                  context.indices.allSatisfy({ index in
+                      let entry = context[index]
+                      let metadata = queueMetadata[index]
+                      return entry.title == metadata.0 &&
+                          entry.artist == metadata.1 &&
+                          entry.album == metadata.2 &&
+                          entry.duration == metadata.3
+                  }),
+                  currentTrack.title == track.title,
+                  currentTrack.artist == track.artist,
+                  currentTrack.album == track.album,
+                  currentTrack.duration == track.duration else {
+                audioAvailability = false
+                recoveryReason = "The recording details changed during playback preparation. Reopen the current song and try again."
                 missingRecordingAlert = true
                 return
             }
