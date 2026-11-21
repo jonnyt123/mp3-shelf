@@ -1,6 +1,9 @@
 import {test} from 'node:test';
 import {strict as assert} from 'node:assert';
-import {evaluateAgentHealth} from './mac-agent-health.mjs';
+import {evaluateAgentHealth,safeJSON} from './mac-agent-health.mjs';
+import {mkdtempSync,writeFileSync,symlinkSync,linkSync,appendFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 const root='/Users/example/mp3-shelf';
 const node='/opt/homebrew/bin/node';
 const plist={Label:'com.jonnyt.mp3shelf.native-preflight',
@@ -112,4 +115,25 @@ test('completed release health requires a canonical SHA-bound archive and publis
   assert(health.blockers.includes('recentRun'),JSON.stringify(mutation));
   assert.equal(health.agentStatus,'NOT_VERIFIED');
  }
+});
+
+test('Mac receipt reader rejects redirected, oversized, truncated and hardlinked evidence',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'mp3-shelf-health-'));
+ try{
+  const good=join(dir,'good.json');
+  writeFileSync(good,JSON.stringify({schema:'receipt',status:'BLOCKED'}));
+  assert.equal(safeJSON(good)?.status,'BLOCKED');
+  assert.equal(safeJSON(good,8),null);
+  writeFileSync(join(dir,'invalid.json'),'{');
+  assert.equal(safeJSON(join(dir,'invalid.json')),null);
+  const redirected=join(dir,'redirect.json');
+  symlinkSync(good,redirected);
+  assert.equal(safeJSON(redirected),null);
+  const alias=join(dir,'alias.json');
+  linkSync(good,alias);
+  assert.equal(safeJSON(good),null);
+  assert.equal(safeJSON(alias),null);
+  assert.equal(safeJSON(join(dir,'missing.json')),null);
+  assert.equal(safeJSON(dir),null);
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });
