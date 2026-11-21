@@ -184,6 +184,52 @@ for broken in [Data(), Data("[{".utf8), Data("null".utf8), Data("{}".utf8), Data
         fatalError("FAIL: corrupted journal changed staged audio")
     }
 }
+// Independent filesystem fault-injection: quarantine must preserve the exact
+// corrupt bytes and any staged audio, including after a simulated app restart.
+// A successful rename must not be followed by an empty-queue checkpoint that
+// erases the only evidence of outstanding download ownership.
+func quarantineFixture(_ bytes: Data, in directory: URL) throws -> URL {
+    let active = directory.appendingPathComponent("tickets.json")
+    let quarantined = directory.appendingPathComponent("tickets.corrupt")
+    guard (try? JSONDecoder().decode([Ticket].self, from: bytes)) == nil else {
+        throw NSError(domain: "fixture", code: 1)
+    }
+    guard fm.fileExists(atPath: active.path) else {
+        throw NSError(domain: "fixture", code: 2)
+    }
+    try fm.moveItem(at: active, to: quarantined)
+    guard try Data(contentsOf: quarantined) == bytes else {
+        throw NSError(domain: "fixture", code: 3)
+    }
+    return quarantined
+}
+for (index, broken) in [Data(), Data("[{".utf8), Data("null".utf8),
+                        Data("{}".utf8), Data("[] trailing".utf8)].enumerated() {
+    let fixtureDir = dir.appendingPathComponent("recovery-\(index)", isDirectory: true)
+    try fm.createDirectory(at: fixtureDir, withIntermediateDirectories: true)
+    let active = fixtureDir.appendingPathComponent("tickets.json")
+    let audioFile = fixtureDir.appendingPathComponent("recording.mp3")
+    try broken.write(to: active, options: .atomic)
+    try audio.write(to: audioFile, options: .atomic)
+    let quarantined = try quarantineFixture(broken, in: fixtureDir)
+    // Simulate restart by discarding in-memory state and reading only disk.
+    guard !fm.fileExists(atPath: active.path),
+          try Data(contentsOf: quarantined) == broken,
+          try Data(contentsOf: audioFile) == audio else {
+        fatalError("FAIL: restart lost corrupt manifest evidence or staged audio")
+    }
+    // A second recovery attempt must not overwrite the first quarantine.
+    do {
+        _ = try quarantineFixture(broken, in: fixtureDir)
+        fatalError("FAIL: duplicate recovery unexpectedly succeeded")
+    } catch let error as NSError where error.domain == "fixture" && error.code == 2 {
+        guard try Data(contentsOf: quarantined) == broken else {
+            fatalError("FAIL: duplicate recovery modified quarantine")
+        }
+    }
+}
+// This is a filesystem reference fixture, not evidence that the production
+// downloader already implements quarantine or crash-safe reconciliation.
 // Missing manifests and valid empty arrays must not be mistaken for corruption.
 let validEmpty = try JSONEncoder().encode([Ticket]())
 guard try JSONDecoder().decode([Ticket].self, from: validEmpty).isEmpty else {
