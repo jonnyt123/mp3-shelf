@@ -27,13 +27,20 @@ func executableSwift(_ text: String) -> String {
     }
 }
 let executableInit = executableSwift(initializer)
+// Recovery must occur in the malformed-manifest failure path, not merely
+// elsewhere in the initializer (for example, on a successful decode).
+let recoveryNames = ["quarantine", "checkpoint", "recoverCorrupt"]
+func hasFailurePathRecovery(_ text: String) -> Bool {
+    let executable = executableSwift(text)
+    let recoveryCall = recoveryNames.map {
+        #"\b"# + $0 + #"\w*\s*\("#
+    }.joined(separator: "|")
+    let pattern = #"(?:\bcatch|\belse)\s*\{[^{}]*(?:"# + recoveryCall + #")"#
+    return executable.range(of: pattern, options: .regularExpression) != nil
+}
+let hasRecovery = hasFailurePathRecovery(initializer)
 let hasFailureBranch = executableInit.range(
     of: #"\b(?:catch|else)\s*\{"#, options: .regularExpression) != nil
-let recoveryNames = ["quarantine", "checkpoint", "recoverCorrupt"]
-let hasRecovery = recoveryNames.contains { name in
-    executableInit.range(of: #"\b"# + name + #"\w*\s*\("#,
-                         options: .regularExpression) != nil
-}
 // Recovery without a persistent write barrier still allows a subsequent
 // persist() to replace the only corrupt ticket evidence with an empty queue.
 // Merely declaring a flag is insufficient: persistence must actually consult
@@ -100,6 +107,25 @@ for inert in [
 guard executableSwift("else { quarantineCorruptManifest() }")
     .contains("quarantineCorruptManifest()") else {
     fatalError("FAIL: executable recovery was stripped")
+}
+
+// A success-path call, inert literal or unrelated failure branch cannot
+// establish corrupt-manifest recovery. These controls guard against a future
+// source refactor silently weakening the inspection contract.
+for inert in [
+    "quarantineCorruptManifest(); if let data = bytes { use(data) } else { logOnly() }",
+    "if let saved = decoded { checkpointRecovery() } else { logOnly() }",
+    "if let saved = decoded { use(saved) } else { /* quarantineCorruptManifest() */ }",
+    #"if let saved = decoded { use(saved) } else { let note = "quarantineCorruptManifest()" }"#,
+    "if let saved = decoded { use(saved) } else { logOnly() }; recoverCorruptManifest()"
+] {
+    guard !hasFailurePathRecovery(inert) else {
+        fatalError("FAIL: unrelated recovery passed failure-path mutation control")
+    }
+}
+guard hasFailurePathRecovery("if let saved = decoded { use(saved) } else { quarantineCorruptManifest() }"),
+      hasFailurePathRecovery("do { use(decoded) } catch { recoverCorruptManifest() }") else {
+    fatalError("FAIL: executable malformed-manifest recovery was rejected")
 }
 
 // Mutation controls: unrelated mentions, negated guards without an else,
