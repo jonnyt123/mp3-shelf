@@ -1387,6 +1387,36 @@ struct MusicTrackRow: View {
         library.fileURL(for: candidate) == library.fileURL(for: track)
     }
 
+    // VoiceOver custom actions and menu actions must share the same mutation
+    // gate. A restored library can reuse a UUID while the row is still visible.
+    private func currentEditableRecording() -> MusicTrack? {
+        guard scenePhase == .active, !library.isImporting, !importBlocked else {
+            playbackNotice = "Wait until the app is active and audio import finishes before editing this song."
+            return nil
+        }
+        let matches = library.tracks.filter { $0.id == track.id }
+        guard matches.count == 1, matchesVisibleRecording(matches[0]) else {
+            playbackNotice = "This recording changed in your library. Reopen the current song before editing."
+            return nil
+        }
+        return matches[0]
+    }
+
+    private func toggleCurrentFavorite() {
+        guard let current = currentEditableRecording() else { return }
+        library.toggleFavorite(current.id)
+        // Never claim success for an ambiguous or replaced recording.
+        let updated = library.tracks.filter { $0.id == current.id }
+        if updated.count != 1 || !matchesVisibleRecording(updated[0]) {
+            playbackNotice = "The library changed while updating favorites. Review the current song."
+        }
+    }
+
+    private func editCurrentRecording() {
+        guard let current = currentEditableRecording() else { return }
+        renaming = current
+    }
+
     private func requestDeleteConfirmation() {
         guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
         // Never authorize a stale row that has already been removed or replaced.
@@ -1636,16 +1666,16 @@ struct MusicTrackRow: View {
             // Expose its management actions without requiring navigation to
             // the separate, visually small ellipsis menu.
             .accessibilityAction(named: track.isFavorite ? "Remove from favorites" : "Add to favorites") {
-                library.toggleFavorite(track.id)
+                toggleCurrentFavorite()
             }
             .accessibilityAction(named: "Edit song details") {
-                renaming = track
+                editCurrentRecording()
             }
             .accessibilityAction(named: "Delete download") {
                 requestDeleteConfirmation()
             }
             Menu {
-                Button { library.toggleFavorite(track.id) } label: {
+                Button { toggleCurrentFavorite() } label: {
                     Label(track.isFavorite ? "Remove favorite" : "Favorite", systemImage: track.isFavorite ? "heart.slash" : "heart")
                 }
                 if library.playlists.isEmpty {
@@ -1729,7 +1759,7 @@ struct MusicTrackRow: View {
                     }
                     .disabled(library.isImporting)
                 }
-                Button("Edit Details", systemImage: "pencil") { renaming = track }
+                Button("Edit Details", systemImage: "pencil") { editCurrentRecording() }
                 if audioAvailability == true {
                     ShareLink(item: library.fileURL(for: track)) {
                         Label("Share Audio File", systemImage: "square.and.arrow.up")
