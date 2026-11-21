@@ -33,8 +33,24 @@ let encoder = JSONEncoder()
 func readJournal(_ url: URL) throws -> Manifest {
     guard let attributes = try? fm.attributesOfItem(atPath: url.path),
           attributes[.type] as? FileAttributeType == .typeRegular else { throw JournalError.unsafePath }
-    do { return try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: url)) }
-    catch { throw JournalError.corruptJournal }
+    do {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: url))
+        guard manifest.generation >= 0 else { throw JournalError.corruptJournal }
+        var ticketIDs = Set<String>()
+        var destinations = Set<String>()
+        for ticket in manifest.tickets {
+            guard !ticket.id.isEmpty, ticketIDs.insert(ticket.id).inserted,
+                  ["queued", "completed", "failed", "cancelled"].contains(ticket.state),
+                  !ticket.recording.isEmpty,
+                  !ticket.recording.hasPrefix("."),
+                  !ticket.recording.contains("/"),
+                  !ticket.recording.contains("\\"),
+                  ticket.recording != "..",
+                  destinations.insert(ticket.recording).inserted
+            else { throw JournalError.corruptJournal }
+        }
+        return manifest
+    } catch { throw JournalError.corruptJournal }
 }
 func publish(_ value: Manifest, at url: URL, interruptBeforeRename: Bool = false) throws {
     guard let attributes = try? fm.attributesOfItem(atPath: url.path),
@@ -64,6 +80,32 @@ try Data("{broken".utf8).write(to: journal, options: .atomic)
 try expectFailure("corrupt journal") { _ = try readJournal(journal) }
 try checked(try Data(contentsOf: journal) == Data("{broken".utf8))
 try encoder.encode(next).write(to: journal, options: .atomic)
+
+// A syntactically valid but semantically unsafe checkpoint must fail closed.
+// The audio file and last known-good manifest are never rewritten by rejection.
+let unsafeManifests: [(String, Manifest)] = [
+    ("negative generation", Manifest(generation: -1, tickets: old.tickets)),
+    ("duplicate ticket", Manifest(generation: 10, tickets: [old.tickets[0], old.tickets[0]])),
+    ("duplicate destination", Manifest(generation: 10, tickets: [
+        Ticket(id: "one", state: "queued", recording: "same.mp3"),
+        Ticket(id: "two", state: "queued", recording: "same.mp3")
+    ])),
+    ("empty ticket", Manifest(generation: 10, tickets: [Ticket(id: "", state: "queued", recording: "x.mp3")])),
+    ("unknown state", Manifest(generation: 10, tickets: [Ticket(id: "x", state: "mystery", recording: "x.mp3")])),
+    ("traversal", Manifest(generation: 10, tickets: [Ticket(id: "x", state: "queued", recording: "../audio.mp3")])),
+    ("absolute path", Manifest(generation: 10, tickets: [Ticket(id: "x", state: "queued", recording: "/tmp/audio.mp3")])),
+    ("windows separator", Manifest(generation: 10, tickets: [Ticket(id: "x", state: "queued", recording: "folder\\\\audio.mp3")])),
+    ("hidden path", Manifest(generation: 10, tickets: [Ticket(id: "x", state: "queued", recording: ".hidden.mp3")]))
+]
+for (label, unsafe) in unsafeManifests {
+    let badBytes = try encoder.encode(unsafe)
+    try badBytes.write(to: journal, options: .atomic)
+    try expectFailure(label) { _ = try readJournal(journal) }
+    try checked(try Data(contentsOf: journal) == badBytes)
+    try checked(try Data(contentsOf: audio) == audioBytes)
+}
+try encoder.encode(next).write(to: journal, options: .atomic)
+try checked(try readJournal(journal) == next)
 let external = root.appendingPathComponent("external.json")
 try encoder.encode(old).write(to: external)
 let link = root.appendingPathComponent("link.json")
@@ -146,4 +188,4 @@ try checked(try Data(contentsOf: audio) == audioBytes)
 let pendingFiles = try fm.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix(".pending-") }
 try checked(pendingFiles.isEmpty)
 
-print("PASS: crash boundaries, 20k ticket round-trip, 256-version concurrent atomic read/write, no pending files, audio preserved")
+print("PASS: crash boundaries, nine semantic corruption cases, 20k ticket round-trip, 256-version concurrent atomic read/write, no pending files, audio preserved")
