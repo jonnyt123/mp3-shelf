@@ -299,7 +299,11 @@ enum SourceLookupRetryPolicy {
     /// Empty optional catalogs cannot establish that an interrupted primary
     /// lookup has no recording. A usable fallback still takes precedence.
     static func failureToRetry(_ recordingFailure: Error?, hasCandidates: Bool) -> Error? {
-        guard !hasCandidates, let recordingFailure, isTemporary(recordingFailure) else { return nil }
+        guard !hasCandidates, let recordingFailure else { return nil }
+        // A cancelled playlist scan must never be rescheduled as an ordinary
+        // transient outage, even when an adapter wraps cancellation inside a
+        // retryable catalog error. Cancellation wins over retry classification.
+        guard !isCancellation(recordingFailure), isTemporary(recordingFailure) else { return nil }
         return recordingFailure
     }
 }
