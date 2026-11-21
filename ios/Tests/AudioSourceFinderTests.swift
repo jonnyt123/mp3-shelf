@@ -2039,6 +2039,33 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.archivePageComplete(
             page: 2, rows: 1, reportedTotal: 21),
             "authoritatively complete final page remains eligible")
+        // DJ edits and synthesized renditions can share the same artist,
+        // base title, and duration. Never silently substitute them.
+        for (filename, requested) in [
+            ("Exact Song (VIP Mix).mp3", "Exact Song"),
+            ("Exact Song (Festival Edit).mp3", "Exact Song"),
+            ("Exact Song (Radio Mix).mp3", "Exact Song"),
+            ("Exact Song (Club Edit).mp3", "Exact Song"),
+            ("Exact Song (Dubstep Remix).mp3", "Exact Song (Remix)"),
+            ("Exact Song (8-Bit).mp3", "Exact Song"),
+            ("Exact Song.mp3", "Exact Song (VIP Mix)"),
+            ("Exact Song (Festival Mix).mp3", "Exact Song (Club Mix)")
+        ] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: filename, requestedTitle: requested),
+                "alternate DJ/synthesized edition must require review: \\(filename)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (VIP Edit).mp3",
+            requestedTitle: "Exact Song (VIP Mix)"),
+            "equivalent VIP edition names remain eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Festival Edit).mp3",
+            requestedTitle: "Exact Song (Festival Mix)"),
+            "equivalent festival edition names remain eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "8bit.mp3", requestedTitle: "8bit"),
+            "a numeric title alone remains a valid exact edition")
         print("Audio source discovery validation tests passed")
     }
 }
