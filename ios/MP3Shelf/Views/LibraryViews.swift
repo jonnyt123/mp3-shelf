@@ -1329,14 +1329,32 @@ struct MusicTrackRow: View {
     @State private var pendingDeleteFingerprint: RecordingFingerprint?
 
     private struct RecordingFingerprint: Equatable {
-        let size: Int
+        let size: UInt64
         let modified: Date?
+        let created: Date?
+        let volume: UInt64
+        let fileNumber: UInt64
 
         init?(url: URL) {
-            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
-                  values.isRegularFile == true, let size = values.fileSize, size > 0 else { return nil }
+            // Size and modification time alone do not identify a file. A restore
+            // can replace a recording with equally sized bytes and preserved
+            // timestamps while an old Delete confirmation is still visible.
+            // The sandbox recording must be a regular local file with a stable
+            // filesystem identity before a destructive action is authorized.
+            guard url.isFileURL,
+                  let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  attributes[.type] as? FileAttributeType == .typeRegular,
+                  let size = (attributes[.size] as? NSNumber)?.uint64Value,
+                  size > 0,
+                  let volume = (attributes[.systemNumber] as? NSNumber)?.uint64Value,
+                  let fileNumber = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value else {
+                return nil
+            }
             self.size = size
-            self.modified = values.contentModificationDate
+            self.modified = attributes[.modificationDate] as? Date
+            self.created = attributes[.creationDate] as? Date
+            self.volume = volume
+            self.fileNumber = fileNumber
         }
     }
     @State private var missingRecordingAlert = false
