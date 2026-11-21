@@ -122,17 +122,17 @@ for malformed in [
     }
 }
 for index in 0..<128 {
-    let task = "foreign-task-\\(index)"
-    let process = "foreign-process-\\(index)"
+    let task = "foreign-task-\(index)"
+    let process = "foreign-process-\(index)"
     let foreign = [
         event("osBackgroundWake", process, task: task, time: 11),
         event("urlSessionCompletion", process, task: task, time: 21),
         event("durableStaging", process, task: task, time: 31)
     ]
     expectCallback([arm] + good + foreign, .verified,
-                   "unrelated complete callback chain cannot break valid evidence \\(index)")
+                   "unrelated complete callback chain cannot break valid evidence \(index)")
     let incomplete = [good[0], event("urlSessionCompletion", task: task, time: 20), good[2]]
     expectCallback([arm] + incomplete + foreign, .invalidEvidence,
-                   "foreign complete chain cannot repair missing matching callback \\(index)")
+                   "foreign complete chain cannot repair missing matching callback \(index)")
 }
 print("PASS: strict callback correlation, JSON transport, malformed payload and 512 noise assertions; fixture only")
