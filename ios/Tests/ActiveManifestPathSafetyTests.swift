@@ -71,3 +71,40 @@ guard try Data(contentsOf: valid) == Data("[]".utf8),
     fatalError("FAIL: normal checkpoint or evidence preservation")
 }
 print("PASS: active manifest symlink, dangling link, directory and regular-file fixture")
+
+
+// A redirected parent can expose a regular-looking leaf outside the intended
+// journal directory. Reject it without modifying queued state or staged audio.
+let existing = root.appendingPathComponent("existing.json")
+let queued = Data(#"[{"id":"queued","status":"queued"}]"#.utf8)
+try queued.write(to: existing, options: .atomic)
+let redirectedParent = root.appendingPathComponent("redirected-parent")
+try fm.createSymbolicLink(at: redirectedParent, withDestinationURL: root)
+let redirectedManifest = redirectedParent.appendingPathComponent("existing.json")
+
+func safeCheckpointWithoutRedirectedParent(_ data: Data, at url: URL) throws {
+    var current = url.deletingLastPathComponent()
+    while current.path != "/" {
+        let attributes = try fm.attributesOfItem(atPath: current.path)
+        guard attributes[.type] as? FileAttributeType != .typeSymbolicLink else {
+            throw NSError(domain: "MP3ManifestPathSafety", code: 2)
+        }
+        current.deleteLastPathComponent()
+    }
+    try safeCheckpoint(data, at: url)
+}
+do {
+    try safeCheckpointWithoutRedirectedParent(Data("[]".utf8), at: redirectedManifest)
+    fatalError("FAIL: redirected parent checkpoint accepted")
+} catch let error as NSError where error.domain == "MP3ManifestPathSafety" && error.code == 2 {
+    guard try Data(contentsOf: existing) == queued,
+          try Data(contentsOf: staged) == audio,
+          try Data(contentsOf: external) == original else {
+        fatalError("FAIL: redirected parent changed journal or audio")
+    }
+}
+try safeCheckpointWithoutRedirectedParent(Data("[]".utf8), at: existing)
+guard try Data(contentsOf: existing) == Data("[]".utf8) else {
+    fatalError("FAIL: ordinary journal checkpoint rejected")
+}
+print("PASS: redirected parent denied without altering queued state or audio")
