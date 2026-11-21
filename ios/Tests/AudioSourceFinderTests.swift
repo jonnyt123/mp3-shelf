@@ -1763,6 +1763,16 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.ccMixterCandidates(
             in: Data(authorFirstRSS.utf8), matching: archiveWish)?.isEmpty == true,
             "conflicting RSS creator after author must also fail closed")
+        // Regression: </item> is not an active metadata field. Closing
+        // ordinary title/creator/link elements must not drop the RSS item.
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(repeatedRSS.utf8), matching: archiveWish)?.count == 1,
+            "complete RSS item survives metadata field closure")
+        let twoItemsRSS = repeatedRSS.replacingOccurrences(
+            of: "</channel>", with: "<item><title>Unrelated Track</title><creator>Other Artist</creator><link>https://ccmixter.org/files/other/9</link><enclosure type=\"audio/mpeg\" url=\"https://ccmixter.org/content/other/other.mp3\" /></item></channel>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(twoItemsRSS.utf8), matching: archiveWish)?.count == 1,
+            "finalized RSS items remain isolated from subsequent unrelated entries")
         let matchingAuthorRSS = repeatedRSS.replacingOccurrences(
             of: "<creator>Exact Artist</creator>",
             with: "<creator>Exact Artist</creator><author>Exact Artist</author>")
