@@ -101,7 +101,7 @@ let versions = (0..<256).map { generation in
     Manifest(generation: 100 + generation, tickets: [
         Ticket(id: "ticket-A", state: generation.isMultiple(of: 2) ? "queued" : "completed",
                recording: "recording.mp3"),
-        Ticket(id: "ticket-\\(generation)", state: "queued", recording: "other.mp3")
+        Ticket(id: "ticket-\(generation)", state: "queued", recording: "other.mp3")
     ])
 }
 try publish(versions[0], at: journal)
@@ -116,7 +116,7 @@ readerQueue.async {
                 break
             }
         } catch {
-            lock.lock(); observedFailure = "reader saw partial or invalid journal: \\(error)"; lock.unlock()
+            recorder.record("reader saw partial or invalid journal: \(error)")
             break
         }
     }
@@ -134,7 +134,7 @@ writerQueue.async {
                 try publish(version, at: journal)
             }
         } catch {
-            lock.lock(); observedFailure = "writer failed: \\(error)"; lock.unlock()
+            recorder.record("writer failed: \(error)")
             break
         }
     }
