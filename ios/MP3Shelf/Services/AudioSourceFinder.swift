@@ -416,7 +416,29 @@ enum AudioSourceFinder {
             }
             return result
         }
-        return anniversaryYears(fileStem) == anniversaryYears(requestedTitle)
+        guard anniversaryYears(fileStem) == anniversaryYears(requestedTitle) else { return false }
+
+        // Two live performances from different years are not interchangeable.
+        // Likewise, an explicit "2021 re-recording" must not auto-match a
+        // different dated re-recording. A bare year in an ordinary title is
+        // not version evidence: only years near the recording qualifier count.
+        func recordingYears(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            let markers: Set<String> = ["live", "concert", "recorded", "rerecorded",
+                                        "rerecording", "rehearsal", "session"]
+            var years = Set<String>()
+            for (index, word) in words.enumerated() where markers.contains(word) {
+                let lower = max(0, index - 2)
+                let upper = min(words.count, index + 3)
+                for candidate in words[lower..<upper] where candidate.count == 4 &&
+                    candidate.allSatisfy(\\.isNumber) &&
+                    (Int(candidate) ?? 0) >= 1900 && (Int(candidate) ?? 0) <= 2100 {
+                    years.insert(candidate)
+                }
+            }
+            return years
+        }
+        return recordingYears(fileStem) == recordingYears(requestedTitle)
     }
 
     // Avoid spending an entire iOS background processing window on up to
