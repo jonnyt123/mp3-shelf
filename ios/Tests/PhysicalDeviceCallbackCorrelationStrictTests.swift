@@ -123,7 +123,7 @@ for malformed in [
 }
 for index in 0..<128 {
     let task = "foreign-task-\(index)"
-    let process = "foreign-process-\(index)"
+    let process = "original-process" // Same process as arm: cannot prove a restart.
     let foreign = [
         event("osBackgroundWake", process, task: task, time: 11),
         event("urlSessionCompletion", process, task: task, time: 21),
