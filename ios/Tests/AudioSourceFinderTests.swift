@@ -2002,6 +2002,26 @@ enum AudioSourceFinderTests {
         verify(AudioLandingPageInspector.isVerifiedAudioResponse(
             audioProbe(200, ["Content-Type": "audio/mpeg"])),
             "unknown-length complete response may proceed to strict byte validation")
+        // A short Archive response without numFound is not evidence that
+        // no competing version exists on an omitted index page.
+        verify(!AudioSourceFinder.archivePageComplete(
+            page: 1, rows: 1, reportedTotal: nil),
+            "uncounted short Archive page cannot authorize unattended matching")
+        verify(!AudioSourceFinder.archivePageComplete(
+            page: 1, rows: 20, reportedTotal: nil),
+            "uncounted full Archive page cannot authorize unattended matching")
+        verify(!AudioSourceFinder.archivePageComplete(
+            page: 3, rows: 1, reportedTotal: 41),
+            "Archive pages outside the inspected budget cannot prove uniqueness")
+        verify(!AudioSourceFinder.archivePageComplete(
+            page: 1, rows: 1, reportedTotal: 2),
+            "truncated Archive page cannot hide a competing recording")
+        verify(AudioSourceFinder.archivePageComplete(
+            page: 1, rows: 1, reportedTotal: 1),
+            "authoritatively complete single-recording page remains eligible")
+        verify(AudioSourceFinder.archivePageComplete(
+            page: 2, rows: 1, reportedTotal: 21),
+            "authoritatively complete final page remains eligible")
         print("Audio source discovery validation tests passed")
     }
 }
