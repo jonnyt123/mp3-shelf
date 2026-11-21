@@ -1358,11 +1358,22 @@ struct MusicTrackRow: View {
         return size > 0
     }
 
+    // A restored library can reuse a track UUID and file URL for different
+    // metadata. Never let a stale row authorize a destructive action.
+    private func matchesVisibleRecording(_ candidate: MusicTrack) -> Bool {
+        candidate.id == track.id &&
+        candidate.title == track.title &&
+        candidate.artist == track.artist &&
+        candidate.album == track.album &&
+        candidate.duration == track.duration &&
+        library.fileURL(for: candidate) == library.fileURL(for: track)
+    }
+
     private func requestDeleteConfirmation() {
         guard !library.isImporting, !importBlocked, scenePhase == .active else { return }
         // Never authorize a stale row that has already been removed or replaced.
         let current = library.tracks.filter { $0.id == track.id }
-        guard current.count == 1 else {
+        guard current.count == 1, matchesVisibleRecording(current[0]) else {
             playbackNotice = "This song changed in your library. Reopen it before deleting."
             return
         }
@@ -1386,6 +1397,7 @@ struct MusicTrackRow: View {
               let expectedFingerprint = pendingDeleteFingerprint else { return }
         let current = library.tracks.filter { $0.id == track.id }
         guard current.count == 1,
+              matchesVisibleRecording(current[0]),
               library.fileURL(for: current[0]) == expectedURL,
               RecordingFingerprint(url: expectedURL) == expectedFingerprint else {
             playbackNotice = "The recording changed while confirming deletion. Nothing was deleted."
