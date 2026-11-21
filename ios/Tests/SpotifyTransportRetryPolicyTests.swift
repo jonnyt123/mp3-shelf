@@ -1,30 +1,32 @@
 import Foundation
-import XCTest
-@testable import MP3Shelf
 
-final class SpotifyTransportRetryPolicyTests: XCTestCase {
-    func testOnlyRecoverableMetadataTransportFailuresAreRetried() {
+// Offline regression fixture: compile alongside production SpotifyService.swift
+// in the native test harness, with its iOS framework dependencies available.
+@main
+enum SpotifyTransportRetryPolicyTests {
+    static func main() {
+        func check(_ condition: Bool, _ label: String) {
+            guard condition else { fatalError("FAIL: \(label)") }
+            print("PASS: \(label)")
+        }
         let recoverable: [URLError.Code] = [
             .timedOut, .networkConnectionLost, .cannotConnectToHost,
             .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet
         ]
         for code in recoverable {
-            XCTAssertTrue(SpotifyTransportRetryPolicy.isTransient(URLError(code)),
-                          "Expected transient transport retry for \(code)")
+            check(SpotifyTransportRetryPolicy.isTransient(URLError(code)),
+                  "transient transport error \(code.rawValue)")
         }
-    }
-
-    func testCancellationAndSecurityFailuresNeverRetry() {
         let permanent: [URLError.Code] = [
             .cancelled, .secureConnectionFailed, .serverCertificateUntrusted,
             .userAuthenticationRequired, .unsupportedURL, .badURL,
             .appTransportSecurityRequiresSecureConnection
         ]
         for code in permanent {
-            XCTAssertFalse(SpotifyTransportRetryPolicy.isTransient(URLError(code)),
-                           "Unexpected retry for \(code)")
+            check(!SpotifyTransportRetryPolicy.isTransient(URLError(code)),
+                  "permanent or security error \(code.rawValue)")
         }
-        XCTAssertFalse(SpotifyTransportRetryPolicy.isTransient(
-            NSError(domain: "FixtureFailure", code: 1)))
+        check(!SpotifyTransportRetryPolicy.isTransient(
+            NSError(domain: "FixtureFailure", code: 1)), "non-URL errors do not retry")
     }
 }
