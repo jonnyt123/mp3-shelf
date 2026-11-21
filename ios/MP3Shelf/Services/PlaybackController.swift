@@ -333,17 +333,14 @@ final class PlaybackController: NSObject, ObservableObject {
         // Automatic advancement retires the finished player when the next
         // recording cannot be opened. Lock-screen Play must retry that failed
         // selection rather than silently succeeding with no audio player.
-        // A deliberately stopped session has no failedTrackID and stays stopped.
+        // A deleted selection can have no decoder after failed advancement.
+        // Reconcile it before the nil-player retry branch so lock-screen Play
+        // cannot repeatedly retry an ID absent from the current catalog.
+        if recoverDeletedCurrentTrack() { return }
         guard let audioPlayer else {
             if failedTrackID != nil { retryFailedPlayback() }
             return
         }
-        // A paused AVAudioPlayer can retain an open descriptor after its
-        // catalog entry has been deleted. Resuming it would resurrect a song
-        // that no longer belongs to the library (including from lock screen).
-        // Recover through the queue instead, using the same bounded candidate
-        // selection as automatic completion. Never reopen the orphaned file.
-        if recoverDeletedCurrentTrack() { return }
         // A decode-error delegate leaves the old AVAudioPlayer allocated but
         // unusable. Reopen the recording on retry so a repaired/reimported file
         // is actually read. A failed manual selection is different: its ID is
@@ -424,9 +421,17 @@ final class PlaybackController: NSObject, ObservableObject {
         updateNowPlaying()
     }
 
-    func next() { advance(automatically: false) }
+    func next() {
+        // Manual Next at the end of a finite queue is otherwise a no-op.
+        // Never leave an orphaned decoder audible after catalog deletion.
+        if recoverDeletedCurrentTrack() { return }
+        advance(automatically: false)
+    }
 
     func previous() {
+        // Previous can resolve to no candidate after catalog deletion.
+        // Never seek or preserve a decoder whose selected ID is unowned.
+        if recoverDeletedCurrentTrack() { return }
         guard let library else { return }
         // An open player is not evidence that its recording still belongs to
         // the library. Never restart an orphaned track when pressing Previous
