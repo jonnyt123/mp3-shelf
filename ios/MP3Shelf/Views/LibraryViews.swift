@@ -98,6 +98,9 @@ struct LibraryView: View {
         // Snapshot the visible queue and URLs before leaving the UI actor.
         // A missing neighbor must not be queued behind an otherwise playable song.
         let recent = recentlyAdded
+        // A restore can reuse both UUID and URL while changing the recording.
+        // Capture the visible metadata before asynchronous file inspection.
+        let metadata = recent.map { ($0.title, $0.artist, $0.album, $0.duration) }
         let locations = recent.map { ($0.id, library.fileURL(for: $0)) }
         guard let selectedIndex = locations.firstIndex(where: { $0.0 == track.id && $0.1 == selectedURL }) else {
             recentPlaybackCheck = nil
@@ -135,7 +138,11 @@ struct LibraryView: View {
             recentPlaybackCheck = nil
             recentPlaybackTask = nil
             guard availability.count == recent.count,
-                  recentlyAdded.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) } == locations.map { RecordingLocationKey(id: $0.0, url: $0.1) } else {
+                  recentlyAdded.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) } == locations.map { RecordingLocationKey(id: $0.0, url: $0.1) },
+                  recentlyAdded.enumerated().allSatisfy({ index, song in
+                      song.title == metadata[index].0 && song.artist == metadata[index].1 &&
+                      song.album == metadata[index].2 && song.duration == metadata[index].3
+                  }) else {
                 missingRecentRecording = true
                 recentPlaybackNotice = "Recently Added changed while checking local files. Retry to check the current recordings."
                 return
@@ -148,6 +155,18 @@ struct LibraryView: View {
             guard let currentByLocation = recordingIndex() else {
                 missingRecentRecording = true
                 recentPlaybackNotice = "Duplicate recording identities were found in your library. Resolve the duplicates before playing."
+                recentRetrySelection = nil
+                return
+            }
+            // The current library must still describe the exact recording
+            // selected before the scan, including metadata reused after restore.
+            guard recent.enumerated().allSatisfy({ index, song in
+                guard let current = currentByLocation[RecordingLocationKey(id: song.id, url: locations[index].1)] else { return false }
+                return current.title == metadata[index].0 && current.artist == metadata[index].1 &&
+                    current.album == metadata[index].2 && current.duration == metadata[index].3
+            }) else {
+                missingRecentRecording = true
+                recentPlaybackNotice = "Recently Added recordings changed while checking local files. Choose a song again."
                 recentRetrySelection = nil
                 return
             }
