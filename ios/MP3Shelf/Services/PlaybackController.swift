@@ -405,7 +405,11 @@ final class PlaybackController: NSObject, ObservableObject {
         // the library. Never restart an orphaned track when pressing Previous
         // after a deletion; resolve the surviving queue first.
         if currentTime > 3, audioPlayer != nil, let currentTrackID,
-           library.song(with: currentTrackID) != nil {
+           library.song(with: currentTrackID) != nil,
+           failedTrackID != currentTrackID {
+            // A decode failure leaves an allocated but unusable AVAudioPlayer.
+            // Seeking that retired player reports success without reopening
+            // repaired audio. Only a healthy paused/playing player can seek.
             seek(to: 0)
             return
         }
@@ -447,7 +451,7 @@ final class PlaybackController: NSObject, ObservableObject {
             if id == currentTrackID {
                 // No earlier playable entry: restart the current recording
                 // without altering its queue position.
-                if audioPlayer != nil {
+                if audioPlayer != nil, failedTrackID != currentTrackID {
                     restoreSelectionState()
                     seek(to: 0)
                     return
