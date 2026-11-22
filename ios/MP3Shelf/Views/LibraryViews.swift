@@ -241,6 +241,14 @@ struct LibraryView: View {
             // Scene/import changes can arrive before SwiftUI's onChange
             // cancellation. Always retire this generation without allowing an
             // obsolete scan to start audio or strand the busy indicator.
+            // Files is only a selection sheet, not an import. Keep the completed
+            // local scan pending while it is visible, rather than discarding the
+            // user's request or starting audio behind the picker. A real import
+            // cancels this task before replacing any recordings.
+            while showFilePicker && scenePhase == .active &&
+                    !importInProgress && !library.isImporting && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
             guard recentPlaybackGeneration == generation, !Task.isCancelled else { return }
             if scenePhase != .active || audioImportBusy {
                 recentPlaybackGeneration = nil
@@ -966,6 +974,14 @@ struct LibraryView: View {
             }
             // Do not rely solely on the scene-phase observer to clear pending
             // state: a detached scan may complete before that observer runs.
+            // Files is only a selection sheet, not an import. Keep the completed
+            // local scan pending while it is visible, rather than discarding the
+            // user's request or starting audio behind the picker. A real import
+            // cancels this task before replacing any recordings.
+            while showFilePicker && scenePhase == .active &&
+                    !importInProgress && !library.isImporting && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
             guard bulkPlaybackGeneration == generation, !Task.isCancelled else { return }
             if scenePhase != .active || audioImportBusy {
                 bulkPlaybackGeneration = nil
