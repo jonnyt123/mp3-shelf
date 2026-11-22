@@ -25,6 +25,12 @@ export function verifiedSmokeComment(comment, currentToolingSha, now = Date.now(
   const match = comment.body.trim().match(
     /^MP3SHELF_DRAFT_UPLOAD_SMOKE_VERIFIED TOOLING_SHA=([a-f0-9]{40}) TAG=(mp3shelf-upload-smoke-[a-f0-9]{12}-[0-9]{13}-[a-f0-9]{6}) ZIP_SHA256=([a-f0-9]{64}) MANIFEST_SHA256=([a-f0-9]{64}) RESULT=UPLOAD_DOWNLOAD_VERIFIED_AND_CLEANED$/);
   if (!match || match[1] !== currentToolingSha) return null;
+  const tagTime = Number(match[2].split('-')[4]);
+  // The smoke tag is minted at upload time. A freshly edited owner comment
+  // must not revive an old or future synthetic upload receipt.
+  if (!Number.isSafeInteger(tagTime) || tagTime > timestamp + 5*60*1000 ||
+      timestamp - tagTime > 24*60*60*1000 || now - tagTime > MAX_AGE)
+    return null;
   try {
     const expected = smokeAttestationLine({ toolingSha: match[1], tag: match[2],
       zipSHA256: match[3], manifestSHA256: match[4] });
