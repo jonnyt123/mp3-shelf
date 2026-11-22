@@ -333,3 +333,20 @@ test('blocked packaging never produces a delivered ZIP receipt even with a forge
   assert.equal(receipt.downloadURL,null);
  }
 });
+
+// A stale or impossible cycle interval must not manufacture a completed release.
+test('native agent refuses a release claim from an overlong execution interval',()=>{
+ const candidate='a'.repeat(40);
+ const record=nativeAgentRunRecord({
+  startedAt:'2026-11-17T00:00:00Z',finishedAt:'2026-11-18T01:00:00Z',
+  result:{status:'already-staged',candidateSha:candidate,
+   packaging:'EXISTING_VERIFIED_ARCHIVE',delivery:'ALREADY_DELIVERED',
+   sha256:'b'.repeat(64),downloadURL:
+    'https://github.com/jonnyt123/mp3-shelf/releases/download/mp3-shelf-ios-'+candidate+
+    '/MP3-Shelf-Xcode-'+candidate.slice(0,12)+'.zip'}
+ });
+ assert.equal(record.status,'BLOCKED');
+ assert.equal(record.integration,'NOT_VERIFIED');
+ assert.equal(record.delivery,'NOT_VERIFIED');
+ assert.equal(record.candidateSha,null);
+});
