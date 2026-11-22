@@ -3090,6 +3090,44 @@ struct PlaylistDetailView: View {
         }
     }
 
+    // Alert dismissal can race a scene transition or a new import. Keep the
+    // listener's retry intent visible until an eligible foreground attempt begins.
+    private func retryPlaylistPlaybackFromAlert() {
+        let shuffled = lastPlaylistPlaybackWasShuffled
+        guard playlistScenePhase == .active else {
+            playlistPlaybackNotice = "Return to MP3 Shelf to retry this playlist. Playback was not changed."
+            playlistPlaybackError = nil
+            playlistPlaybackCanRetry = true
+            return
+        }
+        guard !playlistPlaybackPending else {
+            playlistPlaybackNotice = "Playlist playback is already being prepared. Wait for the current check."
+            playlistPlaybackError = nil
+            return
+        }
+        guard !playlistAudioImportBusy else {
+            playlistPlaybackNotice = "Audio files are still importing. Retry after the import finishes."
+            playlistPlaybackError = nil
+            playlistPlaybackCanRetry = true
+            return
+        }
+        guard let currentPlaylist = uniquePlaylist(playlistID) else {
+            playlistPlaybackError = "This playlist was removed or its identity is ambiguous. Reopen the library before playing."
+            playlistPlaybackCanRetry = false
+            return
+        }
+        let currentTracks = library.songs(in: currentPlaylist)
+        guard !currentTracks.isEmpty else {
+            playlistPlaybackNotice = "This playlist has no songs to play. Add a recording before retrying."
+            playlistPlaybackError = nil
+            playlistPlaybackCanRetry = false
+            return
+        }
+        playlistPlaybackError = nil
+        playlistPlaybackCanRetry = false
+        startPlaylist(currentTracks, shuffled: shuffled)
+    }
+
     // Capture file URLs on the library actor and validate them away from the UI.
     // A playlist may contain saved metadata whose audio was removed by Files.
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
@@ -3704,21 +3742,7 @@ struct PlaylistDetailView: View {
             // offer an action that can only fail again against the same data.
             if playlistPlaybackCanRetry {
                 Button(lastPlaylistPlaybackWasShuffled ? "Retry Shuffle" : "Retry Play") {
-                    let shuffled = lastPlaylistPlaybackWasShuffled
-                    playlistPlaybackError = nil
-                    playlistPlaybackCanRetry = false
-                    guard playlistScenePhase == .active,
-                          !playlistPlaybackPending,
-                          let currentPlaylist = uniquePlaylist(playlistID) else {
-                        playlistPlaybackNotice = "Return to the playlist while the app is active to retry playback."
-                        return
-                    }
-                    let currentTracks = library.songs(in: currentPlaylist)
-                    guard !currentTracks.isEmpty else {
-                        playlistPlaybackNotice = "This playlist has no songs to play. Add a recording before retrying."
-                        return
-                    }
-                    startPlaylist(currentTracks, shuffled: shuffled)
+                    retryPlaylistPlaybackFromAlert()
                 }
             }
             Button(playlistPlaybackCanRetry ? "Not now" : "OK", role: .cancel) {
