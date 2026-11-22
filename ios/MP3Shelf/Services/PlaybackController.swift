@@ -65,19 +65,26 @@ final class PlaybackController: NSObject, ObservableObject {
 
     private weak var library: MusicLibrary?
     private var audioPlayer: AVAudioPlayer?
-    // AVAudioPlayer may retain the original inode after an atomic file replacement.
+    // AVAudioPlayer can keep decoding stale bytes after either an atomic
+    // replacement (new inode) or an in-place overwrite (same inode).
     private var openedAudioFileIdentity: LocalAudioFileIdentity?
 
     private struct LocalAudioFileIdentity: Equatable {
         let device: UInt64
         let inode: UInt64
+        let byteCount: UInt64
+        let modifiedAt: Date
 
         init?(url: URL) {
             guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
                   let device = attributes[.systemNumber] as? NSNumber,
-                  let inode = attributes[.systemFileNumber] as? NSNumber else { return nil }
+                  let inode = attributes[.systemFileNumber] as? NSNumber,
+                  let byteCount = attributes[.size] as? NSNumber,
+                  let modifiedAt = attributes[.modificationDate] as? Date else { return nil }
             self.device = device.uint64Value
             self.inode = inode.uint64Value
+            self.byteCount = byteCount.uint64Value
+            self.modifiedAt = modifiedAt
         }
     }
     private var positionTimer: Timer?
@@ -262,11 +269,23 @@ final class PlaybackController: NSObject, ObservableObject {
             guard player.prepareToPlay(), player.duration.isFinite, player.duration > 0 else {
                 throw CocoaError(.fileReadCorruptFile)
             }
+            // Decoder preparation may read the file while an importer or another
+            // process overwrites it. Never commit a decoder for changed bytes.
+            guard LocalAudioFileIdentity(url: ownedAudioURL) == identityAfterOpen,
+                  library.ownedPlaybackURL(for: catalogTrack) != nil else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
             // Paused selection only prepares a decoder. Audible playback,
             // including retries, crossfades and automatic transitions, still
             // activates the session immediately before starting the player.
             if !startPaused {
                 try activateAudio()
+            }
+            // Audio-session activation can yield to other work; reject any
+            // recording changed since decoder preparation before audible play.
+            guard LocalAudioFileIdentity(url: ownedAudioURL) == identityAfterOpen,
+                  library.ownedPlaybackURL(for: catalogTrack) != nil else {
+                throw CocoaError(.fileReadCorruptFile)
             }
             if !startPaused, transition > 0, let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
