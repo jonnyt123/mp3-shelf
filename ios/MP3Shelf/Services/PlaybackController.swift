@@ -175,7 +175,12 @@ final class PlaybackController: NSObject, ObservableObject {
         // value after library reconciliation deleted its catalog entry.
         // Do not open an orphaned recording or reset a healthy playback queue.
         guard let catalogTrack = library.song(with: track.id) else {
+            // A stale Now Playing selection must not leave a deleted current
+            // recording audible behind the error. Recover only when the
+            // selected decoder itself has lost catalog ownership.
+            _ = recoverDeletedCurrentTrack()
             playbackError = "This song is no longer in your library. Choose another song."
+            updateNowPlaying()
             return
         }
         var nextOrder = playbackOrder
@@ -308,6 +313,15 @@ final class PlaybackController: NSObject, ObservableObject {
     func togglePlayback() { isPlaying ? pause() : resume() }
 
     func pause() {
+        // A deleted recording can remain audible through its open decoder.
+        // A Pause command must retire it, not leave an orphaned player ready
+        // to resume after the library has removed its catalog identity.
+        // Preserve the listener's pause intent while selecting a surviving
+        // queued recording; never delete or rewrite audio bytes here.
+        if recoverDeletedCurrentTrack() {
+            if isPlaying { pause() }
+            return
+        }
         relay.invalidatePendingCompletions()
         interruptionState.cancelResume()
         if outgoingPlayer != nil { cancelFade(); audioPlayer?.volume = 1 }
