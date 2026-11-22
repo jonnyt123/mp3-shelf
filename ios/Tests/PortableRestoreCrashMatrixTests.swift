@@ -76,3 +76,51 @@ for bytes in [Data(), Data("{".utf8), Data("null".utf8), Data("[]".utf8), Data(#
 }
 print("PASS: five restart boundaries and five malformed journals preserve original audio")
 print("LIMITATION: Foundation transaction model; production restore, Xcode and iPhone UNVERIFIED")
+
+
+// A crash can occur during recovery itself. Replaying the same journal must
+// converge to the same catalog without changing pre-existing audio bytes.
+for phase in ["prepared", "writing", "committed"] {
+    for recoveryAttempt in 0..<3 {
+        try save(before, at: library)
+        try originalAudio.write(to: audio, options: .atomic)
+        if fm.fileExists(atPath: journalURL.path) { try fm.removeItem(at: journalURL) }
+        let record = Journal(before: before, proposed: proposed, phase: phase)
+        try save(record, at: journalURL)
+        // Emulate a partially installed candidate before restart.
+        try save(proposed, at: library)
+        // Emulate a crash after the recovery catalog write but before the
+        // journal unlink. The next restart must be safe to repeat.
+        if recoveryAttempt > 0 {
+            try save(phase == "committed" ? proposed : before, at: library)
+        }
+        try recover()
+        let expected = phase == "committed" ? proposed : before
+        precondition(try load(Snapshot.self, from: library) == expected,
+                     "recovery replay mismatch: \(phase) attempt \(recoveryAttempt)")
+        precondition(try Data(contentsOf: audio) == originalAudio,
+                     "recovery replay changed original audio")
+        try recover() // No journal: restart must be a no-op.
+        precondition(try load(Snapshot.self, from: library) == expected,
+                     "second recovery changed catalog")
+        precondition(!fm.fileExists(atPath: journalURL.path))
+    }
+}
+
+// Invalid phase values must never overwrite a partially installed library.
+// Keep the journal for diagnosis/retry rather than silently discarding it.
+for phase in ["", "PREPARED", "committing", "../committed", "rolledBack"] {
+    try save(proposed, at: library)
+    let record = Journal(before: before, proposed: proposed, phase: phase)
+    try save(record, at: journalURL)
+    let journalBytes = try Data(contentsOf: journalURL)
+    do { try recover(); fatalError("accepted invalid phase \(phase)") }
+    catch RestoreFailure.invalidJournal { }
+    precondition(try load(Snapshot.self, from: library) == proposed,
+                 "invalid journal mutated catalog")
+    precondition(try Data(contentsOf: journalURL) == journalBytes,
+                 "invalid journal was lost")
+    precondition(try Data(contentsOf: audio) == originalAudio,
+                 "invalid journal mutated existing audio")
+}
+print("PASS: recovery replay/idempotence and invalid-phase preservation model")
