@@ -637,7 +637,14 @@ final class PlaybackController: NSObject, ObservableObject {
             // rule: that would select the same corrupt file again and strand
             // other playable recordings. Probe the next distinct queue entry
             // once, without changing the user's configured repeat preference.
-            let recoveryLoop: PlaybackLoopMode = loopMode == .one ? .all : loopMode
+            // Deleted-current recovery must retain its wraparound policy for
+            // *every* candidate, not just the first. Otherwise a corrupt
+            // successor near the end of a Repeat Off queue strands playable
+            // recordings earlier in the queue. The attempted-ID set bounds
+            // traversal to one cycle, even when every recording is damaged.
+            // Ordinary end-of-track recovery still respects Repeat Off.
+            let recoveryLoop: PlaybackLoopMode =
+                selectedIsMissing ? .all : (loopMode == .one ? .all : loopMode)
             candidateID = nextOrder.next(automatic: true, loop: recoveryLoop)
         }
         if automatically && !crossfading && !failedToOpenRecording {
