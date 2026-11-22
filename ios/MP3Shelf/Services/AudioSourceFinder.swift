@@ -2542,8 +2542,22 @@ extension AudioSourceFinder {
     static func ccMixterCandidates(in rssData: Data,
                                    matching wish: PlaylistWish) -> [AudioCatalogMatch]? {
         guard let tracks = CCMixterRSSReader().read(rssData) else { return nil }
+        // A feed may describe the same physical URL under conflicting titles,
+        // artists or upload pages. Filtering nonmatches *before* deduplication
+        // would silently promote the remaining exact-looking row to an
+        // automatic match. Treat every claim about that URL as evidence.
+        let claims = Dictionary(grouping: tracks.filter { !$0.downloadURL.isEmpty },
+                                by: { $0.downloadURL })
+        let safeURLs = Set(claims.compactMap { url, rows -> String? in
+            guard rows.allSatisfy({
+                !$0.ambiguousMetadata && !$0.ambiguousEnclosure &&
+                exactMetadataMatch(title: $0.title, creator: $0.creator, wish: wish)
+            }), Set(rows.map(\.landingURL)).count == 1 else { return nil }
+            return url
+        })
         return uniqueDownloadSources(tracks.compactMap {
-            ccMixterCandidate($0, for: wish)
+            guard safeURLs.contains($0.downloadURL) else { return nil }
+            return ccMixterCandidate($0, for: wish)
         })
     }
 
