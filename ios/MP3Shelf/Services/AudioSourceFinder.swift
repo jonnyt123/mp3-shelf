@@ -504,7 +504,29 @@ enum AudioSourceFinder {
             }
             return years
         }
-        return recordingYears(fileStem) == recordingYears(requestedTitle)
+        guard recordingYears(fileStem) == recordingYears(requestedTitle) else {
+            return false
+        }
+
+        // Two venue-specific live recordings are distinct performances even
+        // when artist, song, year and duration agree. The broad "live"
+        // category above cannot establish that Wembley and Madison Square
+        // Garden are the same take. Require the explicitly supplied venue
+        // phrase to agree on both sides before unattended selection.
+        func liveVenue(_ value: String) -> [String]? {
+            let words = tokens(value)
+            guard let live = words.firstIndex(of: "live"), live + 2 < words.count,
+                  ["at", "in", "from"].contains(words[live + 1]) else {
+                return nil
+            }
+            let suffix = Array(words[(live + 2)...])
+            // Stop at common edition boundaries; the venue itself is compared
+            // conservatively as a complete normalized token sequence.
+            let boundaries: Set<String> = ["remastered", "remaster", "mix",
+                                           "edit", "version", "recording"]
+            return Array(suffix.prefix(while: { !boundaries.contains($0) }))
+        }
+        return liveVenue(fileStem) == liveVenue(requestedTitle)
     }
 
     // Avoid spending an entire iOS background processing window on up to
