@@ -65,6 +65,21 @@ final class PlaybackController: NSObject, ObservableObject {
 
     private weak var library: MusicLibrary?
     private var audioPlayer: AVAudioPlayer?
+    // AVAudioPlayer may retain the original inode after an atomic file replacement.
+    private var openedAudioFileIdentity: LocalAudioFileIdentity?
+
+    private struct LocalAudioFileIdentity: Equatable {
+        let device: UInt64
+        let inode: UInt64
+
+        init?(url: URL) {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  let device = attributes[.systemNumber] as? NSNumber,
+                  let inode = attributes[.systemFileNumber] as? NSNumber else { return nil }
+            self.device = device.uint64Value
+            self.inode = inode.uint64Value
+        }
+    }
     private var positionTimer: Timer?
     private var fadeTimer: Timer?
     private var outgoingPlayer: AVAudioPlayer?
@@ -234,7 +249,15 @@ final class PlaybackController: NSObject, ObservableObject {
             // Validate the decoder before taking the system audio session.
             // A corrupt/missing queued recording must not interrupt another
             // app's audio when playback will never begin.
+            let identityBeforeOpen = LocalAudioFileIdentity(url: ownedAudioURL)
             let player = try AVAudioPlayer(contentsOf: ownedAudioURL)
+            let identityAfterOpen = LocalAudioFileIdentity(url: ownedAudioURL)
+            // A replacement between path validation and decoder creation must
+            // not be accepted as the selected catalog-owned recording.
+            guard identityBeforeOpen != nil, identityBeforeOpen == identityAfterOpen,
+                  library.ownedPlaybackURL(for: catalogTrack) != nil else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
             player.delegate = relay
             guard player.prepareToPlay(), player.duration.isFinite, player.duration > 0 else {
                 throw CocoaError(.fileReadCorruptFile)
@@ -262,6 +285,7 @@ final class PlaybackController: NSObject, ObservableObject {
                 audioPlayer?.stop()
                 audioPlayer = player
             }
+            openedAudioFileIdentity = identityAfterOpen
             relay.invalidatePendingCompletions()
             playbackError = nil
             failedTrackID = nil
@@ -387,14 +411,18 @@ final class PlaybackController: NSObject, ObservableObject {
     @discardableResult
     private func retireUnsafeCurrentDecoder() -> Bool {
         guard let player = audioPlayer, let currentTrackID, let library,
-              let selected = library.song(with: currentTrackID),
-              library.ownedPlaybackURL(for: selected) == nil else { return false }
+              let selected = library.song(with: currentTrackID) else { return false }
+        let ownedURL = library.ownedPlaybackURL(for: selected)
+        let identityChanged = openedAudioFileIdentity != nil &&
+            ownedURL.flatMap { LocalAudioFileIdentity(url: $0) } != openedAudioFileIdentity
+        guard ownedURL == nil || identityChanged else { return false }
         relay.invalidatePendingCompletions()
         positionTimer?.invalidate()
         positionTimer = nil
         cancelFade()
         player.stop()
         audioPlayer = nil
+        openedAudioFileIdentity = nil
         isPlaying = false
         interruptionState.cancelResume()
         failedTrackID = currentTrackID
@@ -458,6 +486,7 @@ final class PlaybackController: NSObject, ObservableObject {
         interruptionState.cancelResume()
         audioPlayer?.stop()
         audioPlayer = nil
+        openedAudioFileIdentity = nil
         cancelFade()
         positionTimer?.invalidate()
         positionTimer = nil
