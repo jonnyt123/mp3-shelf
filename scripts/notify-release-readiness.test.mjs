@@ -370,3 +370,30 @@ test('out-of-order readiness snapshots cannot roll back the alert watermark',()=
   assert.equal(sent.length,1);
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
+
+test('tooling SHA change resets notification baseline without hiding subsequent regressions',()=>{
+ const x=dir(),sent=[];
+ try{
+  const first=model({native:'BLOCKED'});
+  writeFileSync(x.latest,JSON.stringify(first));
+  assert.equal(deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',
+   send:m=>sent.push(m)}).status,'BASELINE_SAVED');
+  const newTooling='f'.repeat(40);
+  const next={...model({native:'PASS',hardware:'BLOCKED'}),
+   toolingSha:newTooling,generatedAt:new Date(now+60000).toISOString()};
+  writeFileSync(x.latest,JSON.stringify(next));
+  const reset=deliverChangeOnlyNotification({home:x.home,now:now+60000,
+   platform:'darwin',send:m=>sent.push(m)});
+  assert.equal(reset.status,'BASELINE_SAVED');
+  assert.deepEqual(sent,[]);
+  assert.equal(JSON.parse(readFileSync(x.state,'utf8')).toolingSha,newTooling);
+  const regression={...model({native:'BLOCKED',hardware:'BLOCKED'}),
+   toolingSha:newTooling,generatedAt:new Date(now+120000).toISOString()};
+  writeFileSync(x.latest,JSON.stringify(regression));
+  const changed=deliverChangeOnlyNotification({home:x.home,now:now+120000,
+   platform:'darwin',send:m=>sent.push(m)});
+  assert.equal(changed.status,'CHANGE_NOTIFIED');
+  assert.deepEqual(changed.blocked,['native']);
+  assert.equal(sent.length,1);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
