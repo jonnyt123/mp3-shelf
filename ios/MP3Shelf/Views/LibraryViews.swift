@@ -144,7 +144,31 @@ struct LibraryView: View {
     // Recently added artwork must observe the same missing-file safety rule
     // as a normal library row. Never perform coordinated file I/O on the UI actor.
     private func playRecentRecording(_ track: MusicTrack) {
-        guard scenePhase == .active, !audioImportBusy, recentPlaybackCheck == nil else { return }
+        // Preserve the tapped recording for explicit retry when local files
+        // cannot be inspected. Do not replace a scan already in progress.
+        if recentPlaybackCheck != nil {
+            recentPlaybackNotice = "A recording is already being checked. Wait or cancel the current check."
+            return
+        }
+        if scenePhase != .active || audioImportBusy {
+            let matches = library.tracks.filter { $0.id == track.id }
+            let url = library.fileURL(for: track)
+            guard matches.count == 1,
+                  matches[0].title == track.title,
+                  matches[0].artist == track.artist,
+                  matches[0].album == track.album,
+                  matches[0].duration == track.duration,
+                  library.fileURL(for: matches[0]) == url else {
+                recentRetrySelection = nil
+                recentPlaybackNotice = "This recording changed or has an ambiguous identity. Choose a current song."
+                return
+            }
+            recentRetrySelection = RecentRetryIdentity(track, url: url)
+            recentPlaybackNotice = scenePhase != .active
+                ? "Return to MP3 Shelf to retry this recording. No audio was started."
+                : "Finish importing audio, then retry this recording. Your saved audio was not changed."
+            return
+        }
         let generation = UUID()
         recentPlaybackGeneration = generation
         recentPlaybackCheck = track.id
@@ -1153,7 +1177,7 @@ struct LibraryView: View {
                                                    alignment: .leading)
                                         }
                                         .buttonStyle(.plain)
-                                        .disabled(recentPlaybackCheck != nil || audioImportBusy || scenePhase != .active)
+                                        .disabled(recentPlaybackCheck != nil)
                                         .accessibilityLabel(recentPlaybackCheck == track.id
                                             ? "Checking \(track.title) for offline playback"
                                             : "Play \(track.title) by \(track.artist)")
