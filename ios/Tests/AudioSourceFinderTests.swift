@@ -2270,6 +2270,25 @@ enum AudioSourceFinderTests {
             filename: "Exact Song (Audience Recording).mp3",
             requestedTitle: "Exact Song (Soundboard)"),
             "audience and soundboard captures must not be conflated")
+        // Distinct live venues cannot silently substitute for one another
+        // even when the performance year and track duration match.
+        for (filename, requested) in [
+            ("Exact Song (Live at Wembley 2022).mp3", "Exact Song (Live at Madison Square Garden 2022)"),
+            ("Exact Song (Live at Wembley 2022).mp3", "Exact Song (Live 2022)"),
+            ("Exact Song (Live 2022).mp3", "Exact Song (Live at Wembley 2022)")
+        ] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: filename, requestedTitle: requested),
+                "venue-specific live recording must not be substituted: \\(filename)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Live at Wembley 2022).mp3",
+            requestedTitle: "Exact Song (Live at Wembley 2022)"),
+            "identical venue-specific live recording remains eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Live 2022).mp3",
+            requestedTitle: "Exact Song (Live 2022)"),
+            "ordinary dated live recording remains eligible")
         print("Audio source discovery validation tests passed")
     }
 }
