@@ -529,6 +529,34 @@ enum AudioSourceFinderTests {
             "explicit derivative alongside original does not block a valid match")
         // Alternative edition labels must not collapse into a studio original.
         // Test both directions: requested alternate vs plain file and vice versa.
+        // Same artist/title/duration cannot distinguish a master from a
+        // backing track or an isolated vocal/stem upload.
+        let stemVariants = [
+            "The Song (Backing Track).mp3",
+            "The Song (Backing Instrumental).mp3",
+            "The Song (Minus One).mp3",
+            "The Song (No Vocals).mp3",
+            "The Song (Isolated Vocals).mp3",
+            "The Song (Vocal Stem).mp3",
+            "The Song (Vocals Only).mp3",
+            "The Song (Stems).mp3",
+            "The Song (Multitrack).mp3"
+        ]
+        for alternate in stemVariants {
+            let title = (alternate as NSString).deletingPathExtension
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: alternate, requestedTitle: "The Song"),
+                "stem or backing track cannot replace original: \\(alternate)")
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song.mp3", requestedTitle: title),
+                "original cannot replace requested stem: \\(alternate)")
+            verify(AudioSourceFinder.recordingEditionAgrees(
+                filename: alternate, requestedTitle: title),
+                "same stem edition remains eligible: \\(alternate)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Backing Track.mp3", requestedTitle: "The Backing Track"),
+            "literal song title is not falsely treated as an alternate edition")
         let alternateEditions = [
             "The Song (Radio Version).mp3",
             "The Song (Single Edit).mp3",
