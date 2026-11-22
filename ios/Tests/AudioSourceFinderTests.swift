@@ -972,6 +972,37 @@ enum AudioSourceFinderTests {
                ccMixterMatches?.first?.sourceName == "ccMixter" &&
                ccMixterMatches?.first?.downloadURL.pathExtension == "mp3",
                "ccMixter RSS exact recording with declared CC license is eligible")
+        // A duplicate URL with contradictory catalog identity must not become
+        // an automatic download just because the conflicting row is filtered.
+        let conflictingURLItem = """
+                <item><title>Another Recording (Live)</title>
+                  <dc:creator>Different Artist</dc:creator>
+                  <link>https://ccmixter.org/files/other_artist/5678</link>
+                  <enclosure url="https://ccmixter.org/content/the_artist/the_song.mp3"
+                             type="audio/mpeg" />
+                </item>
+                """
+        let conflictingURLFeed = ccMixterFeed.replacingOccurrences(
+            of: "</channel>", with: conflictingURLItem + "</channel>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(conflictingURLFeed.utf8), matching: wish)?.isEmpty == true,
+               "contradictory RSS identities for one download URL require review")
+        let conflictingPageItem = conflictingURLItem
+            .replacingOccurrences(of: "Another Recording (Live)", with: "The Song")
+            .replacingOccurrences(of: "Different Artist", with: "The Artist")
+        let conflictingPageFeed = ccMixterFeed.replacingOccurrences(
+            of: "</channel>", with: conflictingPageItem + "</channel>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(conflictingPageFeed.utf8), matching: wish)?.isEmpty == true,
+               "same recording URL attributed to different upload pages requires review")
+        let identicalItem = conflictingPageItem.replacingOccurrences(
+            of: "https://ccmixter.org/files/other_artist/5678",
+            with: "https://ccmixter.org/files/the_artist/1234")
+        let duplicateIdenticalFeed = ccMixterFeed.replacingOccurrences(
+            of: "</channel>", with: identicalItem + "</channel>")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(duplicateIdenticalFeed.utf8), matching: wish)?.count == 1,
+               "identical RSS duplicate claims retain one exact recording")
         // Publisher RSS can include inline markup inside metadata. The
         // recording identity must survive nested parser callbacks without
         // becoming a false unavailable result or a different title.
