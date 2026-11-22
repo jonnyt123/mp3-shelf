@@ -2244,6 +2244,7 @@ struct PlaylistsView: View {
 
     private enum FailedPlaylistEdit {
         case create
+        case copy(snapshot: MusicPlaylist)
         case rename(snapshot: MusicPlaylist)
         case delete(snapshot: MusicPlaylist)
     }
@@ -2264,6 +2265,22 @@ struct PlaylistsView: View {
             playlistActionFeedback = nil
             self.failedPlaylistEdit = nil
             showCreate = true
+        case .copy(let snapshot):
+            guard !library.isImporting else {
+                playlistActionFeedback = "Finish importing audio before retrying this copy."
+                return
+            }
+            guard let current = uniquePlaylist(withID: snapshot.id),
+                  current.name == snapshot.name,
+                  current.trackIDs == snapshot.trackIDs,
+                  current.missingTracks == snapshot.missingTracks else {
+                self.failedPlaylistEdit = nil
+                playlistActionFeedback = "This playlist changed or was removed. Review its latest songs before copying."
+                return
+            }
+            self.failedPlaylistEdit = nil
+            playlistActionFeedback = nil
+            copyPlaylist(current)
         case .rename(let snapshot):
             guard !library.isImporting else {
                 playlistActionFeedback = "Finish importing audio before retrying this rename."
@@ -2344,11 +2361,17 @@ struct PlaylistsView: View {
         }
         let existingIDs = Set(library.playlists.map(\.id))
         library.duplicatePlaylist(playlist.id)
-        if let copy = library.playlists.first(where: { !existingIDs.contains($0.id) }) {
+        let newCopies = library.playlists.filter { !existingIDs.contains($0.id) }
+        // A restore/import may introduce another playlist during a failed write.
+        // Never report success or retry an ambiguous copy result.
+        if newCopies.count == 1, let copy = newCopies.first,
+           copy.trackIDs == current.trackIDs,
+           copy.missingTracks == current.missingTracks {
             revealPlaylists()
             playlistActionFeedback = "Created \(copy.name)."
         } else {
-            playlistActionFeedback = "Could not copy this playlist. Your existing playlists were preserved."
+            failedPlaylistEdit = .copy(snapshot: current)
+            playlistActionFeedback = "Could not confirm this playlist copy. Review your playlists before retrying; your original songs were not changed."
         }
     }
 
