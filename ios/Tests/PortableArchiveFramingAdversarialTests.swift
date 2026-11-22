@@ -144,7 +144,7 @@ func validateParts(_ parts: [CheckedPart], payloadLength: Int64) throws {
         intervals.append((part.offset, part.offset + part.length))
     }
     intervals.sort { $0.0 < $1.0 }
-    for i in 1..<intervals.count where intervals[i].0 < intervals[i - 1].1 {
+    for i in intervals.indices.dropFirst() where intervals[i].0 < intervals[i - 1].1 {
         throw FramingError.invalid
     }
 }
