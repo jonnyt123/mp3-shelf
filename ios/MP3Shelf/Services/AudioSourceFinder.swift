@@ -382,10 +382,11 @@ enum AudioSourceFinder {
                 ("chopped-screwed", [["chopped", "and", "screwed"],
                                      ["chopped", "screwed"]]),
                 ("alternate-take", [["alternate", "take"]]),
-                ("mono", [["mono"]]),
-                ("stereo", [["stereo"]]),
-                ("re-recording", [["re", "recorded"], ["rerecorded"],
-                                  ["re", "recording"], ["rerecording"]])
+                // Mono/stereo and re-recording already have canonical categories
+                // above. Duplicating them under narrower aliases makes equivalent
+                // labels (e.g. "Mono" vs "Mono Mix") compare as different sets.
+                ("re-recorded", [["re", "recorded"], ["rerecorded"],
+                                 ["re", "recording"], ["rerecording"]])
             ]
             for (category, spellings) in variants where spellings.contains(where: {
                 contains($0, in: words)
