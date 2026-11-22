@@ -187,3 +187,41 @@ rejects("zero length audio", try encode(manifest([
     second
 ]), payload: payload))
 print("PASS: archive structural mutation matrix; media-byte authenticity is NOT provided by v1")
+
+
+// Large-library restore contract: offsets are authoritative even when the
+// manifest is shuffled. This exercises 2,048 independent recordings without
+// allocating a multi-gigabyte audio fixture.
+let largeCount = 2_048
+let largePayload = Data((0..<largeCount).map { UInt8(truncatingIfNeeded: $0) })
+let largeTracks = (0..<largeCount).map { index in
+    Track(id: "recording-\(index)",
+          audio: Part(offset: Int64(index), length: 1, type: "audio/mpeg"))
+}
+let shuffledTracks = Array(largeTracks.reversed())
+let largeArchive = try encode(Manifest(schema: "mp3-shelf-backup", version: 1,
+    tracks: shuffledTracks,
+    playlists: [Playlist(id: "large-playlist",
+        trackIds: ["recording-2047", "recording-0", "recording-2047"])]),
+    payload: largePayload)
+let largeRestored = try decode(largeArchive)
+precondition(largeRestored.count == largeCount)
+for index in 0..<largeCount {
+    precondition(largeRestored["recording-\(index)"] == Data([UInt8(truncatingIfNeeded: index)]),
+                 "FAIL: wrong bytes for recording \(index)")
+}
+
+// Detect corruption in the middle of a large archive, including ownership
+// collisions that might otherwise overwrite one track in a dictionary.
+var overlappingTracks = shuffledTracks
+overlappingTracks[0] = Track(id: "recording-2047",
+    audio: Part(offset: 0, length: 1, type: "audio/mpeg"))
+rejects("large-library overlapping ownership",
+    try encode(Manifest(schema: "mp3-shelf-backup", version: 1,
+        tracks: overlappingTracks, playlists: []), payload: largePayload))
+var duplicateTracks = shuffledTracks
+duplicateTracks[0] = shuffledTracks[1]
+rejects("large-library duplicate identity",
+    try encode(Manifest(schema: "mp3-shelf-backup", version: 1,
+        tracks: duplicateTracks, playlists: []), payload: largePayload))
+print("PASS: 2048-record archive ownership, reversed manifest and corruption checks")
