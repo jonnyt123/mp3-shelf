@@ -194,6 +194,21 @@ enum SourceDiscoveryJobTests {
                         "queue manifest persistence failure is classified as local even without nested Cocoa error")
         verifyDiscovery(AudioDownloadDiagnostics.shouldTryAlternateSource(for: URLError(.timedOut)),
                         "a remote timeout remains eligible for a different source")
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: URLError(.cancelled)),
+                        "a cancelled background transfer never starts a fallback source")
+        let wrappedTransferCancellation = NSError(domain: "MP3Shelf.TransferAdapter", code: 2,
+            userInfo: [NSUnderlyingErrorKey: URLError(.cancelled) as NSError])
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: wrappedTransferCancellation),
+                        "a wrapped URLSession cancellation cannot trigger another download")
+        let maskedTransferCancellation = NSError(domain: NSURLErrorDomain,
+            code: URLError.Code.timedOut.rawValue,
+            userInfo: [NSUnderlyingErrorKey: URLError(.cancelled) as NSError])
+        verifyDiscovery(!AudioDownloadDiagnostics.shouldTryAlternateSource(for: maskedTransferCancellation),
+                        "a nested cancellation wins over a transient outer transfer failure")
+        let wrappedTransferTimeout = NSError(domain: "MP3Shelf.TransferAdapter", code: 2,
+            userInfo: [NSUnderlyingErrorKey: URLError(.timedOut) as NSError])
+        verifyDiscovery(AudioDownloadDiagnostics.shouldTryAlternateSource(for: wrappedTransferTimeout),
+                        "a genuine wrapped timeout retains fallback eligibility")
         verifyDiscovery(AudioDownloadDiagnostics.http(403).contains("source refused"),
                         "access refusal explains source permissions instead of generic failure")
         verifyDiscovery(AudioDownloadDiagnostics.http(404).contains("no longer available") &&
