@@ -472,28 +472,30 @@ struct LibraryView: View {
     }
 
     private func browsingScopeDidChange() {
-        // Recovery belongs to the exact results that produced the partial
-        // queue. A new query, Favorites filter, or sort order must not offer
-        // "restore skipped" or "refresh Shuffle" for the old selection.
-        // This changes only view feedback; the playing queue is untouched.
-        // A failed Play/Shuffle request also belongs to the previous scope.
-        // Clear its retry before changing results; a retry must never silently
-        // play a different search or Favorites selection.
+        // Every recovery action is scoped to the exact result snapshot. In
+        // particular, an entirely missing offline selection has no skipped
+        // count or retry mode, so it must be invalidated explicitly.
+        let hadRecovery = bulkPlaybackPending || bulkSkippedRecordingCount > 0 ||
+            bulkAllRecordingsUnavailable || partialQueueNeedsRefresh ||
+            partialQueueShuffle != nil || bulkRetryShuffle != nil ||
+            playbackSelectionSnapshot != nil
         let wasPreparing = bulkPlaybackPending
         if wasPreparing {
             cancelBulkPlaybackPreparation(showFeedback: false)
         }
-        if bulkSkippedRecordingCount > 0 || partialQueueNeedsRefresh ||
-           bulkRetryShuffle != nil || wasPreparing {
-            bulkSkippedRecordingCount = 0
-            partialQueueShuffle = nil
-            partialQueueNeedsRefresh = false
-            bulkPlaybackNotice = wasPreparing
-                ? "Your song selection changed. Choose Play or Shuffle for the new results."
-                : nil
-            bulkRetryShuffle = nil
-            playbackSelectionSnapshot = nil
-        }
+        guard hadRecovery else { return }
+        bulkSkippedRecordingCount = 0
+        bulkAllRecordingsUnavailable = false
+        partialQueueShuffle = nil
+        partialQueueNeedsRefresh = false
+        bulkRetryShuffle = nil
+        playbackSelectionSnapshot = nil
+        // Preserve a useful explanation only for interrupted preparation.
+        // Otherwise remove the old restore/retry notice as well as its actions:
+        // it no longer describes the newly filtered or sorted recordings.
+        bulkPlaybackNotice = wasPreparing
+            ? "Your song selection changed. Choose Play or Shuffle for the new results."
+            : nil
     }
 
     private func retryRecentRecording() {
