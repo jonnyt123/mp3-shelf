@@ -2818,14 +2818,43 @@ struct PlaylistsView: View {
                         failedPlaylistEdit = nil
                         playlistActionFeedback = "Playlist name is already up to date."
                     } else {
+                        // A successful name lookup alone is insufficient: a
+                        // restore may have replaced the playlist or changed its
+                        // membership during the write. Compare the full library
+                        // snapshot before offering success or a safe retry.
+                        let beforeRename = library.playlists
                         library.renamePlaylist(current.id, to: name)
-                        if uniquePlaylist(withID: current.id)?.name == name {
+                        let afterRename = library.playlists
+                        let sameStructure = beforeRename.count == afterRename.count
+                            && zip(beforeRename, afterRename).allSatisfy { before, after in
+                                before.id == after.id
+                                    && before.trackIDs == after.trackIDs
+                                    && before.missingTracks == after.missingTracks
+                                    && (before.id == current.id
+                                        ? after.name == name
+                                        : before.name == after.name)
+                            }
+                        let uniqueIDs = Set(afterRename.map(\.id)).count == afterRename.count
+                        if sameStructure && uniqueIDs {
                             revealPlaylists()
                             failedPlaylistEdit = nil
                             playlistActionFeedback = "Renamed playlist to \(name)."
                         } else {
-                            failedPlaylistEdit = .rename(snapshot: current)
-                            playlistActionFeedback = "Could not rename this playlist. Its previous name was preserved."
+                            // Only retry when the old playlist is still unique
+                            // and byte-for-byte unchanged. An ambiguous write
+                            // may already have succeeded; retrying could
+                            // overwrite a concurrent rename or restore.
+                            let unchanged = beforeRename.count == afterRename.count
+                                && zip(beforeRename, afterRename).allSatisfy { before, after in
+                                    before.id == after.id && before.name == after.name
+                                        && before.trackIDs == after.trackIDs
+                                        && before.missingTracks == after.missingTracks
+                                }
+                            failedPlaylistEdit = unchanged && uniqueIDs
+                                ? .rename(snapshot: current) : nil
+                            playlistActionFeedback = unchanged && uniqueIDs
+                                ? "Could not rename this playlist. Its previous name is intact; retry after checking your library."
+                                : "Playlist rename could not be confirmed. Review the latest playlist names and songs before trying again."
                         }
                     }
                 }
