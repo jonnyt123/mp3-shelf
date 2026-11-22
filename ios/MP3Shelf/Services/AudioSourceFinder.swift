@@ -345,6 +345,13 @@ enum AudioSourceFinder {
                 // Uploaded mashups, tribute performances and synthetic covers
                 // can reuse the original artist/title and even its duration.
                 // Require explicit edition agreement before unattended import.
+                // Alternate spatial masters and newly arranged performances are
+                // not interchangeable with the ordinary stereo studio release.
+                ("spatial-master", [["spatial", "audio"], ["dolby", "atmos"],
+                                     ["binaural", "mix"], ["360", "reality", "audio"]]),
+                ("reimagined", [["reimagined"], ["reimagining"]]),
+                ("orchestral-arrangement", [["orchestral"], ["orchestra", "version"],
+                                             ["symphonic", "version"]]),
                 ("mashup", [["mashup"], ["mash", "up"]]),
                 ("medley", [["medley"]]),
                 ("tribute", [["tribute"], ["tribute", "version"]]),
