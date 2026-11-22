@@ -333,6 +333,15 @@ enum AudioSourceFinder {
                 ("mono-mix", [["mono"], ["mono", "mix"]]),
                 ("stereo-mix", [["stereo"], ["stereo", "mix"]]),
                 ("alternate-take", [["alternate", "take"], ["alt", "take"]]),
+                // Uploaded mashups, tribute performances and synthetic covers
+                // can reuse the original artist/title and even its duration.
+                // Require explicit edition agreement before unattended import.
+                ("mashup", [["mashup"], ["mash", "up"]]),
+                ("medley", [["medley"]]),
+                ("tribute", [["tribute"], ["tribute", "version"]]),
+                ("ai-cover", [["ai", "cover"], ["a", "i", "cover"], ["ai", "generated", "cover"]]),
+                ("dj-edit", [["dj", "edit"], ["dj", "version"]]),
+                ("fan-remaster", [["fan", "remaster"], ["fan", "remastered"]]),
                 ("karaoke", [["karaoke"]]),
                 ("acapella", [["acapella"], ["a", "cappella"], ["a", "capella"]]),
                 ("rehearsal", [["rehearsal"]]),
