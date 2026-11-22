@@ -7,8 +7,9 @@ let source = try String(contentsOfFile: "ios/MP3Shelf/Services/SpotifyService.sw
 let marker = "    nonisolated static func boundedRetryAfter("
 guard let start = source.range(of: marker),
       let end = source.range(of: "\n    private func request<T: Decodable>", range: start.upperBound..<source.endIndex),
-      source.contains("Self.boundedRetryAfter(header, now: Date())") else {
-    fatalError("Spotify Retry-After policy is missing or disconnected from the HTTP 429 handler")
+      source.contains("Self.boundedRetryAfter(header, now: Date())"),
+      source.contains("Self.boundedRetryAfter(value, now: Date())") else {
+    fatalError("Spotify Retry-After policy is missing or disconnected from API or OAuth HTTP 429 handlers")
 }
 let implementation = String(source[start.lowerBound..<end.lowerBound])
 let fixture = """
