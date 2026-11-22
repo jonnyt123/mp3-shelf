@@ -966,7 +966,7 @@ final class MusicLibrary: ObservableObject {
     /// either outside the Music directory. Missing/protected audio stays in
     /// the catalog for later recovery rather than being silently removed.
     func ownedPlaybackURL(for track: MusicTrack) -> URL? {
-        guard tracks.contains(where: { $0.id == track.id && $0.fileName == track.fileName }) else {
+        guard song(with: track.id)?.fileName == track.fileName else {
             return nil
         }
         return LocalLibraryFileSafety.regularFile(named: track.fileName, in: musicDirectory)
