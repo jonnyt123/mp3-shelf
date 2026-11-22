@@ -32,6 +32,21 @@ enum AudioSourceFinderTests {
                "conflicting remaster years cannot auto-select")
         verify(try decodeCatalogText(#"["The Song (Live)", "The Song (Live)"]"#) == "The Song (Live)",
                "identical live catalog aliases remain eligible")
+        for alternate in ["The Song (Dolby Atmos)", "The Song (Spatial Audio)",
+                          "The Song (Binaural Mix)", "The Song (360 Reality Audio)",
+                          "The Song (Reimagined)", "The Song (Orchestral)"] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: alternate + ".mp3", requestedTitle: "The Song"),
+                "alternate master or arrangement cannot silently replace studio original: \\(alternate)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Dolby Atmos).mp3",
+            requestedTitle: "The Song (Spatial Audio)"),
+            "equivalent spatial-master labels retain the same edition category")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Dolby Atmos).mp3",
+            requestedTitle: "The Song (Orchestral)"),
+            "spatial master cannot replace orchestral arrangement")
         let editionWish = PlaylistWish(title: "The Song", artist: "The Artist",
                                        album: "The Album", spotifyURL: nil, durationSeconds: 212)
         verify(!AudioSourceFinder.exactMetadataMatch(
