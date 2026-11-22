@@ -667,7 +667,13 @@ struct LibraryView: View {
         }
         .buttonStyle(.bordered)
         .tint(ShelfTheme.accent)
-        .disabled(!hasResults || isSearchUpdating || bulkPlaybackPending || audioImportBusy)
+        // Import is not a disabled state: listeners need an actionable reason
+        // why their selected recordings cannot play yet. The handler retains
+        // the exact Play/Shuffle selection for a deliberate retry.
+        .disabled(!hasResults || isSearchUpdating || bulkPlaybackPending)
+        .accessibilityHint(audioImportBusy
+            ? "Audio is importing. Choose Play or Shuffle to save a retry request without starting playback."
+            : "Checks locally stored recordings before starting playback.")
     }
 
     @ViewBuilder private var browsingActions: some View {
@@ -743,6 +749,10 @@ struct LibraryView: View {
                         } else {
                             Text(isSearchUpdating
                                  ? "Finish searching before retrying playback."
+                                 : audioImportBusy
+                                 ? "Finish importing audio, then retry the saved Play or Shuffle selection."
+                                 : scenePhase != .active
+                                 ? "Return to MP3 Shelf to retry the saved selection."
                                  : "Choose songs in your library to retry playback.")
                                 .font(.footnote)
                                 .foregroundStyle(ShelfTheme.subdued)
