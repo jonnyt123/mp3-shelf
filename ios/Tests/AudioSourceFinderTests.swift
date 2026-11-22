@@ -2232,6 +2232,44 @@ enum AudioSourceFinderTests {
             filename: "Exact Song (DJ Edit).mp3",
             requestedTitle: "Exact Song (Radio Edit)"),
             "different edit categories must remain review-only")
+        // Recording provenance is not interchangeable with the studio master.
+        // Check both directions to prevent false automatic matches on an
+        // original request and on a specifically requested alternate capture.
+        let captureVariants = [
+            "Exact Song (Soundboard).mp3",
+            "Exact Song (SBD Recording).mp3",
+            "Exact Song (Audience Recording).mp3",
+            "Exact Song (Audience Tape).mp3",
+            "Exact Song (Soundcheck).mp3",
+            "Exact Song (Sound Check).mp3",
+            "Exact Song (Rough Mix).mp3",
+            "Exact Song (Roughmix).mp3",
+            "Exact Song (Work Tape).mp3",
+            "Exact Song (Worktape).mp3"
+        ]
+        for alternate in captureVariants {
+            let requestedAlternate = (alternate as NSString).deletingPathExtension
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: alternate, requestedTitle: "Exact Song"),
+                "alternate capture must not replace studio master: \\(alternate)")
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: "Exact Song.mp3", requestedTitle: requestedAlternate),
+                "studio master must not replace requested capture: \\(alternate)")
+        }
+        for (filename, requested) in [
+            ("Exact Song (Sound Check).mp3", "Exact Song (Soundcheck)"),
+            ("Exact Song (Roughmix).mp3", "Exact Song (Rough Mix)"),
+            ("Exact Song (Worktape).mp3", "Exact Song (Work Tape)"),
+            ("Exact Song (SBD Recording).mp3", "Exact Song (Soundboard)")
+        ] {
+            verify(AudioSourceFinder.recordingEditionAgrees(
+                filename: filename, requestedTitle: requested),
+                "equivalent alternate capture labels remain eligible: \\(filename)")
+        }
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Audience Recording).mp3",
+            requestedTitle: "Exact Song (Soundboard)"),
+            "audience and soundboard captures must not be conflated")
         print("Audio source discovery validation tests passed")
     }
 }
