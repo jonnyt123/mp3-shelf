@@ -318,10 +318,7 @@ final class PlaybackController: NSObject, ObservableObject {
         // to resume after the library has removed its catalog identity.
         // Preserve the listener's pause intent while selecting a surviving
         // queued recording; never delete or rewrite audio bytes here.
-        if recoverDeletedCurrentTrack() {
-            if isPlaying { pause() }
-            return
-        }
+        if recoverDeletedCurrentTrack(forcePause: true) { return }
         relay.invalidatePendingCompletions()
         interruptionState.cancelResume()
         if outgoingPlayer != nil { cancelFade(); audioPlayer?.volume = 1 }
@@ -341,13 +338,14 @@ final class PlaybackController: NSObject, ObservableObject {
     /// state and the playback clock cannot continue advertising deleted audio.
     /// Returns true when the caller must stop using its previous player.
     @discardableResult
-    private func recoverDeletedCurrentTrack(allowAutoplay: Bool = false) -> Bool {
+    private func recoverDeletedCurrentTrack(allowAutoplay: Bool = false,
+                                            forcePause: Bool = false) -> Bool {
         guard let currentTrackID, let library,
               library.song(with: currentTrackID) == nil else { return false }
         // Library deletion can be discovered from a paused seek or a lock-screen
         // transport command. Recover the queue without unexpectedly starting
         // audio when the listener deliberately paused playback.
-        let shouldRemainPaused = !isPlaying && !allowAutoplay
+        let shouldRemainPaused = forcePause || (!isPlaying && !allowAutoplay)
         relay.invalidatePendingCompletions()
         positionTimer?.invalidate()
         positionTimer = nil
