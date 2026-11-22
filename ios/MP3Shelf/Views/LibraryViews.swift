@@ -349,9 +349,18 @@ struct LibraryView: View {
     // preparation before presenting it: a slow disk scan must not start audio
     // behind the picker while the user is choosing a replacement recording.
     private func presentAudioImporter() {
-        guard !audioImportBusy else { return }
-        cancelRecentPlaybackPreparation(showFeedback: true)
-        cancelBulkPlaybackPreparation(showFeedback: true)
+        guard !audioImportBusy else {
+            message = "Finish the current audio import before choosing more files."
+            return
+        }
+        guard scenePhase == .active else {
+            message = "Return to MP3 Shelf before opening Files."
+            return
+        }
+        // Opening Files is not an import. The listener can cancel the picker,
+        // leaving a running local playback check and its retry intent intact.
+        // Only the fileImporter's nonempty successful selection invalidates
+        // those checks, immediately before importAudio begins.
         showFilePicker = true
     }
 
