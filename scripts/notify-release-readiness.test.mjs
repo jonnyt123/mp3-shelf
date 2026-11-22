@@ -321,3 +321,24 @@ test('a growing readiness snapshot is rejected rather than trusting its prefix',
   assert.equal(JSON.parse(readFileSync(x.state,'utf8')).gates.native,'UNVERIFIED');
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
+
+test('contradictory all-PASS advisory readiness cannot announce a release all-clear',()=>{
+ const x=dir(),sent=[];
+ try{
+  writeFileSync(x.latest,JSON.stringify(model({native:'BLOCKED'})));
+  deliverChangeOnlyNotification({home:x.home,now,platform:'darwin',send:s=>sent.push(s)});
+  const allPass=Object.fromEntries(names.map(key=>[key,'PASS']));
+  writeFileSync(x.latest,JSON.stringify(model(allPass)));
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now:now+1000,
+   platform:'darwin',send:s=>sent.push(s)}),/identity or status/);
+  assert.deepEqual(sent,[]);
+  assert.equal(JSON.parse(readFileSync(x.state,'utf8')).gates.native,'BLOCKED');
+  // A subsequent legitimate partial recovery remains observable.
+  writeFileSync(x.latest,JSON.stringify(model({native:'PASS',hardware:'BLOCKED'})));
+  const result=deliverChangeOnlyNotification({home:x.home,now:now+2000,
+   platform:'darwin',send:s=>sent.push(s)});
+  assert.equal(result.status,'CHANGE_NOTIFIED');
+  assert.deepEqual(result.cleared,['native']);
+  assert.equal(sent.length,1);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
