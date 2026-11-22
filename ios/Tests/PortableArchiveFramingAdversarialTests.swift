@@ -124,6 +124,54 @@ rejected += 1
 mustReject("JSON object with trailing garbage", framed(json + Data("garbage".utf8)))
 rejected += 1
 
+
+// Independently model the byte-range contract before any restore writes.
+// The production reader must reject overlapping, out-of-bounds, negative and
+// zero-length media slices even when the framing and JSON are otherwise valid.
+struct CheckedPart {
+    let offset: Int64
+    let length: Int64
+}
+func validateParts(_ parts: [CheckedPart], payloadLength: Int64) throws {
+    guard payloadLength >= 0 else { throw FramingError.invalid }
+    var intervals: [(Int64, Int64)] = []
+    for part in parts {
+        guard part.offset >= 0, part.length > 0,
+              part.offset <= payloadLength,
+              part.length <= payloadLength - part.offset else {
+            throw FramingError.invalid
+        }
+        intervals.append((part.offset, part.offset + part.length))
+    }
+    intervals.sort { $0.0 < $1.0 }
+    for i in 1..<intervals.count where intervals[i].0 < intervals[i - 1].1 {
+        throw FramingError.invalid
+    }
+}
+func mustRejectParts(_ name: String, _ parts: [CheckedPart], _ payloadLength: Int64) {
+    do { try validateParts(parts, payloadLength: payloadLength); fatalError("accepted \\(name)") }
+    catch FramingError.invalid { }
+    catch { fatalError("unexpected range error for \\(name): \\(error)") }
+}
+let adjacent = [CheckedPart(offset: 0, length: 4), CheckedPart(offset: 4, length: 6)]
+try validateParts(adjacent, payloadLength: 10)
+try validateParts([CheckedPart(offset: 1, length: 2)], payloadLength: 10)
+try validateParts([], payloadLength: 0)
+for (name, parts, size) in [
+    ("negative offset", [CheckedPart(offset: -1, length: 2)], Int64(10)),
+    ("negative length", [CheckedPart(offset: 0, length: -1)], Int64(10)),
+    ("empty audio", [CheckedPart(offset: 0, length: 0)], Int64(10)),
+    ("past end", [CheckedPart(offset: 9, length: 2)], Int64(10)),
+    ("overflow", [CheckedPart(offset: Int64.max, length: Int64.max)], Int64.max),
+    ("duplicate", [CheckedPart(offset: 0, length: 4), CheckedPart(offset: 0, length: 4)], Int64(10)),
+    ("partial overlap", [CheckedPart(offset: 0, length: 5), CheckedPart(offset: 4, length: 2)], Int64(10)),
+    ("nested overlap", [CheckedPart(offset: 0, length: 9), CheckedPart(offset: 2, length: 2)], Int64(10)),
+    ("negative payload", [CheckedPart(offset: 0, length: 1)], Int64(-1))
+] {
+    mustRejectParts(name, parts, size)
+    rejected += 1
+}
+
 precondition(try decodeFrame(valid).payload == result.payload, "mutations changed valid baseline")
 print("PASS: \(rejected) malformed archive framing cases rejected")
 print("LIMITATION: standalone framing model; production restore and iPhone execution UNVERIFIED")
