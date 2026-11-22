@@ -153,7 +153,16 @@ function deliverLocked({latest,previous,root,now,send,platform}){
  const model=safeRead(latest);
  if(!model)throw Error('Missing latest local release-readiness JSON');
  const current=normalizedGateState(model,{now});
- const prior=safeRead(previous),diff=notificationChanges(prior,current);
+ const prior=safeRead(previous);
+ // A delayed or replayed readiness writer must not roll the notification
+ // watermark backwards. That would cause a later legitimate snapshot to
+ // appear as a fresh transition and generate duplicate/reversed alerts.
+ // Preserve the last known state and fail closed until the producer catches up.
+ if(prior?.schema==='mp3shelf-readiness-notification-state-v1'&&
+    Number.isFinite(Date.parse(prior.updatedAt??''))&&
+    Date.parse(prior.updatedAt)>Date.parse(current.updatedAt))
+  throw Error('STALE_READINESS_SNAPSHOT: latest evidence predates notification state');
+ const diff=notificationChanges(prior,current);
  const message=notificationMessage(diff);
  // Validate the write destination before delivering an irreversible UI alert.
  // Otherwise a redirected state file can cause repeated alerts every hour.
