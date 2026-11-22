@@ -55,7 +55,7 @@ export function normalizedGateState(model,{now=Date.now()}={}){
  const keys=new Set(model.gates.map(g=>g?.key));
  if(keys.size!==KEYS.length||KEYS.some(key=>!keys.has(key))||
    model.gates.some(g=>!STATUS.has(g?.status))||
-   model.blocking.length!==model.gates.filter(g=>g.status!=='PASS').length||
+   // The readiness producer explicitly says NOT_RELEASE_READY. A snapshot with\n   // every gate PASS contradicts that assertion and must never announce an\n   // all-clear from advisory data. Require a real outstanding gate.\n   model.blocking.length===0||\n   model.blocking.length!==model.gates.filter(g=>g.status!=='PASS').length||
    new Set(model.blocking).size!==model.blocking.length||
    model.blocking.some(key=>!KEYS.includes(key)||
      model.gates.find(g=>g.key===key)?.status==='PASS')||
