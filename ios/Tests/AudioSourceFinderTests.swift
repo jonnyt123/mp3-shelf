@@ -2304,6 +2304,28 @@ enum AudioSourceFinderTests {
             filename: "Exact Song (Live 2022).mp3",
             requestedTitle: "Exact Song (Live 2022)"),
             "ordinary dated live recording remains eligible")
+        // An RSS item with MP3 and a distinct AAC/FLAC enclosure is not
+        // necessarily one recording. The non-MP3 audio must not disappear
+        // before the unattended-selection ambiguity check.
+        let mixedCodecRSS = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><item>
+        <title>Exact Song</title><creator>Exact Artist</creator>
+        <link>https://ccmixter.org/files/artist/123</link>
+        <enclosure url="https://ccmixter.org/content/artist/song.mp3" type="audio/mpeg"/>
+        <enclosure url="https://ccmixter.org/content/artist/alternate.m4a" type="audio/mp4"/>
+        </item></channel></rss>
+        """
+        let mixedCodecWish = PlaylistWish(title: "Exact Song", artist: "Exact Artist")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(mixedCodecRSS.utf8), matching: mixedCodecWish)?.isEmpty == true,
+            "distinct MP3 and AAC RSS enclosures must require review")
+        let duplicateCodecRSS = mixedCodecRSS.replacingOccurrences(
+            of: "https://ccmixter.org/content/artist/alternate.m4a",
+            with: "https://ccmixter.org/content/artist/song.mp3")
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(duplicateCodecRSS.utf8), matching: mixedCodecWish)?.count == 1,
+            "identical audio enclosure URL is not a competing recording")
         print("Audio source discovery validation tests passed")
     }
 }
