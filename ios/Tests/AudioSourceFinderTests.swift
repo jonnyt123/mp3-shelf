@@ -975,6 +975,21 @@ enum AudioSourceFinderTests {
         // Publisher RSS can include inline markup inside metadata. The
         // recording identity must survive nested parser callbacks without
         // becoming a false unavailable result or a different title.
+        // Malformed feeds can nest a second item. Its identity must not
+        // replace or augment the outer recording, even when its enclosure
+        // points at an apparently matching MP3.
+        let nestedItemFeed = ccMixterFeed.replacingOccurrences(
+            of: "<cc:license>",
+            with: """
+                <item><title>The Song</title><dc:creator>The Artist</dc:creator>
+                <link>https://ccmixter.org/files/the_artist/9999</link>
+                <enclosure url="https://ccmixter.org/content/the_artist/other.mp3"
+                           type="audio/mpeg"/></item>
+                <cc:license>
+                """)
+        verify(AudioSourceFinder.ccMixterCandidates(
+            in: Data(nestedItemFeed.utf8), matching: wish)?.isEmpty == true,
+               "nested RSS item cannot overwrite or silently authorize outer recording")
         let nestedMetadataFeed = ccMixterFeed
             .replacingOccurrences(of: "<title>The Song</title>",
                                   with: "<title>The <span>Song</span></title>")
