@@ -2558,16 +2558,35 @@ struct PlaylistsView: View {
                     playlistActionFeedback = "Finish importing audio before creating a playlist. Your name is saved for retry."
                     return
                 }
-                let existingIDs = Set(library.playlists.map(\.id))
+                // Confirm the *requested* playlist was created, not merely
+                // that an unrelated playlist appeared during a library refresh.
+                // Restored archives can also contain duplicate playlist UUIDs.
+                let previousPlaylists = library.playlists
+                let existingIDs = Set(previousPlaylists.map(\.id))
                 library.createPlaylist(name)
-                if library.playlists.contains(where: { !existingIDs.contains($0.id) }) {
+                let created = library.playlists.filter { !existingIDs.contains($0.id) }
+                let exactCreation = created.count == 1
+                    && created[0].name == name
+                    && created[0].trackIDs.isEmpty
+                    && created[0].missingTracks.isEmpty
+                    && library.playlists.filter { $0.id == created[0].id }.count == 1
+                let previousEntriesUnchanged = previousPlaylists.allSatisfy { previous in
+                    library.playlists.filter { $0.id == previous.id }.contains { current in
+                        current.name == previous.name
+                            && current.trackIDs == previous.trackIDs
+                            && current.missingTracks == previous.missingTracks
+                    }
+                }
+                if exactCreation && previousEntriesUnchanged {
                     revealPlaylists()
                     newName = ""
                     failedPlaylistEdit = nil
                     playlistActionFeedback = "Created \(name)."
                 } else {
+                    // A failed or ambiguous write must not be advertised as
+                    // success. Preserve the draft for an explicit user retry.
                     failedPlaylistEdit = .create
-                    playlistActionFeedback = "Could not create this playlist. Your existing playlists were preserved."
+                    playlistActionFeedback = "Could not confirm this playlist was created. Review your playlists before retrying; your name is saved."
                 }
             }
             // Keep Create reachable during an import so the user receives an
