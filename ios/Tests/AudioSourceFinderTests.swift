@@ -2160,6 +2160,27 @@ enum AudioSourceFinderTests {
             filename: "Exact Song (Speeded Up).mp3",
             requestedTitle: "Exact Song (Sped Up)"),
             "equivalent speed-up edition labels remain eligible")
+        // Equivalent edition spellings must not be rejected because an alias
+        // accidentally creates a second independent identity category.
+        for (filename, requested) in [
+            ("Exact Song (Mono Mix).mp3", "Exact Song (Mono)"),
+            ("Exact Song (Stereo).mp3", "Exact Song (Stereo Mix)"),
+            ("Exact Song (Re-Recorded).mp3", "Exact Song (Re-Recording)"),
+            ("Exact Song (Rerecorded).mp3", "Exact Song (Rerecorded)")
+        ] {
+            verify(AudioSourceFinder.recordingEditionAgrees(
+                filename: filename, requestedTitle: requested),
+                "equivalent edition spellings must compare identically: \\(filename)")
+        }
+        for (filename, requested) in [
+            ("Exact Song (Mono Mix).mp3", "Exact Song (Stereo Mix)"),
+            ("Exact Song (Re-Recorded).mp3", "Exact Song"),
+            ("Exact Song.mp3", "Exact Song (Re-Recording)")
+        ] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: filename, requestedTitle: requested),
+                "distinct edition must not be automatically selected: \\(filename)")
+        }
         print("Audio source discovery validation tests passed")
     }
 }
