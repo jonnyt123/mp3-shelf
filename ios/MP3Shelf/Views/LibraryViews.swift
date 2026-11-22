@@ -2949,6 +2949,8 @@ struct PlaylistDetailView: View {
     @State private var editing: MusicTrack?
     @State private var manuallyAdding: PlaylistWish?
     @State private var showWebDiscovery = false
+    @State private var sourceReviewWishes: [PlaylistWish] = []
+    @State private var sourceReviewFeedback: String?
     @State private var reviewingRecording: PlaylistWish?
     @State private var playlistPlaybackTask: Task<Void, Never>?
     @State private var playlistPlaybackPending = false
@@ -3064,6 +3066,30 @@ struct PlaylistDetailView: View {
             }
         }
         return ("Awaiting MP3 source search", "magnifyingglass")
+    }
+
+    // Resolve the current playlist at activation, not when the button was drawn.
+    // An import or archive restore may replace the missing-song list meanwhile.
+    private func openMissingSourceReview() {
+        guard playlistScenePhase == .active else {
+            sourceReviewFeedback = "Return to MP3 Shelf to review missing song sources."
+            return
+        }
+        guard !playlistAudioImportBusy else {
+            sourceReviewFeedback = "Wait for the audio import to finish, then review missing song sources."
+            return
+        }
+        guard let current = uniquePlaylist(playlistID) else {
+            sourceReviewFeedback = "This playlist was removed or its identity is ambiguous. Return to Library and reopen it."
+            return
+        }
+        guard !current.missingTracks.isEmpty else {
+            sourceReviewFeedback = "There are no missing song sources left to review in this playlist."
+            return
+        }
+        sourceReviewWishes = current.missingTracks
+        sourceReviewFeedback = nil
+        showWebDiscovery = true
     }
 
     private func cancelPlaylistPreparation(showFeedback: Bool) {
@@ -3367,17 +3393,25 @@ struct PlaylistDetailView: View {
                             .accessibilityHint("Review saved, pending and failed audio transfers without starting a download")
                             if !playlist.missingTracks.isEmpty {
                                 Button {
-                                    showWebDiscovery = true
+                                    openMissingSourceReview()
                                 } label: {
                                     Label("Review missing song sources", systemImage: "magnifyingglass")
                                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                 }
-                                .disabled(playlistScenePhase != .active || playlistAudioImportBusy)
-                                .accessibilityHint("Open the source review screen; no audio is downloaded automatically")
+                                .accessibilityHint("Review current missing sources. If importing is underway, a recovery message explains when to retry; no download starts automatically")
                             }
                         }
                         .padding(.vertical, 8)
                         .accessibilityElement(children: .contain)
+                    }
+                    if let sourceReviewFeedback {
+                        Label(sourceReviewFeedback, systemImage: "info.circle")
+                            .font(.subheadline)
+                            .foregroundStyle(ShelfTheme.subdued)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.updatesFrequently)
+                        Button("Dismiss source review message") { sourceReviewFeedback = nil }
+                            .frame(minHeight: 44)
                     }
                     if playlistPlaybackPending {
                         HStack(spacing: 10) {
@@ -3503,7 +3537,7 @@ struct PlaylistDetailView: View {
                         Text("MP3 Shelf compares recording titles, artist credits, versions and lengths. Clear matches download automatically; use Review recording matches when several recordings are similar. Public audio catalogs provide additional sources.")
                             .font(.caption).foregroundStyle(ShelfTheme.subdued)
                         Button {
-                            showWebDiscovery = true
+                            openMissingSourceReview()
                         } label: {
                             Label("Search the wider web for missing songs", systemImage: "globe")
                         }
@@ -3767,8 +3801,10 @@ struct PlaylistDetailView: View {
         .sheet(item: $manuallyAdding) { wish in
             AuthorizedPlaylistAudioView(wish: wish, playlistID: playlistID)
         }
-        .sheet(isPresented: $showWebDiscovery) {
-            WebAudioDiscoveryView(wishes: playlist?.missingTracks ?? [])
+        .sheet(isPresented: $showWebDiscovery, onDismiss: {
+            sourceReviewWishes = []
+        }) {
+            WebAudioDiscoveryView(wishes: sourceReviewWishes)
         }
         .sheet(item: $reviewingRecording) { wish in
             RecordingMatchReviewView(wish: wish, playlistID: playlistID,
