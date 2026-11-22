@@ -229,15 +229,21 @@ final class PlaybackController: NSObject, ObservableObject {
             // not require an active session; explicit Play/Resume activates it.
             // Keep activation before every audible transition, including
             // crossfades and automatic queue advancement.
-            if !startPaused {
-                try activateAudio()
-            }
             // Re-resolve at the shared open boundary as well: queued playback,
             // retries and crossfade can all carry older MusicTrack snapshots.
+            // Validate the decoder before taking the system audio session.
+            // A corrupt/missing queued recording must not interrupt another
+            // app's audio when playback will never begin.
             let player = try AVAudioPlayer(contentsOf: ownedAudioURL)
             player.delegate = relay
             guard player.prepareToPlay(), player.duration.isFinite, player.duration > 0 else {
                 throw CocoaError(.fileReadCorruptFile)
+            }
+            // Paused selection only prepares a decoder. Audible playback,
+            // including retries, crossfades and automatic transitions, still
+            // activates the session immediately before starting the player.
+            if !startPaused {
+                try activateAudio()
             }
             if !startPaused, transition > 0, let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
