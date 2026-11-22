@@ -2396,6 +2396,18 @@ extension AudioSourceFinder {
                 let isMP3 = type == "audio/mpeg" ||
                     URL(string: raw)?.pathExtension.lowercased() == "mp3"
                 let isOtherAudio = type.hasPrefix("audio/") && !isMP3
+                // Malformed audio enclosures are still evidence of a
+                // potentially different recording. Do not ignore them and
+                // silently promote a valid sibling to a unique match.
+                if isMP3 || isOtherAudio {
+                    guard let parsed = URL(string: raw),
+                          parsed.scheme?.lowercased() == "https",
+                          parsed.host != nil, parsed.user == nil,
+                          parsed.password == nil else {
+                        current?.ambiguousEnclosure = true
+                        return
+                    }
+                }
                 // A second audio enclosure can be a different mix or master,
                 // even if it is AAC/FLAC and only the MP3 would be downloaded.
                 // Never silently select the MP3 merely because the other

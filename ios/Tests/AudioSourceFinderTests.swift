@@ -2341,6 +2341,17 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.ccMixterCandidates(
             in: Data(duplicateCodecRSS.utf8), matching: mixedCodecWish)?.count == 1,
             "identical audio enclosure URL is not a competing recording")
+        // An invalid audio enclosure is still competing evidence. A valid
+        // MP3 sibling must not become an automatic match by discarding it.
+        for invalidURL in ["", "http://ccmixter.org/content/artist/other.mp3",
+                           "file:///private/other.mp3"] {
+            let invalidFeed = mixedCodecRSS.replacingOccurrences(
+                of: "https://ccmixter.org/content/artist/alternate.m4a",
+                with: invalidURL)
+            verify(AudioSourceFinder.ccMixterCandidates(
+                in: Data(invalidFeed.utf8), matching: mixedCodecWish)?.isEmpty == true,
+                "malformed secondary audio enclosure must require review")
+        }
         print("Audio source discovery validation tests passed")
     }
 }
