@@ -380,6 +380,30 @@ final class PlaybackController: NSObject, ObservableObject {
         return true
     }
 
+    /// Recheck file ownership before transport operations use a retained decoder.
+    /// A paused AVAudioPlayer can keep an unlinked or symlink-replaced file open;
+    /// neither Resume nor Seek may reuse it after library validation fails.
+    /// Keep queue and track IDs for an explicit repair/reimport retry.
+    @discardableResult
+    private func retireUnsafeCurrentDecoder() -> Bool {
+        guard let player = audioPlayer, let currentTrackID, let library,
+              let selected = library.song(with: currentTrackID),
+              library.ownedPlaybackURL(for: selected) == nil else { return false }
+        relay.invalidatePendingCompletions()
+        positionTimer?.invalidate()
+        positionTimer = nil
+        cancelFade()
+        player.stop()
+        audioPlayer = nil
+        isPlaying = false
+        interruptionState.cancelResume()
+        failedTrackID = currentTrackID
+        failedPlaybackOrder = playbackOrder
+        playbackError = "This recording is unavailable or unsafe. Reimport it, then retry playback."
+        updateNowPlaying()
+        return true
+    }
+
     func resume() {
         relay.invalidatePendingCompletions()
         interruptionState.cancelResume()
@@ -399,23 +423,7 @@ final class PlaybackController: NSObject, ObservableObject {
         // Resume must not play that orphan merely because the track ID still
         // exists. Retire the decoder and keep the selection/retry identity;
         // a later reimport can then be reopened through the owned-file check.
-        if let currentTrackID, let library,
-           let selected = library.song(with: currentTrackID),
-           library.ownedPlaybackURL(for: selected) == nil {
-            relay.invalidatePendingCompletions()
-            positionTimer?.invalidate()
-            positionTimer = nil
-            cancelFade()
-            audioPlayer.stop()
-            self.audioPlayer = nil
-            isPlaying = false
-            interruptionState.cancelResume()
-            failedTrackID = currentTrackID
-            failedPlaybackOrder = playbackOrder
-            playbackError = "This recording is unavailable or unsafe. Reimport it, then retry playback."
-            updateNowPlaying()
-            return
-        }
+        if retireUnsafeCurrentDecoder() { return }
         // A decode-error delegate leaves the old AVAudioPlayer allocated but
         // unusable. Reopen the recording on retry so a repaired/reimported file
         // is actually read. A failed manual selection is different: its ID is
@@ -470,6 +478,9 @@ final class PlaybackController: NSObject, ObservableObject {
         // bounded queue recovery used by lock-screen Resume; do not seek the
         // stale player or mutate a user-owned audio file.
         if recoverDeletedCurrentTrack() { return }
+        // A scrub must not seek an open descriptor whose catalog path became
+        // unsafe while paused or playing. Preserve the queue for reimport.
+        if retireUnsafeCurrentDecoder() { return }
         // A decode failure can leave an AVAudioPlayer allocated but unable to
         // decode any more frames. Seeking its clock would appear successful
         // while the listener still hears silence. Reopen the catalog-owned
