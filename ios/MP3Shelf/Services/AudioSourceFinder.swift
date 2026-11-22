@@ -365,7 +365,15 @@ enum AudioSourceFinder {
                 ("club-edit", [["club", "edit"]]),
                 ("dubstep-remix", [["dubstep", "remix"]]),
                 ("8-bit-cover", [["8", "bit"], ["8bit"]]),
-                ("instrumental", [["instrumental"]]),
+                // Backing tracks and stem-only uploads can carry the same
+                // title, artist credit and duration as the full vocal master.
+                // Treat them as distinct recordings, not equivalent originals.
+                ("instrumental", [["instrumental"], ["instrumental", "version"]]),
+                ("backing-track", [["backing", "track"], ["backing", "instrumental"],
+                                   ["minus", "one"], ["no", "vocals"]]),
+                ("isolated-vocals", [["isolated", "vocals"], ["vocal", "stem"],
+                                     ["vocals", "only"]]),
+                ("isolated-stems", [["stems"], ["multitrack"], ["multi", "track"]]),
                 ("cover", [["cover"]]),
                 ("live", [["live"]]),
                 ("acoustic", [["acoustic"], ["unplugged"]]),
