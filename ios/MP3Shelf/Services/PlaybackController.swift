@@ -548,7 +548,13 @@ final class PlaybackController: NSObject, ObservableObject {
         }
         var nextOrder = playbackOrder
         nextOrder.retainAvailable(Set(library.tracks.map(\.id)))
-        guard let nextID = nextOrder.next(automatic: automatically, loop: loopMode) else {
+        // Repeat One must not pin recovery to a catalog entry that was
+        // deleted while its decoder was open. Traverse surviving entries
+        // instead, without changing the listener's repeat preference.
+        // This also applies to paused recovery and explicit Play after deletion.
+        let selectedIsMissing = currentTrackID.map { library.song(with: $0) == nil } ?? false
+        let effectiveLoop: PlaybackLoopMode = selectedIsMissing && loopMode == .one ? .all : loopMode
+        guard let nextID = nextOrder.next(automatic: automatically, loop: effectiveLoop) else {
             // A manual Next at the end of a finite queue is a no-op. Do not
             // discard the current paused position, retry state, or queue.
             // Natural completion still ends playback when repeat is off.
