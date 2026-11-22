@@ -2256,6 +2256,10 @@ struct PlaylistsView: View {
         // until the user explicitly reviews the latest playlist state.
         switch failedPlaylistEdit {
         case .create:
+            guard !library.isImporting else {
+                playlistActionFeedback = "Finish importing audio before retrying playlist creation. Your name is saved."
+                return
+            }
             playlistActionFeedback = nil
             self.failedPlaylistEdit = nil
             showCreate = true
@@ -2307,6 +2311,8 @@ struct PlaylistsView: View {
     // A duplicate must be discoverable even when the source was found through
     // a search that excludes the generated copy's name. Keep audio untouched.
     private func copyPlaylist(_ playlist: MusicPlaylist) {
+        // A new action must not leave Retry attached to an older failed edit.
+        failedPlaylistEdit = nil
         guard !library.isImporting else {
             playlistActionFeedback = "Finish importing audio before copying this playlist."
             return
@@ -2333,6 +2339,8 @@ struct PlaylistsView: View {
     private func deleteConfirmedPlaylist() {
         guard let requested = pendingDelete else { return }
         pendingDelete = nil
+        // A deletion result replaces the old failure; never retry that edit.
+        failedPlaylistEdit = nil
         // A confirmation can survive the start of an asynchronous import.
         // Reject destructive writes until the library has settled.
         guard !library.isImporting else {
