@@ -749,6 +749,7 @@ private struct SpotifyPlaylistItem: Decodable {
     var usableTrack: SpotifyTrack? {
         func valid(_ candidate: SpotifyTrack?) -> SpotifyTrack? {
             guard let candidate, candidate.type == "track",
+                  candidate.is_local != true, candidate.is_playable != false,
                   !candidate.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   (candidate.artists ?? []).contains(where: {
                       !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -795,9 +796,11 @@ private struct SpotifyTrack: Decodable {
     let album: SpotifyAlbum?
     let external_urls: SpotifyURLContainer?
     let duration_ms: Int?
+    let is_local: Bool?
+    let is_playable: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case name, type, artists, album, external_urls, duration_ms
+        case name, type, artists, album, external_urls, duration_ms, is_local, is_playable
     }
 
     init(from decoder: Decoder) throws {
@@ -808,6 +811,10 @@ private struct SpotifyTrack: Decodable {
         // entire song when one credited artist is redacted or malformed.
         name = try container.decode(String.self, forKey: .name)
         type = try? container.decode(String.self, forKey: .type)
+        // Local-only and explicitly unplayable entries have no dependable
+        // Spotify recording identity for unattended source selection.
+        is_local = try? container.decode(Bool.self, forKey: .is_local)
+        is_playable = try? container.decode(Bool.self, forKey: .is_playable)
         album = try? container.decode(SpotifyAlbum.self, forKey: .album)
         external_urls = try? container.decode(SpotifyURLContainer.self, forKey: .external_urls)
         // A negative or implausibly long duration is not reliable matching evidence.
