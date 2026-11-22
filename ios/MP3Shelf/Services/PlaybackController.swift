@@ -569,7 +569,7 @@ final class PlaybackController: NSObject, ObservableObject {
             playbackError = originalError
             failedTrackID = originalFailedTrackID
             failedPlaybackOrder = originalFailedOrder
-            isPlaying = originalIsPlaying
+            isPlaying = originalIsPlaying && audioPlayer?.isPlaying == true
             updateNowPlaying()
         }
         var attempted: Set<UUID> = []
