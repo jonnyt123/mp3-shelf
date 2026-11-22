@@ -217,6 +217,13 @@ final class PlaybackController: NSObject, ObservableObject {
             return false
         }
         do {
+            // A persisted catalog is not a trusted filesystem path. Reject
+            // traversal, symlinks, directories and missing recordings before
+            // activating the audio session or changing the current decoder.
+            // Failed selections preserve the previous audible/paused player.
+            guard let ownedAudioURL = library.ownedPlaybackURL(for: catalogTrack) else {
+                throw CocoaError(.fileReadNoSuchFile)
+            }
             // Selecting another recording while paused must not activate the
             // audio session or interrupt another app. Decoder preparation does
             // not require an active session; explicit Play/Resume activates it.
@@ -227,7 +234,7 @@ final class PlaybackController: NSObject, ObservableObject {
             }
             // Re-resolve at the shared open boundary as well: queued playback,
             // retries and crossfade can all carry older MusicTrack snapshots.
-            let player = try AVAudioPlayer(contentsOf: library.fileURL(for: catalogTrack))
+            let player = try AVAudioPlayer(contentsOf: ownedAudioURL)
             player.delegate = relay
             guard player.prepareToPlay(), player.duration.isFinite, player.duration > 0 else {
                 throw CocoaError(.fileReadCorruptFile)
