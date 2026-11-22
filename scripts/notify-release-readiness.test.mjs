@@ -342,3 +342,31 @@ test('contradictory all-PASS advisory readiness cannot announce a release all-cl
   assert.equal(sent.length,1);
  }finally{rmSync(x.home,{recursive:true,force:true})}
 });
+
+test('out-of-order readiness snapshots cannot roll back the alert watermark',()=>{
+ const x=dir(),sent=[];
+ try{
+  const later=new Date(now+60000).toISOString();
+  writeFileSync(x.latest,JSON.stringify({...model({native:'PASS'}),generatedAt:later}));
+  assert.equal(deliverChangeOnlyNotification({home:x.home,now:now+60000,
+   platform:'darwin',send:m=>sent.push(m)}).status,'BASELINE_SAVED');
+  const saved=readFileSync(x.state,'utf8');
+  // An older, valid snapshot arrives after the newer one was already seen.
+  writeFileSync(x.latest,JSON.stringify(model({native:'BLOCKED'})));
+  assert.throws(()=>deliverChangeOnlyNotification({home:x.home,now:now+61000,
+   platform:'darwin',send:m=>sent.push(m)}),/STALE_READINESS_SNAPSHOT/);
+  assert.equal(readFileSync(x.state,'utf8'),saved);
+  assert.deepEqual(sent,[]);
+  // Once the producer catches up, a real later transition is still delivered.
+  writeFileSync(x.latest,JSON.stringify({...model({native:'BLOCKED'}),
+   generatedAt:new Date(now+120000).toISOString()}));
+  const changed=deliverChangeOnlyNotification({home:x.home,now:now+120000,
+   platform:'darwin',send:m=>sent.push(m)});
+  assert.equal(changed.status,'CHANGE_NOTIFIED');
+  assert.deepEqual(changed.blocked,['native']);
+  assert.equal(sent.length,1);
+  assert.equal(deliverChangeOnlyNotification({home:x.home,now:now+120001,
+   platform:'darwin',send:m=>sent.push(m)}).status,'NO_CHANGE');
+  assert.equal(sent.length,1);
+ }finally{rmSync(x.home,{recursive:true,force:true})}
+});
