@@ -227,6 +227,62 @@ for firstOffset in 0...6 {
         }
     }
 }
+// Three independently ordered fragments exercise fragmented restores and
+// permutation invariance. A coverage oracle is deliberately separate from
+// validateParts' sorted-interval implementation.
+var tripleCases = 0
+var tripleAccepted = 0
+for a in 0...4 {
+    for al in 0...4 {
+        for b in 0...4 {
+            for bl in 0...4 {
+                for d in 0...4 {
+                    for dl in 0...4 {
+                        let parts = [CheckedPart(offset: Int64(a), length: Int64(al)),
+                                     CheckedPart(offset: Int64(b), length: Int64(bl)),
+                                     CheckedPart(offset: Int64(d), length: Int64(dl))]
+                        var coverage = [Int](repeating: 0, count: 4)
+                        var expected = true
+                        for part in parts {
+                            if part.length <= 0 || part.offset > 4 || part.length > 4 - part.offset {
+                                expected = false
+                                break
+                            }
+                            for index in Int(part.offset)..<Int(part.offset + part.length) {
+                                coverage[index] += 1
+                            }
+                        }
+                        expected = expected && coverage.allSatisfy { $0 == 1 }
+                        let observed = (try? validateParts(parts, payloadLength: 4)) != nil
+                        precondition(observed == expected, "three-fragment occupancy mismatch")
+                        if observed {
+                            // All six permutations must produce identical acceptance.
+                            for permutation in [[0,1,2], [0,2,1], [1,0,2],
+                                                [1,2,0], [2,0,1], [2,1,0]] {
+                                try validateParts(permutation.map { parts[$0] }, payloadLength: 4)
+                            }
+                            tripleAccepted += 1
+                        }
+                        tripleCases += 1
+                    }
+                }
+            }
+        }
+    }
+}
+precondition(tripleCases == 15_625 && tripleAccepted > 0)
+// Signed 64-bit boundaries must be rejected without overflowing an addition.
+for (name, parts, length) in [
+    ("maximum offset and positive length", [CheckedPart(offset: Int64.max, length: 1)], Int64.max),
+    ("maximum length from nonzero offset", [CheckedPart(offset: 1, length: Int64.max)], Int64.max),
+    ("minimum signed offset", [CheckedPart(offset: Int64.min, length: 1)], Int64.max),
+    ("minimum signed length", [CheckedPart(offset: 0, length: Int64.min)], Int64.max),
+    ("zero payload with nonempty part", [CheckedPart(offset: 0, length: 1)], Int64(0))
+] {
+    mustRejectParts(name, parts, length)
+    rejected += 1
+}
+print("PASS: \\(tripleCases) three-fragment occupancy cases (\\(tripleAccepted) valid; six permutations each)")
 precondition(matrixCases == 2401)
 print("PASS: \(matrixCases) exhaustive two-part range cases (\(matrixAccepted) valid)")
 print("PASS: \(rejected) malformed archive framing cases rejected")
