@@ -140,12 +140,12 @@ enum AudioSourceFinderTests {
                         "Slowed and Reverb", "Performance Edit", "Fan Edit",
                         "Fanmade Edit"] {
             verify(!AudioSourceFinder.recordingEditionAgrees(
-                filename: "The Song - \\(edition).mp3", requestedTitle: "The Song"),
-                "altered recording remains review-only: \\(edition)")
+                filename: "The Song - \(edition).mp3", requestedTitle: "The Song"),
+                "altered recording remains review-only: \(edition)")
             verify(AudioSourceFinder.recordingEditionAgrees(
-                filename: "The Song - \\(edition).mp3",
-                requestedTitle: "The Song (\\(edition))"),
-                "explicitly requested altered edition remains eligible: \\(edition)")
+                filename: "The Song - \(edition).mp3",
+                requestedTitle: "The Song (\(edition))"),
+                "explicitly requested altered edition remains eligible: \(edition)")
         }
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "Speedup.mp3", requestedTitle: "Speedup"),
