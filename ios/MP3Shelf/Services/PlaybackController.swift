@@ -283,17 +283,26 @@ final class PlaybackController: NSObject, ObservableObject {
         }
     }
 
-    func retryFailedPlayback() {
-        guard let library, let track = library.song(with: failedTrackID) else {
+    /// Explicit retry starts audio; a seek-only decoder repair must not turn
+    /// a paused selection into audible playback. Both paths reopen the same
+    /// catalog-owned recording without discarding its saved queue position.
+    func retryFailedPlayback(startPaused: Bool = false) {
+        guard let library, let failedTrackID,
+              let track = library.song(with: failedTrackID) else {
             playbackError = "This song is no longer in your library. Choose another song."
             return
         }
-        if var order = failedPlaybackOrder {
-            order.retainAvailable(Set(library.tracks.map(\.id)))
-            order.setShuffle(isShuffled)
+        var order = failedPlaybackOrder ?? playbackOrder
+        order.retainAvailable(Set(library.tracks.map(\.id)))
+        order.setShuffle(isShuffled)
+        if !order.queueIDs.contains(track.id) {
+            // Legacy/empty retry state: rebuild only from currently owned IDs.
+            order.reset(queue: library.tracks.map(\.id),
+                        current: track.id, shuffled: isShuffled)
+        } else {
             order.select(track.id)
-            beginPlayback(track, using: order)
-        } else { play(track) }
+        }
+        _ = beginPlayback(track, using: order, startPaused: startPaused)
     }
 
     func togglePlayback() { isPlaying ? pause() : resume() }
@@ -414,7 +423,10 @@ final class PlaybackController: NSObject, ObservableObject {
         // retryFailedPlayback clears failedTrackID only after a real play()
         // succeeds, so a failed reopen leaves the retry identity intact.
         if failedTrackID != nil, failedTrackID == currentTrackID {
-            retryFailedPlayback()
+            // Scrubbing is not a Play command. Reopen a repaired decoder in
+            // the paused state, then apply the requested position atomically.
+            // The explicit Retry/Play actions still start playback normally.
+            retryFailedPlayback(startPaused: !isPlaying)
             guard failedTrackID == nil, audioPlayer != nil else { return }
         }
         guard let audioPlayer else { return }
