@@ -127,6 +127,9 @@ struct LibraryView: View {
     @State private var bulkRetryShuffle: Bool?
     // A successful partial queue still needs a visible, local-only repair path.
     @State private var bulkSkippedRecordingCount = 0
+    // An entirely unavailable selection needs a visible Files recovery path.
+    // Keep this distinct from partial playback, which already has a queue.
+    @State private var bulkAllRecordingsUnavailable = false
     // A partial queue can be refreshed explicitly after restoring files.
     // Never mutate the currently playing queue as an import side effect.
     @State private var partialQueueShuffle: Bool?
@@ -397,6 +400,7 @@ struct LibraryView: View {
         }
         bulkRetryShuffle = nil
         bulkSkippedRecordingCount = 0
+        bulkAllRecordingsUnavailable = false
         partialQueueShuffle = nil
         partialQueueNeedsRefresh = false
         playbackSelectionSnapshot = nil
@@ -720,6 +724,19 @@ struct LibraryView: View {
                         .foregroundStyle(ShelfTheme.subdued)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.updatesFrequently)
+                    // An empty offline queue has no playing audio to disrupt.
+                    // Offer a local-only recovery journey instead of a dead-end notice.
+                    if bulkAllRecordingsUnavailable && !bulkPlaybackPending && playbackSelectionIsCurrent() {
+                        Button {
+                            presentAudioImporter()
+                        } label: {
+                            Label("Restore unavailable recordings", systemImage: "square.and.arrow.down")
+                                .frame(minHeight: 44, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(audioImportBusy || scenePhase != .active)
+                        .accessibilityHint("Choose audio files already on this device. No downloads or playback start automatically")
+                    }
                     // Partial playback has already started: restoring missing files
                     // must not reset the active queue or unexpectedly replay songs.
                     if bulkSkippedRecordingCount > 0 && !bulkPlaybackPending && playbackSelectionIsCurrent() {
@@ -907,6 +924,7 @@ struct LibraryView: View {
         bulkPlaybackGeneration = generation
         bulkPlaybackNotice = nil
         bulkSkippedRecordingCount = 0
+        bulkAllRecordingsUnavailable = false
         partialQueueShuffle = nil
         partialQueueNeedsRefresh = false
         playbackSelectionSnapshot = zip(songs, locations).map { song, location in
@@ -999,10 +1017,12 @@ struct LibraryView: View {
                 queue.append(match)
             }
             guard let first = shuffled ? queue.randomElement() : queue.first else {
-                bulkPlaybackNotice = "No playable offline recordings were found in these results. Restore a recording, then retry."
+                bulkAllRecordingsUnavailable = true
+                bulkPlaybackNotice = "No playable offline recordings were found in these results. Restore a recording from Files, then retry."
                 bulkRetryShuffle = shuffled
                 return
             }
+            bulkAllRecordingsUnavailable = false
             playback.isShuffled = shuffled
             playback.play(first, queue: queue)
             bulkRetryShuffle = nil
