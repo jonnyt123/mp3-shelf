@@ -2359,31 +2359,44 @@ struct PlaylistsView: View {
             playlistActionFeedback = "This playlist changed. Review its latest songs before copying it."
             return
         }
-        let existingIDs = Set(library.playlists.map(\.id))
+        // Snapshot every existing playlist, not only its UUID. A restore or
+        // concurrent edit may replace metadata under an existing identity while
+        // duplicatePlaylist is persisting; that is not a verified successful copy.
+        let before = library.playlists
+        let existingIDs = Set(before.map(\.id))
+        guard existingIDs.count == before.count else {
+            playlistActionFeedback = "Duplicate playlist identities were found. Review your playlists before copying."
+            return
+        }
         library.duplicatePlaylist(playlist.id)
-        let newCopies = library.playlists.filter { !existingIDs.contains($0.id) }
+        let after = library.playlists
+        let newCopies = after.filter { !existingIDs.contains($0.id) }
+        let preservedExisting = before.allSatisfy { original in
+            let matches = after.filter { $0.id == original.id }
+            return matches.count == 1 && matches[0].name == original.name
+                && matches[0].trackIDs == original.trackIDs
+                && matches[0].missingTracks == original.missingTracks
+        }
         // A restore/import may introduce another playlist during a failed write.
-        // Never report success or retry an ambiguous copy result.
-        if newCopies.count == 1, let copy = newCopies.first,
+        // Never report success or retry an ambiguous copy result. The new copy
+        // must also have a unique ID and a nonempty, recognizable name.
+        let uniqueAfter = Set(after.map(\.id)).count == after.count
+        if preservedExisting, uniqueAfter, newCopies.count == 1,
+           let copy = newCopies.first,
+           !copy.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            copy.trackIDs == current.trackIDs,
            copy.missingTracks == current.missingTracks {
             revealPlaylists()
             playlistActionFeedback = "Created \(copy.name)."
         } else {
-            // A newly allocated ID may represent a completed copy whose
-            // verification failed. Retrying would create a second playlist.
-            // Offer Retry only when no new playlist appeared and the source
-            // still matches the original snapshot.
-            let safeToRetry = newCopies.isEmpty
-                && uniquePlaylist(withID: current.id).map {
-                    $0.name == current.name
-                        && $0.trackIDs == current.trackIDs
-                        && $0.missingTracks == current.missingTracks
-                } == true
+            // An allocated ID may represent a completed copy whose verification
+            // failed. Only an unchanged library with no new IDs permits Retry;
+            // otherwise a second attempt could duplicate or overwrite user data.
+            let safeToRetry = newCopies.isEmpty && preservedExisting && uniqueAfter
             failedPlaylistEdit = safeToRetry ? .copy(snapshot: current) : nil
             playlistActionFeedback = safeToRetry
                 ? "Could not copy this playlist. Retry after checking your library; your original songs were not changed."
-                : "The copy result is uncertain. Review your playlists before copying again to avoid duplicates."
+                : "The copy result is uncertain or the library changed. Review your playlists before copying again to avoid duplicates."
         }
     }
 
