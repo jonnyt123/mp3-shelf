@@ -73,18 +73,28 @@ final class PlaybackController: NSObject, ObservableObject {
         let device: UInt64
         let inode: UInt64
         let byteCount: UInt64
-        let modifiedAt: Date
+        let modifiedSeconds: Int64
+        let modifiedNanoseconds: Int64
+        let changedSeconds: Int64
+        let changedNanoseconds: Int64
 
         init?(url: URL) {
-            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-                  let device = attributes[.systemNumber] as? NSNumber,
-                  let inode = attributes[.systemFileNumber] as? NSNumber,
-                  let byteCount = attributes[.size] as? NSNumber,
-                  let modifiedAt = attributes[.modificationDate] as? Date else { return nil }
-            self.device = device.uint64Value
-            self.inode = inode.uint64Value
-            self.byteCount = byteCount.uint64Value
-            self.modifiedAt = modifiedAt
+            // Inspect the directory entry itself. Foundation file attributes
+            // can follow a symlink installed after ownedPlaybackURL validation.
+            // POSIX change time also catches same-size rewrites whose mtime was
+            // restored, without hashing a potentially large recording on each
+            // 200 ms playback clock tick.
+            var info = stat()
+            guard lstat(url.path, &info) == 0,
+                  (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  info.st_size > 0 else { return nil }
+            device = UInt64(info.st_dev)
+            inode = UInt64(info.st_ino)
+            byteCount = UInt64(info.st_size)
+            modifiedSeconds = Int64(info.st_mtimespec.tv_sec)
+            modifiedNanoseconds = Int64(info.st_mtimespec.tv_nsec)
+            changedSeconds = Int64(info.st_ctimespec.tv_sec)
+            changedNanoseconds = Int64(info.st_ctimespec.tv_nsec)
         }
     }
     private var positionTimer: Timer?
