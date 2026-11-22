@@ -961,6 +961,17 @@ final class MusicLibrary: ObservableObject {
         return report
     }
 
+    /// Only catalog-owned, regular local recordings may be opened for playback.
+    /// Legacy catalogs can contain relative paths or symlinks; never resolve
+    /// either outside the Music directory. Missing/protected audio stays in
+    /// the catalog for later recovery rather than being silently removed.
+    func ownedPlaybackURL(for track: MusicTrack) -> URL? {
+        guard tracks.contains(where: { $0.id == track.id && $0.fileName == track.fileName }) else {
+            return nil
+        }
+        return LocalLibraryFileSafety.regularFile(named: track.fileName, in: musicDirectory)
+    }
+
     func fileURL(for track: MusicTrack) -> URL { musicDirectory.appendingPathComponent(track.fileName) }
 
     func artwork(for track: MusicTrack) -> UIImage? {
