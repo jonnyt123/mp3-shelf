@@ -143,19 +143,25 @@ func validateParts(_ parts: [CheckedPart], payloadLength: Int64) throws {
         }
         intervals.append((part.offset, part.offset + part.length))
     }
+    // Production open() requires exact coverage, not merely disjoint ranges.
+    // A gap or unreferenced trailing byte could otherwise hide archive data.
     intervals.sort { $0.0 < $1.0 }
-    for i in intervals.indices.dropFirst() where intervals[i].0 < intervals[i - 1].1 {
-        throw FramingError.invalid
+    var next: Int64 = 0
+    for (start, end) in intervals {
+        guard start == next else { throw FramingError.invalid }
+        next = end
     }
+    guard next == payloadLength else { throw FramingError.invalid }
 }
 func mustRejectParts(_ name: String, _ parts: [CheckedPart], _ payloadLength: Int64) {
-    do { try validateParts(parts, payloadLength: payloadLength); fatalError("accepted \\(name)") }
+    do { try validateParts(parts, payloadLength: payloadLength); fatalError("accepted \(name)") }
     catch FramingError.invalid { }
-    catch { fatalError("unexpected range error for \\(name): \\(error)") }
+    catch { fatalError("unexpected range error for \(name): \\(error)") }
 }
 let adjacent = [CheckedPart(offset: 0, length: 4), CheckedPart(offset: 4, length: 6)]
 try validateParts(adjacent, payloadLength: 10)
-try validateParts([CheckedPart(offset: 1, length: 2)], payloadLength: 10)
+try validateParts([CheckedPart(offset: 0, length: 10)], payloadLength: 10)
+try validateParts([CheckedPart(offset: 4, length: 6), CheckedPart(offset: 0, length: 4)], payloadLength: 10)
 try validateParts([], payloadLength: 0)
 for (name, parts, size) in [
     ("negative offset", [CheckedPart(offset: -1, length: 2)], Int64(10)),
@@ -166,7 +172,11 @@ for (name, parts, size) in [
     ("duplicate", [CheckedPart(offset: 0, length: 4), CheckedPart(offset: 0, length: 4)], Int64(10)),
     ("partial overlap", [CheckedPart(offset: 0, length: 5), CheckedPart(offset: 4, length: 2)], Int64(10)),
     ("nested overlap", [CheckedPart(offset: 0, length: 9), CheckedPart(offset: 2, length: 2)], Int64(10)),
-    ("negative payload", [CheckedPart(offset: 0, length: 1)], Int64(-1))
+    ("negative payload", [CheckedPart(offset: 0, length: 1)], Int64(-1)),
+    ("leading gap", [CheckedPart(offset: 1, length: 9)], Int64(10)),
+    ("middle gap", [CheckedPart(offset: 0, length: 4), CheckedPart(offset: 5, length: 5)], Int64(10)),
+    ("trailing unreferenced bytes", [CheckedPart(offset: 0, length: 9)], Int64(10)),
+    ("unreferenced payload", [], Int64(10))
 ] {
     mustRejectParts(name, parts, size)
     rejected += 1
