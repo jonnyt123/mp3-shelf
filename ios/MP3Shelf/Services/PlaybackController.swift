@@ -830,6 +830,11 @@ final class PlaybackController: NSObject, ObservableObject {
                 // Never publish another clock tick or begin a crossfade from
                 // an orphaned player; recover through the surviving queue.
                 if self.recoverDeletedCurrentTrack() { return }
+                // Atomic replacement can leave AVAudioPlayer decoding an old inode
+                // even though the catalog path still resolves to a valid file.
+                // Recheck the opened file identity before publishing progress or
+                // starting a crossfade; retirement preserves queue and retry IDs.
+                if self.retireUnsafeCurrentDecoder() { return }
                 let player = observedPlayer
                 self.currentTime = player.currentTime
                 if self.isPlaying && self.playbackError == nil && self.crossfadeSeconds > 0.1 && self.repeatMode != .one &&
