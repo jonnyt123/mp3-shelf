@@ -817,9 +817,49 @@ struct LibraryView: View {
     // Validate the whole playback queue off the main actor. A missing local
     // recording must not be selected by Play results or Shuffle results.
     private func playDisplayed(shuffled: Bool) {
-        guard scenePhase == .active, !audioImportBusy, !isSearchUpdating, !bulkPlaybackPending else { return }
+        // Play and Shuffle remain actionable while an import is finishing.
+        // Capture the exact selection and requested mode so a later explicit
+        // Retry cannot silently switch to different search results or songs.
+        if scenePhase != .active || audioImportBusy || isSearchUpdating || bulkPlaybackPending {
+            if bulkPlaybackPending {
+                bulkPlaybackNotice = "A playback check is already running. Wait or cancel it before starting another."
+                return
+            }
+            if isSearchUpdating {
+                bulkPlaybackNotice = "Finish searching before starting playback. Choose Play or Shuffle again when results settle."
+                return
+            }
+            let songs = displayed
+            guard !songs.isEmpty else {
+                bulkRetryShuffle = nil
+                playbackSelectionSnapshot = nil
+                bulkPlaybackNotice = "No songs match the current library selection."
+                return
+            }
+            // A failed request must not erase an already playing partial queue.
+            // Retain the exact current selection, not just the search string.
+            let snapshots = songs.map { RecordingPlaybackSnapshot($0, url: library.fileURL(for: $0)) }
+            let ids = library.tracks.map(\.id)
+            guard Set(ids).count == ids.count else {
+                bulkRetryShuffle = nil
+                playbackSelectionSnapshot = nil
+                bulkPlaybackNotice = "Duplicate recording identities were found. Resolve them before playing."
+                return
+            }
+            playbackSelectionSnapshot = snapshots
+            bulkRetryShuffle = shuffled
+            bulkPlaybackNotice = scenePhase != .active
+                ? "Return to MP3 Shelf, then retry this selection. No playback was started."
+                : "Finish importing audio, then retry this selection. Your current queue is unchanged."
+            return
+        }
         let songs = displayed
-        guard !songs.isEmpty else { return }
+        guard !songs.isEmpty else {
+            bulkRetryShuffle = nil
+            playbackSelectionSnapshot = nil
+            bulkPlaybackNotice = "No songs match the current library selection."
+            return
+        }
         // PlaybackController resolves tracks by UUID. A restored library can
         // contain duplicate IDs even when the visible results show only one of
         // them (for example under Favorites or a search query). Fail before
