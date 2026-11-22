@@ -553,7 +553,11 @@ final class PlaybackController: NSObject, ObservableObject {
         // instead, without changing the listener's repeat preference.
         // This also applies to paused recovery and explicit Play after deletion.
         let selectedIsMissing = currentTrackID.map { library.song(with: $0) == nil } ?? false
-        let effectiveLoop: PlaybackLoopMode = selectedIsMissing && loopMode == .one ? .all : loopMode
+        // Recovery is not ordinary end-of-queue playback: when the selected
+        // recording was removed, search surviving queue entries even if the
+        // deleted ID was last and Repeat is Off. Do not change the user's
+        // repeat preference; the override applies only to this recovery.
+        let effectiveLoop: PlaybackLoopMode = selectedIsMissing ? .all : loopMode
         guard let nextID = nextOrder.next(automatic: automatically, loop: effectiveLoop) else {
             // A manual Next at the end of a finite queue is a no-op. Do not
             // discard the current paused position, retry state, or queue.
