@@ -145,7 +145,8 @@ print("PASS: portable envelope corruption, manifest boundaries and byte-exact de
 // Verify that reordering manifest records cannot change the bytes assigned
 // to each stable track ID; offsets, not array position, define ownership.
 let reversed = try encode(manifest([second, first]), payload: payload)
-precondition(try decode(reversed) == restored, "FAIL: manifest order changed media ownership")
+let reversedDecoded = try decode(reversed)
+precondition(reversedDecoded == restored, "FAIL: manifest order changed media ownership")
 
 // Exhaustively test single-byte payload substitution. The v1 envelope does
 // not authenticate media bytes: these substitutions remain structurally valid.
@@ -161,7 +162,7 @@ for index in mediaStart..<valid.count {
     changed[index] ^= 0xff
     let decoded = try decode(changed)
     precondition(decoded != restored, "FAIL: substituted audio not observable at \(index)")
-    precondition(decoded.keys == restored.keys, "FAIL: substitution changed track ownership")
+    precondition(Set(decoded.keys) == Set(restored.keys), "FAIL: substitution changed track ownership")
 }
 
 // Exercise all possible single-byte truncations, including the magic,
