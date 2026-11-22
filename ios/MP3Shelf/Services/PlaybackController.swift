@@ -514,15 +514,23 @@ final class PlaybackController: NSObject, ObservableObject {
         // Manual Next at the end of a finite queue is otherwise a no-op.
         // Never leave an orphaned decoder audible after catalog deletion.
         if recoverDeletedCurrentTrack() { return }
-        // Transport navigation while paused changes selection, not playback intent.
-        // Explicit Play remains the only command that resumes a paused queue.
-        advance(automatically: false, startPaused: !isPlaying)
+        // Retire an unsafe open decoder even when there is no next track.
+        // Capture playback intent before retirement so a valid successor
+        // remains audible after Next, while a paused queue stays paused.
+        let wasPlaying = isPlaying
+        _ = retireUnsafeCurrentDecoder()
+        advance(automatically: false, startPaused: !wasPlaying)
     }
 
     func previous() {
         // Previous can resolve to no candidate after catalog deletion.
         // Never seek or preserve a decoder whose selected ID is unowned.
         if recoverDeletedCurrentTrack() { return }
+        // Previous must not restart an unlinked decoder when the queue has
+        // no earlier entry. Keep the original pause/play intent for a safely
+        // reopened predecessor, and retire the stale decoder first.
+        let wasPlaying = isPlaying
+        _ = retireUnsafeCurrentDecoder()
         guard let library else { return }
         // An open player is not evidence that its recording still belongs to
         // the library. Never restart an orphaned track when pressing Previous
@@ -554,7 +562,7 @@ final class PlaybackController: NSObject, ObservableObject {
         // unchanged until beginPlayback succeeds.
         let originalPlayer = audioPlayer
         let originalTrackID = currentTrackID
-        let originalIsPlaying = isPlaying
+        let originalIsPlaying = wasPlaying
         func restoreSelectionState() {
             guard audioPlayer === originalPlayer,
                   currentTrackID == originalTrackID else { return }
