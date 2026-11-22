@@ -61,8 +61,14 @@ enum AudioDownloadDiagnostics {
     }
 
     static func shouldTryAlternateSource(for error: Error) -> Bool {
+        // An explicit stop is not a source failure. URLSession cancellation can
+        // be wrapped by the download/conversion pipeline, so check the entire
+        // bounded underlying-error chain before initiating another transfer.
+        // This also prevents a cancelled batch from silently consuming a
+        // different host's bandwidth after the user pauses or disconnects.
+        if Task.isCancelled || SourceLookupRetryPolicy.isCancellation(error) { return false }
         // Another network download cannot resolve local disk/access failures.
-        storageMessage(error) == nil
+        return storageMessage(error) == nil
     }
 
     static func message(for error: Error) -> String {
