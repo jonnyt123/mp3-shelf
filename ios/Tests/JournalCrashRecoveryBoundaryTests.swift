@@ -30,7 +30,34 @@ let next = Manifest(generation: 8, tickets: [
     Ticket(id: "ticket-B", state: "queued", recording: "other.mp3")
 ])
 let encoder = JSONEncoder()
+// Verify every component before reading or publishing a journal. FileManager's
+// attributesOfItem follows directory symlinks, so checking only the leaf or
+// immediate parent would permit a redirected journal read/write.
+func requireOwnedRegularJournal(_ url: URL) throws {
+    let ownedRoot = root.standardizedFileURL.path
+    let target = url.standardizedFileURL.path
+    guard target.hasPrefix(ownedRoot + "/"), !target.hasSuffix("/") else {
+        throw JournalError.unsafePath
+    }
+    var component = url.deletingLastPathComponent()
+    while component.standardizedFileURL.path != ownedRoot {
+        let path = component.standardizedFileURL.path
+        guard path.hasPrefix(ownedRoot + "/"),
+              (try? fm.destinationOfSymbolicLink(atPath: component.path)) == nil,
+              let attributes = try? fm.attributesOfItem(atPath: component.path),
+              attributes[.type] as? FileAttributeType == .typeDirectory else {
+            throw JournalError.unsafePath
+        }
+        component.deleteLastPathComponent()
+    }
+    guard (try? fm.destinationOfSymbolicLink(atPath: url.path)) == nil,
+          let attributes = try? fm.attributesOfItem(atPath: url.path),
+          attributes[.type] as? FileAttributeType == .typeRegular else {
+        throw JournalError.unsafePath
+    }
+}
 func readJournal(_ url: URL) throws -> Manifest {
+    try requireOwnedRegularJournal(url)
     guard let attributes = try? fm.attributesOfItem(atPath: url.path),
           attributes[.type] as? FileAttributeType == .typeRegular else { throw JournalError.unsafePath }
     do {
@@ -55,19 +82,7 @@ func readJournal(_ url: URL) throws -> Manifest {
 func publish(_ value: Manifest, at url: URL, interruptBeforeRename: Bool = false) throws {
     guard let attributes = try? fm.attributesOfItem(atPath: url.path),
           attributes[.type] as? FileAttributeType == .typeRegular else { throw JournalError.unsafePath }
-    // A normal immediate parent can still live below a symlinked ancestor.
-    // Reject every symlink between the fixture's owned root and the journal.
-    let canonicalRoot = root.standardizedFileURL.path
-    let canonicalTarget = url.standardizedFileURL.path
-    guard canonicalTarget.hasPrefix(canonicalRoot + "/") else { throw JournalError.unsafePath }
-    var ancestor = url.deletingLastPathComponent()
-    while ancestor.standardizedFileURL.path != canonicalRoot {
-        guard ancestor.standardizedFileURL.path.hasPrefix(canonicalRoot + "/"),
-              (try? fm.destinationOfSymbolicLink(atPath: ancestor.path)) == nil else {
-            throw JournalError.unsafePath
-        }
-        ancestor.deleteLastPathComponent()
-    }
+    try requireOwnedRegularJournal(url)
     let parent = url.deletingLastPathComponent()
     let parentAttributes = try fm.attributesOfItem(atPath: parent.path)
     guard parentAttributes[.type] as? FileAttributeType == .typeDirectory else { throw JournalError.unsafePath }
@@ -124,6 +139,7 @@ try encoder.encode(old).write(to: external)
 let link = root.appendingPathComponent("link.json")
 try fm.createSymbolicLink(at: link, withDestinationURL: external)
 try expectFailure("symlink journal") { try publish(next, at: link) }
+try expectFailure("symlink journal read") { _ = try readJournal(link) }
 try checked(try readJournal(external) == old)
 // A hostile replacement of the journal's parent with a symlink must not
 // redirect publication outside the owned staging directory. The fixture
@@ -140,7 +156,8 @@ let redirectedJournal = linkedParent.appendingPathComponent("active.json")
 // this adversarial case must remain a negative regression even if a future
 // implementation changes its write strategy.
 try expectFailure("symlink parent") { try publish(next, at: redirectedJournal) }
-try checked(try readJournal(outsideJournal) == old)
+try expectFailure("symlink parent read") { _ = try readJournal(redirectedJournal) }
+try checked(try Data(contentsOf: outsideJournal) == encoder.encode(old))
 try checked(try Data(contentsOf: audio) == audioBytes)
 // The immediate parent is a real directory, but its grandparent is a link.
 // A one-level-only check incorrectly permits this redirection.
@@ -151,11 +168,15 @@ try encoder.encode(old).write(to: nestedJournal)
 try expectFailure("symlink ancestor") {
     try publish(next, at: nested.appendingPathComponent("active.json"))
 }
-try checked(try readJournal(nestedJournal) == old)
+try expectFailure("symlink ancestor read") {
+    _ = try readJournal(nested.appendingPathComponent("active.json"))
+}
+try checked(try Data(contentsOf: nestedJournal) == encoder.encode(old))
 try checked(try Data(contentsOf: audio) == audioBytes)
 let collision = root.appendingPathComponent("collision.json")
 try fm.createDirectory(at: collision, withIntermediateDirectories: true)
 try expectFailure("directory journal") { try publish(next, at: collision) }
+try expectFailure("directory journal read") { _ = try readJournal(collision) }
 try checked(try fm.attributesOfItem(atPath: collision.path)[.type] as? FileAttributeType == .typeDirectory)
 try checked(try Data(contentsOf: audio) == audioBytes)
 let large = Manifest(generation: 9, tickets: (0..<20_000).map {
