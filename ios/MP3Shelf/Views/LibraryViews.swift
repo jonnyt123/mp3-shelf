@@ -2505,6 +2505,10 @@ struct PlaylistsView: View {
             Button("Create") {
                 let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return }
+                // Reject duplicate submissions while preserving the draft.
+                // A previous failure must not survive a fresh create attempt.
+                failedPlaylistEdit = nil
+                playlistActionFeedback = nil
                 guard !library.isImporting else {
                     failedPlaylistEdit = .create
                     playlistActionFeedback = "Finish importing audio before creating a playlist. Your name is saved for retry."
@@ -2522,10 +2526,15 @@ struct PlaylistsView: View {
                     playlistActionFeedback = "Could not create this playlist. Your existing playlists were preserved."
                 }
             }
-            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || library.isImporting)
+            // Keep Create reachable during an import so the user receives an
+            // explicit explanation and can retry with the preserved name.
+            // The action itself refuses to mutate the library until import ends.
+            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) {
                 newName = ""
                 failedPlaylistEdit = nil
+                // Cancelling the draft must also remove its obsolete retry.
+                playlistActionFeedback = nil
             }
         } message: { Text("Songs stay on your device.") }
         .alert("Rename Playlist", isPresented: Binding(
