@@ -83,6 +83,7 @@ reject("trailing media", archive + Data([0x7f]))
 // v1 has no media digest: structurally valid substitution must not be called authenticated.
 var tampered = archive
 tampered[tampered.count - 512] ^= 0xff
-precondition(try unpack(tampered) != expected, "substitution should alter audio")
+let tamperedOutput = try unpack(tampered)
+precondition(tamperedOutput != expected, "substitution should alter audio")
 print("PASS: 2048 x 1024-byte v1 ownership, corruption and playlist references")
 print("LIMITATION: v1 cannot authenticate media-byte substitutions")
