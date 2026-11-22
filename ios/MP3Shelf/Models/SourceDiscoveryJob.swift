@@ -1,0 +1,723 @@
+import Foundation
+
+/// User-facing diagnostics do not change transport retry budgets or validation.
+enum AudioDownloadDiagnostics {
+    static let expiredAudioLink = "This audio link expires before the transfer can restart."
+    static let emptyResponse = "The source returned an empty audio file. Try another source."
+
+    static func maySearchForAnotherSource(reason: String?, recordedAdvice: Bool?) -> Bool {
+        if let recordedAdvice { return recordedAdvice }
+        // Old tickets predate explicit source/storage classification.
+        return reason?.hasPrefix("The source") == true || reason?.hasPrefix("This audio link") == true
+    }
+
+    static func http(_ status: Int) -> String {
+        switch status {
+        case 401, 403: return "The source refused this download. Check its source page or try another source."
+        case 404, 410: return "This audio link is no longer available. Search again or provide a new audio link."
+        case 429: return "The source is limiting requests. Wait before retrying."
+        case 500...599: return "The source server is temporarily unavailable (HTTP \(status))."
+        default: return "The source rejected the download (HTTP \(status)). Check the source page."
+        }
+    }
+
+    static func contentType(_ raw: String?) -> String {
+        guard let mime = raw?.lowercased() else {
+            return "The source did not identify its response as supported audio."
+        }
+        if mime.contains("html") || mime.hasPrefix("text/") {
+            return "The source returned a webpage or text instead of an audio file. Use a direct audio link."
+        }
+        return "The source returned an unsupported response. Check its source page for a downloadable audio file."
+    }
+
+    private static func storageMessage(_ error: Error) -> String? {
+        var current = error as NSError
+        var libraryWriteFailed = false
+        // Bound traversal even if an unusual error has cyclic underlying data.
+        for _ in 0..<4 {
+            if current.domain == PersistedLibrary.writeFailureDomain { libraryWriteFailed = true }
+            if current.domain == NSCocoaErrorDomain {
+                if current.code == CocoaError.Code.fileWriteOutOfSpace.rawValue {
+                    return "Not enough space on this iPhone. Free storage and retry."
+                }
+                if current.code == CocoaError.Code.fileWriteNoPermission.rawValue {
+                    return "Audio could not be saved on this iPhone. Check local storage access and retry."
+                }
+                if current.code == CocoaError.Code.fileReadNoPermission.rawValue {
+                    return "The downloaded audio could not be read on this iPhone. Check local storage access and retry."
+                }
+            }
+            if current.domain == NSPOSIXErrorDomain && current.code == Int(POSIXErrorCode.ENOSPC.rawValue) {
+                return "Not enough space on this iPhone. Free storage and retry."
+            }
+            guard let underlying = current.userInfo[NSUnderlyingErrorKey] as? NSError else { break }
+            current = underlying
+        }
+        return libraryWriteFailed ? "The music library could not be saved. Check local storage and retry; another source cannot fix this save failure." : nil
+    }
+
+    static func shouldTryAlternateSource(for error: Error) -> Bool {
+        // Another network download cannot resolve local disk/access failures.
+        storageMessage(error) == nil
+    }
+
+    static func message(for error: Error) -> String {
+        if let message = storageMessage(error) { return message }
+        let failure = error as NSError
+        if failure.domain == NSURLErrorDomain {
+            switch failure.code {
+            case URLError.Code.notConnectedToInternet.rawValue, URLError.Code.dataNotAllowed.rawValue:
+                return "Network unavailable. Connect to Wi-Fi, or approve cellular for this playlist."
+            case URLError.Code.networkConnectionLost.rawValue: return "The connection was interrupted before the download finished."
+            case URLError.Code.timedOut.rawValue: return "The source did not respond in time. Retry when it is available."
+            case URLError.Code.cannotFindHost.rawValue, URLError.Code.cannotConnectToHost.rawValue, URLError.Code.dnsLookupFailed.rawValue:
+                return "The source server could not be reached. Check your connection or try another source."
+            case URLError.Code.secureConnectionFailed.rawValue, URLError.Code.serverCertificateUntrusted.rawValue, URLError.Code.serverCertificateHasBadDate.rawValue, URLError.Code.serverCertificateNotYetValid.rawValue:
+                return "The source's secure connection could not be verified. Try another source."
+            case URLError.Code.cancelled.rawValue: return "The transfer stopped before completion. Retry when ready."
+            default: break
+            }
+        }
+        if failure.domain == NSCocoaErrorDomain && failure.code == CocoaError.Code.fileReadTooLarge.rawValue {
+            return "The audio file exceeds the 100 MB download limit. Try a smaller source."
+        }
+        return error.localizedDescription
+    }
+}
+
+/// Checkpoint for foreground catalog lookups. Written atomically after each
+/// processed song, allowing discovery to resume after app suspension or exit.
+/// Pure policy used by the foreground discovery queue and regression tests.
+enum DownloadNetworkPolicy {
+    static func canDiscover(onWiFi: Bool, onCellular: Bool,
+                            explicitlyAllowCellular: Bool) -> Bool {
+        onWiFi || (onCellular && explicitlyAllowCellular)
+    }
+}
+
+
+/// Only a real, verified MP3 import should improve its catalog's reliability.
+/// A temporary network error on a *later successful* ticket must be cleared
+/// at completion. Duplicate/previously saved recordings are not new successes.
+enum BackgroundProviderHistoryPolicy {
+    struct Outcome {
+        let provider: String
+        let imported: Bool
+        let failed: Bool
+        let failureReason: String?
+    }
+
+    static let maxOutcomes = 200
+
+    static func counts(_ outcome: Outcome) -> Bool {
+        (outcome.imported && outcome.failureReason == nil) || outcome.failed
+    }
+
+    static func sources(in outcomes: [Outcome]) -> (successful: [String], failed: [String]) {
+        var successful: [String] = []
+        var failed: [String] = []
+        for outcome in outcomes.prefix(maxOutcomes) {
+            if outcome.imported && outcome.failureReason == nil {
+                successful.append(outcome.provider)
+            } else if outcome.failed {
+                failed.append(outcome.provider)
+            }
+        }
+        return (successful, failed)
+    }
+}
+
+/// Protect manifest restore from malformed/duplicate identifiers rather than
+/// crashing on Dictionary(uniqueKeysWithValues:). Prefer the most recently
+/// started ticket on collision; older tickets without a time retain first-win.
+enum BackgroundTicketManifestPolicy {
+    static let writeFailureDomain = "MP3Shelf.DownloadQueueWrite"
+
+    static func write<T: Encodable>(_ tickets: [T], to url: URL) throws {
+        do {
+            try JSONEncoder().encode(tickets).write(to: url, options: .atomic)
+        } catch {
+            throw NSError(domain: writeFailureDomain, code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "The download queue could not be saved. Check iPhone storage and retry.",
+                NSUnderlyingErrorKey: error
+            ])
+        }
+    }
+
+    static func distinctByIdentifier<T>(
+        _ values: [T], id: (T) -> UUID, startedAt: (T) -> Date?
+    ) -> [UUID: T] {
+        var result: [UUID: T] = [:]
+        for value in values {
+            let identifier = id(value)
+            guard let existing = result[identifier] else {
+                result[identifier] = value
+                continue
+            }
+            let previousDate = startedAt(existing) ?? .distantPast
+            let incomingDate = startedAt(value) ?? .distantPast
+            if incomingDate > previousDate { result[identifier] = value }
+        }
+        return result
+    }
+}
+
+/// Small, bounded recovery budget for actual background file transfers.
+/// The source catalog has its own independent lookup retry policy. Do not
+/// retry invalid media, rejected permissions, or conflicting song metadata.
+enum BackgroundTransferRetryPolicy {
+    static let maxRetries = 3
+
+    static func linkExpiresByStart(_ url: URL, earliestBeginDate: Date?, now: Date = .now) -> Bool {
+        AudioSourceLinks.hasExpired(url, at: max(now, earliestBeginDate ?? now))
+    }
+
+    static func delay(afterFailure attempt: Int) -> TimeInterval? {
+        switch attempt {
+        case 1: return 45
+        case 2: return 150
+        case 3: return 450
+        default: return nil
+        }
+    }
+
+    /// Connectivity loss is not a broken server or bad song source. Retry in
+    /// the existing background URLSession until a permitted connection returns.
+    /// Delay is capped so prolonged offline periods do not spin up tasks.
+    static func isConnectivityInterruption(_ code: Int) -> Bool {
+        code == URLError.Code.notConnectedToInternet.rawValue ||
+            code == URLError.Code.networkConnectionLost.rawValue ||
+            code == URLError.Code.dataNotAllowed.rawValue
+    }
+
+    static func connectivityDelay(afterFailure count: Int) -> TimeInterval {
+        switch count {
+        case ...1: return 60
+        case 2: return 180
+        case 3: return 600
+        case 4: return 1_800
+        default: return 3_600
+        }
+    }
+
+    static func isTemporaryHTTP(_ statusCode: Int) -> Bool {
+        [408, 429, 500, 502, 503, 504].contains(statusCode)
+    }
+
+    static func isTemporaryURLFailure(_ code: Int) -> Bool {
+        let temporary: Set<Int> = [
+            URLError.Code.timedOut.rawValue,
+            URLError.Code.networkConnectionLost.rawValue,
+            URLError.Code.notConnectedToInternet.rawValue,
+            URLError.Code.dataNotAllowed.rawValue,
+            URLError.Code.cannotConnectToHost.rawValue,
+            URLError.Code.cannotFindHost.rawValue,
+            URLError.Code.dnsLookupFailed.rawValue
+        ]
+        return temporary.contains(code)
+    }
+}
+
+/// Typed resolver failures distinguish temporary outages from a genuine miss.
+protocol SourceLookupRetryableError: Error {
+    var shouldRetrySourceLookup: Bool { get }
+}
+
+enum SourceLookupRetryPolicy {
+    static func isTemporary(_ error: Error) -> Bool {
+        if let failure = error as? any SourceLookupRetryableError {
+            return failure.shouldRetrySourceLookup
+        }
+        let failure = error as NSError
+        return failure.domain == NSURLErrorDomain &&
+            BackgroundTransferRetryPolicy.isTemporaryURLFailure(failure.code)
+    }
+
+    /// Empty optional catalogs cannot establish that an interrupted primary
+    /// lookup has no recording. A usable fallback still takes precedence.
+    static func failureToRetry(_ recordingFailure: Error?, hasCandidates: Bool) -> Error? {
+        guard !hasCandidates, let recordingFailure, isTemporary(recordingFailure) else { return nil }
+        return recordingFailure
+    }
+}
+
+/// Try a bounded set of AAC formats from one already-validated recording.
+/// A refused or stale high-bitrate URL must not hide a usable lower-bitrate URL.
+enum RecordingStreamProbe {
+    struct Candidate: Sendable {
+        let url: URL
+        let bitrate: Int?
+    }
+    static let maximumAttempts = 3
+
+    static func orderedSources(_ candidates: [Candidate], at date: Date = .now) -> [URL] {
+        let ranked = candidates.enumerated().sorted {
+            let first = max(0, $0.element.bitrate ?? 0)
+            let second = max(0, $1.element.bitrate ?? 0)
+            return first == second ? $0.offset < $1.offset : first > second
+        }
+        var seen = Set<URL>()
+        return Array(ranked.compactMap { entry -> URL? in
+            let url = entry.element.url
+            guard AudioSourceLinks.isResolvedAudioURL(url),
+                  !AudioSourceLinks.hasExpired(url, at: date.addingTimeInterval(30)),
+                  seen.insert(url).inserted else { return nil }
+            return url
+        }.prefix(maximumAttempts))
+    }
+
+    /// Keep one verified backup for a failure during the full transfer.
+    static func resolve(_ candidates: [Candidate], at date: Date = .now,
+                        probe: @Sendable (_ url: URL, _ isBackup: Bool) async throws -> Void) async throws -> [URL] {
+        try Task.checkCancellation()
+        var verified: [URL] = []
+        var lastFailure: Error?
+        var temporaryFailure: Error?
+        for url in orderedSources(candidates, at: date) {
+            try Task.checkCancellation()
+            do {
+                try await probe(url, !verified.isEmpty)
+                try Task.checkCancellation()
+                verified.append(url)
+                if verified.count == 2 { break }
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                try Task.checkCancellation()
+                let failure = error as NSError
+                if failure.domain == NSURLErrorDomain && failure.code == URLError.Code.cancelled.rawValue { throw error }
+                if SourceLookupRetryPolicy.isTemporary(error), temporaryFailure == nil { temporaryFailure = error }
+                lastFailure = error
+            }
+        }
+        if !verified.isEmpty { return verified }
+        // Keep a temporary outage eligible for the existing bounded lookup
+        // retry even if the last format happened to return a permanent refusal.
+        if let failure = temporaryFailure ?? lastFailure { throw failure }
+        return []
+    }
+}
+
+/// Limit oversized transfers as soon as the background daemon reports their
+/// expected or received bytes, not only after downloading the whole file.
+/// Progress coalescing avoids hundreds of SwiftUI refreshes per recording.
+enum BackgroundTransferProgressPolicy {
+    static let maxBytes: Int64 = 100 * 1024 * 1024
+    static let minimumUpdateBytes: Int64 = 256 * 1024
+
+    static func exceedsLimit(received: Int64, expected: Int64) -> Bool {
+        received > maxBytes || expected > maxBytes
+    }
+
+    static func shouldPublish(received: Int64, total: Int64,
+                              previousReceived: Int64?) -> Bool {
+        guard received >= 0 else { return false }
+        guard let previousReceived else { return true }
+        return received < previousReceived ||
+            received - previousReceived >= minimumUpdateBytes ||
+            (total > 0 && received >= total && previousReceived < total)
+    }
+}
+
+/// Coalesce overlapping URLSession callbacks into one verified staging pass.
+/// The last caller must not report background events complete until its pass
+/// (and any newly staged media arriving during that pass) has finished.
+@MainActor
+final class StagedAudioRecoveryCoordinator {
+    private var isRunning = false
+    private var needsAnotherPass = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func run(_ performPass: @MainActor () async -> Void) async {
+        if isRunning {
+            needsAnotherPass = true
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+            return
+        }
+        isRunning = true
+        repeat {
+            needsAnotherPass = false
+            await performPass()
+        } while needsAnotherPass
+        isRunning = false
+        let resumed = waiters
+        waiters.removeAll()
+        for continuation in resumed { continuation.resume() }
+    }
+}
+
+/// The local transfer manifest and iOS' background URLSession can drift
+/// apart after a crash or the system discards a task. Be conservative: do not
+/// duplicate a live task or reissue one whose staging file awaits import.
+enum BackgroundTransferRecoveryPolicy {
+    static let minimumAge: TimeInterval = 15 * 60
+
+    static func shouldRecover(startedAt: Date?, checkedAt: Date,
+                              firstScanHasTask: Bool, secondScanHasTask: Bool,
+                              hasUnidentifiedTasks: Bool,
+                              hasStagedFile: Bool, isImporting: Bool) -> Bool {
+        guard let startedAt,
+              checkedAt.timeIntervalSince(startedAt) >= minimumAge else { return false }
+        return !firstScanHasTask && !secondScanHasTask &&
+            !hasUnidentifiedTasks && !hasStagedFile && !isImporting
+    }
+}
+
+/// Avoid filling iOS's background URLSession with an unbounded number of
+/// simultaneous downloads when importing a large Spotify playlist.
+/// The discovery cursor is never consumed while transfer slots are full.
+enum BackgroundDownloadBackpressure {
+    static let maximumOutstandingTransfers = 4
+
+    static func mayEnqueue(outstandingTransfers: Int) -> Bool {
+        outstandingTransfers >= 0 && outstandingTransfers < maximumOutstandingTransfers
+    }
+}
+
+/// Pure, testable eligibility for bounded system-scheduled catalog work.
+/// The foreground queue continues to use the normal user-approved policy.
+enum BackgroundDiscoveryPolicy {
+    static let maxSongsPerPass = 5
+
+    /// NWPathMonitor can report Wi-Fi just as a system background batch begins.
+    /// Do not launch a second, unbounded foreground lookup from that callback.
+    static func canStartForegroundScan(isSceneActive: Bool,
+                                       hasForegroundTask: Bool,
+                                       hasBackgroundBatch: Bool,
+                                       hasPendingWork: Bool) -> Bool {
+        isSceneActive && hasPendingWork && !hasForegroundTask && !hasBackgroundBatch
+    }
+
+    /// A foreground request that arrived during a bounded background pass
+    /// may be retried only after that pass releases ownership. Headless
+    /// launches must never turn completion into an unrestricted scan.
+    static func shouldResumeForegroundDiscovery(isSceneActive: Bool,
+                                                foregroundRequestPending: Bool,
+                                                hasBackgroundBatch: Bool) -> Bool {
+        isSceneActive && foregroundRequestPending && !hasBackgroundBatch
+    }
+
+    static func hasPending(_ jobs: [SourceDiscoveryJob]) -> Bool {
+        jobs.contains { !$0.isPaused && !$0.isComplete }
+    }
+
+    static func canProcess(onWiFi: Bool, job: SourceDiscoveryJob, at date: Date) -> Bool {
+        onWiFi && !job.isPaused && !job.isComplete &&
+            job.canAttemptLookup(at: date)
+    }
+
+    /// Do not spend catalog retry budget when a bounded Wi-Fi-only lookup
+    /// loses its permitted network while the provider request is in flight.
+    static func canRecordLookupFailure(isCancelled: Bool, isPaused: Bool,
+                                       networkAllowed: Bool,
+                                       backgroundWiFiOnly: Bool,
+                                       onWiFi: Bool) -> Bool {
+        !isCancelled && !isPaused && networkAllowed &&
+            (!backgroundWiFiOnly || onWiFi)
+    }
+
+    /// Rotate across playlists between independently granted iOS windows, so
+    /// a long playlist cannot monopolize rare background processing time.
+    static func nextJob(in jobs: [SourceDiscoveryJob], lastPlaylistID: UUID?,
+                        onWiFi: Bool, at date: Date) -> SourceDiscoveryJob? {
+        guard onWiFi, !jobs.isEmpty else { return nil }
+        let start = lastPlaylistID.flatMap { id in
+            jobs.firstIndex(where: { $0.playlistID == id }).map { ($0 + 1) % jobs.count }
+        } ?? 0
+        for offset in 0..<jobs.count {
+            let job = jobs[(start + offset) % jobs.count]
+            if canProcess(onWiFi: true, job: job, at: date) { return job }
+        }
+        return nil
+    }
+
+    /// BGProcessingTask is opportunistic. Schedule no earlier than the first
+    /// provider retry deadline, instead of waking solely to rediscover backoff.
+    static func earliestUsefulDate(for jobs: [SourceDiscoveryJob], at date: Date) -> Date? {
+        let active = jobs.filter { !$0.isPaused && !$0.isComplete }
+        guard !active.isEmpty else { return nil }
+        return active.map { job in
+            max(date, job.nextLookupAt ?? date)
+        }.min()
+    }
+}
+
+struct SourceDiscoveryJob: Codable, Equatable, Identifiable {
+    enum Result { case queued, unavailable, failed, alreadyPresent, removed }
+
+    /// Per-song outcome for the Spotify → independent-source MP3 matching
+    /// dashboard. Optional so existing checkpoint JSON remains decodable.
+    enum Outcome: String, Codable, Equatable {
+        case queued, unavailable, failed, alreadyPresent, removed, previous
+    }
+
+    var playlistID: UUID
+    var wishes: [PlaylistWish]
+    var nextIndex: Int = 0
+    var queued: Int = 0
+    var unavailable: Int = 0
+    var failed: Int = 0
+    var isPaused = false
+    var lastError: String? = nil
+    // Optional so older persisted checkpoints remain decodable.
+    var catalogWarnings: [String]? = nil
+    var lookupDetails: [String: [String]]? = nil
+    var recordingCandidates: [String: [RecordingCandidate]]? = nil
+    var sourceRecoveryAttempts: [String: Int]? = nil
+    var sourceRecoveryNotBefore: [String: Date]? = nil
+    var webSearchWishIDs: [UUID]? = nil
+    var webSources: [String: [AudioCatalogMatch]]? = nil
+    var webSearchStoppedReason: String? = nil
+    var outcomes: [Outcome]? = nil
+    // Optional fields preserve decoding of checkpoints created by older builds.
+    var transientFailureCount: Int? = nil
+    var nextRetryAt: Date? = nil
+
+    static let maxAutomaticWebSearches = 20
+
+    /// Persist this reservation before calling the paid API. A resume or
+    /// retry within the same job must never spend twice for the same wish.
+    mutating func reserveWebSearch(for wishID: UUID) -> Bool {
+        guard webSearchStoppedReason == nil,
+              !(webSearchWishIDs ?? []).contains(wishID),
+              (webSearchWishIDs?.count ?? 0) < Self.maxAutomaticWebSearches else { return false }
+        webSearchWishIDs = (webSearchWishIDs ?? []) + [wishID]
+        return true
+    }
+
+    mutating func saveLookupDetails(_ details: [String], for wishID: UUID) {
+        if lookupDetails == nil { lookupDetails = [:] }
+        lookupDetails?[wishID.uuidString] = Array(details.prefix(16)).map { String($0.prefix(500)) }
+    }
+
+    /// Move only this processed wish back to pending, keeping every other
+    /// song's cursor/history, the pause and the web-search credit ledger intact.
+    /// Older checkpoints used alreadyPresent for an existing transfer.
+    mutating func requeueFailedSource(for wishID: UUID, notBefore: Date? = nil) -> Bool {
+        guard nextIndex <= wishes.count,
+              let index = wishes.firstIndex(where: { $0.id == wishID }),
+              index < nextIndex, let history = outcomes, index < history.count,
+              history[index] == .queued || history[index] == .alreadyPresent,
+              (sourceRecoveryAttempts?[wishID.uuidString] ?? 0) < 3 else { return false }
+        moveProcessedWishesToPending(at: [index])
+        if sourceRecoveryAttempts == nil { sourceRecoveryAttempts = [:] }
+        sourceRecoveryAttempts?[wishID.uuidString, default: 0] += 1
+        if let notBefore {
+            if sourceRecoveryNotBefore == nil { sourceRecoveryNotBefore = [:] }
+            sourceRecoveryNotBefore?[wishID.uuidString] = notBefore
+        }
+        return true
+    }
+
+    /// Exhaust a bounded retry budget instead of blocking this playlist
+    /// indefinitely when a remote catalog cannot answer. An exhausted song
+    /// is classified as failed, not falsely recorded as unavailable.
+    static let automaticRetryLimit = 5
+    var hasExhaustedAutomaticRetries: Bool {
+        (transientFailureCount ?? 0) >= Self.automaticRetryLimit
+    }
+
+    /// Network lookups suspend while playlists and checkpoints can change.
+    /// Only the unchanged snapshot may write back to its original array slot.
+    func isCurrent(in jobs: [SourceDiscoveryJob], at index: Int) -> Bool {
+        jobs.indices.contains(index) && jobs[index] == self
+    }
+
+    var id: UUID { playlistID }
+    var isComplete: Bool { nextIndex >= wishes.count }
+    var remaining: Int { max(0, wishes.count - max(0, nextIndex)) }
+    var currentWish: PlaylistWish? {
+        // Malformed persisted indices must never subscript wishes[-1].
+        guard wishes.indices.contains(nextIndex) else { return nil }
+        return wishes[nextIndex]
+    }
+
+    /// Clamp a malformed/partially-written checkpoint rather than crashing
+    /// during playlist resumption. Valid checkpoints are left unchanged.
+    /// Return true if anything was repaired so the caller can persist later.
+    @discardableResult
+    mutating func repairPersistedCheckpoint() -> Bool {
+        var changed = false
+        let validIndex = min(max(0, nextIndex), wishes.count)
+        if nextIndex != validIndex {
+            nextIndex = validIndex
+            // Retry state belongs to the previous invalid cursor, not to the
+            // newly selected song.
+            transientFailureCount = nil
+            nextRetryAt = nil
+            changed = true
+        }
+        let validQueued = min(max(0, queued), validIndex)
+        let validUnavailable = min(max(0, unavailable), validIndex)
+        let validFailed = min(max(0, failed), validIndex)
+        if queued != validQueued { queued = validQueued; changed = true }
+        if unavailable != validUnavailable { unavailable = validUnavailable; changed = true }
+        if failed != validFailed { failed = validFailed; changed = true }
+        if let savedOutcomes = outcomes, savedOutcomes.count > validIndex {
+            outcomes = Array(savedOutcomes.prefix(validIndex))
+            changed = true
+        }
+        if let attempts = transientFailureCount {
+            let clamped = min(max(0, attempts), Self.automaticRetryLimit)
+            if attempts != clamped { transientFailureCount = clamped; changed = true }
+        }
+        if isComplete && (nextRetryAt != nil || transientFailureCount != nil) {
+            nextRetryAt = nil
+            transientFailureCount = nil
+            changed = true
+        }
+        return changed
+    }
+
+    var nextLookupAt: Date? {
+        guard let wish = currentWish, let deadlines = sourceRecoveryNotBefore,
+              let recovery = deadlines[wish.id.uuidString] else { return nextRetryAt }
+        // A provider retry belongs to the current lookup. A recovered link
+        // has its own deadline, so other pending songs can use that time.
+        if let nextRetryAt { return max(recovery, nextRetryAt) }
+        var earliest = recovery
+        for pending in wishes.dropFirst(nextIndex + 1) {
+            guard let deadline = deadlines[pending.id.uuidString] else { return nil }
+            earliest = min(earliest, deadline)
+        }
+        return earliest
+    }
+
+    func canAttemptLookup(at date: Date) -> Bool {
+        nextLookupAt.map { $0 <= date } ?? true
+    }
+
+    /// Move the first ready pending song to the cursor if its predecessor
+    /// is waiting for a replacement link. The processed prefix stays intact.
+    mutating func prepareLookup(at date: Date) -> Bool {
+        guard let wish = currentWish, nextRetryAt.map({ $0 <= date }) ?? true else { return false }
+        guard let deadlines = sourceRecoveryNotBefore,
+              let recovery = deadlines[wish.id.uuidString], recovery > date else { return true }
+        guard nextRetryAt == nil,
+              let readyIndex = wishes.indices.dropFirst(nextIndex + 1).first(where: {
+                  (deadlines[wishes[$0].id.uuidString] ?? date) <= date
+              }) else { return false }
+        let ready = wishes.remove(at: readyIndex)
+        wishes.insert(ready, at: nextIndex)
+        return true
+    }
+
+    /// The current song is not discarded when a catalog is temporarily down.
+    /// Increasing delays avoid hammering APIs during an outage. The next
+    /// retry date is persisted alongside the existing discovery cursor.
+    mutating func recordTransientFailure(_ message: String, at date: Date = .now) {
+        if nextIndex < 0 || nextIndex > wishes.count { repairPersistedCheckpoint() }
+        guard !isComplete else { return }
+        let count = min(Self.automaticRetryLimit, (transientFailureCount ?? 0) + 1)
+        let delays: [TimeInterval] = [15, 30, 60, 120, 240]
+        transientFailureCount = count
+        nextRetryAt = date.addingTimeInterval(delays[count - 1])
+        lastError = message
+    }
+
+    /// A source still failing after repeated automatic attempts should not
+    /// hold the rest of the playlist hostage. Manual playlist Retry remains
+    /// available once its missing-song search finishes.
+    @discardableResult
+    mutating func finishExhaustedRetriesIfNeeded() -> Bool {
+        guard hasExhaustedAutomaticRetries && !isComplete else { return false }
+        let finalError = lastError
+        record(.failed)
+        lastError = finalError
+        return true
+    }
+
+    /// Refresh missing songs and reopen any completed lookup that used old
+    /// recording metadata. Corrected entries keep their paid-search reservation.
+    @discardableResult
+    mutating func refreshMissingWishes(_ missing: [PlaylistWish]) -> Int {
+        if nextIndex < 0 || nextIndex > wishes.count { repairPersistedCheckpoint() }
+        // Some external playlist feeds can repeat an internal wish ID.
+        // Accept the newest metadata without crashing on duplicate keys.
+        let updated = Dictionary(missing.map { ($0.id, $0) },
+                                 uniquingKeysWith: { _, newest in newest })
+        var correctedProcessed: [Int] = []
+        for index in wishes.indices {
+            let previous = wishes[index]
+            guard let latest = updated[previous.id] else { continue }
+            if !previous.matchesSourceRequest(latest) {
+                let key = previous.id.uuidString
+                recordingCandidates?.removeValue(forKey: key)
+                webSources?.removeValue(forKey: key)
+                lookupDetails?.removeValue(forKey: key)
+                if index < nextIndex { correctedProcessed.append(index) }
+            }
+            wishes[index] = latest
+        }
+        if !correctedProcessed.isEmpty {
+            moveProcessedWishesToPending(at: correctedProcessed)
+        }
+        var ids = Set(wishes.map(\.id))
+        let appended = missing.filter { ids.insert($0.id).inserted }
+        wishes.append(contentsOf: appended)
+        return appended.count + correctedProcessed.count
+    }
+
+    /// Keep the current pending song and its retry time while moving stale
+    /// processed entries behind it. Legacy checkpoints may lack outcomes.
+    private mutating func moveProcessedWishesToPending(at indices: [Int]) {
+        let moving = Set(indices)
+        let retained = (0..<nextIndex).filter { !moving.contains($0) }
+        if let history = outcomes {
+            for index in indices where history.indices.contains(index) {
+                switch history[index] {
+                case .queued: queued = max(0, queued - 1)
+                case .unavailable: unavailable = max(0, unavailable - 1)
+                case .failed: failed = max(0, failed - 1)
+                default: break
+                }
+            }
+            outcomes = retained.compactMap { history.indices.contains($0) ? history[$0] : nil }
+        }
+        let reordered = retained.map { wishes[$0] } + Array(wishes.dropFirst(nextIndex)) + indices.map { wishes[$0] }
+        wishes = reordered
+        nextIndex = retained.count
+        repairPersistedCheckpoint()
+    }
+
+    func outcome(for wish: PlaylistWish) -> Outcome? {
+        guard let index = wishes.firstIndex(where: { $0.id == wish.id }),
+              index < nextIndex else { return nil }
+        return outcomes.flatMap { index < $0.count ? $0[index] : nil } ?? .previous
+    }
+
+    mutating func record(_ result: Result) {
+        if nextIndex < 0 || nextIndex > wishes.count { repairPersistedCheckpoint() }
+        guard !isComplete else { return }
+        var updated = outcomes ?? Array(repeating: Outcome.previous, count: nextIndex)
+        // Repair truncated/corrupted optional history without changing the
+        // authoritative persisted cursor or aggregate counts.
+        if updated.count > nextIndex { updated = Array(updated.prefix(nextIndex)) }
+        if updated.count < nextIndex {
+            updated.append(contentsOf: repeatElement(.previous, count: nextIndex - updated.count))
+        }
+        switch result {
+        case .queued:
+            queued += 1
+            updated.append(.queued)
+        case .unavailable:
+            unavailable += 1
+            updated.append(.unavailable)
+        case .failed:
+            failed += 1
+            updated.append(.failed)
+        case .alreadyPresent:
+            updated.append(.alreadyPresent)
+        case .removed:
+            updated.append(.removed)
+        }
+        outcomes = updated
+        sourceRecoveryNotBefore?.removeValue(forKey: wishes[nextIndex].id.uuidString)
+        nextIndex += 1
+        lastError = nil
+        transientFailureCount = nil
+        nextRetryAt = nil
+    }
+}

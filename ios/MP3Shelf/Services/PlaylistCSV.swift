@@ -1,0 +1,250 @@
+import Foundation
+
+// Pure Foundation parser so the importer can be tested independently of iOS.
+enum PlaylistCSVError: LocalizedError {
+    case unreadable, missingTitleColumn, empty
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadable: return "This file is not valid UTF-8, UTF-16 or Latin-1 text."
+        case .missingTitleColumn: return "No song title column was found. Expected Track Name, Name or Title."
+        case .empty: return "No tracks were found in this playlist file."
+        }
+    }
+}
+
+enum PlaylistCSV {
+    static func parse(_ data: Data) throws -> [PlaylistWish] {
+        guard let raw = String(data: data, encoding: .utf8)
+            ?? String(data: data, encoding: .utf16)
+            ?? String(data: data, encoding: .isoLatin1) else {
+            throw PlaylistCSVError.unreadable
+        }
+        let text = raw.replacingOccurrences(of: "\u{FEFF}", with: "")
+        let firstLine = text.components(separatedBy: .newlines).first ?? ""
+        let delimiter: Character = firstLine.filter { $0 == "\t" }.count > firstLine.filter { $0 == "," }.count ? "\t" : ","
+        let rows = parseRows(text, delimiter: delimiter).filter { $0.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) }
+        guard let header = rows.first else { throw PlaylistCSVError.empty }
+
+        func canonical(_ str: String) -> String {
+            str.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+        }
+        let fields = header.map(canonical)
+        func column(_ aliases: [String]) -> Int? {
+            fields.firstIndex(where: { aliases.contains($0) })
+        }
+        guard let titleColumn = column(["trackname", "track", "title", "song", "songtitle", "name"]) else {
+            throw PlaylistCSVError.missingTitleColumn
+        }
+        let artistColumn = column(["artistname", "artistnames", "artist", "artists", "artistss"])
+        let albumColumn = column(["albumname", "album", "release"])
+        let spotifyColumn = column(["trackuri", "spotifyuri", "trackurl", "spotifyurl", "url"])
+        func cell(_ row: [String], _ index: Int?) -> String {
+            guard let index, row.indices.contains(index) else { return "" }
+            return row[index].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let items: [PlaylistWish] = rows.dropFirst().compactMap { row in
+            let title = cell(row, titleColumn)
+            guard !title.isEmpty else { return nil }
+            let uri = cell(row, spotifyColumn)
+            let link: String?
+            if uri.hasPrefix("spotify:track:") {
+                link = "https://open.spotify.com/track/" + String(uri.dropFirst("spotify:track:".count))
+            } else if uri.hasPrefix("https://open.spotify.com/track/") {
+                link = uri
+            } else {
+                link = nil
+            }
+            return PlaylistWish(title: title, artist: cell(row, artistColumn),
+                                album: cell(row, albumColumn), spotifyURL: link)
+        }
+        if items.isEmpty { throw PlaylistCSVError.empty }
+        return items
+    }
+
+    static func parseRows(_ text: String, delimiter: Character) -> [[String]] {
+        var rows: [[String]] = []
+        var row: [String] = []
+        var field = ""
+        var quoted = false
+        let characters = Array(text)
+        var index = 0
+        while index < characters.count {
+            let char = characters[index]
+            if char == "\"" {
+                if quoted && index + 1 < characters.count && characters[index + 1] == "\"" {
+                    field.append("\"")
+                    index += 1
+                } else { quoted.toggle() }
+            } else if char == delimiter && !quoted {
+                row.append(field)
+                field = ""
+            } else if (char == "\n" || char == "\r" || char == "\r\n") && !quoted {
+                if char == "\r" && index + 1 < characters.count && characters[index + 1] == "\n" { index += 1 }
+                row.append(field)
+                rows.append(row)
+                row = []
+                field = ""
+            } else {
+                field.append(char)
+            }
+            index += 1
+        }
+        if !field.isEmpty || !row.isEmpty {
+            row.append(field)
+            rows.append(row)
+        }
+        return rows
+    }
+}
+
+
+/// Sync an imported playlist without changing the identity
+/// of unchanged entries. An identical track can occur more than once; consume
+/// old occurrence IDs in sequence rather than collapsing duplicate entries.
+enum SpotifyPlaylistSync {
+    static func identity(_ wish: PlaylistWish) -> String {
+        if let id = AppleMusicLibraryIdentity.canonical(wish.appleMusicItemID) {
+            return "apple-music:\(id)"
+        }
+        if let raw = wish.spotifyURL,
+           let url = URLComponents(string: raw),
+           url.scheme?.lowercased() == "https",
+           url.host?.lowercased() == "open.spotify.com",
+           url.path.split(separator: "/").count == 2,
+           url.path.hasPrefix("/track/"),
+           let id = url.path.split(separator: "/").last,
+           id.count == 22 && id.allSatisfy({ $0.isASCII && $0.isLetter || $0.isASCII && $0.isNumber }) {
+            return "spotify:\(id)"
+        }
+        // Older CSV imports can lack an authentic Spotify track link.
+        // Include the known duration so remixes and previews remain distinct.
+        let length = wish.durationSeconds.map { String(Int($0.rounded())) } ?? "unknown"
+        return "metadata:\(MusicMatching.key(wish.title)):\(MusicMatching.key(wish.artist)):\(length)"
+    }
+
+    static func merge(previous: [PlaylistWish], latest: [PlaylistWish]) -> [PlaylistWish] {
+        var buckets = Dictionary(grouping: previous, by: identity)
+        return latest.map { updated in
+            let key = identity(updated)
+            guard var old = buckets[key], !old.isEmpty else { return updated }
+            var stable = updated
+            stable.id = old.removeFirst().id
+            buckets[key] = old
+            return stable
+        }
+    }
+}
+
+enum MusicMatching {
+    static func key(_ text: String) -> String {
+        var base = text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        if let range = base.range(of: #"\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring)\b[^\)\]]*[\)\]]"#, options: .regularExpression) {
+            base.removeSubrange(range)
+        }
+        return base.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+    }
+
+    /// Two Spotify wishes may share a title and artist but describe different
+    /// recordings, such as a preview, radio edit or extended version. Never
+    /// coalesce their background transfers without compatible duration data.
+    static func sameRequestedRecording(_ lhs: PlaylistWish, _ rhs: PlaylistWish) -> Bool {
+        guard key(lhs.title) == key(rhs.title), !key(lhs.title).isEmpty,
+              key(lhs.artist) == key(rhs.artist), !key(lhs.artist).isEmpty else { return false }
+        switch (lhs.durationSeconds, rhs.durationSeconds) {
+        case (nil, nil): return true
+        case let (a?, b?): return a.isFinite && b.isFinite && abs(a - b) <= 4
+        default: return false
+        }
+    }
+
+    /// Filter version/duration candidates before disambiguating by artist.
+    /// Otherwise two same-name edits of different lengths are incorrectly
+    /// treated as ambiguous, even when exactly one is the requested version.
+    static func reusableOfflineTrack(for wish: PlaylistWish,
+                                     in library: [MusicTrack]) -> MusicTrack? {
+        let durationCompatible = library.filter { track in
+            guard let expected = wish.durationSeconds else { return true }
+            return expected.isFinite && track.duration.isFinite &&
+                abs(track.duration - expected) <= 4
+        }
+        return matchingTrack(for: wish, in: durationCompatible)
+    }
+
+    static func matchingTrack(for wish: PlaylistWish, in library: [MusicTrack]) -> MusicTrack? {
+        let name = key(wish.title)
+        guard !name.isEmpty else { return nil }
+        let sameTitle = library.filter { key($0.title) == name }
+        let artist = key(wish.artist)
+        if !artist.isEmpty {
+            let both = sameTitle.filter {
+                let candidate = key($0.artist)
+                return candidate == artist || (!candidate.isEmpty && (artist.contains(candidate) || candidate.contains(artist)))
+            }
+            // Don't guess if multiple recordings share this metadata.
+            return both.count == 1 ? both[0] : nil
+        }
+        return sameTitle.count == 1 ? sameTitle[0] : nil
+    }
+}
+
+
+/// Single-pass title index for very large imported Spotify playlists.
+/// Matching delegates to the existing strict artist/duration policy, so
+/// same-name remixes and ambiguous tracks are never silently substituted.
+struct OfflineTrackIndex {
+    private let tracksByTitle: [String: [MusicTrack]]
+
+    init(tracks: [MusicTrack]) {
+        var lookup: [String: [MusicTrack]] = [:]
+        lookup.reserveCapacity(tracks.count)
+        for track in tracks {
+            let title = MusicMatching.key(track.title)
+            if !title.isEmpty { lookup[title, default: []].append(track) }
+        }
+        tracksByTitle = lookup
+    }
+
+    func reusableTrack(for wish: PlaylistWish,
+                       isAvailable: ((MusicTrack) -> Bool)? = nil) -> MusicTrack? {
+        let key = MusicMatching.key(wish.title)
+        guard !key.isEmpty, let candidates = tracksByTitle[key] else { return nil }
+        let usable = isAvailable.map { candidates.filter($0) } ?? candidates
+        return MusicMatching.reusableOfflineTrack(for: wish, in: usable)
+    }
+}
+
+/// Verify identity evidence inside imported audio before assigning playlist
+/// metadata. Missing tags are inconclusive; contradictory tags are a mismatch.
+/// The caller separately validates playable media and Spotify's duration.
+enum SourceAudioIdentity {
+    enum Conflict: String {
+        case title, artist
+    }
+
+    static func conflictingField(title: String?, artist: String?,
+                                 requested: PlaylistWish) -> Conflict? {
+        func normalized(_ value: String?) -> String? {
+            guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            let key = MusicMatching.key(text)
+            guard !key.isEmpty,
+                  !["unknown", "unknownartist", "untitled", "track"].contains(key)
+            else { return nil }
+            return key
+        }
+
+        let wantedTitle = MusicMatching.key(requested.title)
+        if let embedded = normalized(title), !wantedTitle.isEmpty,
+           embedded != wantedTitle {
+            return .title
+        }
+        let wantedArtist = MusicMatching.key(requested.artist)
+        if let embedded = normalized(artist), !wantedArtist.isEmpty,
+           embedded != wantedArtist &&
+           !embedded.contains(wantedArtist) && !wantedArtist.contains(embedded) {
+            return .artist
+        }
+        return nil
+    }
+}

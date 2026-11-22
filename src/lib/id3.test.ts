@@ -1,0 +1,4 @@
+import{describe,expect,it}from"vitest";
+import{parseId3Bytes}from"./id3";
+function frame(id:string,value:string){const payload=new Uint8Array([3,...new TextEncoder().encode(value)]),out=new Uint8Array(10+payload.length);out.set(new TextEncoder().encode(id));new DataView(out.buffer).setUint32(4,payload.length);out.set(payload,10);return out}
+describe("ID3 metadata",()=>{it("reads title, artist and album frames",()=>{const frames=[frame("TIT2","Track Name"),frame("TPE1","Artist Name"),frame("TALB","Album Name")],size=frames.reduce((n,f)=>n+f.length,0),tag=new Uint8Array(10+size);tag.set([73,68,51,3,0,0,0,0,0,size],0);let offset=10;for(const f of frames){tag.set(f,offset);offset+=f.length}expect(parseId3Bytes(tag)).toMatchObject({title:"Track Name",artist:"Artist Name",album:"Album Name"})});it("ignores files without ID3 tags",()=>{expect(parseId3Bytes(new Uint8Array([1,2,3]))).toEqual({})})});
