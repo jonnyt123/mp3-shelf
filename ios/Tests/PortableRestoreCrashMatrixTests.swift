@@ -96,12 +96,15 @@ for phase in ["prepared", "writing", "committed"] {
         }
         try recover()
         let expected = phase == "committed" ? proposed : before
-        precondition(try load(Snapshot.self, from: library) == expected,
+        let observed = try load(Snapshot.self, from: library)
+        precondition(observed == expected,
                      "recovery replay mismatch: \(phase) attempt \(recoveryAttempt)")
-        precondition(try Data(contentsOf: audio) == originalAudio,
+        let observedAudio = try Data(contentsOf: audio)
+        precondition(observedAudio == originalAudio,
                      "recovery replay changed original audio")
         try recover() // No journal: restart must be a no-op.
-        precondition(try load(Snapshot.self, from: library) == expected,
+        let observed = try load(Snapshot.self, from: library)
+        precondition(observed == expected,
                      "second recovery changed catalog")
         precondition(!fm.fileExists(atPath: journalURL.path))
     }
@@ -116,11 +119,14 @@ for phase in ["", "PREPARED", "committing", "../committed", "rolledBack"] {
     let journalBytes = try Data(contentsOf: journalURL)
     do { try recover(); fatalError("accepted invalid phase \(phase)") }
     catch RestoreFailure.invalidJournal { }
-    precondition(try load(Snapshot.self, from: library) == proposed,
+    let observed = try load(Snapshot.self, from: library)
+    precondition(observed == proposed,
                  "invalid journal mutated catalog")
-    precondition(try Data(contentsOf: journalURL) == journalBytes,
+    let preservedJournal = try Data(contentsOf: journalURL)
+    precondition(preservedJournal == journalBytes,
                  "invalid journal was lost")
-    precondition(try Data(contentsOf: audio) == originalAudio,
+    let observedAudio = try Data(contentsOf: audio)
+        precondition(observedAudio == originalAudio,
                  "invalid journal mutated existing audio")
 }
 print("PASS: recovery replay/idempotence and invalid-phase preservation model")
