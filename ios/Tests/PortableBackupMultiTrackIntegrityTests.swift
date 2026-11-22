@@ -80,3 +80,53 @@ reject("empty payload", valid, ["one", "two"], [["one"]], Data())
 precondition(try validateArchive(payload: payload, segments: valid,
                                  trackIDs: ["one", "two"], playlists: [["two", "one"]])["two"] == second)
 print("PASS: multi-track portable archive ownership, ordering and 13 corruption boundaries")
+
+
+// Deterministic adversarial allocation matrix: exercises arithmetic boundaries,
+// split/merge mutations, shuffled metadata order and byte-exact ownership.
+// The fixed seed makes any failure reproducible without a third-party test runner.
+struct FixtureRNG {
+    private var state: UInt64 = 0x6a09e667f3bcc909
+    mutating func next() -> UInt64 {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        return state
+    }
+    mutating func count(_ upper: Int) -> Int { Int(next() % UInt64(upper)) }
+}
+var rng = FixtureRNG()
+for iteration in 0..<512 {
+    let trackCount = 2 + rng.count(12)
+    var bytes = Data()
+    var pieces: [Segment] = []
+    var expected: [String: Data] = [:]
+    for index in 0..<trackCount {
+        let owner = "record-\(index)"
+        let length = 1 + rng.count(512)
+        let audio = Data((0..<length).map { _ in UInt8(truncatingIfNeeded: rng.next()) })
+        pieces.append(Segment(owner: owner, offset: bytes.count, length: length))
+        expected[owner] = audio
+        bytes.append(audio)
+    }
+    let ids = (0..<trackCount).map { "record-\($0)" }
+    let playlist = (0..<trackCount).reversed().map { "record-\($0)" }
+    let shuffled = pieces.reversed()
+    let roundTrip = try validateArchive(payload: bytes, segments: Array(shuffled),
+                                       trackIDs: ids, playlists: [playlist])
+    precondition(roundTrip == expected, "FAIL byte identity iteration \(iteration)")
+    let victim = rng.count(trackCount)
+    var overlapping = pieces
+    overlapping[victim] = Segment(owner: pieces[victim].owner,
+                                  offset: pieces[victim].offset,
+                                  length: pieces[victim].length + 1)
+    reject("extended segment \(iteration)", overlapping, ids, [playlist], bytes)
+    var missing = pieces
+    missing.remove(at: victim)
+    reject("missing owner \(iteration)", missing, ids, [playlist], bytes)
+    var duplicated = pieces
+    duplicated.append(pieces[victim])
+    reject("duplicate owner \(iteration)", duplicated, ids, [playlist], bytes)
+    var truncated = bytes
+    truncated.removeLast()
+    reject("truncated payload \(iteration)", pieces, ids, [playlist], truncated)
+}
+print("PASS: 512 seeded multi-track byte-exact and corruption matrices")
