@@ -374,13 +374,18 @@ final class SpotifyService: NSObject, ObservableObject {
                 rateLimitRetries += 1
                 // A zero-second provider hint still gets a short delay.
                 try await Task.sleep(nanoseconds: UInt64(max(1, seconds)) * 1_000_000_000)
-            case 500...599:
+            case 408, 425, 500...599:
+                // A timeout (408) or an early-request refusal (425) can
+                // interrupt an otherwise valid paginated playlist import.
+                // These are idempotent metadata GETs; apply the same bounded,
+                // cancellable retry budget as transient provider failures.
+                // Never retry a 401/403 or an arbitrary client error.
                 // Playlist metadata reads are idempotent GET requests. A
                 // transient provider outage should not discard a large import
                 // on the first failure, but retries must remain bounded and
                 // cancellable. Never retry permanent 4xx responses here.
                 guard transientServerRetries < 2 else {
-                    throw SpotifyError.api("Spotify is temporarily unavailable (HTTP \(response.statusCode)). Try importing again later.")
+                    throw SpotifyError.api("Spotify metadata is temporarily unavailable (HTTP \(response.statusCode)). Try importing again later.")
                 }
                 transientServerRetries += 1
                 try await Task.sleep(nanoseconds: UInt64(transientServerRetries) * 1_000_000_000)
