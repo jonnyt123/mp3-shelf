@@ -74,6 +74,9 @@ export function normalizedGateState(model,{now=Date.now()}={}){
 export function notificationChanges(previous,current){
  if(previous?.schema!=='mp3shelf-readiness-notification-state-v1'||
    !current||previous.candidateSha!==current.candidateSha||
+   // A new release-tooling implementation may change the meaning of gates.
+   // Establish a silent baseline instead of comparing incompatible snapshots.
+   previous.toolingSha!==current.toolingSha||
    !SHA.test(previous.toolingSha??'')||
    !Number.isFinite(Date.parse(previous.updatedAt??''))||
    Date.parse(previous.updatedAt)>Date.parse(current.updatedAt)||
