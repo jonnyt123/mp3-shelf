@@ -3342,6 +3342,43 @@ struct PlaylistDetailView: View {
                             playlistShuffleButton(availableTracks)
                         }
                     }
+                    // An imported playlist can have source metadata but no playable local
+                    // recordings. Disabled Play/Shuffle alone strands the listener.
+                    // These actions are navigation only: neither starts a download nor
+                    // performs source discovery without another explicit user action.
+                    if availableTracks.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("No audio saved for this playlist", systemImage: "externaldrive.badge.exclamationmark")
+                                .font(.headline)
+                                .foregroundStyle(.orange)
+                                .accessibilityAddTraits(.isHeader)
+                            Text(playlist.missingTracks.isEmpty
+                                 ? "Add recordings to this playlist before playing."
+                                 : "\(playlist.missingTracks.count) songs still need local audio. Review downloads or choose a source to restore playback.")
+                                .font(.subheadline)
+                                .foregroundStyle(ShelfTheme.subdued)
+                                .fixedSize(horizontal: false, vertical: true)
+                            NavigationLink {
+                                DownloadManagerView()
+                            } label: {
+                                Label("Review downloads", systemImage: "arrow.down.circle")
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }
+                            .accessibilityHint("Review saved, pending and failed audio transfers without starting a download")
+                            if !playlist.missingTracks.isEmpty {
+                                Button {
+                                    showWebDiscovery = true
+                                } label: {
+                                    Label("Review missing song sources", systemImage: "magnifyingglass")
+                                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                }
+                                .disabled(playlistScenePhase != .active || playlistAudioImportBusy)
+                                .accessibilityHint("Open the source review screen; no audio is downloaded automatically")
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        .accessibilityElement(children: .contain)
+                    }
                     if playlistPlaybackPending {
                         HStack(spacing: 10) {
                             ProgressView().accessibilityHidden(true)
