@@ -345,6 +345,14 @@ enum AudioSourceFinder {
                 ("karaoke", [["karaoke"]]),
                 ("acapella", [["acapella"], ["a", "cappella"], ["a", "capella"]]),
                 ("rehearsal", [["rehearsal"]]),
+                // Live capture provenance is part of the recording identity.
+                // A soundboard/audience tape or soundcheck is not the studio
+                // master, even if uploader credits and duration are identical.
+                ("soundboard-recording", [["soundboard"], ["sbd", "recording"], ["soundboard", "recording"]]),
+                ("audience-recording", [["audience", "recording"], ["audience", "tape"], ["aud", "recording"]]),
+                ("soundcheck", [["soundcheck"], ["sound", "check"]]),
+                ("rough-mix", [["rough", "mix"], ["roughmix"]]),
+                ("work-tape", [["work", "tape"], ["worktape"]]),
                 ("bootleg", [["bootleg"]]),
                 ("bass-boosted", [["bass", "boosted"], ["bassboosted"]]),
                 ("club-mix", [["club", "mix"]]),
