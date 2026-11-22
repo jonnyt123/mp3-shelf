@@ -2181,6 +2181,29 @@ enum AudioSourceFinderTests {
                 filename: filename, requestedTitle: requested),
                 "distinct edition must not be automatically selected: \\(filename)")
         }
+        // False-positive regression: upload metadata can repeat Spotify's
+        // original artist/title while the physical file is another recording.
+        for alternate in [
+            "Exact Song (Mashup).mp3",
+            "Exact Song (Mash Up).mp3",
+            "Exact Song (Medley).mp3",
+            "Exact Song (Tribute).mp3",
+            "Exact Song (AI Cover).mp3",
+            "Exact Song (DJ Edit).mp3",
+            "Exact Song (Fan Remaster).mp3"
+        ] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: alternate, requestedTitle: "Exact Song"),
+                "alternate recording must not auto-match the original: \\(alternate)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (Mash Up).mp3",
+            requestedTitle: "Exact Song (Mashup)"),
+            "equivalent mashup labels identify the same alternate category")
+        verify(!AudioSourceFinder.recordingEditionAgrees(
+            filename: "Exact Song (DJ Edit).mp3",
+            requestedTitle: "Exact Song (Radio Edit)"),
+            "different edit categories must remain review-only")
         print("Audio source discovery validation tests passed")
     }
 }
