@@ -103,6 +103,27 @@ for index in 0..<4 {
 }
 mustReject("big endian length", swapped)
 rejected += 1
+
+// Preserve opaque media bytes exactly, including an embedded archive signature,
+// binary zeros and a payload large enough to cross common buffer boundaries.
+for payload in [
+    Data(),
+    Data(repeating: 0, count: 65_537),
+    signature + json,
+    Data([0x00, 0xff, 0x7f, 0x80, 0x0a, 0x00])
+] {
+    let decoded = try decodeFrame(framed(json, payload))
+    precondition(decoded.manifest == json)
+    precondition(decoded.payload == payload, "opaque payload was reinterpreted")
+}
+// The declared JSON region must be complete, not a valid prefix followed by
+// garbage. Audio bytes after that region cannot rescue malformed JSON.
+let malformedPrefix = Data(#"{"schema":"mp3-shelf-backup","version":1,"tracks":[],"#.utf8)
+mustReject("partial manifest before audio", framed(malformedPrefix, Data([0x49, 0x44, 0x33])))
+rejected += 1
+mustReject("JSON object with trailing garbage", framed(json + Data("garbage".utf8)))
+rejected += 1
+
 precondition(try decodeFrame(valid).payload == result.payload, "mutations changed valid baseline")
 print("PASS: \(rejected) malformed archive framing cases rejected")
 print("LIMITATION: standalone framing model; production restore and iPhone execution UNVERIFIED")
