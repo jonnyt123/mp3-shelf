@@ -25,6 +25,7 @@ func unpack(_ archive: Data) throws -> [String: Data] {
     let end = header + Int(count)
     let m = try JSONDecoder().decode(Manifest.self, from: archive.subdata(in: header..<end))
     guard m.schema == "mp3-shelf-backup", m.version == 1,
+          m.tracks.count <= 20_000, m.playlists.count <= 2_000,
           Set(m.tracks.map(\.id)).count == m.tracks.count,
           Set(m.playlists.map(\.id)).count == m.playlists.count else { throw Invalid.archive }
     let ids = Set(m.tracks.map(\.id))
@@ -34,7 +35,10 @@ func unpack(_ archive: Data) throws -> [String: Data] {
     var result: [String: Data] = [:]
     for track in m.tracks.sorted(by: { $0.audio.offset < $1.audio.offset }) {
         let p = track.audio
-        guard p.offset == cursor, p.length > 0, p.length <= Int64(payload.count) - cursor else { throw Invalid.archive }
+        guard p.offset == cursor, p.length > 0,
+              p.length <= 250 * 1024 * 1024,
+              ["audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-aiff"].contains(p.type),
+              p.length <= Int64(payload.count) - cursor else { throw Invalid.archive }
         let next = cursor + p.length
         result[track.id] = payload.subdata(in: Int(cursor)..<Int(next))
         cursor = next
@@ -87,3 +91,43 @@ let tamperedOutput = try unpack(tampered)
 precondition(tamperedOutput != expected, "substitution should alter audio")
 print("PASS: 2048 x 1024-byte v1 ownership, corruption and playlist references")
 print("LIMITATION: v1 cannot authenticate media-byte substitutions")
+
+
+// Native open() contract boundary checks: invalid late metadata must abort
+// before a restore writes any audio. These are model checks, not production
+// invocation; compare them with PortableShelfArchive.open on macOS.
+let base = Manifest(schema: manifest.schema, version: 1, tracks: tracks, playlists: [playlist])
+func altered(_ index: Int, _ part: Part) -> Manifest {
+    var copy = tracks
+    copy[index] = Track(id: copy[index].id, audio: part)
+    return Manifest(schema: base.schema, version: base.version, tracks: copy, playlists: base.playlists)
+}
+reject("negative offset", try pack(altered(count - 1,
+    Part(offset: -1, length: Int64(chunk), type: "audio/mpeg")), payload))
+reject("negative length", try pack(altered(count - 1,
+    Part(offset: Int64((count - 1) * chunk), length: -1, type: "audio/mpeg")), payload))
+reject("zero length", try pack(altered(count - 1,
+    Part(offset: Int64((count - 1) * chunk), length: 0, type: "audio/mpeg")), payload))
+reject("offset overflow", try pack(altered(count - 1,
+    Part(offset: Int64.max, length: Int64.max, type: "audio/mpeg")), payload))
+reject("unsupported media type", try pack(altered(count - 1,
+    Part(offset: Int64((count - 1) * chunk), length: Int64(chunk), type: "text/plain")), payload))
+reject("too many playlists", try pack(Manifest(schema: base.schema, version: 1,
+    tracks: tracks, playlists: (0..<2001).map {
+        Playlist(id: "list-\($0)", trackIds: [])
+    }), payload))
+reject("too many tracks", try pack(Manifest(schema: base.schema, version: 1,
+    tracks: tracks + (count..<20001).map {
+        Track(id: "extra-\($0)", audio: Part(offset: 0, length: 1, type: "audio/mpeg"))
+    }, playlists: []), payload))
+
+// Permute the metadata without relocating payload bytes: extraction must
+// always be keyed by the persisted byte range, never manifest array order.
+for rotation in stride(from: 1, through: count - 1, by: 127) {
+    let rotated = Array(tracks[rotation...]) + Array(tracks[..<rotation])
+    let rotatedManifest = Manifest(schema: base.schema, version: 1,
+        tracks: rotated, playlists: [playlist])
+    precondition(try unpack(pack(rotatedManifest, payload)) == expected,
+                 "rotation \(rotation) reassigned audio bytes")
+}
+print("PASS: native-aligned limits, malformed late entries and metadata permutations")
