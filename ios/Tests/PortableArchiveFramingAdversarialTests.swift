@@ -28,7 +28,7 @@ func decodeFrame(_ bytes: Data) throws -> (manifest: Data, payload: Data) {
     for i in 0..<4 {
         length |= UInt32(bytes[signature.count + i]) << (i * 8)
     }
-    guard length > 0, length <= maximumManifest,
+    guard length > 0, length <= UInt32(maximumManifest),
           Int(length) <= bytes.count - prefixSize else {
         throw FramingError.invalid
     }
