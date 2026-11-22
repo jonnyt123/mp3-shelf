@@ -505,6 +505,12 @@ final class PlaybackController: NSObject, ObservableObject {
         }
         do {
             try activateAudio()
+            // Audio-session activation can yield while a background import or
+            // filesystem provider replaces the selected file. Recheck both
+            // catalog ownership and the exact decoder-backed file identity
+            // immediately before audible Resume; the earlier transport check
+            // alone cannot close this race.
+            if retireUnsafeCurrentDecoder() { return }
             guard audioPlayer.play() else { throw CocoaError(.fileReadCorruptFile) }
             isPlaying = true
             playbackError = nil
