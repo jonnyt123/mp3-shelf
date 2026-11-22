@@ -2357,6 +2357,7 @@ extension AudioSourceFinder {
         var landingURL = ""
         var downloadURL = ""
         var licenseURL = ""
+        var observedAudioURL: String?
         var ambiguousEnclosure = false
         var ambiguousMetadata = false
     }
@@ -2382,12 +2383,22 @@ extension AudioSourceFinder {
             } else if field == "enclosure", current != nil {
                 let type = (attributeDict["type"] ?? "").lowercased()
                 let raw = attributeDict["url"] ?? ""
-                if type == "audio/mpeg" || URL(string: raw)?.pathExtension.lowercased() == "mp3" {
-                    // A feed item with multiple distinct recordings cannot
-                    // authorize an unattended choice based on XML element order.
-                    if let previous = current?.downloadURL, !previous.isEmpty, previous != raw {
+                let isMP3 = type == "audio/mpeg" ||
+                    URL(string: raw)?.pathExtension.lowercased() == "mp3"
+                let isOtherAudio = type.hasPrefix("audio/") && !isMP3
+                // A second audio enclosure can be a different mix or master,
+                // even if it is AAC/FLAC and only the MP3 would be downloaded.
+                // Never silently select the MP3 merely because the other
+                // recording's codec was filtered out.
+                if isMP3 || isOtherAudio {
+                    if let previous = current?.observedAudioURL,
+                       !previous.isEmpty, previous != raw {
                         current?.ambiguousEnclosure = true
-                    } else if current?.ambiguousEnclosure == false {
+                    }
+                    if current?.observedAudioURL == nil {
+                        current?.observedAudioURL = raw
+                    }
+                    if isMP3 && current?.downloadURL.isEmpty == true {
                         current?.downloadURL = raw
                     }
                 }
