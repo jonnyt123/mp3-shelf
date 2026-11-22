@@ -235,8 +235,20 @@ struct LibraryView: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled, scenePhase == .active, !audioImportBusy,
-                  recentPlaybackGeneration == generation else { return }
+            // Scene/import changes can arrive before SwiftUI's onChange
+            // cancellation. Always retire this generation without allowing an
+            // obsolete scan to start audio or strand the busy indicator.
+            guard recentPlaybackGeneration == generation, !Task.isCancelled else { return }
+            if scenePhase != .active || audioImportBusy {
+                recentPlaybackGeneration = nil
+                recentPlaybackCheck = nil
+                recentPlaybackTask = nil
+                missingRecentRecording = true
+                recentPlaybackNotice = scenePhase != .active
+                    ? "Playback check paused while MP3 Shelf is inactive. Return and retry this recording."
+                    : "Audio import interrupted the playback check. Finish importing, then retry this recording."
+                return
+            }
             recentPlaybackGeneration = nil
             recentPlaybackCheck = nil
             recentPlaybackTask = nil
@@ -925,8 +937,19 @@ struct LibraryView: View {
             } onCancel: {
                 scan.cancel()
             }
-            guard !Task.isCancelled, scenePhase == .active, !audioImportBusy,
-                  bulkPlaybackGeneration == generation else { return }
+            // Do not rely solely on the scene-phase observer to clear pending
+            // state: a detached scan may complete before that observer runs.
+            guard bulkPlaybackGeneration == generation, !Task.isCancelled else { return }
+            if scenePhase != .active || audioImportBusy {
+                bulkPlaybackGeneration = nil
+                bulkPlaybackPending = false
+                bulkPlaybackTask = nil
+                bulkSkippedRecordingCount = 0
+                bulkPlaybackNotice = scenePhase != .active
+                    ? "Playback check paused while MP3 Shelf is inactive. Return and retry Play or Shuffle."
+                    : "Audio import interrupted playback preparation. Finish importing, then retry Play or Shuffle."
+                return
+            }
             bulkPlaybackGeneration = nil
             bulkPlaybackPending = false
             bulkPlaybackTask = nil
