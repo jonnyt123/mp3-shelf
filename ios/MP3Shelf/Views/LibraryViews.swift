@@ -2588,6 +2588,14 @@ struct PlaylistsView: View {
                 // Restored archives can also contain duplicate playlist UUIDs.
                 let previousPlaylists = library.playlists
                 let existingIDs = Set(previousPlaylists.map(\.id))
+                // A restored archive may contain duplicate IDs. Refuse to
+                // mutate an ambiguous library rather than trusting a set of
+                // identities that has already collapsed distinct playlists.
+                guard existingIDs.count == previousPlaylists.count else {
+                    failedPlaylistEdit = nil
+                    playlistActionFeedback = "Duplicate playlist identities were found. Review your playlists before creating another."
+                    return
+                }
                 library.createPlaylist(name)
                 let created = library.playlists.filter { !existingIDs.contains($0.id) }
                 let exactCreation = created.count == 1
@@ -2595,13 +2603,19 @@ struct PlaylistsView: View {
                     && created[0].trackIDs.isEmpty
                     && created[0].missingTracks.isEmpty
                     && library.playlists.filter { $0.id == created[0].id }.count == 1
-                let previousEntriesUnchanged = previousPlaylists.allSatisfy { previous in
-                    library.playlists.filter { $0.id == previous.id }.contains { current in
-                        current.name == previous.name
+                let resultingPlaylists = library.playlists
+                // Preserve the original order and exact membership of every
+                // existing playlist. A concurrent restore can reorder or
+                // duplicate entries without changing the set of UUIDs.
+                let preservedPrefix = resultingPlaylists.count >= previousPlaylists.count
+                    && zip(previousPlaylists, resultingPlaylists).allSatisfy { previous, current in
+                        current.id == previous.id
+                            && current.name == previous.name
                             && current.trackIDs == previous.trackIDs
                             && current.missingTracks == previous.missingTracks
                     }
-                }
+                let previousEntriesUnchanged = preservedPrefix
+                    && Set(resultingPlaylists.map(\.id)).count == resultingPlaylists.count
                 if exactCreation && previousEntriesUnchanged {
                     revealPlaylists()
                     newName = ""
