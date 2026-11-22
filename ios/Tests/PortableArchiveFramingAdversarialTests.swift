@@ -287,3 +287,32 @@ precondition(matrixCases == 2401)
 print("PASS: \(matrixCases) exhaustive two-part range cases (\(matrixAccepted) valid)")
 print("PASS: \(rejected) malformed archive framing cases rejected")
 print("LIMITATION: standalone framing model; production restore and iPhone execution UNVERIFIED")
+
+// Deterministic corruption sweep: mutate each byte of the framing header and
+// the declared JSON region. A mutation may remain a valid frame (for example,
+// changing a JSON whitespace byte); if so, decoding must preserve the exact
+// altered manifest and opaque audio. Otherwise the frame must reject.
+var corruptionCases = 0
+var corruptionRejected = 0
+for position in 0..<(signature.count + 4 + json.count) {
+    for bit in 0..<8 {
+        var mutated = valid
+        mutated[position] ^= UInt8(1 << bit)
+        do {
+            let decoded = try decodeFrame(mutated)
+            let declaredEnd = signature.count + 4 + decoded.manifest.count
+            precondition(decoded.manifest == mutated.subdata(in: (signature.count + 4)..<declaredEnd),
+                         "accepted mutation changed manifest bytes")
+            precondition(decoded.payload == mutated.subdata(in: declaredEnd..<mutated.count),
+                         "accepted mutation changed audio bytes")
+            precondition(position >= signature.count + 4,
+                         "mutated signature/length header was accepted")
+        } catch FramingError.invalid {
+            corruptionRejected += 1
+        }
+        corruptionCases += 1
+    }
+}
+precondition(corruptionCases == (signature.count + 4 + json.count) * 8)
+precondition(corruptionRejected > 0)
+print("PASS: \(corruptionCases) deterministic framing bit flips (\(corruptionRejected) rejected)")
