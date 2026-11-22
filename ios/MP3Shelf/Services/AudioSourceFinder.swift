@@ -2379,7 +2379,13 @@ extension AudioSourceFinder {
             let field = String(elementName.split(separator: ":").last ?? "").lowercased()
             elementDepth += 1
             if field == "item" {
-                current = CCMixterFeedTrack()
+                // Reject malformed nested item boundaries rather than
+                // replacing the outer recording's identity.
+                if current != nil {
+                    current?.ambiguousMetadata = true
+                } else {
+                    current = CCMixterFeedTrack()
+                }
             } else if field == "enclosure", current != nil {
                 let type = (attributeDict["type"] ?? "").lowercased()
                 let raw = attributeDict["url"] ?? ""
