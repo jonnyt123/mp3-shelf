@@ -287,7 +287,20 @@ final class PlaybackController: NSObject, ObservableObject {
                   library.ownedPlaybackURL(for: catalogTrack) != nil else {
                 throw CocoaError(.fileReadCorruptFile)
             }
-            if !startPaused, transition > 0, let previous = audioPlayer, previous.isPlaying {
+            // The outgoing decoder must still represent the catalog-owned bytes
+            // before it is allowed to overlap the incoming recording. A file
+            // replaced during decoder preparation could otherwise remain audible
+            // until the first fade timer tick, even when the incoming file is valid.
+            let outgoingIsOwned: Bool = {
+                guard let currentTrackID, let openedAudioFileIdentity,
+                      let outgoingSong = library.song(with: currentTrackID),
+                      let outgoingURL = library.ownedPlaybackURL(for: outgoingSong) else {
+                    return false
+                }
+                return LocalAudioFileIdentity(url: outgoingURL) == openedAudioFileIdentity
+            }()
+            if !startPaused, transition > 0, outgoingIsOwned,
+               let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
                 guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
                 // The previous decoder remains audible during the fade. Keep its
