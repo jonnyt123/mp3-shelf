@@ -50,9 +50,11 @@ func validate(_ bytes: Data) throws -> (Data, Data) {
           tracks.count == 1,
           let track = tracks.first,
           track["id"] as? String == "track-A",
-          let parts = [track["audio"], track["artwork"]] as? [[String: Any]],
+          let audioPart = track["audio"] as? [String: Any],
+          let artworkPart = track["artwork"] as? [String: Any],
           let ids = playlists.first?["trackIds"] as? [String],
           ids.allSatisfy({ $0 == "track-A" }) else { throw ArchiveFailure.invalid }
+    let parts = [audioPart, artworkPart]
     let payload = bytes.subdata(in: payloadStart..<bytes.count)
     var ranges: [(Int, Int)] = []
     for part in parts {
@@ -89,5 +91,6 @@ rejected("oversized manifest", oversized)
 var truncatedHeader = valid
 truncatedHeader.replaceSubrange(magic.count..<(magic.count + 4), with: [255, 0, 0, 0])
 rejected("truncated manifest", truncatedHeader.prefix(magic.count + 5))
-precondition(try validate(valid).0 == audio)
+let verifiedAgain = try validate(valid)
+precondition(verifiedAgain.0 == audio)
 print("PASS: portable backup envelope, Unicode metadata, ten corruption boundaries, byte-exact audio/artwork")
