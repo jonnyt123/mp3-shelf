@@ -442,8 +442,24 @@ struct LibraryView: View {
     private func retryRecentRecording() {
         // The retry button must not silently do nothing while the app is
         // backgrounded or another file scan is still preparing playback.
-        guard scenePhase == .active, !audioImportBusy,
-              recentPlaybackCheck == nil, let selection = recentRetrySelection else { return }
+        // Retry remains visible when the app is backgrounded or Files is still
+        // importing. Do not silently discard the listener's recovery request.
+        guard let selection = recentRetrySelection else {
+            recentPlaybackNotice = "Choose a recording from Recently Added to start a new playback check."
+            return
+        }
+        guard scenePhase == .active else {
+            recentPlaybackNotice = "Return to MP3 Shelf to retry this recording. Your saved audio was not changed."
+            return
+        }
+        guard !audioImportBusy else {
+            recentPlaybackNotice = "Wait for the audio import to finish, then retry this recording."
+            return
+        }
+        guard recentPlaybackCheck == nil else {
+            recentPlaybackNotice = "This recording is already being checked. Wait for the current check or cancel it."
+            return
+        }
         let candidates = recentlyAdded.filter { $0.id == selection.id }
         // Prefer the exact recording originally selected. After a successful
         // reimport, its URL may change; accept that replacement only if the ID
