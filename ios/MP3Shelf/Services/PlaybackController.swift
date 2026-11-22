@@ -827,6 +827,9 @@ final class PlaybackController: NSObject, ObservableObject {
                     timer.invalidate()
                     return
                 }
+                // Validate the incoming recording first: never restore its
+                // volume after the file was replaced or removed.
+                if self.recoverDeletedCurrentTrack() || self.retireUnsafeCurrentDecoder() { return }
                 // Both decoders can be audible during a crossfade. The 200 ms
                 // position timer validates only the incoming recording; verify
                 // the outgoing file here before changing either volume.
@@ -839,9 +842,6 @@ final class PlaybackController: NSObject, ObservableObject {
                     incoming.volume = 1
                     return
                 }
-                // A replacement of the incoming recording must also retire
-                // the new decoder before the fade can make it audible again.
-                if self.recoverDeletedCurrentTrack() || self.retireUnsafeCurrentDecoder() { return }
                 let fraction = min(1, (ProcessInfo.processInfo.systemUptime - started) / max(0.1, duration))
                 // Equal-power curves prevent a noticeable dip in perceived loudness.
                 outgoing.volume = Float(cos(fraction * .pi / 2))
