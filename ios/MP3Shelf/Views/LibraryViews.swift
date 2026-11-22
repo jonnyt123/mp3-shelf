@@ -2245,6 +2245,7 @@ struct PlaylistsView: View {
     private enum FailedPlaylistEdit {
         case create
         case rename(snapshot: MusicPlaylist)
+        case delete(snapshot: MusicPlaylist)
     }
 
     // Restore the original input when a failed write is retried instead of
@@ -2283,6 +2284,23 @@ struct PlaylistsView: View {
             playlistActionFeedback = nil
             self.failedPlaylistEdit = nil
             pendingRename = current
+        case .delete(let snapshot):
+            guard !library.isImporting else {
+                playlistActionFeedback = "Finish importing audio before retrying deletion. Nothing was deleted."
+                return
+            }
+            guard let current = uniquePlaylist(withID: snapshot.id),
+                  current.name == snapshot.name,
+                  current.trackIDs == snapshot.trackIDs,
+                  current.missingTracks == snapshot.missingTracks else {
+                self.failedPlaylistEdit = nil
+                playlistActionFeedback = "This playlist changed or was removed. Review the current playlist before deleting anything."
+                return
+            }
+            // A retry never deletes immediately: the user must confirm again.
+            self.failedPlaylistEdit = nil
+            playlistActionFeedback = nil
+            pendingDelete = current
         }
     }
 
@@ -2359,7 +2377,10 @@ struct PlaylistsView: View {
         }
         library.deletePlaylist(requested.id)
         if library.playlists.contains(where: { $0.id == requested.id }) {
-            playlistActionFeedback = "Could not delete this playlist. Your existing playlists were preserved."
+            // Keep a safe recovery path, but only after a fresh identity and
+            // contents check followed by another destructive confirmation.
+            failedPlaylistEdit = .delete(snapshot: requested)
+            playlistActionFeedback = "Could not delete this playlist. Your existing playlists were preserved. Retry to review and confirm again."
         } else {
             revealPlaylists()
             playlistActionFeedback = "Deleted \(requested.name). Your songs remain in your library."
@@ -2385,7 +2406,7 @@ struct PlaylistsView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(ShelfTheme.accent)
                     .frame(minWidth: 44, minHeight: 44)
-                    .accessibilityHint("Reopen the playlist editor with your previous name")
+                    .accessibilityHint("Review the failed playlist action before trying again")
             }
             Button {
                 playlistActionFeedback = nil
