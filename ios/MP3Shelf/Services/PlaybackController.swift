@@ -394,6 +394,28 @@ final class PlaybackController: NSObject, ObservableObject {
             if failedTrackID != nil { retryFailedPlayback() }
             return
         }
+        // An AVAudioPlayer can retain an open descriptor after its cataloged
+        // recording disappears or is replaced by an unsafe filesystem entry.
+        // Resume must not play that orphan merely because the track ID still
+        // exists. Retire the decoder and keep the selection/retry identity;
+        // a later reimport can then be reopened through the owned-file check.
+        if let currentTrackID, let library,
+           let selected = library.song(with: currentTrackID),
+           library.ownedPlaybackURL(for: selected) == nil {
+            relay.invalidatePendingCompletions()
+            positionTimer?.invalidate()
+            positionTimer = nil
+            cancelFade()
+            audioPlayer.stop()
+            self.audioPlayer = nil
+            isPlaying = false
+            interruptionState.cancelResume()
+            failedTrackID = currentTrackID
+            failedPlaybackOrder = playbackOrder
+            playbackError = "This recording is unavailable or unsafe. Reimport it, then retry playback."
+            updateNowPlaying()
+            return
+        }
         // A decode-error delegate leaves the old AVAudioPlayer allocated but
         // unusable. Reopen the recording on retry so a repaired/reimported file
         // is actually read. A failed manual selection is different: its ID is
