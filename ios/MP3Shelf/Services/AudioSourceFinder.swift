@@ -2372,6 +2372,7 @@ extension AudioSourceFinder {
         // nested element erase the recording's title or creator.
         private var elementDepth = 0
         private var fieldDepth = 0
+        private var nestedItemDepth = 0
 
         func parser(_ parser: XMLParser, didStartElement elementName: String,
                     namespaceURI: String?, qualifiedName qName: String?,
@@ -2379,14 +2380,17 @@ extension AudioSourceFinder {
             let field = String(elementName.split(separator: ":").last ?? "").lowercased()
             elementDepth += 1
             if field == "item" {
-                // Reject malformed nested item boundaries rather than
-                // replacing the outer recording's identity.
                 if current != nil {
                     current?.ambiguousMetadata = true
+                    nestedItemDepth += 1
                 } else {
                     current = CCMixterFeedTrack()
                 }
-            } else if field == "enclosure", current != nil {
+            }
+            // Do not let any nested item's title, author or enclosure
+            // contaminate the outer item's identity.
+            if nestedItemDepth > 0 { return }
+            if field == "enclosure", current != nil {
                 let type = (attributeDict["type"] ?? "").lowercased()
                 let raw = attributeDict["url"] ?? ""
                 let isMP3 = type == "audio/mpeg" ||
@@ -2436,6 +2440,10 @@ extension AudioSourceFinder {
             // when the last metadata field has already closed; otherwise
             // every well-formed RSS item is silently dropped.
             if field == "item" {
+                if nestedItemDepth > 0 {
+                    nestedItemDepth -= 1
+                    return
+                }
                 if let entry = current { tracks.append(entry) }
                 current = nil
                 activeField = ""
@@ -2444,7 +2452,7 @@ extension AudioSourceFinder {
                 return
             }
             // Nested markup must not prematurely commit an enclosing field.
-            guard field == activeField, elementDepth == fieldDepth else { return }
+            guard nestedItemDepth == 0, field == activeField, elementDepth == fieldDepth else { return }
             let content = characters.trimmingCharacters(in: .whitespacesAndNewlines)
             if current != nil {
                 switch field {
