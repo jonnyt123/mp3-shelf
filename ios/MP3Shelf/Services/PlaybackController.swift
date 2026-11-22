@@ -461,7 +461,9 @@ final class PlaybackController: NSObject, ObservableObject {
         // Manual Next at the end of a finite queue is otherwise a no-op.
         // Never leave an orphaned decoder audible after catalog deletion.
         if recoverDeletedCurrentTrack() { return }
-        advance(automatically: false)
+        // Transport navigation while paused changes selection, not playback intent.
+        // Explicit Play remains the only command that resumes a paused queue.
+        advance(automatically: false, startPaused: !isPlaying)
     }
 
     func previous() {
@@ -528,11 +530,13 @@ final class PlaybackController: NSObject, ObservableObject {
                 // successor. Previous must reopen the still-cataloged track
                 // instead of seeking a nil player and doing nothing.
                 guard let target = library.song(with: id) else { continue }
-                if beginPlayback(target, using: nextOrder) { return }
+                if beginPlayback(target, using: nextOrder,
+                                 startPaused: !originalIsPlaying) { return }
                 continue
             }
             guard let target = library.song(with: id) else { continue }
-            if beginPlayback(target, using: nextOrder) { return }
+            if beginPlayback(target, using: nextOrder,
+                             startPaused: !originalIsPlaying) { return }
         }
         // Leave the current recording and its playback order intact when
         // every previous candidate is unavailable.
