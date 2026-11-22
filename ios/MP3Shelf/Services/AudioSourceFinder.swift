@@ -20,8 +20,16 @@ enum AudioSourceFinder {
                 let nonempty = strings.map {
                     $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 }.filter { !$0.isEmpty }
+                // Normalization may erase edition qualifiers. A catalog
+                // array containing both a studio and alternate recording is
+                // ambiguous even if their normalized base titles agree.
+                let first = nonempty.first ?? ""
                 let identities = Set(nonempty.map(MusicMatching.key))
-                value = identities.count == 1 ? (nonempty.first ?? "") : ""
+                let editionsAgree = nonempty.allSatisfy {
+                    AudioSourceFinder.recordingEditionAgrees(
+                        filename: $0, requestedTitle: first)
+                }
+                value = identities.count == 1 && editionsAgree ? first : ""
             }
             else { value = "" }
         }
@@ -137,7 +145,8 @@ enum AudioSourceFinder {
         let song = MusicMatching.key(wish.title)
         let artist = MusicMatching.key(wish.artist)
         return !song.isEmpty && !artist.isEmpty &&
-            MusicMatching.key(title) == song && MusicMatching.key(creator) == artist
+            MusicMatching.key(title) == song && MusicMatching.key(creator) == artist &&
+            recordingEditionAgrees(filename: title, requestedTitle: wish.title)
     }
 
     static func licensedURL(_ value: String?) -> URL? {
