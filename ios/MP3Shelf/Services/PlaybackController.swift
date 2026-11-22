@@ -352,7 +352,12 @@ final class PlaybackController: NSObject, ObservableObject {
             // A failed manual selection must not destroy a paused recording:
             // the listener may resume it after dismissing the error. Automatic
             // advancement has no such fallback because its predecessor ended.
-            let previousIsAudible = audioPlayer?.isPlaying == true
+            // A replacement may fail after the previous recording was removed,
+            // overwritten or replaced in place. Never preserve that stale
+            // decoder as a fallback merely because it still reports isPlaying.
+            // Retirement preserves queue identity and never deletes audio bytes.
+            let retiredUnsafePredecessor = retireUnsafeCurrentDecoder()
+            let previousIsAudible = !retiredUnsafePredecessor && audioPlayer?.isPlaying == true
             if !preserveExistingOnFailure || audioPlayer == nil {
                 positionTimer?.invalidate()
                 positionTimer = nil
