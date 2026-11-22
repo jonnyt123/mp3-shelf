@@ -182,6 +182,52 @@ for (name, parts, size) in [
     rejected += 1
 }
 
-precondition(try decodeFrame(valid).payload == result.payload, "mutations changed valid baseline")
+// Swift precondition's autoclosure is nonthrowing: decode before asserting.
+let unchangedBaseline = try decodeFrame(valid)
+precondition(unchangedBaseline.payload == result.payload, "mutations changed valid baseline")
+
+// Exhaustive bounded range-partition matrix. The independent byte-occupancy
+// oracle detects gaps, duplicate coverage and invalid slices without relying
+// on the interval-sorting implementation being tested.
+var matrixCases = 0
+var matrixAccepted = 0
+for firstOffset in 0...6 {
+    for firstLength in 0...6 {
+        for secondOffset in 0...6 {
+            for secondLength in 0...6 {
+                let parts = [
+                    CheckedPart(offset: Int64(firstOffset), length: Int64(firstLength)),
+                    CheckedPart(offset: Int64(secondOffset), length: Int64(secondLength))
+                ]
+                var occupancy = [Int](repeating: 0, count: 6)
+                var expectedValid = true
+                for part in parts {
+                    guard part.length > 0, part.offset >= 0,
+                          part.offset <= 6, part.length <= 6 - part.offset else {
+                        expectedValid = false
+                        break
+                    }
+                    for index in Int(part.offset)..<Int(part.offset + part.length) {
+                        occupancy[index] += 1
+                    }
+                }
+                expectedValid = expectedValid && occupancy.allSatisfy { $0 == 1 }
+                let actualValid: Bool
+                do {
+                    try validateParts(parts, payloadLength: 6)
+                    actualValid = true
+                } catch FramingError.invalid {
+                    actualValid = false
+                }
+                precondition(actualValid == expectedValid,
+                             "range matrix disagreement: \(firstOffset),\(firstLength),\(secondOffset),\(secondLength)")
+                matrixCases += 1
+                if actualValid { matrixAccepted += 1 }
+            }
+        }
+    }
+}
+precondition(matrixCases == 2401)
+print("PASS: \(matrixCases) exhaustive two-part range cases (\(matrixAccepted) valid)")
 print("PASS: \(rejected) malformed archive framing cases rejected")
 print("LIMITATION: standalone framing model; production restore and iPhone execution UNVERIFIED")
