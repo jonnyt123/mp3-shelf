@@ -134,6 +134,22 @@ enum AudioSourceFinderTests {
             filename: "The Song - Bassboosted.mp3",
             requestedTitle: "The Song (Bass Boosted)"),
             "bass boosted spelling variants describe the same edition")
+        // Alternative spelling and unofficial edit labels must never become
+        // unattended substitutions, even with matching base title/duration.
+        for edition in ["Spedup", "Speedup", "Slowed & Reverb",
+                        "Slowed and Reverb", "Performance Edit", "Fan Edit",
+                        "Fanmade Edit"] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song - \\(edition).mp3", requestedTitle: "The Song"),
+                "altered recording remains review-only: \\(edition)")
+            verify(AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song - \\(edition).mp3",
+                requestedTitle: "The Song (\\(edition))"),
+                "explicitly requested altered edition remains eligible: \\(edition)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Speedup.mp3", requestedTitle: "Speedup"),
+            "edition words in the actual title are not automatically rejected")
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "The Club.mp3", requestedTitle: "The Club"),
             "ordinary title containing club is not an alternate mix")
