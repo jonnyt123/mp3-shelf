@@ -2370,8 +2370,20 @@ struct PlaylistsView: View {
             revealPlaylists()
             playlistActionFeedback = "Created \(copy.name)."
         } else {
-            failedPlaylistEdit = .copy(snapshot: current)
-            playlistActionFeedback = "Could not confirm this playlist copy. Review your playlists before retrying; your original songs were not changed."
+            // A newly allocated ID may represent a completed copy whose
+            // verification failed. Retrying would create a second playlist.
+            // Offer Retry only when no new playlist appeared and the source
+            // still matches the original snapshot.
+            let safeToRetry = newCopies.isEmpty
+                && uniquePlaylist(withID: current.id).map {
+                    $0.name == current.name
+                        && $0.trackIDs == current.trackIDs
+                        && $0.missingTracks == current.missingTracks
+                } == true
+            failedPlaylistEdit = safeToRetry ? .copy(snapshot: current) : nil
+            playlistActionFeedback = safeToRetry
+                ? "Could not copy this playlist. Retry after checking your library; your original songs were not changed."
+                : "The copy result is uncertain. Review your playlists before copying again to avoid duplicates."
         }
     }
 
@@ -2583,10 +2595,14 @@ struct PlaylistsView: View {
                     failedPlaylistEdit = nil
                     playlistActionFeedback = "Created \(name)."
                 } else {
-                    // A failed or ambiguous write must not be advertised as
-                    // success. Preserve the draft for an explicit user retry.
-                    failedPlaylistEdit = .create
-                    playlistActionFeedback = "Could not confirm this playlist was created. Review your playlists before retrying; your name is saved."
+                    // An ambiguous write may already have created a playlist.
+                    // Do not offer a blind Retry that can duplicate it.
+                    // Preserve the typed name for a deliberate new attempt.
+                    let safeToRetry = created.isEmpty && previousEntriesUnchanged
+                    failedPlaylistEdit = safeToRetry ? .create : nil
+                    playlistActionFeedback = safeToRetry
+                        ? "Could not create this playlist. Your name is saved; retry after checking your library."
+                        : "Playlist creation could not be confirmed. Review your playlists before creating another; your name is saved."
                 }
             }
             // Keep Create reachable during an import so the user receives an
