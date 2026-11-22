@@ -299,6 +299,24 @@ final class SpotifyService: NSObject, ObservableObject {
         }
     }
 
+    // Spotify may send Retry-After as delta-seconds or an HTTP-date. Keep
+    // both forms bounded so malformed or distant dates cannot stall imports.
+    // A date already elapsed gets the same one-second minimum as a zero delta.
+    nonisolated static func boundedRetryAfter(_ value: String, now: Date) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let seconds = Int(trimmed) {
+            return (0...10).contains(seconds) ? max(1, seconds) : nil
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        guard let date = formatter.date(from: trimmed) else { return nil }
+        let seconds = date.timeIntervalSince(now)
+        guard seconds >= -1, seconds <= 10 else { return nil }
+        return max(1, Int(ceil(seconds)))
+    }
+
     private func request<T: Decodable>(_ url: URL) async throws -> T {
         // This method attaches a bearer token. Reject any unexpected URL at
         // the final dispatch boundary, including future callers that bypass
@@ -368,7 +386,7 @@ final class SpotifyService: NSObject, ObservableObject {
                 // keeping a playlist import suspended indefinitely.
                 guard rateLimitRetries < 2,
                       let header = response.value(forHTTPHeaderField: "Retry-After")?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      let seconds = Int(header), (0...10).contains(seconds) else {
+                      let seconds = Self.boundedRetryAfter(header, now: Date()) else {
                     throw SpotifyError.api("Spotify rate limit reached. Try importing again later.")
                 }
                 rateLimitRetries += 1
