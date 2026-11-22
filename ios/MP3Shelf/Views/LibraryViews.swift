@@ -969,7 +969,7 @@ struct LibraryView: View {
                 }
                 return availability
             }
-            let availability = await withTaskCancellationHandler {
+            var availability = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: {
                 scan.cancel()
@@ -980,11 +980,42 @@ struct LibraryView: View {
             // local scan pending while it is visible, rather than discarding the
             // user's request or starting audio behind the picker. A real import
             // cancels this task before replacing any recordings.
+            var pickerInterruptedScan = showFilePicker
             while showFilePicker && scenePhase == .active &&
                     !importInProgress && !library.isImporting && !Task.isCancelled {
+                pickerInterruptedScan = true
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
             guard bulkPlaybackGeneration == generation, !Task.isCancelled else { return }
+            // The first scan may have finished before Files was dismissed.
+            // Files can move or remove a recording without importing anything,
+            // so never queue the old availability snapshot after a picker visit.
+            // Recheck off the main actor and preserve the original selection.
+            if pickerInterruptedScan && scenePhase == .active && !audioImportBusy {
+                let refresh = Task.detached(priority: .userInitiated) { () -> [Bool] in
+                    var refreshed: [Bool] = []
+                    refreshed.reserveCapacity(locations.count)
+                    for (_, url) in locations {
+                        if Task.isCancelled { return [] }
+                        guard url.isFileURL,
+                              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                              values.isRegularFile == true,
+                              values.isSymbolicLink != true,
+                              let size = values.fileSize, size > 0 else {
+                            refreshed.append(false)
+                            continue
+                        }
+                        refreshed.append(true)
+                    }
+                    return refreshed
+                }
+                availability = await withTaskCancellationHandler {
+                    await refresh.value
+                } onCancel: {
+                    refresh.cancel()
+                }
+                guard bulkPlaybackGeneration == generation, !Task.isCancelled else { return }
+            }
             if scenePhase != .active || audioImportBusy {
                 bulkPlaybackGeneration = nil
                 bulkPlaybackPending = false
