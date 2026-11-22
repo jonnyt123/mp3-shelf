@@ -26,6 +26,21 @@ enum AudioSourceFinderTests {
         verify(try decodeCatalogText(#"["", "  "]"#).isEmpty,
                "blank-only catalog metadata stays unavailable")
 
+        verify(try decodeCatalogText(#"["The Song", "The Song (Live)"]"#).isEmpty,
+               "studio and live catalog aliases cannot collapse into one identity")
+        verify(try decodeCatalogText(#"["The Song (2020 Remaster)", "The Song (2022 Remaster)"]"#).isEmpty,
+               "conflicting remaster years cannot auto-select")
+        verify(try decodeCatalogText(#"["The Song (Live)", "The Song (Live)"]"#) == "The Song (Live)",
+               "identical live catalog aliases remain eligible")
+        let editionWish = PlaylistWish(title: "The Song", artist: "The Artist",
+                                       album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        verify(!AudioSourceFinder.exactMetadataMatch(
+            title: "The Song (Live)", creator: "The Artist", wish: editionWish),
+            "normalized catalog metadata cannot replace studio with live recording")
+        verify(AudioSourceFinder.exactMetadataMatch(
+            title: "The Song", creator: "The Artist", wish: editionWish),
+            "exact studio catalog metadata remains eligible")
+
         // RSS and JSON catalogs share one bounded response validator. A
         // redirect is rejected by their common URLSession delegate before
         // either response can be parsed; status and size fail closed here.
