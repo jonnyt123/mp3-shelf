@@ -374,7 +374,7 @@ final class SpotifyService: NSObject, ObservableObject {
                 rateLimitRetries += 1
                 // A zero-second provider hint still gets a short delay.
                 try await Task.sleep(nanoseconds: UInt64(max(1, seconds)) * 1_000_000_000)
-            case 408, 425, 500...599:
+            case let status where SpotifyMetadataHTTPRetryPolicy.isTransient(status):
                 // A timeout (408) or an early-request refusal (425) can
                 // interrupt an otherwise valid paginated playlist import.
                 // These are idempotent metadata GETs; apply the same bounded,
@@ -887,5 +887,13 @@ enum SpotifyTransportRetryPolicy {
         default:
             return false
         }
+    }
+}
+
+// Only idempotent Spotify metadata GETs use this classification. All retries
+// remain capped by the caller's shared transientServerRetries budget.
+enum SpotifyMetadataHTTPRetryPolicy {
+    static func isTransient(_ status: Int) -> Bool {
+        status == 408 || status == 425 || (500...599).contains(status)
     }
 }
