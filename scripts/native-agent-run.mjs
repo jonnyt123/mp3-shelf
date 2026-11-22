@@ -35,7 +35,7 @@ export function nativeAgentRunRecord({ startedAt, finishedAt, result, error }) {
   const startTime = Date.parse(startedAt);
   const finishTime = Date.parse(finishedAt);
   const validInterval = Number.isFinite(startTime) && Number.isFinite(finishTime) &&
-    finishTime >= startTime;
+    finishTime >= startTime && finishTime - startTime <= 24 * 3600000;
   const verifiedIntegration = !error && !conflictingSource && !conflictingIntegration &&
     validInterval && validSource &&
     integrationStates.includes(declaredIntegration ?? declaredStatus);
