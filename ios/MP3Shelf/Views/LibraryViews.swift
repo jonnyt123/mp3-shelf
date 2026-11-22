@@ -223,8 +223,8 @@ struct LibraryView: View {
                 results.reserveCapacity(locations.count)
                 for (_, url) in locations {
                     if Task.isCancelled { return [] }
-                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                          values.isRegularFile == true, let size = values.fileSize,
+                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                          url.isFileURL, values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
                           size > 0 else {
                         results.append(false)
                         continue
@@ -564,8 +564,8 @@ struct LibraryView: View {
                 if Task.isCancelled { return nil }
                 // fileExists also returns true for directories and empty staging
                 // placeholders; neither is an offline-playable recording.
-                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                      values.isRegularFile == true, let size = values.fileSize,
+                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                      url.isFileURL, values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
                       size > 0 else { continue }
                 count += 1
             }
@@ -957,8 +957,8 @@ struct LibraryView: View {
                 availability.reserveCapacity(locations.count)
                 for (_, url) in locations {
                     if Task.isCancelled { return [] }
-                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                          values.isRegularFile == true, let size = values.fileSize,
+                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                          url.isFileURL, values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
                           size > 0 else {
                         availability.append(false)
                         continue
@@ -1664,8 +1664,8 @@ struct MusicTrackRow: View {
     // File metadata is checked off the main actor. A nil snapshot means the
     // row has not been scanned, not that the recording is missing.
     nonisolated private static func isUsableRecording(at url: URL) -> Bool {
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-              values.isRegularFile == true,
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+              url.isFileURL, values.isRegularFile == true, values.isSymbolicLink != true,
               let size = values.fileSize else { return false }
         return size > 0
     }
@@ -3397,8 +3397,8 @@ struct PlaylistDetailView: View {
                 availability.reserveCapacity(snapshots.count)
                 for location in snapshots {
                     if Task.isCancelled { break }
-                    let values = try? location.url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-                    availability.append(values?.isRegularFile == true && (values?.fileSize ?? 0) > 0)
+                    let values = try? location.url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+                    availability.append(location.url.isFileURL && values?.isRegularFile == true && values?.isSymbolicLink != true && (values?.fileSize ?? 0) > 0)
                 }
                 return availability
             }
