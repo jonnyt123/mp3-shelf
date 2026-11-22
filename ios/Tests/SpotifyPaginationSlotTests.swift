@@ -124,6 +124,20 @@ enum SpotifyPaginationSlotTests {
         let selected = mixed.items.compactMap(\.usableTrack)
         check(selected.map(\.name) == ["Studio Song", "Fallback", "Credits"],
               "episode and malformed primary envelopes fall back to usable recordings")
+        // Matching titles/artists/durations are insufficient if two envelopes
+        // identify different recordings (e.g. alternate masters).
+        let trackA = "0123456789ABCDEFGHIJKL"
+        let trackB = "ABCDEFGHIJKL0123456789"
+        let identityConflict = "{\\\"items\\\":[{\\\"item\\\":{\\\"name\\\":\\\"Same\\\",\\\"type\\\":\\\"track\\\",\\\"artists\\\":[{\\\"name\\\":\\\"Artist\\\"}],\\\"duration_ms\\\":200000,\\\"external_urls\\\":{\\\"spotify\\\":\\\"https://open.spotify.com/track/\\(trackA)\\\"}},\\\"track\\\":{\\\"name\\\":\\\"Same\\\",\\\"type\\\":\\\"track\\\",\\\"artists\\\":[{\\\"name\\\":\\\"Artist\\\"}],\\\"duration_ms\\\":200000,\\\"external_urls\\\":{\\\"spotify\\\":\\\"https://open.spotify.com/track/\\(trackB)\\\"}}}]}"
+        let conflictingIDs = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,
+            from: Data(identityConflict.utf8))
+        check(conflictingIDs.items.first?.usableTrack == nil,
+              "conflicting Spotify recording IDs cannot auto-select")
+        let identicalIDs = identityConflict.replacingOccurrences(of: trackB, with: trackA)
+        let matchingIDs = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,
+            from: Data(identicalIDs.utf8))
+        check(matchingIDs.items.first?.usableTrack?.name == "Same",
+              "identical canonical Spotify recording IDs remain usable")
         // A provider migration may include both envelope formats. Conflicting
         // track identities must be review/unavailable, never auto-imported.
         let conflicting = try JSONDecoder().decode(SpotifyPage<SpotifyPlaylistItem>.self,

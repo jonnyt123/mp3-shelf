@@ -786,6 +786,18 @@ private struct SpotifyPlaylistItem: Decodable {
             .filter { !$0.isEmpty }
         let legacyArtists = (legacy.artists ?? []).map { normalized($0.name) }
             .filter { !$0.isEmpty }
+        // Two envelopes can agree on display metadata while identifying distinct
+        // Spotify recordings. Never choose one for unattended source discovery.
+        // Compare canonical IDs only when both are supplied; malformed URLs
+        // are not trustworthy evidence of equality.
+        let primaryURL = primary.external_urls?.spotify
+        let legacyURL = legacy.external_urls?.spotify
+        if primaryURL != nil && legacyURL != nil {
+            guard let a = SpotifyTrackLinks.canonicalURL(primaryURL),
+                  let b = SpotifyTrackLinks.canonicalURL(legacyURL), a == b else {
+                return nil
+            }
+        }
         guard normalized(primary.name) == normalized(legacy.name),
               primaryArtists == legacyArtists,
               primary.duration_ms == nil || legacy.duration_ms == nil ||
