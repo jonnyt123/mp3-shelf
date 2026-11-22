@@ -22,6 +22,17 @@ private func verifyWrappedSourceLookupFailures() {
                     "nested URL timeout remains retryable")
     verifyDiscovery(!SourceLookupRetryPolicy.isTemporary(wrapper(permanent)),
                     "wrapped permanent URL failure stays nonretryable")
+    verifyDiscovery(!SourceLookupRetryPolicy.isTemporary(wrapper(URLError(.cancelled) as NSError)),
+                    "wrapped cancellation never enters transient lookup retry")
+    let cancelledTransient = NSError(domain: NSURLErrorDomain,
+        code: URLError.Code.timedOut.rawValue,
+        userInfo: [NSUnderlyingErrorKey: URLError(.cancelled) as NSError])
+    verifyDiscovery(!SourceLookupRetryPolicy.isTemporary(wrapper(cancelledTransient)),
+                    "outer transient timeout cannot mask nested cancellation")
+    let retryableCancelled = NSError(domain: "MP3Shelf.RetryableAdapter", code: 1,
+        userInfo: [NSUnderlyingErrorKey: URLError(.cancelled) as NSError])
+    verifyDiscovery(SourceLookupRetryPolicy.isCancellation(retryableCancelled),
+                    "adapter cancellation remains detectable before retry classification")
     verifyDiscovery(!SourceLookupRetryPolicy.isTemporary(wrapper(NSError(domain: "Disk", code: 28))),
                     "wrapped local storage failure does not retry remote source")
     var deep = transient
