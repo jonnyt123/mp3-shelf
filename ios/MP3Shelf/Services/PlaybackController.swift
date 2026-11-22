@@ -290,11 +290,17 @@ final class PlaybackController: NSObject, ObservableObject {
             if !startPaused, transition > 0, let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
                 guard player.play() else { throw CocoaError(.fileReadCorruptFile) }
+                // The previous decoder remains audible during the fade. Keep its
+                // original file identity so replacing that file cannot leave an
+                // orphaned recording playing behind the newly selected track.
+                let outgoingIdentity = openedAudioFileIdentity
+                let outgoingTrackID = currentTrackID
                 cancelFade()
                 outgoingPlayer = previous
                 previous.delegate = nil
                 audioPlayer = player
-                startFade(duration: transition, from: previous, to: player)
+                startFade(duration: transition, from: previous, to: player,
+                          outgoingTrackID: outgoingTrackID, outgoingIdentity: outgoingIdentity)
             } else {
                 player.volume = 1
                 if !startPaused {
@@ -804,7 +810,8 @@ final class PlaybackController: NSObject, ObservableObject {
         outgoingPlayer = nil
     }
 
-    private func startFade(duration: TimeInterval, from outgoing: AVAudioPlayer, to incoming: AVAudioPlayer) {
+    private func startFade(duration: TimeInterval, from outgoing: AVAudioPlayer, to incoming: AVAudioPlayer,
+                           outgoingTrackID: UUID?, outgoingIdentity: LocalAudioFileIdentity?) {
         let started = ProcessInfo.processInfo.systemUptime
         fadeTimer?.invalidate()
         fadeTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self, weak outgoing, weak incoming] timer in
@@ -820,6 +827,21 @@ final class PlaybackController: NSObject, ObservableObject {
                     timer.invalidate()
                     return
                 }
+                // Both decoders can be audible during a crossfade. The 200 ms
+                // position timer validates only the incoming recording; verify
+                // the outgoing file here before changing either volume.
+                guard let outgoingTrackID, let outgoingIdentity,
+                      let library = self.library,
+                      let song = library.song(with: outgoingTrackID),
+                      let url = library.ownedPlaybackURL(for: song),
+                      LocalAudioFileIdentity(url: url) == outgoingIdentity else {
+                    self.cancelFade()
+                    incoming.volume = 1
+                    return
+                }
+                // A replacement of the incoming recording must also retire
+                // the new decoder before the fade can make it audible again.
+                if self.recoverDeletedCurrentTrack() || self.retireUnsafeCurrentDecoder() { return }
                 let fraction = min(1, (ProcessInfo.processInfo.systemUptime - started) / max(0.1, duration))
                 // Equal-power curves prevent a noticeable dip in perceived loudness.
                 outgoing.volume = Float(cos(fraction * .pi / 2))
