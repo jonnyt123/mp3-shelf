@@ -3131,7 +3131,14 @@ struct PlaylistDetailView: View {
     // Capture file URLs on the library actor and validate them away from the UI.
     // A playlist may contain saved metadata whose audio was removed by Files.
     private func startPlaylist(_ tracks: [MusicTrack], shuffled: Bool) {
-        guard playlistScenePhase == .active, !playlistPlaybackPending, !tracks.isEmpty else { return }
+        guard !playlistPlaybackPending, !tracks.isEmpty else { return }
+        guard playlistScenePhase == .active else {
+            lastPlaylistPlaybackWasShuffled = shuffled
+            playlistPlaybackCanRetry = true
+            playlistPlaybackError = nil
+            playlistPlaybackNotice = "Return to MP3 Shelf to play this playlist. No audio was changed."
+            return
+        }
         guard !playlistAudioImportBusy else {
             lastPlaylistPlaybackWasShuffled = shuffled
             playlistPlaybackCanRetry = true
@@ -3261,9 +3268,11 @@ struct PlaylistDetailView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(ShelfTheme.accent)
-        .disabled(tracks.isEmpty || playlistPlaybackPending || playlistAudioImportBusy)
+        .disabled(tracks.isEmpty || playlistPlaybackPending)
         .accessibilityLabel(playlistPlaybackPending ? "Checking playlist recordings" : "Play playlist in order")
-        .accessibilityHint("Play available offline recordings in playlist order; missing files are skipped")
+        .accessibilityHint(playlistAudioImportBusy
+            ? "Audio import is in progress. Activating Play explains when playback can be retried."
+            : "Play available offline recordings in playlist order; missing files are skipped")
     }
 
     private func playlistShuffleButton(_ tracks: [MusicTrack]) -> some View {
@@ -3272,9 +3281,11 @@ struct PlaylistDetailView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
-        .disabled(tracks.isEmpty || playlistPlaybackPending || playlistAudioImportBusy)
+        .disabled(tracks.isEmpty || playlistPlaybackPending)
         .accessibilityLabel("Shuffle playlist")
-        .accessibilityHint("Shuffle available offline recordings; missing files are skipped")
+        .accessibilityHint(playlistAudioImportBusy
+            ? "Audio import is in progress. Activating Shuffle explains when playback can be retried."
+            : "Shuffle available offline recordings; missing files are skipped")
     }
 
     var body: some View {
