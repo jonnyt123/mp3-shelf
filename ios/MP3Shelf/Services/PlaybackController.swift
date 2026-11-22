@@ -217,7 +217,14 @@ final class PlaybackController: NSObject, ObservableObject {
             return false
         }
         do {
-            try activateAudio()
+            // Selecting another recording while paused must not activate the
+            // audio session or interrupt another app. Decoder preparation does
+            // not require an active session; explicit Play/Resume activates it.
+            // Keep activation before every audible transition, including
+            // crossfades and automatic queue advancement.
+            if !startPaused {
+                try activateAudio()
+            }
             // Re-resolve at the shared open boundary as well: queued playback,
             // retries and crossfade can all carry older MusicTrack snapshots.
             let player = try AVAudioPlayer(contentsOf: library.fileURL(for: catalogTrack))
