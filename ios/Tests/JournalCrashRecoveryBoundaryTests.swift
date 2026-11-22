@@ -250,4 +250,31 @@ try checked(try Data(contentsOf: audio) == audioBytes)
 let pendingFiles = try fm.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix(".pending-") }
 try checked(pendingFiles.isEmpty)
 
-print("PASS: crash boundaries, nine semantic corruption cases, 20k ticket round-trip, 256-version concurrent atomic read/write, no pending files, audio preserved")
+
+// Independent hostile on-disk checkpoint corpus. A failed read must not
+// mutate the original bytes, neighboring audio, or a recoverable checkpoint.
+let validCheckpoint = try encoder.encode(next)
+let hostileJournalBytes: [(String, Data)] = [
+    ("zero-byte checkpoint", Data()),
+    ("truncated JSON", Data(validCheckpoint.dropLast())),
+    ("invalid UTF-8", Data([0xff, 0xfe, 0xfd])),
+    ("trailing JSON", validCheckpoint + Data("{}".utf8)),
+    ("wrong top-level shape", Data("[]".utf8)),
+    ("null ticket list", Data(#"{"generation":8,"tickets":null}"#.utf8)),
+    ("fractional generation", Data(#"{"generation":8.5,"tickets":[]}"#.utf8)),
+    ("missing ticket state", Data(#"{"generation":8,"tickets":[{"id":"x","recording":"a.mp3"}]}"#.utf8)),
+    ("ticket with null destination", Data(#"{"generation":8,"tickets":[{"id":"x","state":"queued","recording":null}]}"#.utf8))
+]
+for (label, bytes) in hostileJournalBytes {
+    try bytes.write(to: journal, options: .atomic)
+    try expectFailure(label) { _ = try readJournal(journal) }
+    try checked(try Data(contentsOf: journal) == bytes)
+    try checked(try Data(contentsOf: audio) == audioBytes)
+}
+// A rejected checkpoint must not prevent recovery by a later valid,
+// complete journal replacement. No fixture uses destructive repair.
+try validCheckpoint.write(to: journal, options: .atomic)
+try checked(try readJournal(journal) == next)
+try checked(try Data(contentsOf: audio) == audioBytes)
+
+print("PASS: crash boundaries, nine hostile byte cases, nine semantic corruption cases, 20k ticket round-trip, 256-version concurrent atomic read/write, no pending files, audio preserved")
