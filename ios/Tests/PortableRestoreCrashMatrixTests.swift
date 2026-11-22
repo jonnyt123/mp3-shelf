@@ -100,11 +100,11 @@ for phase in ["prepared", "writing", "committed"] {
         precondition(observed == expected,
                      "recovery replay mismatch: \(phase) attempt \(recoveryAttempt)")
         let observedAudio = try Data(contentsOf: audio)
-        precondition(observedAudio == originalAudio,
+    precondition(observedAudio == originalAudio,
                      "recovery replay changed original audio")
         try recover() // No journal: restart must be a no-op.
-        let observed = try load(Snapshot.self, from: library)
-        precondition(observed == expected,
+        let observedAfterSecondRecovery = try load(Snapshot.self, from: library)
+        precondition(observedAfterSecondRecovery == expected,
                      "second recovery changed catalog")
         precondition(!fm.fileExists(atPath: journalURL.path))
     }
@@ -130,3 +130,33 @@ for phase in ["", "PREPARED", "committing", "../committed", "rolledBack"] {
                  "invalid journal mutated existing audio")
 }
 print("PASS: recovery replay/idempotence and invalid-phase preservation model")
+
+// A recovery journal is itself user data until reconciliation succeeds.
+// Simulate a failed catalog write by replacing its path with a directory:
+// recovery must retain the durable journal, then succeed after repair.
+for phase in ["prepared", "writing", "committed"] {
+    try save(Journal(before: before, proposed: proposed, phase: phase), at: journalURL)
+    let journalBytes = try Data(contentsOf: journalURL)
+    if fm.fileExists(atPath: library.path) { try fm.removeItem(at: library) }
+    try fm.createDirectory(at: library, withIntermediateDirectories: false)
+    do {
+        try recover()
+        fatalError("recovery unexpectedly succeeded with directory catalog")
+    } catch RestoreFailure.invalidJournal {
+        fatalError("valid journal misclassified as corrupt")
+    } catch {
+        // Expected filesystem write failure. The journal must remain intact.
+    }
+    precondition(try Data(contentsOf: journalURL) == journalBytes,
+                 "failed recovery discarded journal")
+    precondition(try Data(contentsOf: audio) == originalAudio,
+                 "failed recovery changed user audio")
+    try fm.removeItem(at: library)
+    try save(before, at: library)
+    try recover()
+    precondition(try load(Snapshot.self, from: library) == (phase == "committed" ? proposed : before),
+                 "recovery retry did not converge")
+    precondition(!fm.fileExists(atPath: journalURL.path),
+                 "successful retry retained stale journal")
+}
+print("PASS: failed catalog-write recovery preserves journal for retry")
