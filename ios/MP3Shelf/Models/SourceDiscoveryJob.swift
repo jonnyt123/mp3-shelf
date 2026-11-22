@@ -256,6 +256,10 @@ protocol SourceLookupRetryableError: Error {
 
 enum SourceLookupRetryPolicy {
     static func isTemporary(_ error: Error) -> Bool {
+        // Cancellation must win even when a catalog adapter labels the outer
+        // error retryable or wraps a transient timeout around cancellation.
+        // Otherwise a stopped full-playlist scan can resume source requests.
+        if isCancellation(error) { return false }
         if let failure = error as? any SourceLookupRetryableError {
             return failure.shouldRetrySourceLookup
         }
