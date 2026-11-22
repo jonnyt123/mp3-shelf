@@ -147,14 +147,17 @@ for phase in ["prepared", "writing", "committed"] {
     } catch {
         // Expected filesystem write failure. The journal must remain intact.
     }
-    precondition(try Data(contentsOf: journalURL) == journalBytes,
+    let journalAfterFailure = try Data(contentsOf: journalURL)
+    let audioAfterFailure = try Data(contentsOf: audio)
+    precondition(journalAfterFailure == journalBytes,
                  "failed recovery discarded journal")
-    precondition(try Data(contentsOf: audio) == originalAudio,
+    precondition(audioAfterFailure == originalAudio,
                  "failed recovery changed user audio")
     try fm.removeItem(at: library)
     try save(before, at: library)
     try recover()
-    precondition(try load(Snapshot.self, from: library) == (phase == "committed" ? proposed : before),
+    let recoveredCatalog = try load(Snapshot.self, from: library)
+    precondition(recoveredCatalog == (phase == "committed" ? proposed : before),
                  "recovery retry did not converge")
     precondition(!fm.fileExists(atPath: journalURL.path),
                  "successful retry retained stale journal")
