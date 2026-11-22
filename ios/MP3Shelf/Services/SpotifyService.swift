@@ -518,14 +518,15 @@ final class SpotifyService: NSObject, ObservableObject {
             }
             let delay: Int
             if http.statusCode == 429 {
+                // Token refresh is subject to the same bounded Retry-After
+                // semantics as playlist requests, including HTTP-date hints.
+                // Reject malformed or distant dates instead of retrying
+                // immediately or sleeping for an unbounded interval.
                 guard let value = http.value(forHTTPHeaderField: "Retry-After"),
-                      let seconds = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)),
-                      (0...10).contains(seconds) else {
+                      let seconds = Self.boundedRetryAfter(value, now: Date()) else {
                     throw SpotifyError.api("Spotify authentication rate limit reached. Try again later.")
                 }
-                // A zero-second hint is valid; use a short minimum delay to
-                // prevent immediate repeated token requests.
-                delay = max(1, seconds)
+                delay = seconds
             } else if (500...599).contains(http.statusCode) {
                 // Bounded deterministic backoff; no retries on 403 or other
                 // permanent client errors and no unbounded provider traffic.
