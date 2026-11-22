@@ -282,7 +282,7 @@ for (name, parts, length) in [
     mustRejectParts(name, parts, length)
     rejected += 1
 }
-print("PASS: \\(tripleCases) three-fragment occupancy cases (\\(tripleAccepted) valid; six permutations each)")
+print("PASS: \(tripleCases) three-fragment occupancy cases (\(tripleAccepted) valid; six permutations each)")
 precondition(matrixCases == 2401)
 print("PASS: \(matrixCases) exhaustive two-part range cases (\(matrixAccepted) valid)")
 print("PASS: \(rejected) malformed archive framing cases rejected")
