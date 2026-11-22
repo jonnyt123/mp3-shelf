@@ -131,3 +131,48 @@ for rotation in stride(from: 1, through: count - 1, by: 127) {
                  "rotation \(rotation) reassigned audio bytes")
 }
 print("PASS: native-aligned limits, malformed late entries and metadata permutations")
+
+
+// Deterministic adversarial boundary matrix: mutate every byte-range boundary
+// without changing the media. This catches a decoder that silently accepts a
+// partial library, assigns two IDs to one slice, or tolerates a hidden gap.
+// Sampling both ends and interior tracks avoids a first/last-only regression.
+let sampledIndices = [0, 1, 2, 127, 255, 511, 1023, 1024, 1535, 2046, 2047]
+var rejectedCases = 0
+for index in sampledIndices {
+    let original = tracks[index].audio
+    let mutations: [(String, Part)] = [
+        ("offset before", Part(offset: original.offset - 1, length: original.length, type: original.type)),
+        ("offset after", Part(offset: original.offset + 1, length: original.length, type: original.type)),
+        ("length short", Part(offset: original.offset, length: original.length - 1, type: original.type)),
+        ("length long", Part(offset: original.offset, length: original.length + 1, type: original.type)),
+        ("zero bytes", Part(offset: original.offset, length: 0, type: original.type)),
+        ("negative bytes", Part(offset: original.offset, length: -1, type: original.type)),
+        ("huge length", Part(offset: original.offset, length: Int64.max, type: original.type)),
+        ("unsupported content", Part(offset: original.offset, length: original.length, type: "application/octet-stream"))
+    ]
+    for (label, part) in mutations {
+        reject("track \(index): \(label)", try pack(altered(index, part), payload))
+        rejectedCases += 1
+    }
+}
+// Mutate the final playlist rather than the audio: the entire archive must
+// reject a dangling ID, even if every byte range remains structurally sound.
+for index in sampledIndices {
+    let playlistWithMissingID = Playlist(id: "ordered",
+        trackIds: ["audio-0", "audio-\(index)", "unavailable-\(index)"])
+    reject("dangling playlist member \(index)", try pack(
+        Manifest(schema: base.schema, version: base.version,
+                 tracks: tracks, playlists: [playlistWithMissingID]), payload))
+    rejectedCases += 1
+}
+// Duplicate playlist identities are forbidden even when their track orders
+// differ; a restore must never ambiguously overwrite the first playlist.
+reject("duplicate playlist identity", try pack(
+    Manifest(schema: base.schema, version: base.version, tracks: tracks,
+             playlists: [playlist, Playlist(id: playlist.id, trackIds: ["audio-0"])]),
+    payload))
+rejectedCases += 1
+precondition(rejectedCases == sampledIndices.count * 9 + 1)
+precondition(try unpack(archive) == expected, "mutations modified baseline archive")
+print("PASS: \(rejectedCases) deterministic large-library metadata mutations")
