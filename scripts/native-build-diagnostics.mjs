@@ -16,6 +16,15 @@ const GENERATED_CACHE = [
   /module cache.*(?:corrupt|malformed)/i,
   /error:.*(?:modulecache|ModuleCache\.noindex).*(?:corrupt|malformed)/i
 ];
+// Fatal environment failures override retryable phrases even when Xcode prints
+// an earlier transient error. Never retry disk-full, toolchain or permissions.
+const FATAL_ENVIRONMENT = [
+  /(?:no space left on device|disk (?:is )?full|ENOSPC)/i,
+  /(?:permission denied|operation not permitted|EACCES|EPERM)/i,
+  /(?:xcode-select: error|active developer directory.*(?:invalid|does not exist)|requires Xcode)/i,
+  /(?:dyld:.*(?:library not loaded|symbol not found)|dyld\\[[0-9]+\\]:.*(?:library not loaded|symbol not found))/i,
+  /(?:code signing is required|provisioning profile.*(?:missing|not found))/i
+];
 const SOURCE_FAILURE = [
   /(?:^|\n)[^\n]*\berror: (?:cannot find|no such module|type .* has no member|ambiguous use of|missing argument|extra argument|cannot convert|invalid redeclaration|expression is ambiguous|expected .* declaration|consecutive statements)/i,
   /Swift Compiler Error/i,
@@ -26,7 +35,7 @@ const SOURCE_FAILURE = [
 export function diagnoseNativeLog(log) {
   const value = typeof log === 'string' ? log.slice(-MAX_READ) : '';
   if (!value) return { category: 'unavailable', retryable: false, repair: 'none' };
-  if (SOURCE_FAILURE.some(re => re.test(value))) {
+  if (FATAL_ENVIRONMENT.some(re => re.test(value))) {\n    return { category: 'fatal-environment', retryable: false, repair: 'none' };\n  }\n  if (SOURCE_FAILURE.some(re => re.test(value))) {
     return { category: 'swift-source', retryable: false, repair: 'none' };
   }
   if (GENERATED_CACHE.some(re => re.test(value))) {
@@ -53,7 +62,7 @@ export function readNativeLogTail(path) {
   } finally { closeSync(fd); }
 }
 export function clearIsolatedDerivedData(worktree) {
-  const root = resolve(worktree);
+  const root = resolve(worktree);\n  const rootEntry = lstatSync(root);\n  if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink())\n    throw Error('Refusing generated-cache cleanup in redirected worktree root');
   const generated = resolve(root, 'ios/build/local-release/DerivedData');
   const rel = relative(root, generated);
   if (rel.startsWith('..' + sep) || rel === '..' || !rel)
