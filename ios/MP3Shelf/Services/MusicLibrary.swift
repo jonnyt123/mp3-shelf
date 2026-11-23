@@ -1184,15 +1184,31 @@ final class MusicLibrary: ObservableObject {
             isLibraryPersistenceSafe = true
             libraryStorageError = nil
             recoverInterruptedImports()
-            // Discovery checkpoints may also have been protected at startup.
-            if let saved = try? Data(contentsOf: discoveryURL),
-               let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
-                discoveryJobs = decoded.compactMap { checkpoint in
-                    guard let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) else { return nil }
-                    var repaired = checkpoint
-                    repaired.repairPersistedCheckpoint()
-                    repaired.refreshMissingWishes(playlist.missingTracks)
-                    return repaired
+            // A recovered library must not erase discovery history belonging to
+            // temporarily unavailable playlists. A protected or corrupt checkpoint
+            // is not an empty queue: retain its bytes and block future writes.
+            if manager.fileExists(atPath: discoveryURL.path) {
+                do {
+                    let saved = try Data(contentsOf: discoveryURL)
+                    let decoded = try JSONDecoder().decode([SourceDiscoveryJob].self, from: saved)
+                    discoveryJobs = decoded.map { checkpoint in
+                        var repaired = checkpoint
+                        repaired.repairPersistedCheckpoint()
+                        if let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) {
+                            repaired.refreshMissingWishes(playlist.missingTracks)
+                        } else {
+                            repaired.isPaused = true
+                        }
+                        return repaired
+                    }
+                    discoveryCheckpointUnreadable = false
+                    discoveryCheckpointNeedsRetry = true
+                    // Do not dispatch discovery until the reconciled state is durable.
+                    _ = persistDiscovery()
+                } catch {
+                    discoveryCheckpointUnreadable = true
+                    libraryStorageError = "Saved discovery progress could not be reopened. Original checkpoint bytes are preserved; discovery is paused."
+                    print("MP3 Shelf preserved unreadable discovery checkpoint during library recovery: \\(error)")
                 }
             }
             return true
