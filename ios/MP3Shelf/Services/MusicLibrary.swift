@@ -154,6 +154,8 @@ final class MusicLibrary: ObservableObject {
     // Never replace an existing checkpoint whose bytes could not be read or decoded.
     // Unlike a failed write, this state cannot be recovered by retrying an encode.
     private var discoveryCheckpointUnreadable = false
+    // A failed pause must remain an explicit stop request until its checkpoint is durable.
+    private var pendingDiscoveryPauses = Set<UUID>()
 
     init() {
         let documents = manager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -1450,6 +1452,7 @@ final class MusicLibrary: ObservableObject {
         // previously paused job in memory. In particular, preserve the prior
         // cursor and retry identity until the updated queue is durable.
         let previousJobs = discoveryJobs
+        pendingDiscoveryPauses.remove(playlistID)
         if let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID && !$0.isComplete }) {
             discoveryJobs[index].isPaused = false
             discoveryJobs[index].lastError = nil
@@ -1479,6 +1482,9 @@ final class MusicLibrary: ObservableObject {
         discoveryJobs[index].isPaused = true
         if !persistDiscovery() {
             discoveryJobs[index] = previousJob
+            pendingDiscoveryPauses.insert(playlistID)
+        } else {
+            pendingDiscoveryPauses.remove(playlistID)
         }
         if automaticDownloadProgress?.playlistID == playlistID { automaticDownloadTask?.cancel() }
     }
@@ -1493,6 +1499,7 @@ final class MusicLibrary: ObservableObject {
         // A failed checkpoint write must not expose an uncommitted resume to
         // foreground/background schedulers. Keep the exact previous job so a
         // later retry preserves its cursor, error and retry identity.
+        guard !pendingDiscoveryPauses.contains(playlistID) || flushPendingDiscoveryPauses() else { return }
         let previousJob = discoveryJobs[index]
         discoveryJobs[index].isPaused = false
         discoveryJobs[index].lastError = nil
@@ -1520,6 +1527,7 @@ final class MusicLibrary: ObservableObject {
         // A damaged checkpoint is not an empty queue; never schedule a lookup
         // from an in-memory replacement while its original bytes are retained.
         guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe else { return false }
+        guard flushPendingDiscoveryPauses() else { return false }
         guard !backgroundDiscoveryInProgress && automaticDownloadTask == nil else { return true }
         // Retry the same in-memory checkpoint before any new background lookup.
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return false }
@@ -1601,8 +1609,27 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
+    /// Commit pending pause requests before permitting another lookup.
+    private func flushPendingDiscoveryPauses() -> Bool {
+        guard !pendingDiscoveryPauses.isEmpty else { return true }
+        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return false }
+        let original = discoveryJobs
+        for id in pendingDiscoveryPauses {
+            if let index = discoveryJobs.firstIndex(where: { $0.playlistID == id }) {
+                discoveryJobs[index].isPaused = true
+            }
+        }
+        guard persistDiscovery() else {
+            discoveryJobs = original
+            return false
+        }
+        pendingDiscoveryPauses.removeAll()
+        return true
+    }
+
     func resumePendingDiscovery() {
         guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe else { return }
+        guard flushPendingDiscoveryPauses() else { return }
         // A transient protected-file or low-storage failure can recover on the
         // next foreground activation without losing the selected cursor.
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
@@ -1828,7 +1855,7 @@ final class MusicLibrary: ObservableObject {
         while let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) {
             if let maximum = maxProcessedSongs, processedThisPass >= maximum { break }
             var job = discoveryJobs[index]
-            if Task.isCancelled || discoveryCheckpointUnreadable || !isLibraryPersistenceSafe ||
+            if Task.isCancelled || pendingDiscoveryPauses.contains(playlistID) || discoveryCheckpointUnreadable || !isLibraryPersistenceSafe ||
                 discoveryCheckpointNeedsRetry || job.isPaused || job.isComplete ||
                 !networkAllowsDiscovery(for: playlistID) ||
                 (backgroundWiFiOnly && !isOnWiFi) { break }
