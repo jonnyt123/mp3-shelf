@@ -100,6 +100,9 @@ struct LibraryView: View {
         return ""
     }()
     @State private var favoritesOnly = false
+    // A listener may edit and then restore a filter during a slow import.
+    // Comparing only final values would incorrectly erase that deliberate choice.
+    @State private var browsingScopeRevision = 0
     // Avoid rescanning large collections on every intermediate keystroke.
     @State private var settledSearchText = ""
     @AccessibilityFocusState private var searchResultsFocused: Bool
@@ -1637,9 +1640,18 @@ struct LibraryView: View {
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
-        .onChange(of: searchText) { _, _ in browsingScopeDidChange() }
-        .onChange(of: favoritesOnly) { _, _ in browsingScopeDidChange() }
-        .onChange(of: sortMode) { _, _ in browsingScopeDidChange() }
+        .onChange(of: searchText) { _, _ in
+            browsingScopeRevision &+= 1
+            browsingScopeDidChange()
+        }
+        .onChange(of: favoritesOnly) { _, _ in
+            browsingScopeRevision &+= 1
+            browsingScopeDidChange()
+        }
+        .onChange(of: sortMode) { _, _ in
+            browsingScopeRevision &+= 1
+            browsingScopeDidChange()
+        }
         .onChange(of: library.tracks.map { RecordingPlaybackSnapshot($0, url: library.fileURL(for: $0)) }) { _, _ in
             // A Files import is an intentional library mutation. Preserve its
             // partial-queue recovery until the import report is available;
@@ -1701,12 +1713,14 @@ struct LibraryView: View {
                 let wasEmptyBeforeImport = library.tracks.isEmpty
                 let searchAtImportStart = searchText
                 let favoritesAtImportStart = favoritesOnly
+                let scopeRevisionAtImportStart = browsingScopeRevision
                 importInProgress = true
                 Task { @MainActor in
                     let outcome = await library.importAudio(urls: urls)
                     if wasEmptyBeforeImport && outcome.imported > 0 &&
                        searchText == searchAtImportStart &&
-                       favoritesOnly == favoritesAtImportStart {
+                       favoritesOnly == favoritesAtImportStart &&
+                       browsingScopeRevision == scopeRevisionAtImportStart {
                         clearSearch()
                         favoritesOnly = false
                     }
