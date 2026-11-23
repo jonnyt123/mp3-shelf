@@ -245,8 +245,10 @@ struct LibraryView: View {
             // local scan pending while it is visible, rather than discarding the
             // user's request or starting audio behind the picker. A real import
             // cancels this task before replacing any recordings.
+            var pickerInterruptedScan = showFilePicker
             while showFilePicker && scenePhase == .active &&
                     !importInProgress && !library.isImporting && !Task.isCancelled {
+                pickerInterruptedScan = true
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
             guard recentPlaybackGeneration == generation, !Task.isCancelled else { return }
@@ -260,10 +262,39 @@ struct LibraryView: View {
                     : "Audio import interrupted the playback check. Finish importing, then retry this recording."
                 return
             }
+            // Files may have been cancelled after a recording was moved or
+            // removed. Revalidate the original URLs before authorizing playback.
+            // This is local metadata I/O only; do not mutate the active queue.
+            var currentAvailability = availability
+            if pickerInterruptedScan {
+                let refreshed = Task.detached(priority: .userInitiated) { () -> [Bool] in
+                    var results: [Bool] = []
+                    results.reserveCapacity(locations.count)
+                    for (_, url) in locations {
+                        if Task.isCancelled { return [] }
+                        guard url.isFileURL,
+                              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                              values.isRegularFile == true, values.isSymbolicLink != true,
+                              let size = values.fileSize, size > 0 else {
+                            results.append(false)
+                            continue
+                        }
+                        results.append(true)
+                    }
+                    return results
+                }
+                currentAvailability = await withTaskCancellationHandler {
+                    await refreshed.value
+                } onCancel: {
+                    refreshed.cancel()
+                }
+                guard recentPlaybackGeneration == generation, !Task.isCancelled,
+                      scenePhase == .active, !audioImportBusy else { return }
+            }
             recentPlaybackGeneration = nil
             recentPlaybackCheck = nil
             recentPlaybackTask = nil
-            guard availability.count == recent.count,
+            guard currentAvailability.count == recent.count,
                   recentlyAdded.map { RecordingLocationKey(id: $0.id, url: library.fileURL(for: $0)) } == locations.map { RecordingLocationKey(id: $0.0, url: $0.1) },
                   recentlyAdded.enumerated().allSatisfy({ index, song in
                       song.title == metadata[index].0 && song.artist == metadata[index].1 &&
@@ -297,10 +328,10 @@ struct LibraryView: View {
                 return
             }
             let queue: [MusicTrack] = recent.enumerated().compactMap { index, song in
-                guard availability[index] else { return nil }
+                guard currentAvailability[index] else { return nil }
                 return currentByLocation[RecordingLocationKey(id: song.id, url: locations[index].1)]
             }
-            guard availability[selectedIndex],
+            guard currentAvailability[selectedIndex],
                   let selected = currentByLocation[RecordingLocationKey(id: track.id, url: selectedURL)] else {
                 missingRecentRecording = true
                 recentPlaybackNotice = "This recording is unavailable offline. Retry after restoring its local file, or choose another song."
