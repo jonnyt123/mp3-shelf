@@ -27,7 +27,7 @@ func hasSafeParent(_ url: URL) -> Bool {
 }
 func isRegularNoFollow(_ url: URL) -> Bool {
     var info = stat()
-    return url.path.withCString { lstat($0, &info) == 0 && (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) }
+    return url.path.withCString { lstat($0, &info) == 0 && (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) && info.st_nlink == 1 }
 }
 func readJournal(_ url: URL, expectedID: String? = nil) throws -> SafeJournal? {
     var info = stat()
@@ -164,3 +164,26 @@ do { _ = try readJournal(missingAlias.appendingPathComponent("nested/journal.jso
      fatalError("dangling ancestor accepted") }
 catch BoundaryError.unsafe { }
 print("PASS: 96 nested-ancestor symlink isolation cases and dangling ancestor rejection (standalone model only)")
+
+// A hard-linked journal is a regular file, but its bytes are also reachable
+// through an unrelated path. Refuse reads and writes instead of trusting the
+// final-component file type alone. This remains a standalone model fixture.
+for i in 0..<96 {
+    let external = root.appendingPathComponent("hardlink-external_\(i).json")
+    let journal = root.appendingPathComponent("hardlink-journal_\(i).json")
+    let original = try JSONEncoder().encode(SafeJournal(id: "hardlink-journal_\(i)", generation: 1))
+    try original.write(to: external)
+    let linkStatus = external.path.withCString { source in
+        journal.path.withCString { destination in link(source, destination) }
+    }
+    check(linkStatus == 0, "hardlink fixture setup failed")
+    check(!isRegularNoFollow(journal), "hard-linked journal accepted as isolated file")
+    do { _ = try readJournal(journal); fatalError("hard-linked journal read accepted") }
+    catch BoundaryError.unsafe { }
+    do { try publish(SafeJournal(id: "hardlink-journal_\(i)", generation: 2), to: journal)
+         fatalError("hard-linked journal publication accepted") }
+    catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: external) == original, "external hardlink bytes changed")
+    check(try Data(contentsOf: journal) == original, "journal hardlink bytes changed")
+}
+print("PASS: 96 hardlink alias read/write isolation cases (standalone model only)")
