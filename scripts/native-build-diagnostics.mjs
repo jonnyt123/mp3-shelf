@@ -35,7 +35,10 @@ const SOURCE_FAILURE = [
 export function diagnoseNativeLog(log) {
   const value = typeof log === 'string' ? log.slice(-MAX_READ) : '';
   if (!value) return { category: 'unavailable', retryable: false, repair: 'none' };
-  if (FATAL_ENVIRONMENT.some(re => re.test(value))) {\n    return { category: 'fatal-environment', retryable: false, repair: 'none' };\n  }\n  if (SOURCE_FAILURE.some(re => re.test(value))) {
+  if (FATAL_ENVIRONMENT.some(re => re.test(value))) {
+    return { category: 'fatal-environment', retryable: false, repair: 'none' };
+  }
+  if (SOURCE_FAILURE.some(re => re.test(value))) {
     return { category: 'swift-source', retryable: false, repair: 'none' };
   }
   if (GENERATED_CACHE.some(re => re.test(value))) {
@@ -62,7 +65,10 @@ export function readNativeLogTail(path) {
   } finally { closeSync(fd); }
 }
 export function clearIsolatedDerivedData(worktree) {
-  const root = resolve(worktree);\n  const rootEntry = lstatSync(root);\n  if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink())\n    throw Error('Refusing generated-cache cleanup in redirected worktree root');
+  const root = resolve(worktree);
+  const rootEntry = lstatSync(root);
+  if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink())
+    throw Error('Refusing generated-cache cleanup in redirected worktree root');
   const generated = resolve(root, 'ios/build/local-release/DerivedData');
   const rel = relative(root, generated);
   if (rel.startsWith('..' + sep) || rel === '..' || !rel)
