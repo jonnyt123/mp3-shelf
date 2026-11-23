@@ -91,6 +91,31 @@ enum AudioSourceFinderTests {
                "Commons continuation prevents first-page automatic selection")
         verify(!AudioSourceFinder.commonsSearchComplete(commonsMalformed),
                "malformed Commons page cannot authorize a recording")
+        // Identical performer, base title and duration cannot prove the same
+        // concert or broadcast capture. Both directions must fail closed.
+        for (alternate, requested) in [
+            ("The Song (Recorded at Studio A)", "The Song (Recorded at Studio B)"),
+            ("The Song (Concert at Wembley)", "The Song (Concert at Brixton)"),
+            ("The Song (Live on Radio One)", "The Song (Live on Radio Two)"),
+            ("The Song (Recorded in London)", "The Song"),
+            ("The Song", "The Song (Recorded in London)")
+        ] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: alternate + ".mp3", requestedTitle: requested),
+                "distinct recording location or broadcast requires review: \\(alternate)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Recorded at Studio A).mp3",
+            requestedTitle: "The Song (Recorded at Studio A)"),
+            "identical named recording location remains eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Live on Radio One).mp3",
+            requestedTitle: "The Song (Live on Radio One)"),
+            "identical broadcast capture remains eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "Recorded in America.mp3", requestedTitle: "Recorded in America"),
+            "ordinary song title containing a location is not rejected")
+
         // Dated live takes and re-recordings must not silently cross-match.
         verify(!AudioSourceFinder.recordingEditionAgrees(
             filename: "The Song (Live 2019).mp3", requestedTitle: "The Song (Live 2021)"),
