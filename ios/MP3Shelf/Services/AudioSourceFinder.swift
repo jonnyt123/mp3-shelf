@@ -634,8 +634,35 @@ enum AudioSourceFinder {
               MusicMatching.key(left[0]) == MusicMatching.key(right[0]) else {
             return false
         }
-        return recordingEditionAgrees(filename: left[0], requestedTitle: right[0]) &&
-            recordingEditionAgrees(filename: right[0], requestedTitle: left[0])
+        // Normalized titles and broad edition categories can agree while
+        // the same Archive identifier advertises two different dated masters.
+        // Do not let a later dedupe silently discard the competing release.
+        guard recordingEditionAgrees(filename: left[0], requestedTitle: right[0]),
+              recordingEditionAgrees(filename: right[0], requestedTitle: left[0]) else {
+            return false
+        }
+        return datedMasterYears(in: left[0]) == datedMasterYears(in: right[0])
+    }
+
+    private static func datedMasterYears(in title: String) -> Set<String> {
+        // Only years attached to a mastering/reissue qualifier are evidence.
+        // A year in the actual song title is not itself a release edition.
+        let words = title.lowercased().components(
+            separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        let markers: Set<String> = ["remaster", "remastered", "remastering",
+                                    "anniversary", "reissue", "reissued"]
+        var years = Set<String>()
+        for (index, word) in words.enumerated() where markers.contains(word) {
+            let lower = max(0, index - 2)
+            let upper = min(words.count, index + 3)
+            for candidate in words[lower..<upper] {
+                if candidate.count == 4, let year = Int(candidate),
+                   (1900...2099).contains(year) {
+                    years.insert(candidate)
+                }
+            }
+        }
+        return years
     }
 
     static func archiveIndexDuplicatesAgree(_ docs: [SearchItem]) -> Bool {
