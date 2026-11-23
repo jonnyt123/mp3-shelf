@@ -288,8 +288,20 @@ struct LibraryView: View {
                 } onCancel: {
                     refreshed.cancel()
                 }
-                guard recentPlaybackGeneration == generation, !Task.isCancelled,
-                      scenePhase == .active, !audioImportBusy else { return }
+                // A foreground transition or import may interrupt the second scan
+                // before SwiftUI's observers run. Retire only this request, so
+                // the spinner cannot remain stuck and a newer tap is untouched.
+                guard recentPlaybackGeneration == generation, !Task.isCancelled else { return }
+                if scenePhase != .active || audioImportBusy {
+                    recentPlaybackGeneration = nil
+                    recentPlaybackCheck = nil
+                    recentPlaybackTask = nil
+                    missingRecentRecording = true
+                    recentPlaybackNotice = scenePhase != .active
+                        ? "Playback check paused while MP3 Shelf is inactive. Return and retry this recording."
+                        : "Audio import interrupted the playback check. Finish importing, then retry this recording."
+                    return
+                }
             }
             recentPlaybackGeneration = nil
             recentPlaybackCheck = nil
