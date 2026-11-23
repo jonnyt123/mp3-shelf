@@ -86,3 +86,19 @@ test('missing, repeated or impossible branch counts never become release evidenc
   c.proposals[2].ahead = 0;
   assert.equal(auditNativeReconciliation(c).status, 'BLOCKED');
 });
+
+test('malformed native paths cannot pass reconciliation despite ios prefix', () => {
+  for (const path of [
+    'ios//MP3Shelf/Audio.swift',
+    'ios/./MP3Shelf/Audio.swift',
+    'ios/MP3Shelf/Audio.swift\\nignored',
+    'ios/MP3Shelf/Audio.swift\\t',
+    'ios/MP3Shelf/Audio.swift\\u007f'
+  ]) {
+    const data = healthy();
+    data.proposals[0].changedFiles = [path];
+    const audit = auditNativeReconciliation(data);
+    assert.equal(audit.status, 'BLOCKED', JSON.stringify(path));
+    assert(audit.blockers.some(reason => reason.includes('unexpected changed paths')));
+  }
+});
