@@ -1446,6 +1446,10 @@ final class MusicLibrary: ObservableObject {
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
         guard let playlist = playlists.first(where: { $0.id == playlistID }),
               !playlist.missingTracks.isEmpty else { return }
+        // A failed checkpoint save must not publish a new job or clear a
+        // previously paused job in memory. In particular, preserve the prior
+        // cursor and retry identity until the updated queue is durable.
+        let previousJobs = discoveryJobs
         if let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID && !$0.isComplete }) {
             discoveryJobs[index].isPaused = false
             discoveryJobs[index].lastError = nil
@@ -1455,7 +1459,10 @@ final class MusicLibrary: ObservableObject {
             discoveryJobs.removeAll { $0.playlistID == playlistID }
             discoveryJobs.append(SourceDiscoveryJob(playlistID: playlistID, wishes: playlist.missingTracks))
         }
-        persistDiscovery()
+        guard persistDiscovery() else {
+            discoveryJobs = previousJobs
+            return
+        }
         resumePendingDiscovery()
     }
 
@@ -1465,8 +1472,14 @@ final class MusicLibrary: ObservableObject {
 
     func pauseSourceDiscovery(for playlistID: UUID) {
         guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) else { return }
+        // Do not report a durable pause that failed to reach disk. Cancel an
+        // active lookup regardless: cancellation is safer than continuing
+        // after a failed pause checkpoint and cannot delete recorded audio.
+        let previousJob = discoveryJobs[index]
         discoveryJobs[index].isPaused = true
-        persistDiscovery()
+        if !persistDiscovery() {
+            discoveryJobs[index] = previousJob
+        }
         if automaticDownloadProgress?.playlistID == playlistID { automaticDownloadTask?.cancel() }
     }
 
