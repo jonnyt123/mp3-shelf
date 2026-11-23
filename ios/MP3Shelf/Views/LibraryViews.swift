@@ -1664,9 +1664,21 @@ struct LibraryView: View {
                 guard !urls.isEmpty, !importInProgress else { return }
                 cancelRecentPlaybackPreparation(showFeedback: true)
                 cancelBulkPlaybackPreparation(showFeedback: true)
+                // The first successful import should reveal the new music, not
+                // strand a new listener behind a pre-import search/Favorites filter.
+                // Capture the scope so edits made while Files copies audio win.
+                let wasEmptyBeforeImport = library.tracks.isEmpty
+                let searchAtImportStart = searchText
+                let favoritesAtImportStart = favoritesOnly
                 importInProgress = true
                 Task { @MainActor in
                     let outcome = await library.importAudio(urls: urls)
+                    if wasEmptyBeforeImport && outcome.imported > 0 &&
+                       searchText == searchAtImportStart &&
+                       favoritesOnly == favoritesAtImportStart {
+                        clearSearch()
+                        favoritesOnly = false
+                    }
                     // Importing unrelated songs can expand a search or the
                     // unfiltered Library. Never rebind an old partial queue to
                     // those new results: Refresh would silently play a different
