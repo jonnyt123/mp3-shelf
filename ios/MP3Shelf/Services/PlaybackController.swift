@@ -434,6 +434,11 @@ final class PlaybackController: NSObject, ObservableObject {
         // Preserve the listener's pause intent while selecting a surviving
         // queued recording; never delete or rewrite audio bytes here.
         if recoverDeletedCurrentTrack(forcePause: true) { return }
+        // Pause is also a transport boundary: an open decoder may still point
+        // at a replaced recording even though the catalog path looks valid.
+        // Retire it now, rather than leaving stale bytes allocated until a
+        // later Resume/Seek. Preserve the selected ID and queue for reimport.
+        if retireUnsafeCurrentDecoder() { return }
         relay.invalidatePendingCompletions()
         interruptionState.cancelResume()
         if outgoingPlayer != nil { cancelFade(); audioPlayer?.volume = 1 }
