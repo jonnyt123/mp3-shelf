@@ -1467,7 +1467,7 @@ final class MusicLibrary: ObservableObject {
     func runBackgroundDiscoveryBatch() async -> Bool {
         // A damaged checkpoint is not an empty queue; never schedule a lookup
         // from an in-memory replacement while its original bytes are retained.
-        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return false }
+        guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe else { return false }
         guard !backgroundDiscoveryInProgress && automaticDownloadTask == nil else { return true }
         // Retry the same in-memory checkpoint before any new background lookup.
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return false }
@@ -1515,8 +1515,42 @@ final class MusicLibrary: ObservableObject {
         return !Task.isCancelled
     }
 
+    /// Retry reading a previously protected checkpoint without ever treating it as
+    /// a fresh empty queue. A malformed or missing file remains untouched and
+    /// discovery stays disabled until a valid checkpoint is available.
+    @discardableResult
+    private func recoverDiscoveryCheckpointIfReadable() -> Bool {
+        guard discoveryCheckpointUnreadable else { return true }
+        guard isLibraryPersistenceSafe else { return false }
+        do {
+            let data = try Data(contentsOf: discoveryURL)
+            let saved = try JSONDecoder().decode([SourceDiscoveryJob].self, from: data)
+            // Preserve every saved job, including jobs whose playlist is not
+            // currently present. Dropping those identities on recovery could
+            // permanently consume their retry history on the next write.
+            let restored = saved.map { checkpoint -> SourceDiscoveryJob in
+                var repaired = checkpoint
+                repaired.repairPersistedCheckpoint()
+                if let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) {
+                    repaired.refreshMissingWishes(playlist.missingTracks)
+                } else {
+                    repaired.isPaused = true
+                }
+                return repaired
+            }
+            discoveryJobs = restored
+            discoveryCheckpointUnreadable = false
+            discoveryCheckpointNeedsRetry = true
+            // Persist the repaired snapshot before dispatching new lookups.
+            return persistDiscovery()
+        } catch {
+            libraryStorageError = "Saved discovery progress is still unreadable. Original checkpoint bytes remain untouched."
+            return false
+        }
+    }
+
     func resumePendingDiscovery() {
-        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return }
+        guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe else { return }
         // A transient protected-file or low-storage failure can recover on the
         // next foreground activation without losing the selected cursor.
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
