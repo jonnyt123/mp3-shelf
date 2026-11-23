@@ -508,9 +508,9 @@ final class SpotifyService: NSObject, ObservableObject {
                 // recovery; authorization-code exchange is single-use and must
                 // never be replayed after an ambiguous network interruption.
                 guard !Task.isCancelled,
-                      isRefreshGrant,
-                      retryCount < 2,
-                      SpotifyTransportRetryPolicy.isTransient(error) else { throw error }
+                      SpotifyTokenTransportRetryPolicy.canRetry(
+                          isRefreshGrant: isRefreshGrant, attempts: retryCount, error: error
+                      ) else { throw error }
                 retryCount += 1
                 try await Task.sleep(nanoseconds: UInt64(retryCount) * 1_000_000_000)
                 continue
@@ -948,5 +948,14 @@ enum SpotifyTransportRetryPolicy {
 enum SpotifyMetadataHTTPRetryPolicy {
     static func isTransient(_ status: Int) -> Bool {
         status == 408 || status == 425 || (500...599).contains(status)
+    }
+}
+
+// Token refresh can recover from brief network interruptions. Authorization
+// code exchange is not replayable because the code may already be consumed.
+enum SpotifyTokenTransportRetryPolicy {
+    static func canRetry(isRefreshGrant: Bool, attempts: Int, error: Error) -> Bool {
+        isRefreshGrant && (0..<2).contains(attempts) &&
+            SpotifyTransportRetryPolicy.isTransient(error)
     }
 }
