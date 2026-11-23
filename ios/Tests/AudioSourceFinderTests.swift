@@ -416,6 +416,29 @@ enum AudioSourceFinderTests {
                manuallyApprovedRequest.allowsExpensiveNetworkAccess == true &&
                manuallyApprovedRequest.allowsConstrainedNetworkAccess == true,
                "manual cellular opt-in enables catalog requests for that playlist")
+        // Exact artist, title and duration cannot establish the same master when
+        // the filename identifies a radio edit, altered speed or vocal removal.
+        // Both directions matter: a requested alternate must not be replaced
+        // by the ordinary studio version either.
+        for alternate in ["Radio Edit", "Single Edit", "Album Edit",
+                          "Album Version", "Sped Up", "Speed Up", "Speedup",
+                          "Slowed", "Slowed Down", "Slow Version", "Reversed",
+                          "Reverse Audio", "Vocal Removed", "Vocals Removed",
+                          "Vocal Removal"] {
+            let editionTitle = "The Song (\\(alternate))"
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song.mp3", requestedTitle: editionTitle),
+                "requested alternate edition must not be replaced by studio master: \\(alternate)")
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song (\\(alternate)).mp3", requestedTitle: "The Song"),
+                "alternate upload must not be silently substituted: \\(alternate)")
+            verify(AudioSourceFinder.recordingEditionAgrees(
+                filename: "The Song (\\(alternate)).mp3", requestedTitle: editionTitle),
+                "same explicit alternate edition remains eligible: \\(alternate)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song.mp3", requestedTitle: "The Song"),
+            "ordinary studio edition remains eligible after alternate-edition gates")
         verify(AudioSourceFinder.exactMetadataMatch(title: "The Song", creator: "The Artist",
                                                      wish: wish), "exact title and artist")
         verify(!AudioSourceFinder.exactMetadataMatch(title: "The Song (Live)",
