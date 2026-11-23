@@ -179,3 +179,32 @@ test('generated-cache cleanup refuses a symlinked worktree root', () => {
     assert.equal(readFileSync(join(cache, 'valuable'), 'utf8'), 'keep');
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(parent, { recursive: true, force: true }); }
 });
+
+test('ordinary Swift file diagnostics override cache and service retry hints', async () => {
+  const diagnostics = [
+    'Sources/Player.swift:42:18: error: value of type Player has no member refresh',
+    '/tmp/native/Playlist.swift:7: error: unterminated string literal',
+    'error: emit-module command failed with exit code 1'
+  ];
+  for (const diagnostic of diagnostics) {
+    assert.deepEqual(diagnoseNativeLog('unable to initiate PIF transfer session\\nmodule cache corrupted\\n' + diagnostic), {
+      category: 'swift-source', retryable: false, repair: 'none'
+    }, diagnostic);
+  }
+  const root = scratch();
+  try {
+    let calls = 0;
+    await assert.rejects(runNativeWithBoundedRecovery({
+      cwd: root, output: root,
+      run: async (_command, _args, _cwd, log) => {
+        calls++;
+        writeFileSync(log, 'build service could not create build operation\\nPlayer.swift:42:18: error: unterminated string literal');
+        throw Error('compilation failed');
+      }
+    }), /swift-source/);
+    assert.equal(calls, 1);
+    const report = JSON.parse(readFileSync(join(root, 'native-diagnosis.json')));
+    assert.equal(report.retryCount, 0);
+    assert.equal(report.finalStatus, 'BLOCKED');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
