@@ -464,21 +464,6 @@ enum PortableShelfArchive {
         }) else {
             throw ArchiveError.invalidManifest
         }
-        // Export and restore must enforce the same discovery metadata contract.
-        // Validate before creating any destination staging file.
-        let proposedWishes = playlists.map { list in
-            let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
-            return Playlist(id: list.id.uuidString, name: list.name,
-                            trackIds: [], sourceURL: list.sourceURL,
-                            wishes: wishes.isEmpty ? nil : wishes.map {
-                                Wish(title: $0.title, artist: $0.artist, album: $0.album,
-                                     spotifyURL: $0.spotifyURL,
-                                     durationSeconds: $0.durationSeconds,
-                                     artistNames: $0.artistNames,
-                                     appleMusicItemID: $0.appleMusicItemID)
-                            })
-        }
-        try validatePlaylistWishes(proposedWishes)
         let lists = playlists.enumerated().map { index, list in
             let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
             return Playlist(
@@ -493,6 +478,22 @@ enum PortableShelfArchive {
                 },
                 appleMusicLibraryID: list.appleMusicLibraryID
             )
+        }
+        // Validate the exact serialized playlist records, not a reduced projection.
+        // In particular, Apple Music library identifiers and resolved portable
+        // track IDs must be checked before any destination staging file exists.
+        // A preflight projection that omits fields can accept an export which
+        // the same archive reader subsequently rejects on restore.
+        try validatePlaylistWishes(lists)
+        let validatedTrackIDs = Set(exportedTrackIDs)
+        for playlist in lists {
+            try Task.checkCancellation()
+            for trackID in playlist.trackIds {
+                try Task.checkCancellation()
+                guard validatedTrackIDs.contains(trackID) else {
+                    throw ArchiveError.invalidManifest
+                }
+            }
         }
         let manifest = Manifest(schema: "mp3-shelf-backup", version: 1,
                                 createdAt: ISO8601DateFormatter().string(from: Date()),
