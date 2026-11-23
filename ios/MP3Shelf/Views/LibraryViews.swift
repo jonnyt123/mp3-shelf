@@ -1173,31 +1173,53 @@ struct LibraryView: View {
                                 .accessibilityLabel("Searching songs")
                         } else if visibleTracks.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
-                                PremiumIcon(symbol: "magnifyingglass", color: ShelfTheme.accent,
-                                            size: 56)
-                                Text("No matching songs")
-                                    .font(.system(.headline, design: .rounded, weight: .bold))
-                                    .foregroundStyle(.white)
-                                Text(favoritesOnly
-                                     ? "No favorites match this search. Try All music or a different song, artist or album."
-                                     : "Try a different song, artist or album.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(ShelfTheme.subdued)
-                                if favoritesOnly {
+                                if library.tracks.isEmpty {
+                                    // Search can be restored before the first import. In that
+                                    // case no query can match: offer a real first-use action
+                                    // instead of implying the listener has existing songs.
+                                    EmptyShelfView(
+                                        title: "Your library is empty",
+                                        subtitle: "Import audio from Files to start listening offline. Clear the search to browse your new songs.",
+                                        symbol: "music.note.list")
                                     Button {
-                                        favoritesOnly = false
+                                        presentAudioImporter()
                                     } label: {
-                                        Label("Search all music", systemImage: "music.note.list")
+                                        Label("Import audio from Files", systemImage: "square.and.arrow.down")
                                             .frame(minHeight: 44)
                                     }
-                                    .buttonStyle(.bordered)
-                                    .accessibilityHint("Keep the search and include songs that are not favorites")
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(audioImportBusy || scenePhase != .active)
+                                    .accessibilityHint(audioImportBusy
+                                        ? "Wait until the current import finishes"
+                                        : "Choose local audio files without using the internet")
+                                } else {
+                                    PremiumIcon(symbol: "magnifyingglass", color: ShelfTheme.accent,
+                                                size: 56)
+                                    Text("No matching songs")
+                                        .font(.system(.headline, design: .rounded, weight: .bold))
+                                        .foregroundStyle(.white)
+                                    Text(favoritesOnly
+                                         ? "No favorites match this search. Try All music or a different song, artist or album."
+                                         : "Try a different song, artist or album.")
+                                        .font(.subheadline)
+                                        .foregroundStyle(ShelfTheme.subdued)
+                                    if favoritesOnly {
+                                        Button {
+                                            favoritesOnly = false
+                                        } label: {
+                                            Label("Search all music", systemImage: "music.note.list")
+                                                .frame(minHeight: 44)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .accessibilityHint("Keep the search and include songs that are not favorites")
+                                    }
                                 }
                                 Button {
                                     clearSearch()
                                     favoritesOnly = false
                                 } label: {
-                                    Label("Show complete library", systemImage: "arrow.uturn.backward")
+                                    Label(library.tracks.isEmpty ? "Clear search" : "Show complete library",
+                                          systemImage: "arrow.uturn.backward")
                                         .frame(minHeight: 44)
                                 }
                                 .buttonStyle(.bordered)
