@@ -223,8 +223,9 @@ struct LibraryView: View {
                 results.reserveCapacity(locations.count)
                 for (_, url) in locations {
                     if Task.isCancelled { return [] }
-                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-                          url.isFileURL, values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
+                    guard url.isFileURL,
+                          let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                          values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
                           size > 0 else {
                         results.append(false)
                         continue
@@ -609,8 +610,9 @@ struct LibraryView: View {
                 if Task.isCancelled { return nil }
                 // fileExists also returns true for directories and empty staging
                 // placeholders; neither is an offline-playable recording.
-                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-                      url.isFileURL, values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
+                guard url.isFileURL,
+                      let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                      values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
                       size > 0 else { continue }
                 count += 1
             }
@@ -1002,8 +1004,9 @@ struct LibraryView: View {
                 availability.reserveCapacity(locations.count)
                 for (_, url) in locations {
                     if Task.isCancelled { return [] }
-                    guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-                          url.isFileURL, values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
+                    guard url.isFileURL,
+                          let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                          values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
                           size > 0 else {
                         availability.append(false)
                         continue
