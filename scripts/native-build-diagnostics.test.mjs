@@ -123,3 +123,33 @@ test('diagnostics reject symlinks and use only the bounded log tail', () => {
     assert.throws(() => readNativeLogTail(link), /unsafe/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+
+test('machine preconditions override retryable cache and service noise', () => {
+  for (const message of [
+    'malformed PCM file in ModuleCache.noindex\nNo space left on device',
+    'build service connection interrupted\nxcode-select: error: invalid developer directory',
+    'dyld_shared_cache_extract_dylibs failed\nmodule cache corrupted',
+    'build service could not create build operation\nPermission denied'
+  ]) {
+    assert.deepEqual(diagnoseNativeLog(message), {
+      category: 'machine-precondition', retryable: false, repair: 'none'
+    });
+  }
+  assert.equal(diagnoseNativeLog('CoreSimulatorService connection became invalid').retryable, true);
+});
+test('root symlink must never redirect automatic DerivedData cleanup', () => {
+  const parent = scratch(), outside = scratch();
+  try {
+    const cache = join(outside, 'ios/build/local-release/DerivedData');
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, 'user-file'), 'keep');
+    const linked = join(parent, 'linked-worktree');
+    symlinkSync(outside, linked);
+    assert.throws(() => clearIsolatedDerivedData(linked), /linked worktree root/);
+    assert.equal(readFileSync(join(cache, 'user-file'), 'utf8'), 'keep');
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
