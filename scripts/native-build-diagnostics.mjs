@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Deterministic, fail-closed native build diagnosis; no source-file rewrites. */
-import { openSync, readSync, closeSync, statSync, lstatSync, rmSync } from 'node:fs';
+import { constants, openSync, readSync, closeSync, fstatSync, lstatSync, rmSync } from 'node:fs';
 import { resolve, join, relative, sep } from 'node:path';
 
 const MAX_READ = 1024 * 1024;
@@ -51,16 +51,33 @@ export function diagnoseNativeLog(log) {
 }
 export function readNativeLogTail(path) {
   const metadata = lstatSync(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 32 * 1024 * 1024)
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 ||
+      metadata.size > 32 * 1024 * 1024)
     throw Error('Native build log is missing or unsafe to inspect');
-  const fd = openSync(path, 'r');
+  // Open without following symlinks, then validate the opened inode rather than
+  // trusting the path inspected above (which could have changed in between).
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
-    const opened = statSync(path);
-    if (opened.size !== metadata.size || opened.ino !== metadata.ino)
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== metadata.dev ||
+        opened.ino !== metadata.ino || opened.nlink !== 1 ||
+        opened.size !== metadata.size)
       throw Error('Native build log changed during diagnosis');
-    const n = Math.min(metadata.size, MAX_READ), buffer = Buffer.alloc(n);
-    if (readSync(fd, buffer, 0, n, metadata.size - n) !== n)
-      throw Error('Native build log shortened during diagnosis');
+    const n = Math.min(opened.size, MAX_READ), buffer = Buffer.alloc(n);
+    let offset = 0;
+    while (offset < n) {
+      const count = readSync(fd, buffer, offset, n - offset, opened.size - n + offset);
+      if (count <= 0) throw Error('Native build log shortened during diagnosis');
+      offset += count;
+    }
+    const after = fstatSync(fd);
+    const named = lstatSync(path);
+    if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs ||
+        after.ctimeMs !== opened.ctimeMs || named.dev !== opened.dev ||
+        named.ino !== opened.ino || named.size !== opened.size ||
+        named.mtimeMs !== opened.mtimeMs || named.ctimeMs !== opened.ctimeMs ||
+        named.isSymbolicLink() || named.nlink !== 1)
+      throw Error('Native build log changed during reading');
     return buffer.toString('utf8');
   } finally { closeSync(fd); }
 }

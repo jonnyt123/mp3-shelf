@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, linkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { diagnoseNativeLog, clearIsolatedDerivedData, readNativeLogTail } from './native-build-diagnostics.mjs';
@@ -124,6 +124,18 @@ test('diagnostics reject symlinks and use only the bounded log tail', () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('native log diagnosis rejects hard-linked files and preserves the final bounded megabyte', () => {
+  const root = scratch();
+  try {
+    const log = join(root, 'log');
+    writeFileSync(log, 'old transient\\n' + 'X'.repeat(1024 * 1024) + '\\nNo space left on device');
+    assert.match(readNativeLogTail(log), /No space left on device/);
+    assert.doesNotMatch(readNativeLogTail(log), /old transient/);
+    const hardlink = join(root, 'hardlink');
+    linkSync(log, hardlink);
+    assert.throws(() => readNativeLogTail(log), /unsafe/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('fatal toolchain, disk, permissions and dyld failures override transient retry hints', () => {
   for (const fatal of [
     'error: No space left on device',
