@@ -1882,9 +1882,13 @@ final class MusicLibrary: ObservableObject {
                     if retryFailure != nil {
                         details.append("Recording lookup was interrupted; retrying with the existing five-attempt limit")
                     }
+                    // Lookup results must be durable before any download ticket
+                    // can be created. A failed checkpoint must not consume the
+                    // selected source or advance this wish on a later restart.
+                    guard job.isCurrent(in: discoveryJobs, at: index) else { break }
                     job.saveLookupDetails(details, for: wish.id)
                     discoveryJobs[index] = job
-                    persistDiscovery()
+                    guard persistDiscovery() else { throw CancellationError() }
                     if let retryFailure { throw retryFailure }
                     if let catalogError, candidates.isEmpty && !healthyLookup { throw catalogError }
                     if Task.isCancelled || !networkAllowsDiscovery(for: playlistID) ||
@@ -1895,6 +1899,14 @@ final class MusicLibrary: ObservableObject {
                     guard BackgroundDownloadBackpressure.mayEnqueue(
                         outstandingTransfers: BackgroundAudioDownloader.shared.pendingCount()
                     ) else { break }
+                    // A playlist refresh, pause, or storage fault during an
+                    // awaited lookup invalidates the local job snapshot. Never
+                    // enqueue a transfer against that obsolete snapshot.
+                    guard !discoveryCheckpointNeedsRetry,
+                          !Task.isCancelled,
+                          job.isCurrent(in: discoveryJobs, at: index),
+                          !job.isPaused,
+                          hasCurrentSourceRequest(wish, for: playlistID) else { break }
                     if hasOfflineRecording(matching: wish) {
                         job.record(.alreadyPresent)
                     } else if BackgroundAudioDownloader.shared.isQueued(wish, for: playlistID) {
