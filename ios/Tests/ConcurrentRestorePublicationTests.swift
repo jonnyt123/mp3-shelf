@@ -182,3 +182,50 @@ do { _ = try recoverLinkedStage(replacedStage, symlinkDestination); fatalError("
 catch PublishFailure.unsafeStage { }
 check((try Data(contentsOf: replacedStage)) == equalBytes, "symlink recovery lost audio")
 print("PASS: 32 post-link crash recoveries, idempotent retry, ABA inode conflict, and symlink rejection (model only)")
+
+ 
+// Recovery failure matrix: do not convert missing, replaced, or malicious
+// filesystem entries into successful restore receipts.
+for i in 0..<24 {
+    let stage = root.appendingPathComponent("missing-destination-\(i).part")
+    let destination = root.appendingPathComponent("missing-destination-\(i).mp3")
+    let payload = Data(repeating: UInt8(i + 1), count: 4096 + i)
+    try payload.write(to: stage)
+    check(try recoverLinkedStage(stage, destination) == .missing, "missing destination reported success")
+    check((try Data(contentsOf: stage)) == payload, "missing destination destroyed staged bytes")
+    check(!fm.fileExists(atPath: destination.path), "missing destination unexpectedly created")
+}
+for i in 0..<24 {
+    let stage = root.appendingPathComponent("replaced-\(i).part")
+    let destination = root.appendingPathComponent("replaced-\(i).mp3")
+    let staged = Data(repeating: UInt8(i + 30), count: 2048 + i)
+    let replacement = Data(repeating: UInt8(i + 60), count: 2048 + i)
+    try staged.write(to: stage)
+    let linked = stage.path.withCString { source in
+        destination.path.withCString { target in link(source, target) }
+    }
+    check(linked == 0, "could not construct replacement fixture")
+    try fm.removeItem(at: destination)
+    try replacement.write(to: destination)
+    check(try recoverLinkedStage(stage, destination) == .conflict, "replaced destination falsely recovered")
+    check((try Data(contentsOf: stage)) == staged, "replacement conflict discarded staged audio")
+    check((try Data(contentsOf: destination)) == replacement, "replacement conflict overwrote destination")
+}
+let maliciousStage = root.appendingPathComponent("recovery-stage-symlink.part")
+let maliciousDestination = root.appendingPathComponent("recovery-stage-symlink.mp3")
+try fm.createSymbolicLink(at: maliciousStage, withDestinationURL: outside)
+try original.write(to: maliciousDestination)
+do {
+    _ = try recoverLinkedStage(maliciousStage, maliciousDestination)
+    fatalError("recovery accepted symlinked stage")
+} catch PublishFailure.unsafeStage { }
+check((try Data(contentsOf: outside)) == original, "symlink recovery changed unrelated audio")
+check((try Data(contentsOf: maliciousDestination)) == original, "symlink recovery changed destination")
+let danglingStage = root.appendingPathComponent("dangling-stage.part")
+let danglingDestination = root.appendingPathComponent("dangling-destination.mp3")
+try fm.createSymbolicLink(at: danglingStage, withDestinationURL: root.appendingPathComponent("absent-audio"))
+check(try recoverLinkedStage(danglingStage, danglingDestination) == .missing,
+      "dangling symlink stage did not fail closed as missing")
+check((try fm.destinationOfSymbolicLink(atPath: danglingStage.path)).contains("absent-audio"),
+      "dangling symlink was removed")
+print("PASS: 24 missing destinations, 24 replacement conflicts, live and dangling stage symlink preservation (model only)")
