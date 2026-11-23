@@ -541,11 +541,15 @@ enum AudioSourceFinder {
         // phrase to agree on both sides before unattended selection.
         func liveVenue(_ value: String) -> [String]? {
             let words = tokens(value)
-            guard let live = words.firstIndex(of: "live"), live + 2 < words.count,
-                  ["at", "in", "from"].contains(words[live + 1]) else {
-                return nil
-            }
-            let suffix = Array(words[(live + 2)...])
+            // Performance metadata also uses "recorded at", "live on" and
+            // "concert at". A different named venue/broadcast is not the
+            // same recording, even if the catalog title omits that detail.
+            let qualifiers: Set<String> = ["live", "concert", "recorded"]
+            guard let marker = words.indices.first(where: {
+                qualifiers.contains(words[$0]) && $0 + 2 < words.count &&
+                    ["at", "in", "from", "on"].contains(words[$0 + 1])
+            }) else { return nil }
+            let suffix = Array(words[(marker + 2)...])
             // Stop at common edition boundaries; the venue itself is compared
             // conservatively as a complete normalized token sequence.
             let boundaries: Set<String> = ["remastered", "remaster", "mix",
