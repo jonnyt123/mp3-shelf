@@ -137,3 +137,25 @@ test('native stage refuses ambiguous smoke, failed reason and device/CI approval
   x.qaRecord = x.qaRecord.replace('- Failure reason: none\\n', '');
   assert(nativeStageErrors(x).some(error => error.includes('Missing native QA field: Failure reason')));
 });
+
+test('native stage rejects duplicate, failed and out-of-order receipt steps', () => {
+  const duplicate = valid();
+  duplicate.receipt.steps.push({ name: 'native-local-release', success: false });
+  assert(nativeStageErrors(duplicate).some(e => e.includes('duplicate')));
+
+  const failedExtra = valid();
+  failedExtra.receipt.steps.unshift({ name: 'node-release-safety', success: false });
+  assert(nativeStageErrors(failedExtra).some(e => e.includes('unsuccessful')));
+
+  const reversed = valid();
+  reversed.receipt.steps.reverse();
+  assert(nativeStageErrors(reversed).some(e => e.includes('subsequent')));
+
+  const malformed = valid();
+  malformed.receipt.steps.push({ success: true });
+  assert(nativeStageErrors(malformed).some(e => e.includes('malformed')));
+
+  const extraSuccessful = valid();
+  extraSuccessful.receipt.steps.unshift({ name: 'node-release-safety', success: true });
+  assert.deepEqual(nativeStageErrors(extraSuccessful), []);
+});
