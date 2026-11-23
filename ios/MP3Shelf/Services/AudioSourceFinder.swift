@@ -386,6 +386,16 @@ enum AudioSourceFinder {
                 ("extended-mix", [["extended", "mix"], ["extended", "version"], ["extended", "edit"]]),
                 ("pitch-shifted", [["pitch", "shifted"], ["pitch", "shift"], ["pitched", "up"], ["pitched", "down"]]),
                 ("radio-mix", [["radio", "mix"]]),
+                // Radio edits, sped-up social edits and alternate masters can
+                // retain the same normalized title and near-identical duration.
+                // Never silently substitute one for the playlist recording.
+                ("radio-edit", [["radio", "edit"], ["single", "edit"]]),
+                ("album-edit", [["album", "edit"], ["album", "version"]]),
+                ("sped-up", [["sped", "up"], ["speed", "up"], ["speedup"]]),
+                ("slowed", [["slowed"], ["slowed", "down"], ["slow", "version"]]),
+                ("reversed", [["reversed"], ["reverse", "audio"]]),
+                ("vocal-removal", [["vocal", "removed"], ["vocals", "removed"],
+                                    ["vocal", "removal"]]),
                 ("club-edit", [["club", "edit"]]),
                 ("dubstep-remix", [["dubstep", "remix"]]),
                 ("8-bit-cover", [["8", "bit"], ["8bit"]]),
