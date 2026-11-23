@@ -241,6 +241,22 @@ describe("durable backup export",()=>{
   expect((await parseLibraryBackup(backup)).tracks).toHaveLength(2);
  });
 
+ it("rejects a crafted FNV32 collision instead of silently exporting replaced audio",async()=>{
+  const storage=store();
+  // These distinct eight-byte payloads both hash to 4016251539 under
+  // the former single 32-bit FNV-1a snapshot fingerprint.
+  const first=new Uint8Array([92,238,245,97,54,212,41,99]);
+  const second=new Uint8Array([234,247,205,244,200,133,5,54]);
+  const original={...track,size:8,blob:new Blob([first])};
+  const replaced={...original,blob:new Blob([second])};
+  let reads=0;
+  await expect(createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[original]:[replaced];
+  })).rejects.toThrow("Saved recording bytes changed");
+  expect(reads).toBe(2);
+  expect(storage.values.get(key)).toBe(JSON.stringify(playlist));
+ });
  it("rejects same-size audio replacement even when all metadata is identical",async()=>{
   const storage=store();
   const changed={...track,blob:new Blob([new Uint8Array([9,8,7])])};
