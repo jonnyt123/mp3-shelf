@@ -85,7 +85,7 @@ enum AudioSourceFinderTests {
             maximumBytes: 1024)) == nil,
             "HTML body without content type cannot enter catalog matching")
         verify((try? AudioSourceFinder.validatedCatalogBody(
-            Data("{\\"query\\":{}}".utf8), response: mislabeledHTML,
+            Data(#"{"query":{}}"#.utf8), response: mislabeledHTML,
             maximumBytes: 1024)) != nil,
             "valid JSON with JSON content type remains eligible")
         verify((try? AudioSourceFinder.validatedCatalogBody(
