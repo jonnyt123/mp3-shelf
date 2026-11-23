@@ -52,7 +52,7 @@ export function auditNativeReconciliation({ candidateSha, proposals } = {}) {
     if (!Array.isArray(changedFiles) || changedFiles.length === 0 ||
         changedFiles.length > 500 || new Set(changedFiles).size !== changedFiles.length ||
         changedFiles.some(path => typeof path !== 'string' ||
-          !path.startsWith('ios/') || path.includes('..') || path.includes('\\')))
+          !path.startsWith('ios/') || path.includes('\\') ||\n          path.split('/').some(part => !part || part === '.' || part === '..') ||\n          /[\\x00-\\x1f\\x7f]/.test(path)))
       blockers.push('PR #' + number + ' has missing or unexpected changed paths.');
     else {
       for (const path of changedFiles) {
@@ -120,7 +120,7 @@ export function auditLiveNativeBranches(root) {
   const base = prMetadata(project, 29);
   const candidateSha = remoteRef(project, 'refs/heads/feat/ios-consolidated-candidate');
   if (base.state !== 'open' || base.draft !== true ||
-      base.head?.sha !== candidateSha || base.head?.repo?.full_name !== REPO ||
+      base.head?.sha !== candidateSha ||\n      base.head?.ref !== 'feat/ios-consolidated-candidate' ||\n      base.head?.repo?.full_name !== REPO ||
       base.base?.repo?.full_name !== REPO)
     throw Error('Current consolidated PR #29 changed or lost draft status.');
   const snapshots = PRS.map(number => ({
@@ -168,7 +168,7 @@ export function auditLiveNativeBranches(root) {
   const freshBase = prMetadata(project, 29);
   if (remoteRef(project, 'refs/heads/feat/ios-consolidated-candidate') !== candidateSha ||
       freshBase.head?.sha !== candidateSha || freshBase.state !== 'open' ||
-      freshBase.draft !== true || freshBase.base?.ref !== base.base?.ref ||
+      freshBase.draft !== true ||\n      freshBase.head?.ref !== base.head?.ref ||\n      freshBase.head?.repo?.full_name !== base.head?.repo?.full_name ||\n      freshBase.base?.ref !== base.base?.ref ||
       freshBase.base?.sha !== base.base?.sha ||
       freshBase.base?.repo?.full_name !== base.base?.repo?.full_name)
     throw Error('Consolidated native candidate metadata or source advanced during reconciliation audit.');
