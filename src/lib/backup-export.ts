@@ -20,6 +20,18 @@ export async function createStoredLibraryBackup(
  const baseline=storage.getItem(key);
  const playlists=parseStoredPlaylists(baseline);
  const tracks=await loadTracks();
+ const assertUniqueTracks=(items:Track[])=>{
+  // An ID is the stable identity of a saved recording. Duplicate IDs make
+  // the snapshot map overwrite an earlier recording and can produce a
+  // plausible archive that silently loses one of the two payloads on restore.
+  const seen=new Set<string>();
+  for(const item of items){
+   if(!item.id||seen.has(item.id))
+    throw new Error("Saved recordings contain duplicate or missing identities. No backup was created.");
+   seen.add(item.id);
+  }
+ };
+ assertUniqueTracks(tracks);
  const assertSnapshot=()=>{
   assertNoRecovery();
   if(storage.getItem(key)!==baseline)
@@ -123,6 +135,7 @@ export async function createStoredLibraryBackup(
  assertSnapshot();
  const latest=await loadTracks();
  assertSnapshot();
+ assertUniqueTracks(latest);
  const signature=(items:Track[])=>JSON.stringify(items.map(item=>[
   item.id,item.name,item.originalName,item.artist,item.album,item.size,
   item.type,item.importedAt,item.blob.size,item.blob.type,
