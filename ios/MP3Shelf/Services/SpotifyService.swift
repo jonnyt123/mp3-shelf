@@ -248,6 +248,7 @@ final class SpotifyService: NSObject, ObservableObject {
         }
         var next: URL? = URL(string: "https://api.spotify.com/v1/playlists/\(playlist.id)/items?limit=50")
         var wishes: [PlaylistWish] = []
+        var unavailableCount = 0
         var visitedPages = Set<URL>()
         while let url = next {
             guard visitedPages.insert(url).inserted, visitedPages.count <= 500 else {
@@ -262,7 +263,10 @@ final class SpotifyService: NSObject, ObservableObject {
                 // is present. Select the first *usable recording*, rather
                 // than allowing a non-track item to hide a valid fallback.
                 let track = entry.usableTrack
-                guard let track else { continue }
+                guard let track else {
+                    unavailableCount += 1
+                    continue
+                }
                 // Spotify may return unavailable, partially redacted, or malformed
                 // playlist entries. Never feed missing artist/title identities to
                 // automatic recording discovery: a title-only match can import a
@@ -271,7 +275,10 @@ final class SpotifyService: NSObject, ObservableObject {
                 let artists = (track.artists ?? []).map {
                     $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
                 }.filter { !$0.isEmpty }
-                guard !title.isEmpty, !artists.isEmpty else { continue }
+                guard !title.isEmpty, !artists.isEmpty else {
+                    unavailableCount += 1
+                    continue
+                }
                 // Zero/negative durations are not usable matching evidence.
                 // Keep the track but omit that evidence rather than treating
                 // zero seconds as a valid full-length recording.
@@ -289,7 +296,17 @@ final class SpotifyService: NSObject, ObservableObject {
         }
         try Task.checkCancellation()
         guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
-        if wishes.isEmpty { throw SpotifyError.api("No usable songs were returned. Spotify currently limits playlist access to playlists you own or collaborate on.") }
+        if wishes.isEmpty {
+            throw SpotifyError.api("No usable songs were returned. Spotify may restrict playlist access or the playlist may contain unavailable recordings.")
+        }
+        // Do not silently imply a complete playlist import when Spotify has
+        // withheld recordings or returned episodes/redacted entries. The
+        // successful wishes remain usable, in their original playlist order.
+        if unavailableCount > 0 {
+            message = "Imported metadata for \(wishes.count) songs; \(unavailableCount) playlist entries were unavailable and were not downloaded."
+        } else {
+            message = nil
+        }
         return wishes
     }
 
