@@ -556,7 +556,28 @@ enum AudioSourceFinder {
                                            "edit", "version", "recording"]
             return Array(suffix.prefix(while: { !boundaries.contains($0) }))
         }
-        return liveVenue(fileStem) == liveVenue(requestedTitle)
+        guard liveVenue(fileStem) == liveVenue(requestedTitle) else { return false }
+
+        // Numbered demo, take and mix revisions can share the same artist,
+        // normalized title and duration. A generic edition category is not
+        // enough to identify which recorded performance was requested.
+        // Only digits immediately following an explicit recording qualifier
+        // count; ordinary numbered song titles remain unaffected.
+        func numberedRevisions(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            let qualifiers: Set<String> = ["demo", "take", "mix", "version", "edit"]
+            var revisions = Set<String>()
+            for index in words.indices where qualifiers.contains(words[index]) {
+                let next = words.index(after: index)
+                guard next < words.endIndex else { continue }
+                let number = words[next]
+                guard number.count <= 3, !number.isEmpty,
+                      number.allSatisfy(\.isNumber) else { continue }
+                revisions.insert("\(words[index]):\(Int(number) ?? 0)")
+            }
+            return revisions
+        }
+        return numberedRevisions(fileStem) == numberedRevisions(requestedTitle)
     }
 
     // Avoid spending an entire iOS background processing window on up to
