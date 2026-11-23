@@ -151,6 +151,9 @@ final class MusicLibrary: ObservableObject {
     // A failed checkpoint must never permit more source lookups to advance an
     // in-memory cursor that would be lost on process termination.
     private var discoveryCheckpointNeedsRetry = false
+    // Never replace an existing checkpoint whose bytes could not be read or decoded.
+    // Unlike a failed write, this state cannot be recovered by retrying an encode.
+    private var discoveryCheckpointUnreadable = false
 
     init() {
         let documents = manager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -175,15 +178,23 @@ final class MusicLibrary: ObservableObject {
             }
             isLibraryPersistenceSafe = true
             recoverInterruptedImports()
-            if let saved = try? Data(contentsOf: discoveryURL),
-               let decoded = try? JSONDecoder().decode([SourceDiscoveryJob].self, from: saved) {
-                discoveryJobs = decoded.compactMap { checkpoint in
-                    guard let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) else { return nil }
-                    var repaired = checkpoint
-                    repaired.repairPersistedCheckpoint()
-                    // A saved playlist can be newer than the last discovery checkpoint.
-                    repaired.refreshMissingWishes(playlist.missingTracks)
-                    return repaired
+            // A missing checkpoint is a fresh install. Existing but unreadable data
+            // must remain untouched: treating it as an empty queue loses retry IDs.
+            if manager.fileExists(atPath: discoveryURL.path) {
+                do {
+                    let saved = try Data(contentsOf: discoveryURL)
+                    let decoded = try JSONDecoder().decode([SourceDiscoveryJob].self, from: saved)
+                    discoveryJobs = decoded.compactMap { checkpoint in
+                        guard let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) else { return nil }
+                        var repaired = checkpoint
+                        repaired.repairPersistedCheckpoint()
+                        repaired.refreshMissingWishes(playlist.missingTracks)
+                        return repaired
+                    }
+                } catch {
+                    discoveryCheckpointUnreadable = true
+                    libraryStorageError = "Saved discovery progress could not be opened. Existing checkpoint bytes are preserved; discovery is paused until the checkpoint can be recovered."
+                    print("MP3 Shelf preserved unreadable discovery checkpoint: \\(error)")
                 }
             }
         } catch {
@@ -1557,6 +1568,10 @@ final class MusicLibrary: ObservableObject {
 
     @discardableResult
     private func persistDiscovery() -> Bool {
+        guard !discoveryCheckpointUnreadable else {
+            libraryStorageError = "Discovery checkpoint recovery is required before progress can be saved. Existing checkpoint bytes are preserved."
+            return false
+        }
         do {
             let data = try JSONEncoder().encode(discoveryJobs)
             try data.write(to: discoveryURL, options: .atomic)
