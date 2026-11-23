@@ -8,13 +8,16 @@ import Glibc
 // Standalone POSIX filesystem model, NOT production restore integration.
 // swift -swift-version 6 ios/Tests/ConcurrentRestorePublicationTests.swift
 enum PublishFailure: Error { case unsafeStage, conflict, io(Int32) }
-func publish(_ stage: URL, to destination: URL) throws {
+func publish(_ stage: URL, to destination: URL,
+             linkOperation: (URL, URL) -> Int32 = { source, target in
+                 source.path.withCString { a in target.path.withCString { b in link(a, b) } }
+             }) throws {
     let attrs = try FileManager.default.attributesOfItem(atPath: stage.path)
     guard attrs[.type] as? FileAttributeType == .typeRegular,
           (attrs[.size] as? NSNumber)?.int64Value ?? 0 > 0,
           (attrs[.referenceCount] as? NSNumber)?.intValue == 1 else { throw PublishFailure.unsafeStage }
     // link(2) creates the destination exclusively; rename(2) would overwrite.
-    let result = stage.path.withCString { a in destination.path.withCString { b in link(a, b) } }
+    let result = linkOperation(stage, destination)
     guard result == 0 else {
         let code = errno
         if code == EEXIST { throw PublishFailure.conflict }
@@ -229,3 +232,35 @@ check(try recoverLinkedStage(danglingStage, danglingDestination) == .missing,
 check((try fm.destinationOfSymbolicLink(atPath: danglingStage.path)).contains("absent-audio"),
       "dangling symlink was removed")
 print("PASS: 24 missing destinations, 24 replacement conflicts, live and dangling stage symlink preservation (model only)")
+
+
+// Inject real POSIX error codes at the exclusive-publication boundary. This
+// tests crash/disk-pressure handling deterministically without filling a disk,
+// changing user audio, or depending on machine-specific permissions.
+let faultStage = root.appendingPathComponent("fault-injection.part")
+let faultTarget = root.appendingPathComponent("fault-injection.mp3")
+let faultBytes = Data(repeating: 0x71, count: 65536)
+try faultBytes.write(to: faultStage)
+for code: Int32 in [ENOSPC, EDQUOT, EACCES, EIO, EROFS] {
+    var attempted = 0
+    do {
+        try publish(faultStage, to: faultTarget, linkOperation: { source, target in
+            attempted += 1
+            check(source == faultStage && target == faultTarget, "fault hook received wrong paths")
+            errno = code
+            return -1
+        })
+        fatalError("publication ignored injected errno \(code)")
+    } catch PublishFailure.io(let observed) {
+        check(observed == code, "publication lost errno \(code)")
+    }
+    check(attempted == 1, "publication retried an unsafe filesystem failure")
+    check(!fm.fileExists(atPath: faultTarget.path), "failure created destination")
+    check((try Data(contentsOf: faultStage)) == faultBytes, "failure discarded staged audio")
+    check((try Data(contentsOf: outside)) == original, "failure changed unrelated audio")
+}
+check(!fm.fileExists(atPath: faultTarget.path), "fault injection left destination behind")
+try publish(faultStage, to: faultTarget)
+check((try Data(contentsOf: faultTarget)) == faultBytes, "retry did not publish original audio")
+check(!fm.fileExists(atPath: faultStage.path), "successful retry retained staged file")
+print("PASS: ENOSPC, EDQUOT, EACCES, EIO, EROFS fault injection preserves staged/user audio; retry succeeds (model only)")
