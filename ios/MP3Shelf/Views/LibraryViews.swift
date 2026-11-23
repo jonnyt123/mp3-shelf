@@ -663,6 +663,35 @@ struct LibraryView: View {
         searchResultsFocused = false
     }
 
+    // The Files sheet dismisses before the asynchronous copy completes. Without
+    // an explicit progress state, first-time listeners see an empty library and
+    // a disabled Import button with no explanation of what is happening.
+    @ViewBuilder private var firstImportStatus: some View {
+        if importInProgress || library.isImporting {
+            HStack(alignment: .center, spacing: 12) {
+                ProgressView()
+                    .tint(ShelfTheme.accent)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Importing your music…")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Keep MP3 Shelf open while audio is copied to your library.")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Importing music. Keep MP3 Shelf open while audio is copied.")
+            .accessibilityAddTraits(.updatesFrequently)
+        } else if showFilePicker {
+            Text("Choose audio files in Files, or cancel to return to your library.")
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.updatesFrequently)
+        }
+    }
+
     private var sortMenu: some View {
         Menu {
             Picker("Sort songs", selection: $sortMode) {
@@ -1181,6 +1210,7 @@ struct LibraryView: View {
                                         title: "Your library is empty",
                                         subtitle: "Import audio from Files to start listening offline. Clear the search to browse your new songs.",
                                         symbol: "music.note.list")
+                                    firstImportStatus
                                     Button {
                                         presentAudioImporter()
                                     } label: {
@@ -1496,6 +1526,7 @@ struct LibraryView: View {
                                         title: "Your library is empty",
                                         subtitle: "Import audio saved on this iPhone to start listening offline.",
                                         symbol: "music.note.list")
+                                    firstImportStatus
                                     Button {
                                         presentAudioImporter()
                                     } label: {
