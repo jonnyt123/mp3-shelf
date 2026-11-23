@@ -431,4 +431,33 @@ describe("durable backup export",()=>{
   expect(new Uint8Array(await restored.tracks[0].blob.slice(300*1024,300*1024+1).arrayBuffer())[0]).toBe(77);
  });
 
+ it("rejects duplicate recording IDs before reading any media or creating an archive",async()=>{
+  const storage=store();
+  const first={...track};
+  const second={...track,name:"Distinct recording with reused ID",blob:new Blob([new Uint8Array([9,8,7])])};
+  const before=new Map(storage.values);
+  const read=vi.fn(()=>Promise.resolve([first,second]));
+  await expect(createStoredLibraryBackup(storage,key,read))
+   .rejects.toThrow("duplicate or missing identities");
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(storage.values).toEqual(before);
+ });
+ it("rejects a duplicate ID introduced during the second IndexedDB snapshot",async()=>{
+  const storage=store();
+  const duplicate={...track,name:"Concurrent duplicate",blob:new Blob([new Uint8Array([4,5,6])])};
+  let reads=0;
+  await expect(createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[track]:[track,duplicate];
+  })).rejects.toThrow("duplicate or missing identities");
+  expect(reads).toBe(2);
+  expect(storage.values.get(key)).toBe(JSON.stringify(playlist));
+ });
+ it("accepts two distinct identities with identical audio bytes",async()=>{
+  const storage=store();
+  const second={...track,id:"distinct-track",name:"Same recording bytes"};
+  const parsed=await parseLibraryBackup(await createStoredLibraryBackup(storage,key,async()=>[track,second]));
+  expect(parsed.tracks.map(item=>item.id).sort()).toEqual(["distinct-track","fresh-export"]);
+ });
+
 });
