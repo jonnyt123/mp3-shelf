@@ -61,9 +61,19 @@ export function nativeStageErrors({ proposed, current, receipt, qaRecord }) {
       receipt.cleanCheckout !== true || receipt.exitCode !== 0)
     errors.push('A successful SHA-bound native/all local receipt is required.');
   const nativeSteps = Array.isArray(receipt?.steps) ? receipt.steps : [];
-  if (!nativeSteps.some(s => s?.name === 'native-local-release' && s.success === true) ||
-      !nativeSteps.some(s => s?.name === 'post-native-checkout-integrity' && s.success === true))
-    errors.push('Native Xcode execution and post-build Git checkout integrity are required.');
+  // A successful step cannot cancel out a second failed or duplicated attempt.
+  // The integrity check must follow the native build, never precede it.
+  const nativeNames = nativeSteps.map(step => step?.name);
+  const buildIndex = nativeNames.indexOf('native-local-release');
+  const integrityIndex = nativeNames.indexOf('post-native-checkout-integrity');
+  if (buildIndex < 0 || integrityIndex <= buildIndex ||
+      nativeSteps[buildIndex]?.success !== true ||
+      nativeSteps[integrityIndex]?.success !== true)
+    errors.push('Native Xcode execution and subsequent post-build Git checkout integrity are required.');
+  if (new Set(nativeNames).size !== nativeNames.length ||
+      nativeSteps.some(step => !step || typeof step.name !== 'string' ||
+        step.success !== true))
+    errors.push('Native receipt contains duplicate, malformed or unsuccessful verification steps.');
   const lines = typeof qaRecord === 'string' ? qaRecord : '';
   const fields = new Map();
   for (const line of lines.split(/\r?\n/)) {
