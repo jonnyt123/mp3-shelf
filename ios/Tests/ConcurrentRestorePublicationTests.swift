@@ -155,8 +155,8 @@ func recoverLinkedStage(_ stage: URL, _ destination: URL) throws -> RecoveryResu
     return .completed
 }
 for i in 0..<32 {
-    let stage = root.appendingPathComponent("recovery-\\(i).part")
-    let destination = root.appendingPathComponent("recovery-\\(i).mp3")
+    let stage = root.appendingPathComponent("recovery-\(i).part")
+    let destination = root.appendingPathComponent("recovery-\(i).mp3")
     let payload = Data(repeating: UInt8(i + 17), count: 8192 + i)
     try payload.write(to: stage)
     let linked = stage.path.withCString { source in
