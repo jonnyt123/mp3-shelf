@@ -1423,7 +1423,11 @@ final class MusicLibrary: ObservableObject {
     func startAutomaticDownloads(for playlistID: UUID) {
         // An unreadable on-disk checkpoint owns the previous retry identities.
         // Do not manufacture a replacement job that cannot be safely committed.
-        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return }
+        // Manual retry is also a recovery entry point: users must not need to
+        // background and foreground the app to unlock a previously protected
+        // checkpoint. A failed re-read/write leaves the original bytes intact.
+        guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe else { return }
+        if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
         guard let playlist = playlists.first(where: { $0.id == playlistID }),
               !playlist.missingTracks.isEmpty else { return }
         if let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID && !$0.isComplete }) {
@@ -1451,7 +1455,11 @@ final class MusicLibrary: ObservableObject {
     }
 
     func resumeSourceDiscovery(for playlistID: UUID) {
-        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return }
+        // Manual retry is also a recovery entry point: users must not need to
+        // background and foreground the app to unlock a previously protected
+        // checkpoint. A failed re-read/write leaves the original bytes intact.
+        guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe else { return }
+        if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
         guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) else { return }
         discoveryJobs[index].isPaused = false
         discoveryJobs[index].lastError = nil
