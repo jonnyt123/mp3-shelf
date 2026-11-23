@@ -499,7 +499,22 @@ final class SpotifyService: NSObject, ObservableObject {
         var tokenData: Data?
         while tokenData == nil {
             try Task.checkCancellation()
-            let (data, response) = try await apiSession.data(for: request)
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await apiSession.data(for: request)
+            } catch {
+                // A refresh grant is idempotent enough for bounded transport
+                // recovery; authorization-code exchange is single-use and must
+                // never be replayed after an ambiguous network interruption.
+                guard !Task.isCancelled,
+                      isRefreshGrant,
+                      retryCount < 2,
+                      SpotifyTransportRetryPolicy.isTransient(error) else { throw error }
+                retryCount += 1
+                try await Task.sleep(nanoseconds: UInt64(retryCount) * 1_000_000_000)
+                continue
+            }
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse else {
                 throw SpotifyError.api("Spotify token endpoint returned no HTTP response.")
