@@ -1452,7 +1452,6 @@ final class MusicLibrary: ObservableObject {
         // previously paused job in memory. In particular, preserve the prior
         // cursor and retry identity until the updated queue is durable.
         let previousJobs = discoveryJobs
-        pendingDiscoveryPauses.remove(playlistID)
         if let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID && !$0.isComplete }) {
             discoveryJobs[index].isPaused = false
             discoveryJobs[index].lastError = nil
@@ -1466,6 +1465,7 @@ final class MusicLibrary: ObservableObject {
             discoveryJobs = previousJobs
             return
         }
+        pendingDiscoveryPauses.remove(playlistID)
         resumePendingDiscovery()
     }
 
