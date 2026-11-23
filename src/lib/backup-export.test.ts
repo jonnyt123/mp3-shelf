@@ -295,6 +295,37 @@ describe("durable backup export",()=>{
   })).rejects.toThrow("Saved recording bytes changed");
   expect(reads).toBe(2);
  });
+ it("rejects a large same-length audio replacement outside the former three probe windows",async()=>{
+  const storage=store();
+  const bytes=new Uint8Array(2*1024*1024);
+  bytes.fill(7);
+  const replaced=bytes.slice();
+  // Former probes covered the first, middle and last 64 KiB only.
+  replaced[384*1024]=8;
+  const original={...track,size:bytes.length,blob:new Blob([bytes])};
+  const changed={...original,blob:new Blob([replaced])};
+  let reads=0;
+  await expect(createStoredLibraryBackup(storage,key,async()=>{
+   reads++;
+   return reads===1?[original]:[changed];
+  })).rejects.toThrow("Saved recording bytes changed");
+  expect(reads).toBe(2);
+ });
+ it("fingerprints a large recording with bounded reads and browser task yields",async()=>{
+  const storage=store();
+  const bytes=new Uint8Array(2*1024*1024);
+  const media=new Blob([bytes]);
+  const originalSlice=media.slice.bind(media);
+  const lengths:number[]=[];
+  Object.defineProperty(media,"slice",{value:(start?:number,end?:number,type?:string)=>{
+   lengths.push((end??media.size)-(start??0));
+   return originalSlice(start,end,type);
+  }});
+  await createStoredLibraryBackup(storage,key,async()=>[{...track,size:bytes.length,blob:media}]);
+  // Two complete snapshots, before and after the media-stream validation.
+  expect(lengths).toHaveLength(64);
+  expect(lengths.every(length=>length>0&&length<=64*1024)).toBe(true);
+ });
  it("bounds each fingerprint read to 64 KiB for a medium recording",async()=>{
   const storage=store();
   const bytes=new Uint8Array(512*1024);
