@@ -208,3 +208,38 @@ for i in 0..<48 {
     check(try readJournal(journal)?.generation == 1, "valid retry failed")
 }
 print("PASS: 48 empty/oversized journal rejection and recovery cases (standalone model only)")
+
+
+// Non-regular journal nodes must be rejected before any read that could block.
+// FIFO reads would hang waiting for a writer; directory reads can fail differently
+// across Darwin/Foundation versions. Neither may be replaced by a new journal.
+for i in 0..<48 {
+    let fifo = root.appendingPathComponent("fifo_\(i).json")
+    let directory = root.appendingPathComponent("directory_\(i).json")
+    let fifoStatus = fifo.path.withCString { mkfifo($0, mode_t(0o600)) }
+    check(fifoStatus == 0, "FIFO fixture setup failed")
+    try fm.createDirectory(at: directory, withIntermediateDirectories: false)
+    let marker = directory.appendingPathComponent("preserve.txt")
+    let markerBytes = Data("PRESERVE-DIRECTORY-\(i)".utf8)
+    try markerBytes.write(to: marker)
+    for candidate in [fifo, directory] {
+        do { _ = try readJournal(candidate); fatalError("non-regular journal read accepted") }
+        catch BoundaryError.unsafe { }
+        do {
+            try publish(SafeJournal(id: "node_\(i)", generation: 1), to: candidate)
+            fatalError("non-regular journal replaced")
+        } catch BoundaryError.unsafe { }
+    }
+    check(try Data(contentsOf: marker) == markerBytes, "directory evidence changed")
+    var fifoInfo = stat()
+    check(fifo.path.withCString { lstat($0, &fifoInfo) == 0 } &&
+          (fifoInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFIFO),
+          "FIFO replaced or removed")
+    try fm.removeItem(at: fifo)
+    try fm.removeItem(at: directory)
+    try publish(SafeJournal(id: "node_\(i)", generation: 1), to: fifo)
+    check(try readJournal(fifo)?.generation == 1, "FIFO path recovery failed")
+    try publish(SafeJournal(id: "node_\(i)", generation: 1), to: directory)
+    check(try readJournal(directory)?.generation == 1, "directory path recovery failed")
+}
+print("PASS: 48 FIFO and directory journal rejection/preservation/recovery sequences (standalone model only)")
