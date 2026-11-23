@@ -8,7 +8,8 @@ import Glibc
 // Standalone adversarial filesystem fixture. Not a production downloader test.
 // swift -swift-version 6 ios/Tests/BackgroundTicketSymlinkBoundaryTests.swift
 struct SafeJournal: Codable, Equatable { let id: String; let generation: Int }
-enum BoundaryError: Error { case unsafe, stale, identityMismatch }
+enum BoundaryError: Error { case unsafe, stale, identityMismatch, oversized }
+let maximumJournalBytes = 64 * 1024
 func hasSafeParent(_ url: URL) -> Bool {
     // Validate every existing ancestor: checking only the immediate parent
     // misses a symlink higher in a nested journal directory.
@@ -43,7 +44,7 @@ func readJournal(_ url: URL, expectedID: String? = nil) throws -> SafeJournal? {
 func publish(_ record: SafeJournal, to destination: URL) throws {
     guard record.id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil,
           record.generation > 0 else { throw BoundaryError.unsafe }
-    guard hasSafeParent(destination) else { throw BoundaryError.unsafe }
+    guard hasSafeParent(destination) else { throw BoundaryError.unsafe }\n    guard try JSONEncoder().encode(record).count <= maximumJournalBytes else { throw BoundaryError.oversized }
     if let old = try readJournal(destination, expectedID: record.id), old.generation >= record.generation { throw BoundaryError.stale }
     let temporary = destination.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".tmp")
     defer { try? FileManager.default.removeItem(at: temporary) }
@@ -187,3 +188,21 @@ for i in 0..<96 {
     check(try Data(contentsOf: journal) == original, "journal hardlink bytes changed")
 }
 print("PASS: 96 hardlink alias read/write isolation cases (standalone model only)")
+
+// Bounded recovery must reject huge and empty journal records before decoding,
+// and preserve their bytes instead of silently replacing damaged evidence.
+for i in 0..<48 {
+    let journal = root.appendingPathComponent("bounded_\(i).json")
+    let payload = i % 2 == 0 ? Data() : Data(repeating: 0x20, count: maximumJournalBytes + i + 1)
+    try payload.write(to: journal)
+    do { _ = try readJournal(journal); fatalError("invalid journal size accepted") }
+    catch BoundaryError.oversized { }
+    do { try publish(SafeJournal(id: "bounded_\(i)", generation: 1), to: journal)
+         fatalError("invalid journal overwritten") }
+    catch BoundaryError.oversized { }
+    check(try Data(contentsOf: journal) == payload, "oversized evidence changed")
+    try fm.removeItem(at: journal)
+    try publish(SafeJournal(id: "bounded_\(i)", generation: 1), to: journal)
+    check(try readJournal(journal)?.generation == 1, "valid retry failed")
+}
+print("PASS: 48 empty/oversized journal rejection and recovery cases (standalone model only)")
