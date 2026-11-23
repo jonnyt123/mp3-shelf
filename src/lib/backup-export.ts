@@ -50,7 +50,7 @@ export async function createStoredLibraryBackup(
   // Iterate lazily so multi-GB libraries do not allocate an offsets array.
   // Each read remains capped at 64 KiB and yields periodically to Safari.
   const chunks=Math.ceil(blob.size/window);
-  let hash=2166136261;
+  // Two independent 32-bit accumulators prevent trivial FNV-1a collisions\n  // from making distinct same-size recordings appear identical.\n  let hash=2166136261;\n  let secondary=0x9e3779b9;
   for(let chunk=0;chunk<chunks;chunk++){
    const offset=chunk*window;
    // A second tab may mutate the library while a large fingerprint is read.
@@ -59,7 +59,7 @@ export async function createStoredLibraryBackup(
    assertSnapshot();
    const bytes=new Uint8Array(await blob.slice(offset,offset+window).arrayBuffer());
    assertSnapshot();
-   for(const byte of bytes)hash=Math.imul(hash^byte,16777619)>>>0;
+   for(const byte of bytes){\n    hash=Math.imul(hash^byte,16777619)>>>0;\n    secondary=Math.imul(secondary^byte,2246822519)>>>0;\n   }
    // Hashing a medium-sized library is CPU-heavy even with bounded buffers.
    // Yield after at most 256 KiB so Safari can paint, process taps and let
    // another tab's storage event become visible before more work is done.
@@ -68,7 +68,7 @@ export async function createStoredLibraryBackup(
     assertSnapshot();
    }
   }
-  return `${blob.size}:${hash}`;
+  return `${blob.size}:${hash}:${secondary}`;
  };
  const sampleTracks=async(items:Track[])=>{
   const samples=new Map<string,string>();
