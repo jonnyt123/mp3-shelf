@@ -1,0 +1,245 @@
+import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
+
+// Standalone adversarial filesystem fixture. Not a production downloader test.
+// swift -swift-version 6 ios/Tests/BackgroundTicketSymlinkBoundaryTests.swift
+struct SafeJournal: Codable, Equatable { let id: String; let generation: Int }
+enum BoundaryError: Error { case unsafe, stale, identityMismatch, oversized }
+let maximumJournalBytes = 64 * 1024
+func hasSafeParent(_ url: URL) -> Bool {
+    // Validate every existing ancestor: checking only the immediate parent
+    // misses a symlink higher in a nested journal directory.
+    var current = url.deletingLastPathComponent().standardizedFileURL
+    while true {
+        var info = stat()
+        let safe = current.path.withCString {
+            lstat($0, &info) == 0 &&
+            (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR)
+        }
+        if !safe { return false }
+        let parent = current.deletingLastPathComponent()
+        if parent.path == current.path { return true }
+        current = parent
+    }
+}
+func isRegularNoFollow(_ url: URL) -> Bool {
+    var info = stat()
+    return url.path.withCString { lstat($0, &info) == 0 && (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) && info.st_nlink == 1 }
+}
+func readJournal(_ url: URL, expectedID: String? = nil) throws -> SafeJournal? {
+    var info = stat()
+    guard hasSafeParent(url) else { throw BoundaryError.unsafe }
+    let exists = url.path.withCString { lstat($0, &info) == 0 }
+    if !exists { return nil }
+    guard isRegularNoFollow(url) else { throw BoundaryError.unsafe }
+    guard info.st_size > 0 && info.st_size <= off_t(maximumJournalBytes) else { throw BoundaryError.oversized }
+    let record = try JSONDecoder().decode(SafeJournal.self, from: Data(contentsOf: url))
+    guard record.generation > 0, record.id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else { throw BoundaryError.unsafe }
+    if let expectedID, record.id != expectedID { throw BoundaryError.identityMismatch }
+    return record
+}
+func publish(_ record: SafeJournal, to destination: URL) throws {
+    guard record.id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil,
+          record.generation > 0 else { throw BoundaryError.unsafe }
+    guard hasSafeParent(destination) else { throw BoundaryError.unsafe }
+    guard try JSONEncoder().encode(record).count <= maximumJournalBytes else { throw BoundaryError.oversized }
+    if let old = try readJournal(destination, expectedID: record.id), old.generation >= record.generation { throw BoundaryError.stale }
+    let temporary = destination.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".tmp")
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    try JSONEncoder().encode(record).write(to: temporary, options: .atomic)
+    guard isRegularNoFollow(temporary) else { throw BoundaryError.unsafe }
+    let status = temporary.path.withCString { src in destination.path.withCString { dst in rename(src, dst) } }
+    guard status == 0 else { throw BoundaryError.unsafe }
+}
+func check(_ value: @autoclosure () throws -> Bool, _ message: String) {
+    guard (try? value()) == true else { fatalError(message) }
+}
+let fm = FileManager.default
+let root = fm.temporaryDirectory.appendingPathComponent("mp3-symlink-qa-\(UUID().uuidString)")
+try fm.createDirectory(at: root, withIntermediateDirectories: true)
+defer { try? fm.removeItem(at: root) }
+let outside = root.appendingPathComponent("outside.txt")
+let sentinel = Data("DO-NOT-CHANGE".utf8)
+try sentinel.write(to: outside)
+for i in 0..<128 {
+    let journal = root.appendingPathComponent("ticket_\(i).json")
+    try fm.createSymbolicLink(at: journal, withDestinationURL: outside)
+    do { _ = try readJournal(journal); fatalError("symlink journal accepted") }
+    catch BoundaryError.unsafe { }
+    do { try publish(SafeJournal(id: "ticket_\(i)", generation: 1), to: journal); fatalError("symlink journal overwritten") }
+    catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: outside) == sentinel, "external bytes changed")
+    try fm.removeItem(at: journal)
+    try publish(SafeJournal(id: "ticket_\(i)", generation: 1), to: journal)
+    check(try readJournal(journal) == SafeJournal(id: "ticket_\(i)", generation: 1), "valid journal missing")
+    do { try publish(SafeJournal(id: "ticket_\(i)", generation: 1), to: journal); fatalError("stale journal accepted") }
+    catch BoundaryError.stale { }
+    try publish(SafeJournal(id: "ticket_\(i)", generation: 2), to: journal)
+    check(try readJournal(journal)?.generation == 2, "replacement failed")
+}
+for i in 0..<64 {
+    let journal = root.appendingPathComponent("corrupt_\(i).json")
+    try Data("{not-json".utf8).write(to: journal)
+    do { try publish(SafeJournal(id: "corrupt_\(i)", generation: 1), to: journal); fatalError("corrupt journal silently overwritten") }
+    catch is DecodingError { }
+    check(try Data(contentsOf: journal) == Data("{not-json".utf8), "corrupt evidence lost")
+}
+print("PASS: 128 symlink journal isolation and replacement sequences; 64 corrupt journal preservation cases (standalone model only)")
+
+// Cross-ticket substitution must never be mistaken for a valid older generation.
+// A foreign journal with a high or low generation is preserved for recovery.
+for i in 0..<128 {
+    let destination = root.appendingPathComponent("identity_\(i).json")
+    let original = SafeJournal(id: "owner_\(i)", generation: i + 1)
+    let foreign = SafeJournal(id: "foreign_\(i)", generation: 1)
+    try JSONEncoder().encode(foreign).write(to: destination)
+    let originalBytes = try Data(contentsOf: destination)
+    do {
+        try publish(original, to: destination)
+        fatalError("foreign ticket journal replaced")
+    } catch BoundaryError.identityMismatch { }
+    check(try Data(contentsOf: destination) == originalBytes, "foreign journal bytes changed")
+    do {
+        _ = try readJournal(destination, expectedID: original.id)
+        fatalError("foreign journal accepted during recovery")
+    } catch BoundaryError.identityMismatch { }
+}
+for i in 0..<64 {
+    let destination = root.appendingPathComponent("invalid-generation_\(i).json")
+    try JSONEncoder().encode(SafeJournal(id: "ticket_\(i)", generation: 0)).write(to: destination)
+    let originalBytes = try Data(contentsOf: destination)
+    do {
+        try publish(SafeJournal(id: "ticket_\(i)", generation: 1), to: destination)
+        fatalError("invalid persisted generation overwritten")
+    } catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: destination) == originalBytes, "invalid journal evidence changed")
+}
+print("PASS: 128 cross-ticket substitution and 64 invalid-generation preservation cases (standalone model only)")
+
+// Parent-directory symlinks bypass final-component lstat checks. A journal
+// read or publication must reject redirected directories before touching files.
+let redirected = root.appendingPathComponent("redirected")
+try fm.createDirectory(at: redirected, withIntermediateDirectories: true)
+let alias = root.appendingPathComponent("alias")
+try fm.createSymbolicLink(at: alias, withDestinationURL: redirected)
+for i in 0..<96 {
+    let target = redirected.appendingPathComponent("journal_\(i).json")
+    let throughAlias = alias.appendingPathComponent("journal_\(i).json")
+    let original = Data("PRESERVE-EXTERNAL-JOURNAL-\(i)".utf8)
+    try original.write(to: target)
+    do { _ = try readJournal(throughAlias); fatalError("redirected journal read accepted") }
+    catch BoundaryError.unsafe { }
+    do { try publish(SafeJournal(id: "journal_\(i)", generation: 1), to: throughAlias)
+         fatalError("redirected journal publication accepted") }
+    catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: target) == original, "redirected journal modified")
+    check(!fm.fileExists(atPath: redirected.appendingPathComponent("journal_\(i).json.tmp").path),
+          "unexpected temporary publication")
+}
+print("PASS: 96 parent-directory symlink read/write rejection cases (standalone model only)")
+
+// A symlink in a grandparent directory must be rejected even when the
+// immediate parent is a real directory. Also reject dangling ancestors.
+let nestedExternal = root.appendingPathComponent("nested-external")
+let nestedReal = nestedExternal.appendingPathComponent("real")
+try fm.createDirectory(at: nestedReal, withIntermediateDirectories: true)
+let nestedAlias = root.appendingPathComponent("nested-alias")
+try fm.createSymbolicLink(at: nestedAlias, withDestinationURL: nestedExternal)
+for i in 0..<96 {
+    let external = nestedReal.appendingPathComponent("nested_\(i).json")
+    let viaAlias = nestedAlias.appendingPathComponent("real/nested_\(i).json")
+    let bytes = Data("PRESERVE-NESTED-\(i)".utf8)
+    try bytes.write(to: external)
+    do { _ = try readJournal(viaAlias); fatalError("nested ancestor symlink read accepted") }
+    catch BoundaryError.unsafe { }
+    do { try publish(SafeJournal(id: "nested_\(i)", generation: 1), to: viaAlias)
+         fatalError("nested ancestor symlink publication accepted") }
+    catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: external) == bytes, "nested external bytes modified")
+}
+let missingAlias = root.appendingPathComponent("missing-alias")
+try fm.createSymbolicLink(at: missingAlias, withDestinationURL: root.appendingPathComponent("nonexistent"))
+do { _ = try readJournal(missingAlias.appendingPathComponent("nested/journal.json"))
+     fatalError("dangling ancestor accepted") }
+catch BoundaryError.unsafe { }
+print("PASS: 96 nested-ancestor symlink isolation cases and dangling ancestor rejection (standalone model only)")
+
+// A hard-linked journal is a regular file, but its bytes are also reachable
+// through an unrelated path. Refuse reads and writes instead of trusting the
+// final-component file type alone. This remains a standalone model fixture.
+for i in 0..<96 {
+    let external = root.appendingPathComponent("hardlink-external_\(i).json")
+    let journal = root.appendingPathComponent("hardlink-journal_\(i).json")
+    let original = try JSONEncoder().encode(SafeJournal(id: "hardlink-journal_\(i)", generation: 1))
+    try original.write(to: external)
+    let linkStatus = external.path.withCString { source in
+        journal.path.withCString { destination in link(source, destination) }
+    }
+    check(linkStatus == 0, "hardlink fixture setup failed")
+    check(!isRegularNoFollow(journal), "hard-linked journal accepted as isolated file")
+    do { _ = try readJournal(journal); fatalError("hard-linked journal read accepted") }
+    catch BoundaryError.unsafe { }
+    do { try publish(SafeJournal(id: "hardlink-journal_\(i)", generation: 2), to: journal)
+         fatalError("hard-linked journal publication accepted") }
+    catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: external) == original, "external hardlink bytes changed")
+    check(try Data(contentsOf: journal) == original, "journal hardlink bytes changed")
+}
+print("PASS: 96 hardlink alias read/write isolation cases (standalone model only)")
+
+// Bounded recovery must reject huge and empty journal records before decoding,
+// and preserve their bytes instead of silently replacing damaged evidence.
+for i in 0..<48 {
+    let journal = root.appendingPathComponent("bounded_\(i).json")
+    let payload = i % 2 == 0 ? Data() : Data(repeating: 0x20, count: maximumJournalBytes + i + 1)
+    try payload.write(to: journal)
+    do { _ = try readJournal(journal); fatalError("invalid journal size accepted") }
+    catch BoundaryError.oversized { }
+    do { try publish(SafeJournal(id: "bounded_\(i)", generation: 1), to: journal)
+         fatalError("invalid journal overwritten") }
+    catch BoundaryError.oversized { }
+    check(try Data(contentsOf: journal) == payload, "oversized evidence changed")
+    try fm.removeItem(at: journal)
+    try publish(SafeJournal(id: "bounded_\(i)", generation: 1), to: journal)
+    check(try readJournal(journal)?.generation == 1, "valid retry failed")
+}
+print("PASS: 48 empty/oversized journal rejection and recovery cases (standalone model only)")
+
+
+// Non-regular journal nodes must be rejected before any read that could block.
+// FIFO reads would hang waiting for a writer; directory reads can fail differently
+// across Darwin/Foundation versions. Neither may be replaced by a new journal.
+for i in 0..<48 {
+    let fifo = root.appendingPathComponent("fifo_\(i).json")
+    let directory = root.appendingPathComponent("directory_\(i).json")
+    let fifoStatus = fifo.path.withCString { mkfifo($0, mode_t(0o600)) }
+    check(fifoStatus == 0, "FIFO fixture setup failed")
+    try fm.createDirectory(at: directory, withIntermediateDirectories: false)
+    let marker = directory.appendingPathComponent("preserve.txt")
+    let markerBytes = Data("PRESERVE-DIRECTORY-\(i)".utf8)
+    try markerBytes.write(to: marker)
+    for candidate in [fifo, directory] {
+        do { _ = try readJournal(candidate); fatalError("non-regular journal read accepted") }
+        catch BoundaryError.unsafe { }
+        do {
+            try publish(SafeJournal(id: "node_\(i)", generation: 1), to: candidate)
+            fatalError("non-regular journal replaced")
+        } catch BoundaryError.unsafe { }
+    }
+    check(try Data(contentsOf: marker) == markerBytes, "directory evidence changed")
+    var fifoInfo = stat()
+    check(fifo.path.withCString { lstat($0, &fifoInfo) == 0 } &&
+          (fifoInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFIFO),
+          "FIFO replaced or removed")
+    try fm.removeItem(at: fifo)
+    try fm.removeItem(at: directory)
+    try publish(SafeJournal(id: "node_\(i)", generation: 1), to: fifo)
+    check(try readJournal(fifo)?.generation == 1, "FIFO path recovery failed")
+    try publish(SafeJournal(id: "node_\(i)", generation: 1), to: directory)
+    check(try readJournal(directory)?.generation == 1, "directory path recovery failed")
+}
+print("PASS: 48 FIFO and directory journal rejection/preservation/recovery sequences (standalone model only)")
