@@ -322,6 +322,45 @@ enum AudioSourceFinderTests {
             AudioSourceFinder.SearchResponse.self, from: differentArtist)
         verify(!AudioSourceFinder.archiveSearchRowsComplete(conflictingCreator.response),
                "duplicate Archive identifiers with conflicting creators fail closed")
+        // An index may reuse one identifier for two dated masters. The
+        // normalized song key and generic "remaster" category are identical,
+        // but unattended deduplication must not choose the first release.
+        for titles in [
+            ["The Song (2011 Remaster)", "The Song (2020 Remaster)"],
+            ["The Song (2020 Remastered)", "The Song (2011 Remastered)"],
+            ["The Song (2020 Remaster)", "The Song"]
+        ] {
+            let json = """
+            {"response":{"numFound":2,"docs":[
+              {"identifier":"shared-master","title":"\\(titles[0])","creator":"The Artist"},
+              {"identifier":"shared-master","title":"\\(titles[1])","creator":"The Artist"}
+            ]}}
+            """
+            let body = try JSONDecoder().decode(
+                AudioSourceFinder.SearchResponse.self, from: Data(json.utf8)).response
+            verify(!AudioSourceFinder.archiveSearchRowsComplete(body),
+                   "conflicting dated Archive masters cannot be collapsed: \\(titles)")
+        }
+        let sameMaster = """
+        {"response":{"numFound":2,"docs":[
+          {"identifier":"shared-master","title":"The Song (2020 Remaster)","creator":"The Artist"},
+          {"identifier":"shared-master","title":"The Song (2020 Remastered)","creator":"The Artist"}
+        ]}}
+        """
+        let sameMasterBody = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: Data(sameMaster.utf8)).response
+        verify(AudioSourceFinder.archiveSearchRowsComplete(sameMasterBody),
+               "equivalent labels for the same dated master remain deduplicable")
+        let songYear = """
+        {"response":{"numFound":2,"docs":[
+          {"identifier":"shared-song","title":"1999","creator":"The Artist"},
+          {"identifier":"shared-song","title":"1999","creator":"The Artist"}
+        ]}}
+        """
+        let songYearBody = try JSONDecoder().decode(
+            AudioSourceFinder.SearchResponse.self, from: Data(songYear.utf8)).response
+        verify(AudioSourceFinder.archiveSearchRowsComplete(songYearBody),
+               "numeric song titles are not mistaken for mastering years")
         let cleanSearch = #"""
         {"response":{"numFound":1,"docs":[
           {"identifier":"valid-one","title":"The Song","creator":"The Artist"}]}}
