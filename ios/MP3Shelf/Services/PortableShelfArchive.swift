@@ -464,6 +464,21 @@ enum PortableShelfArchive {
         }) else {
             throw ArchiveError.invalidManifest
         }
+        // Export and restore must enforce the same discovery metadata contract.
+        // Validate before creating any destination staging file.
+        let proposedWishes = playlists.map { list in
+            let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
+            return Playlist(id: list.id.uuidString, name: list.name,
+                            trackIds: [], sourceURL: list.sourceURL,
+                            wishes: wishes.isEmpty ? nil : wishes.map {
+                                Wish(title: $0.title, artist: $0.artist, album: $0.album,
+                                     spotifyURL: $0.spotifyURL,
+                                     durationSeconds: $0.durationSeconds,
+                                     artistNames: $0.artistNames,
+                                     appleMusicItemID: $0.appleMusicItemID)
+                            })
+        }
+        try validatePlaylistWishes(proposedWishes)
         let lists = playlists.enumerated().map { index, list in
             let wishes = list.sourceOrder.isEmpty ? list.missingTracks : list.sourceOrder
             return Playlist(
@@ -821,6 +836,37 @@ enum PortableShelfArchive {
         }
     }
 
+    /// Reject malformed playlist wishes before restore mutates the library.
+    /// A corrupted wish must not poison persistent discovery checkpoints or
+    /// cause a partially restored collection after earlier media was imported.
+    private static func validatePlaylistWishes(_ playlists: [Playlist]) throws {
+        for playlist in playlists {
+            try Task.checkCancellation()
+            guard let wishes = playlist.wishes else { continue }
+            // Bound metadata work independently of the archive's JSON byte cap.
+            guard wishes.count <= 20_000 else { throw ArchiveError.invalidManifest }
+            for wish in wishes {
+                try Task.checkCancellation()
+                guard !wish.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      wish.title.utf8.count <= 4_096,
+                      wish.artist.utf8.count <= 4_096,
+                      wish.album.utf8.count <= 4_096,
+                      (wish.spotifyURL?.utf8.count ?? 0) <= 8_192,
+                      (wish.appleMusicItemID?.utf8.count ?? 0) <= 4_096,
+                      (wish.artistNames?.count ?? 0) <= 100,
+                      wish.artistNames?.allSatisfy({ $0.utf8.count <= 4_096 }) ?? true else {
+                    throw ArchiveError.invalidManifest
+                }
+                if let duration = wish.durationSeconds {
+                    guard duration.isFinite, duration > 0,
+                          duration <= 24 * 60 * 60 else {
+                        throw ArchiveError.invalidManifest
+                    }
+                }
+            }
+        }
+    }
+
     static func open(_ url: URL) throws -> Opened {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -904,6 +950,7 @@ enum PortableShelfArchive {
         guard expectedStart == payloadSize else {
             throw ArchiveError.invalidRange
         }
+        try validatePlaylistWishes(manifest.playlists)
         var playlistIDs = Set<String>()
         for playlist in manifest.playlists {
             try Task.checkCancellation()
