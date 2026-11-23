@@ -302,12 +302,15 @@ final class SpotifyService: NSObject, ObservableObject {
         // Do not silently imply a complete playlist import when Spotify has
         // withheld recordings or returned episodes/redacted entries. The
         // successful wishes remain usable, in their original playlist order.
-        if unavailableCount > 0 {
-            message = "Imported metadata for \(wishes.count) songs; \(unavailableCount) playlist entries were unavailable and were not downloaded."
-        } else {
-            message = nil
-        }
+        message = Self.playlistImportNotice(imported: wishes.count, unavailable: unavailableCount)
         return wishes
+    }
+
+    // Keep unavailable counts observable without introducing fake recording
+    // identities into the download queue. Pure for deterministic regression.
+    nonisolated static func playlistImportNotice(imported: Int, unavailable: Int) -> String? {
+        guard unavailable > 0 else { return nil }
+        return "Imported metadata for \(imported) songs; \(unavailable) playlist entries were unavailable and were not downloaded."
     }
 
     private static func isValidPlaylistID(_ id: String) -> Bool {
