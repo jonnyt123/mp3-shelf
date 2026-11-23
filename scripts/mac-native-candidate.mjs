@@ -360,6 +360,17 @@ export async function executeNativePreflight({ repo, promote = false, evidenceRo
     git(project, 'worktree', 'add', '--detach', worktree, proposed);
     installedWorktree = true;
     assertWorktreeClean(worktree, proposed);
+    // The tooling's synthetic regression suite is a mandatory preflight,
+    // not a substitute for the candidate's 17 native Swift/Xcode steps or
+    // the separate physical-iPhone acceptance. A failed policy test must
+    // block draft staging before any native source branch is modified.
+    await runLogged(process.execPath, [
+      '--test',
+      fileURLToPath(new URL('./native-build-diagnostics.test.mjs', import.meta.url)),
+      fileURLToPath(new URL('./native-offline-journey-regression.test.mjs', import.meta.url)),
+      fileURLToPath(new URL('./native-branch-reconciliation.test.mjs', import.meta.url))
+    ], project, join(output, 'native-policy-regressions.log'),
+    { timeoutMs: 90_000, maxLogBytes: 2 * 1024 * 1024 });
     try {
       await runNativeWithBoundedRecovery({ cwd: worktree, output });
     } catch (error) {
