@@ -1764,8 +1764,19 @@ final class MusicLibrary: ObservableObject {
         // recording matcher has no candidates left or has been disabled.
         let now = Date()
         let lookupAt = notBefore.flatMap { $0 > now ? $0 : nil }
+        // A background transfer failure must not publish a retry cursor that
+        // cannot survive process termination. Preserve the exact previous job
+        // (including retry identity and backoff) when storage is unavailable.
+        // Do not schedule foreground or background discovery for an unsaved retry.
+        guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe,
+              !pendingDiscoveryPauses.contains(ticket.playlistID) else { return }
+        if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
+        let previousJob = discoveryJobs[index]
         guard discoveryJobs[index].requeueFailedSource(for: ticket.requested.id, notBefore: lookupAt) else { return }
-        persistDiscovery()
+        guard persistDiscovery() else {
+            discoveryJobs[index] = previousJob
+            return
+        }
         resumePendingDiscovery()
         if !foregroundDiscoveryEnabled && !backgroundDiscoveryInProgress {
             MP3ShelfBackgroundDiscovery.schedule(nextUsefulDate: nextBackgroundDiscoveryDate)
