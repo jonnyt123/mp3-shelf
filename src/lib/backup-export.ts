@@ -33,17 +33,14 @@ export async function createStoredLibraryBackup(
   // Bound additional I/O for large libraries while detecting common
   // same-size media replacements that metadata-only comparisons miss.
   const window=64*1024;
-  // Small and medium recordings can be checked completely with bounded
-  // per-read memory. Three probes alone miss edits between sampled regions.
-  // Large recordings retain bounded I/O to avoid doubling multi-GB exports.
-  const offsets:number[]=[];
-  if(blob.size<=1024*1024){
-   for(let offset=0;offset<blob.size;offset+=window)offsets.push(offset);
-  }else{
-   offsets.push(0,Math.floor((blob.size-window)/2),blob.size-window);
-  }
+  // Every byte must contribute to the snapshot: a same-length replacement
+  // outside three probe windows otherwise produces a plausible but stale backup.
+  // Iterate lazily so multi-GB libraries do not allocate an offsets array.
+  // Each read remains capped at 64 KiB and yields periodically to Safari.
+  const chunks=Math.ceil(blob.size/window);
   let hash=2166136261;
-  for(const offset of offsets){
+  for(let chunk=0;chunk<chunks;chunk++){
+   const offset=chunk*window;
    // A second tab may mutate the library while a large fingerprint is read.
    // Check on both sides of each asynchronous slice rather than only once
    // per recording, so superseded exports stop without scanning more data.
@@ -54,7 +51,7 @@ export async function createStoredLibraryBackup(
    // Hashing a medium-sized library is CPU-heavy even with bounded buffers.
    // Yield after at most 256 KiB so Safari can paint, process taps and let
    // another tab's storage event become visible before more work is done.
-   if(offsets.length>4 && (offsets.indexOf(offset)+1)%4===0){
+   if(chunks>4 && (chunk+1)%4===0){
     await new Promise<void>(resolve=>setTimeout(resolve,0));
     assertSnapshot();
    }
