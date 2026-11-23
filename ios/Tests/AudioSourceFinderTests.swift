@@ -116,6 +116,27 @@ enum AudioSourceFinderTests {
             filename: "Recorded in America.mp3", requestedTitle: "Recorded in America"),
             "ordinary song title containing a location is not rejected")
 
+        // Distinct numbered takes and mixes must not auto-import simply
+        // because the performer, base title and duration are identical.
+        for (candidate, requested) in [
+            ("The Song (Demo 1)", "The Song (Demo 2)"),
+            ("The Song (Take 3)", "The Song (Take 4)"),
+            ("The Song (Mix 01)", "The Song (Mix 2)"),
+            ("The Song (Version 2)", "The Song"),
+            ("The Song", "The Song (Edit 2)")
+        ] {
+            verify(!AudioSourceFinder.recordingEditionAgrees(
+                filename: candidate + ".mp3", requestedTitle: requested),
+                "numbered recording revisions require exact agreement: \(candidate)")
+        }
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "The Song (Demo 01).mp3",
+            requestedTitle: "The Song (Demo 1)"),
+            "equivalent zero-padded demo revisions remain eligible")
+        verify(AudioSourceFinder.recordingEditionAgrees(
+            filename: "99 Red Balloons.mp3", requestedTitle: "99 Red Balloons"),
+            "numeric song titles are not treated as numbered revisions")
+
         // Dated live takes and re-recordings must not silently cross-match.
         verify(!AudioSourceFinder.recordingEditionAgrees(
             filename: "The Song (Live 2019).mp3", requestedTitle: "The Song (Live 2021)"),
