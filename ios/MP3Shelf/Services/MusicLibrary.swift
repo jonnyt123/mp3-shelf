@@ -1758,7 +1758,6 @@ final class MusicLibrary: ObservableObject {
 
     func recoverRecordingSource(after ticket: BackgroundAudioTicket, notBefore: Date? = nil) {
         guard hasCurrentSourceRequest(ticket.requested, for: ticket.playlistID),
-              let index = discoveryJobs.firstIndex(where: { $0.playlistID == ticket.playlistID }),
               !hasOfflineRecording(matching: ticket.requested) else { return }
         // Discovery can still find a catalog or cached web file after the
         // recording matcher has no candidates left or has been disabled.
@@ -1771,6 +1770,11 @@ final class MusicLibrary: ObservableObject {
         guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe,
               !pendingDiscoveryPauses.contains(ticket.playlistID) else { return }
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
+        // Recovery can replace the entire jobs array; resolve the index only
+        // after the checkpoint has been reopened and reconciled.
+        guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == ticket.playlistID }),
+              hasCurrentSourceRequest(ticket.requested, for: ticket.playlistID),
+              !hasOfflineRecording(matching: ticket.requested) else { return }
         let previousJob = discoveryJobs[index]
         guard discoveryJobs[index].requeueFailedSource(for: ticket.requested.id, notBefore: lookupAt) else { return }
         guard persistDiscovery() else {
