@@ -126,3 +126,59 @@ check(fm.fileExists(atPath: directoryStage.path), "stage lost on directory colli
 check((try fm.attributesOfItem(atPath: occupiedDirectory.path))[.type] as? FileAttributeType == .typeDirectory, "directory replaced")
 print("PASS: 288 concurrent attempts, 48 winners, 240 retained losers, occupied destination, symlink, directory, empty and hardlink stage rejection")
 print("LIMITATION: model-only; production restore, macOS/Xcode and physical iPhone UNVERIFIED")
+
+
+// Crash window: link(2) succeeded, but process died before removing the stage.
+// Recovery must only unlink the stage when it is the SAME inode as the published
+// destination. A matching byte sequence alone is insufficient (ABA replacement).
+func inodeIdentity(_ url: URL) throws -> (UInt64, UInt64) {
+    var info = stat()
+    let status = url.path.withCString { lstat($0, &info) }
+    guard status == 0 else { throw PublishFailure.io(errno) }
+    guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+        throw PublishFailure.unsafeStage
+    }
+    return (UInt64(info.st_dev), UInt64(info.st_ino))
+}
+enum RecoveryResult { case completed, conflict, missing }
+func recoverLinkedStage(_ stage: URL, _ destination: URL) throws -> RecoveryResult {
+    guard fm.fileExists(atPath: stage.path) else { return .missing }
+    // lstat, not fileExists alone: do not follow a symlink at either path.
+    let stageID = try inodeIdentity(stage)
+    do {
+        let destinationID = try inodeIdentity(destination)
+        guard stageID == destinationID else { return .conflict }
+    } catch PublishFailure.io(let code) where code == ENOENT {
+        return .missing
+    }
+    try fm.removeItem(at: stage)
+    return .completed
+}
+for i in 0..<32 {
+    let stage = root.appendingPathComponent("recovery-\\(i).part")
+    let destination = root.appendingPathComponent("recovery-\\(i).mp3")
+    let payload = Data(repeating: UInt8(i + 17), count: 8192 + i)
+    try payload.write(to: stage)
+    let linked = stage.path.withCString { source in
+        destination.path.withCString { target in link(source, target) }
+    }
+    check(linked == 0, "could not simulate post-link crash")
+    check(try recoverLinkedStage(stage, destination) == .completed, "failed crash recovery")
+    check(!fm.fileExists(atPath: stage.path), "crash stage not cleaned")
+    check((try Data(contentsOf: destination)) == payload, "recovered audio changed")
+    check(try recoverLinkedStage(stage, destination) == .missing, "recovery not idempotent")
+}
+let replacedStage = root.appendingPathComponent("aba-stage.part")
+let replacedDestination = root.appendingPathComponent("aba-destination.mp3")
+let equalBytes = Data(repeating: 0xD3, count: 8192)
+try equalBytes.write(to: replacedStage)
+try equalBytes.write(to: replacedDestination)
+check(try recoverLinkedStage(replacedStage, replacedDestination) == .conflict, "same bytes falsely accepted as same inode")
+check((try Data(contentsOf: replacedStage)) == equalBytes, "conflict discarded staged audio")
+check((try Data(contentsOf: replacedDestination)) == equalBytes, "conflict changed published audio")
+let symlinkDestination = root.appendingPathComponent("recovery-symlink.mp3")
+try fm.createSymbolicLink(at: symlinkDestination, withDestinationURL: replacedStage)
+do { _ = try recoverLinkedStage(replacedStage, symlinkDestination); fatalError("recovery followed destination symlink") }
+catch PublishFailure.unsafeStage { }
+check((try Data(contentsOf: replacedStage)) == equalBytes, "symlink recovery lost audio")
+print("PASS: 32 post-link crash recoveries, idempotent retry, ABA inode conflict, and symlink rejection (model only)")
