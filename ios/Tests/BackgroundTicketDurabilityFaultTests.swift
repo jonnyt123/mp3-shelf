@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 // Standalone deterministic filesystem model, NOT production URLSession integration.
 // Run: swift -swift-version 6 ios/Tests/BackgroundTicketDurabilityFaultTests.swift
@@ -20,7 +25,7 @@ final class DurableTicketStore {
         guard fm.fileExists(atPath: file.path) else { return nil }
         return try JSONDecoder().decode(TicketRecord.self, from: Data(contentsOf: file))
     }
-    func arm(_ record: TicketRecord, failBeforePublish: Bool = false) throws {
+    func arm(_ record: TicketRecord, failBeforePublish: Bool = false, failAfterPublish: Bool = false) throws {
         guard record.ticket.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil,
               record.audioName.range(of: "^[A-Za-z0-9_-]+\\.mp3$", options: .regularExpression) != nil,
               record.expectedBytes > 0, record.generation > 0 else { throw Fault.invalid }
@@ -28,11 +33,15 @@ final class DurableTicketStore {
         let temp = path("\(record.ticket).new")
         try JSONEncoder().encode(record).write(to: temp, options: .atomic)
         if failBeforePublish { throw Fault.injected }
-        // Model only: removing an existing journal before moving the replacement
-        // is NOT crash-atomic. Production must use an atomic replace or versioned journal.
+        // POSIX rename atomically replaces a journal on the same filesystem.
+        // Never remove the previous journal first: a crash in that gap loses
+        // the active ticket. This models publication, not production durability.
         let journal = path("\(record.ticket).json")
-        if fm.fileExists(atPath: journal.path) { try fm.removeItem(at: journal) }
-        try fm.moveItem(at: temp, to: journal)
+        let status = temp.path.withCString { source in
+            journal.path.withCString { destination in rename(source, destination) }
+        }
+        guard status == 0 else { throw Fault.injected }
+        if failAfterPublish { throw Fault.injected }
     }
     func complete(_ record: TicketRecord, bytes: Data, failBeforeCommit: Bool = false) throws -> Bool {
         guard let active = try read(record.ticket), active == record else { return false }
@@ -84,3 +93,29 @@ for ticket in ["../escape", "nested/ticket", "", "a b"] {
     catch Fault.invalid { }
 }
 print("PASS: 128 persisted ticket replay/fault/duplicate scenarios and 9 path rejection cases (model only)")
+
+for i in 0..<96 {
+    let id = "replacement_\(i)"
+    let original = TicketRecord(ticket: id, generation: 1, audioName: "old_\(i).mp3", expectedBytes: 1024)
+    let newer = TicketRecord(ticket: id, generation: 2, audioName: "new_\(i).mp3", expectedBytes: 2048)
+    try store.arm(original)
+    do {
+        try store.arm(newer, failBeforePublish: true)
+        fatalError("prepublication crash ignored")
+    } catch Fault.injected {}
+    verify(try DurableTicketStore(root).read(id) == original, "old journal lost before atomic replacement")
+    do {
+        try store.arm(newer, failAfterPublish: true)
+        fatalError("postpublication crash ignored")
+    } catch Fault.injected {}
+    verify(try DurableTicketStore(root).read(id) == newer, "new journal lost after atomic replacement")
+    verify(try !store.complete(original, bytes: Data(repeating: 0x11, count: 1024)), "stale ticket committed")
+    let payload = Data(repeating: UInt8(i % 251), count: 2048)
+    verify(try store.complete(newer, bytes: payload), "replacement ticket could not commit")
+    verify(try Data(contentsOf: root.appendingPathComponent(newer.audioName)) == payload, "replacement audio changed")
+    do {
+        try store.arm(original)
+        fatalError("older generation resurrected")
+    } catch Fault.conflict {}
+}
+print("PASS: 96 atomic journal replacement crash-window and stale generation scenarios (model only)")
