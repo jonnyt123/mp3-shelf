@@ -125,6 +125,7 @@ for index in 0..<32 {
         }
         fatalError("same-inode archive rewrite accepted")
     } catch PinnedReadError.changed { }
-    precondition(try Data(contentsOf: file) == replacement, "rewrite setup did not persist")
+    let persisted = try Data(contentsOf: file)
+    precondition(persisted == replacement, "rewrite setup did not persist")
 }
 print("PASS: 32 same-inode same-length rewrite rejection scenarios")
