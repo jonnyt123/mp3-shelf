@@ -37,7 +37,14 @@ const SOURCE_FAILURE = [
 export function diagnoseNativeLog(log) {
   const value = typeof log === 'string' ? log.slice(-MAX_READ) : '';
   if (!value) return { category: 'unavailable', retryable: false, repair: 'none' };
-  if (SOURCE_FAILURE.some(re => re.test(value))) {
+  // A recoverable cache/service message can accompany an unrelated compiler
+  // error in the same failed build. Never retry a mixed failure: only a clean
+  // infrastructure-only failure may receive the one bounded retry.
+  const errorLines = value.split(/\r?\n/).filter(line => /(?:^|\s)error:|\bfatal error:/i.test(line));
+  const infrastructureError = line =>
+    [...GENERATED_CACHE, ...TRANSIENT].some(re => re.test(line));
+  if (SOURCE_FAILURE.some(re => re.test(value)) ||
+      errorLines.some(line => !infrastructureError(line))) {
     return { category: 'swift-source', retryable: false, repair: 'none' };
   }
   if (MACHINE_BLOCKER.some(re => re.test(value))) {

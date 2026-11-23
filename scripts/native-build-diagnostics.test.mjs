@@ -153,3 +153,32 @@ test('root symlink must never redirect automatic DerivedData cleanup', () => {
     rmSync(outside, { recursive: true, force: true });
   }
 });
+
+test('mixed Swift compiler failures never trigger infrastructure retry', () => {
+  const cases = [
+    'build service connection interrupted\\n/path/Foo.swift:42:9: error: value of type Foo has no member bar',
+    'malformed PCM file in ModuleCache.noindex\\n/path/Foo.swift:7: error: cannot infer contextual base in reference to member foo',
+    'unable to initiate PIF transfer session\\nfatal error: unexpected compiler crash'
+  ];
+  for (const log of cases) {
+    assert.deepEqual(diagnoseNativeLog(log), {
+      category: 'swift-source', retryable: false, repair: 'none'
+    });
+  }
+});
+test('mixed source failure prevents any second native invocation', async () => {
+  const root = scratch();
+  try {
+    let calls = 0;
+    await assert.rejects(runNativeWithBoundedRecovery({
+      cwd: root, output: root,
+      run: async (_command, _args, _cwd, log) => {
+        calls++;
+        writeFileSync(log, 'build service connection interrupted\\nFoo.swift:12: error: cannot infer type');
+        throw Error('build failed');
+      }
+    }), /swift-source/);
+    assert.equal(calls, 1);
+    assert.equal(JSON.parse(readFileSync(join(root, 'native-diagnosis.json'))).retryCount, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
