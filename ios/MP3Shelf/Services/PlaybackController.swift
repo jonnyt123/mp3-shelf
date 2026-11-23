@@ -272,7 +272,7 @@ final class PlaybackController: NSObject, ObservableObject {
             // A replacement between path validation and decoder creation must
             // not be accepted as the selected catalog-owned recording.
             guard identityBeforeOpen != nil, identityBeforeOpen == identityAfterOpen,
-                  library.ownedPlaybackURL(for: catalogTrack) != nil else {
+                  library.ownedPlaybackURL(for: catalogTrack) == ownedAudioURL else {
                 throw CocoaError(.fileReadCorruptFile)
             }
             player.delegate = relay
@@ -282,7 +282,7 @@ final class PlaybackController: NSObject, ObservableObject {
             // Decoder preparation may read the file while an importer or another
             // process overwrites it. Never commit a decoder for changed bytes.
             guard LocalAudioFileIdentity(url: ownedAudioURL) == identityAfterOpen,
-                  library.ownedPlaybackURL(for: catalogTrack) != nil else {
+                  library.ownedPlaybackURL(for: catalogTrack) == ownedAudioURL else {
                 throw CocoaError(.fileReadCorruptFile)
             }
             // Paused selection only prepares a decoder. Audible playback,
@@ -294,7 +294,7 @@ final class PlaybackController: NSObject, ObservableObject {
             // Audio-session activation can yield to other work; reject any
             // recording changed since decoder preparation before audible play.
             guard LocalAudioFileIdentity(url: ownedAudioURL) == identityAfterOpen,
-                  library.ownedPlaybackURL(for: catalogTrack) != nil else {
+                  library.ownedPlaybackURL(for: catalogTrack) == ownedAudioURL else {
                 throw CocoaError(.fileReadCorruptFile)
             }
             // The outgoing decoder must still represent the catalog-owned bytes
@@ -307,7 +307,8 @@ final class PlaybackController: NSObject, ObservableObject {
                       let outgoingURL = library.ownedPlaybackURL(for: outgoingSong) else {
                     return false
                 }
-                return LocalAudioFileIdentity(url: outgoingURL) == openedAudioFileIdentity
+                return audioPlayer?.url == outgoingURL &&
+                    LocalAudioFileIdentity(url: outgoingURL) == openedAudioFileIdentity
             }()
             // A newly prepared recording must never overlap a decoder whose
             // catalog entry disappeared or whose backing file was replaced.
@@ -489,9 +490,14 @@ final class PlaybackController: NSObject, ObservableObject {
         guard let player = audioPlayer, let currentTrackID, let library,
               let selected = library.song(with: currentTrackID) else { return false }
         let ownedURL = library.ownedPlaybackURL(for: selected)
-        let identityChanged = openedAudioFileIdentity != nil &&
+        // A catalog repair may move the track to a new filename while the old
+        // inode remains valid (including hard-linked copies). The retained
+        // decoder must match the CURRENT catalog path, not merely the inode.
+        // Missing identity is also unsafe: never trust an untracked decoder.
+        let pathChanged = ownedURL != player.url
+        let identityChanged = openedAudioFileIdentity == nil ||
             ownedURL.flatMap { LocalAudioFileIdentity(url: $0) } != openedAudioFileIdentity
-        guard ownedURL == nil || identityChanged else { return false }
+        guard pathChanged || identityChanged else { return false }
         relay.invalidatePendingCompletions()
         positionTimer?.invalidate()
         positionTimer = nil
@@ -894,6 +900,7 @@ final class PlaybackController: NSObject, ObservableObject {
                       let library = self.library,
                       let song = library.song(with: outgoingTrackID),
                       let url = library.ownedPlaybackURL(for: song),
+                      outgoing.url == url,
                       LocalAudioFileIdentity(url: url) == outgoingIdentity else {
                     self.cancelFade()
                     incoming.volume = 1
