@@ -11,7 +11,8 @@ enum PublishFailure: Error { case unsafeStage, conflict, io(Int32) }
 func publish(_ stage: URL, to destination: URL,
              linkOperation: (URL, URL) -> Int32 = { source, target in
                  source.path.withCString { a in target.path.withCString { b in link(a, b) } }
-             }) throws {
+             },
+             cleanupOperation: (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) throws {
     let attrs = try FileManager.default.attributesOfItem(atPath: stage.path)
     guard attrs[.type] as? FileAttributeType == .typeRegular,
           (attrs[.size] as? NSNumber)?.int64Value ?? 0 > 0,
@@ -23,7 +24,7 @@ func publish(_ stage: URL, to destination: URL,
         if code == EEXIST { throw PublishFailure.conflict }
         throw PublishFailure.io(code)
     }
-    try FileManager.default.removeItem(at: stage)
+    try cleanupOperation(stage)
 }
 func check(_ ok: @autoclosure () throws -> Bool, _ message: String) {
     guard (try? ok()) == true else { fatalError(message) }
@@ -264,3 +265,32 @@ try publish(faultStage, to: faultTarget)
 check((try Data(contentsOf: faultTarget)) == faultBytes, "retry did not publish original audio")
 check(!fm.fileExists(atPath: faultStage.path), "successful retry retained staged file")
 print("PASS: ENOSPC, EDQUOT, EACCES, EIO, EROFS fault injection preserves staged/user audio; retry succeeds (model only)")
+
+// Crash window: destination is linked successfully, but unlinking the stage
+// fails. Preserve both links and allow the journal recovery path to complete.
+// This models a recoverable filesystem failure; it does not execute app code.
+for i in 0..<32 {
+    let stage = root.appendingPathComponent("unlink-failure-\(i).part")
+    let destination = root.appendingPathComponent("unlink-failure-\(i).mp3")
+    let payload = Data(repeating: UInt8(i + 90), count: 4096 + i)
+    try payload.write(to: stage)
+    var cleanupCalls = 0
+    do {
+        try publish(stage, to: destination, cleanupOperation: { candidate in
+            check(candidate == stage, "cleanup attempted unexpected path")
+            cleanupCalls += 1
+            throw PublishFailure.io(EIO)
+        })
+        fatalError("post-link cleanup failure was suppressed")
+    } catch PublishFailure.io(let code) {
+        check(code == EIO, "cleanup error was changed")
+    }
+    check(cleanupCalls == 1, "cleanup retried unexpectedly")
+    check((try Data(contentsOf: stage)) == payload, "post-link failure lost stage")
+    check((try Data(contentsOf: destination)) == payload, "post-link failure lost published audio")
+    check(try inodeIdentity(stage) == inodeIdentity(destination), "post-link failure broke inode identity")
+    check(try recoverLinkedStage(stage, destination) == .completed, "post-link recovery failed")
+    check((try Data(contentsOf: destination)) == payload, "post-link recovery damaged destination")
+    check(try recoverLinkedStage(stage, destination) == .missing, "post-link recovery was not idempotent")
+}
+print("PASS: 32 injected post-link cleanup failures preserve both links and recover idempotently (model only)")
