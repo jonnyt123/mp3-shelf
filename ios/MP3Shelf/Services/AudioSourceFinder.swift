@@ -2222,7 +2222,10 @@ enum AutomaticWebAudioFinder {
             }
         } else { return false }
         guard seconds.isFinite, seconds > 0 else { return false }
-        return wish.durationSeconds.map { abs($0 - seconds) <= 4 } ?? true
+        return wish.durationSeconds.map { expected in
+            expected.isFinite && expected > 0 &&
+                abs(expected - seconds) <= recordingDurationTolerance(expected)
+        } ?? true
     }
 
     // A matching title/artist is not sufficient to identify the exact recording.
