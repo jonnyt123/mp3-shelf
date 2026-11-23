@@ -148,6 +148,9 @@ final class MusicLibrary: ObservableObject {
     private let lyricsDirectory: URL
     private let databaseURL: URL
     private let discoveryURL: URL
+    // A failed checkpoint must never permit more source lookups to advance an
+    // in-memory cursor that would be lost on process termination.
+    private var discoveryCheckpointNeedsRetry = false
 
     init() {
         let documents = manager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -1448,6 +1451,8 @@ final class MusicLibrary: ObservableObject {
     /// foreground cellular opt-in that may have been granted earlier.
     func runBackgroundDiscoveryBatch() async -> Bool {
         guard !backgroundDiscoveryInProgress && automaticDownloadTask == nil else { return true }
+        // Retry the same in-memory checkpoint before any new background lookup.
+        if discoveryCheckpointNeedsRetry && !persistDiscovery() { return false }
         // Claim the queue before the first suspension; NWPathMonitor may fire
         // while we await the initial network path or an external catalog.
         backgroundDiscoveryInProgress = true
@@ -1493,6 +1498,9 @@ final class MusicLibrary: ObservableObject {
     }
 
     func resumePendingDiscovery() {
+        // A transient protected-file or low-storage failure can recover on the
+        // next foreground activation without losing the selected cursor.
+        if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
         guard BackgroundDiscoveryPolicy.canStartForegroundScan(
             isSceneActive: foregroundDiscoveryEnabled,
             hasForegroundTask: automaticDownloadTask != nil,
@@ -1547,9 +1555,22 @@ final class MusicLibrary: ObservableObject {
         }
     }
 
-    private func persistDiscovery() {
-        if let data = try? JSONEncoder().encode(discoveryJobs) {
-            try? data.write(to: discoveryURL, options: .atomic)
+    @discardableResult
+    private func persistDiscovery() -> Bool {
+        do {
+            let data = try JSONEncoder().encode(discoveryJobs)
+            try data.write(to: discoveryURL, options: .atomic)
+            discoveryCheckpointNeedsRetry = false
+            return true
+        } catch {
+            discoveryCheckpointNeedsRetry = true
+            automaticDownloadTask?.cancel()
+            catalogRetryTask?.cancel()
+            catalogRetryTask = nil
+            scheduledCatalogRetryAt = nil
+            libraryStorageError = "Discovery progress could not be saved. Source searches are paused until storage is writable; existing recordings are preserved."
+            print("MP3 Shelf deferred source discovery after checkpoint failure: \(error)")
+            return false
         }
     }
 
@@ -1698,7 +1719,7 @@ final class MusicLibrary: ObservableObject {
         while let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) {
             if let maximum = maxProcessedSongs, processedThisPass >= maximum { break }
             var job = discoveryJobs[index]
-            if Task.isCancelled || job.isPaused || job.isComplete ||
+            if Task.isCancelled || discoveryCheckpointNeedsRetry || job.isPaused || job.isComplete ||
                 !networkAllowsDiscovery(for: playlistID) ||
                 (backgroundWiFiOnly && !isOnWiFi) { break }
             // Keep the original playlist cursor untouched while all four
@@ -1713,7 +1734,7 @@ final class MusicLibrary: ObservableObject {
                 // Persist the selected cursor before any asynchronous work.
                 // Subsequent lookups reject stale checkpoints by equality.
                 discoveryJobs[index] = job
-                persistDiscovery()
+                guard persistDiscovery() else { break }
             }
             if var progress = automaticDownloadProgress {
                 progress.currentSong = "\(wish.artist) — \(wish.title)"
