@@ -1210,8 +1210,10 @@ struct LibraryView: View {
                                     // case no query can match: offer a real first-use action
                                     // instead of implying the listener has existing songs.
                                     EmptyShelfView(
-                                        title: "Your library is empty",
-                                        subtitle: "Import audio from Files to start listening offline. Clear the search to browse your new songs.",
+                                        title: audioImportBusy ? "Adding music to your library" : "Your library is empty",
+                                        subtitle: audioImportBusy
+                                            ? "Your selected audio is being copied. New songs will appear when import finishes."
+                                            : "Import audio from Files to start listening offline. Clear the search to browse your new songs.",
                                         symbol: "music.note.list")
                                     firstImportStatus
                                     Button {
@@ -1526,8 +1528,10 @@ struct LibraryView: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 if library.tracks.isEmpty {
                                     EmptyShelfView(
-                                        title: "Your library is empty",
-                                        subtitle: "Import audio saved on this iPhone to start listening offline.",
+                                        title: audioImportBusy ? "Adding music to your library" : "Your library is empty",
+                                        subtitle: audioImportBusy
+                                            ? "Your selected audio is being copied. New songs will appear when import finishes."
+                                            : "Import audio saved on this iPhone to start listening offline.",
                                         symbol: "music.note.list")
                                     firstImportStatus
                                     Button {
@@ -1704,7 +1708,18 @@ struct LibraryView: View {
                 // Closing Files or selecting nothing must not cancel a playback
                 // check or discard its retry state. Only a real import can
                 // replace a recording being validated for playback.
-                guard !urls.isEmpty, !importInProgress else { return }
+                guard !urls.isEmpty else { return }
+                // Another screen may own an active import. Reject this second
+                // selection before cancelling playback checks or starting a
+                // competing copy into the same local library.
+                guard !importInProgress && !library.isImporting else {
+                    message = "Audio is already being imported. Wait for it to finish, then choose more files."
+                    return
+                }
+                guard scenePhase == .active else {
+                    message = "Return to MP3 Shelf to import audio. No files were changed."
+                    return
+                }
                 cancelRecentPlaybackPreparation(showFeedback: true)
                 cancelBulkPlaybackPreparation(showFeedback: true)
                 // The first successful import should reveal the new music, not
