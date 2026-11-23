@@ -9,12 +9,19 @@ import Glibc
 // swift -swift-version 6 ios/Tests/BackgroundTicketSymlinkBoundaryTests.swift
 struct SafeJournal: Codable, Equatable { let id: String; let generation: Int }
 enum BoundaryError: Error { case unsafe, stale, identityMismatch }
+func hasSafeParent(_ url: URL) -> Bool {
+    var info = stat()
+    let parent = url.deletingLastPathComponent()
+    return parent.path.withCString { lstat($0, &info) == 0 &&
+        (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) }
+}
 func isRegularNoFollow(_ url: URL) -> Bool {
     var info = stat()
     return url.path.withCString { lstat($0, &info) == 0 && (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) }
 }
 func readJournal(_ url: URL, expectedID: String? = nil) throws -> SafeJournal? {
     var info = stat()
+    guard hasSafeParent(url) else { throw BoundaryError.unsafe }
     let exists = url.path.withCString { lstat($0, &info) == 0 }
     if !exists { return nil }
     guard isRegularNoFollow(url) else { throw BoundaryError.unsafe }
@@ -26,6 +33,7 @@ func readJournal(_ url: URL, expectedID: String? = nil) throws -> SafeJournal? {
 func publish(_ record: SafeJournal, to destination: URL) throws {
     guard record.id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil,
           record.generation > 0 else { throw BoundaryError.unsafe }
+    guard hasSafeParent(destination) else { throw BoundaryError.unsafe }
     if let old = try readJournal(destination, expectedID: record.id), old.generation >= record.generation { throw BoundaryError.stale }
     let temporary = destination.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".tmp")
     defer { try? FileManager.default.removeItem(at: temporary) }
@@ -98,3 +106,25 @@ for i in 0..<64 {
     check(try Data(contentsOf: destination) == originalBytes, "invalid journal evidence changed")
 }
 print("PASS: 128 cross-ticket substitution and 64 invalid-generation preservation cases (standalone model only)")
+
+// Parent-directory symlinks bypass final-component lstat checks. A journal
+// read or publication must reject redirected directories before touching files.
+let redirected = root.appendingPathComponent("redirected")
+try fm.createDirectory(at: redirected, withIntermediateDirectories: true)
+let alias = root.appendingPathComponent("alias")
+try fm.createSymbolicLink(at: alias, withDestinationURL: redirected)
+for i in 0..<96 {
+    let target = redirected.appendingPathComponent("journal_\(i).json")
+    let throughAlias = alias.appendingPathComponent("journal_\(i).json")
+    let original = Data("PRESERVE-EXTERNAL-JOURNAL-\(i)".utf8)
+    try original.write(to: target)
+    do { _ = try readJournal(throughAlias); fatalError("redirected journal read accepted") }
+    catch BoundaryError.unsafe { }
+    do { try publish(SafeJournal(id: "journal_\(i)", generation: 1), to: throughAlias)
+         fatalError("redirected journal publication accepted") }
+    catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: target) == original, "redirected journal modified")
+    check(!fm.fileExists(atPath: redirected.appendingPathComponent("journal_\(i).json.tmp").path),
+          "unexpected temporary publication")
+}
+print("PASS: 96 parent-directory symlink read/write rejection cases (standalone model only)")
