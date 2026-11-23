@@ -123,3 +123,62 @@ test('diagnostics reject symlinks and use only the bounded log tail', () => {
     assert.throws(() => readNativeLogTail(link), /unsafe/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+
+test('machine preconditions override retryable cache and service noise', () => {
+  for (const message of [
+    'malformed PCM file in ModuleCache.noindex\nNo space left on device',
+    'build service connection interrupted\nxcode-select: error: invalid developer directory',
+    'dyld_shared_cache_extract_dylibs failed\nmodule cache corrupted',
+    'build service could not create build operation\nPermission denied'
+  ]) {
+    assert.deepEqual(diagnoseNativeLog(message), {
+      category: 'machine-precondition', retryable: false, repair: 'none'
+    });
+  }
+  assert.equal(diagnoseNativeLog('CoreSimulatorService connection became invalid').retryable, true);
+});
+test('root symlink must never redirect automatic DerivedData cleanup', () => {
+  const parent = scratch(), outside = scratch();
+  try {
+    const cache = join(outside, 'ios/build/local-release/DerivedData');
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, 'user-file'), 'keep');
+    const linked = join(parent, 'linked-worktree');
+    symlinkSync(outside, linked);
+    assert.throws(() => clearIsolatedDerivedData(linked), /linked worktree root/);
+    assert.equal(readFileSync(join(cache, 'user-file'), 'utf8'), 'keep');
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('mixed Swift compiler failures never trigger infrastructure retry', () => {
+  const cases = [
+    'build service connection interrupted\n/path/Foo.swift:42:9: error: value of type Foo has no member bar',
+    'malformed PCM file in ModuleCache.noindex\n/path/Foo.swift:7: error: cannot infer contextual base in reference to member foo',
+    'unable to initiate PIF transfer session\nfatal error: unexpected compiler crash'
+  ];
+  for (const log of cases) {
+    assert.deepEqual(diagnoseNativeLog(log), {
+      category: 'swift-source', retryable: false, repair: 'none'
+    });
+  }
+});
+test('mixed source failure prevents any second native invocation', async () => {
+  const root = scratch();
+  try {
+    let calls = 0;
+    await assert.rejects(runNativeWithBoundedRecovery({
+      cwd: root, output: root,
+      run: async (_command, _args, _cwd, log) => {
+        calls++;
+        writeFileSync(log, 'build service connection interrupted\nFoo.swift:12: error: cannot infer type');
+        throw Error('build failed');
+      }
+    }), /swift-source/);
+    assert.equal(calls, 1);
+    assert.equal(JSON.parse(readFileSync(join(root, 'native-diagnosis.json'))).retryCount, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
