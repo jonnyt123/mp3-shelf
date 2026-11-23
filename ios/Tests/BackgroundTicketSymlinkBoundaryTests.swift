@@ -8,22 +8,25 @@ import Glibc
 // Standalone adversarial filesystem fixture. Not a production downloader test.
 // swift -swift-version 6 ios/Tests/BackgroundTicketSymlinkBoundaryTests.swift
 struct SafeJournal: Codable, Equatable { let id: String; let generation: Int }
-enum BoundaryError: Error { case unsafe, stale }
+enum BoundaryError: Error { case unsafe, stale, identityMismatch }
 func isRegularNoFollow(_ url: URL) -> Bool {
     var info = stat()
     return url.path.withCString { lstat($0, &info) == 0 && (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) }
 }
-func readJournal(_ url: URL) throws -> SafeJournal? {
+func readJournal(_ url: URL, expectedID: String? = nil) throws -> SafeJournal? {
     var info = stat()
     let exists = url.path.withCString { lstat($0, &info) == 0 }
     if !exists { return nil }
     guard isRegularNoFollow(url) else { throw BoundaryError.unsafe }
-    return try JSONDecoder().decode(SafeJournal.self, from: Data(contentsOf: url))
+    let record = try JSONDecoder().decode(SafeJournal.self, from: Data(contentsOf: url))
+    guard record.generation > 0, record.id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else { throw BoundaryError.unsafe }
+    if let expectedID, record.id != expectedID { throw BoundaryError.identityMismatch }
+    return record
 }
 func publish(_ record: SafeJournal, to destination: URL) throws {
     guard record.id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil,
           record.generation > 0 else { throw BoundaryError.unsafe }
-    if let old = try readJournal(destination), old.generation >= record.generation { throw BoundaryError.stale }
+    if let old = try readJournal(destination, expectedID: record.id), old.generation >= record.generation { throw BoundaryError.stale }
     let temporary = destination.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".tmp")
     defer { try? FileManager.default.removeItem(at: temporary) }
     try JSONEncoder().encode(record).write(to: temporary, options: .atomic)
@@ -65,3 +68,33 @@ for i in 0..<64 {
     check(try Data(contentsOf: journal) == Data("{not-json".utf8), "corrupt evidence lost")
 }
 print("PASS: 128 symlink journal isolation and replacement sequences; 64 corrupt journal preservation cases (standalone model only)")
+
+// Cross-ticket substitution must never be mistaken for a valid older generation.
+// A foreign journal with a high or low generation is preserved for recovery.
+for i in 0..<128 {
+    let destination = root.appendingPathComponent("identity_\(i).json")
+    let original = SafeJournal(id: "owner_\(i)", generation: i + 1)
+    let foreign = SafeJournal(id: "foreign_\(i)", generation: 1)
+    try JSONEncoder().encode(foreign).write(to: destination)
+    let originalBytes = try Data(contentsOf: destination)
+    do {
+        try publish(original, to: destination)
+        fatalError("foreign ticket journal replaced")
+    } catch BoundaryError.identityMismatch { }
+    check(try Data(contentsOf: destination) == originalBytes, "foreign journal bytes changed")
+    do {
+        _ = try readJournal(destination, expectedID: original.id)
+        fatalError("foreign journal accepted during recovery")
+    } catch BoundaryError.identityMismatch { }
+}
+for i in 0..<64 {
+    let destination = root.appendingPathComponent("invalid-generation_\(i).json")
+    try JSONEncoder().encode(SafeJournal(id: "ticket_\(i)", generation: 0)).write(to: destination)
+    let originalBytes = try Data(contentsOf: destination)
+    do {
+        try publish(SafeJournal(id: "ticket_\(i)", generation: 1), to: destination)
+        fatalError("invalid persisted generation overwritten")
+    } catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: destination) == originalBytes, "invalid journal evidence changed")
+}
+print("PASS: 128 cross-ticket substitution and 64 invalid-generation preservation cases (standalone model only)")
