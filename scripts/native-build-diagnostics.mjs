@@ -26,6 +26,11 @@ const FATAL_ENVIRONMENT = [
   /(?:code signing is required|provisioning profile.*(?:missing|not found))/i
 ];
 const SOURCE_FAILURE = [
+  // Swift diagnostics often use file:line:column: error without one of the
+  // narrow message fragments below. Such failures must never trigger a
+  // transient-service/cache retry just because another error appeared first.
+  /(?:^|\n)[^\n]*\.swift:\d+(?::\d+)?:\s*error:/i,
+  /(?:^|\n)\s*(?:error: )?(?:emit-module command failed|failed to emit module)/i,
   /(?:^|\n)[^\n]*\berror: (?:cannot find|no such module|type .* has no member|ambiguous use of|missing argument|extra argument|cannot convert|invalid redeclaration|expression is ambiguous|expected .* declaration|consecutive statements)/i,
   /Swift Compiler Error/i,
   /(?:^|\n)[^\n]*CompileSwift .* failed/i
