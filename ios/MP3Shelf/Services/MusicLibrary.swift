@@ -184,11 +184,19 @@ final class MusicLibrary: ObservableObject {
                 do {
                     let saved = try Data(contentsOf: discoveryURL)
                     let decoded = try JSONDecoder().decode([SourceDiscoveryJob].self, from: saved)
-                    discoveryJobs = decoded.compactMap { checkpoint in
-                        guard let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) else { return nil }
+                    // Startup must retain the same retry identities as reentry
+                    // recovery. A temporarily missing playlist is not proof that
+                    // its discovery history can safely be discarded.
+                    discoveryJobs = decoded.map { checkpoint in
                         var repaired = checkpoint
                         repaired.repairPersistedCheckpoint()
-                        repaired.refreshMissingWishes(playlist.missingTracks)
+                        if let playlist = playlists.first(where: { $0.id == checkpoint.playlistID }) {
+                            repaired.refreshMissingWishes(playlist.missingTracks)
+                        } else {
+                            // Retain the cursor and source failures, but do not
+                            // dispatch work for a playlist that is unavailable.
+                            repaired.isPaused = true
+                        }
                         return repaired
                     }
                 } catch {
