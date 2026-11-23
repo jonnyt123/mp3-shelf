@@ -875,16 +875,12 @@ private struct SpotifyTrack: Decodable {
         // A redacted/local-only entry must never become eligible for unattended
         // source discovery just because the API returned a string or number
         // where its documented boolean should be. Missing flags remain unknown.
-        if container.contains(.is_local) {
-            is_local = (try? container.decode(Bool.self, forKey: .is_local)) ?? true
-        } else {
-            is_local = nil
-        }
-        if container.contains(.is_playable) {
-            is_playable = (try? container.decode(Bool.self, forKey: .is_playable)) ?? false
-        } else {
-            is_playable = nil
-        }
+        is_local = SpotifyAvailabilityPolicy.localFlag(
+            present: container.contains(.is_local),
+            decoded: try? container.decode(Bool.self, forKey: .is_local))
+        is_playable = SpotifyAvailabilityPolicy.playableFlag(
+            present: container.contains(.is_playable),
+            decoded: try? container.decode(Bool.self, forKey: .is_playable))
         album = try? container.decode(SpotifyAlbum.self, forKey: .album)
         external_urls = try? container.decode(SpotifyURLContainer.self, forKey: .external_urls)
         // A negative or implausibly long duration is not reliable matching evidence.
@@ -911,6 +907,19 @@ private struct SpotifyTrack: Decodable {
         }
     }
 }
+
+ // Keep absent Spotify availability fields distinct from malformed or null
+ // fields. Null is a present but untrusted value, not proof of playability.
+ enum SpotifyAvailabilityPolicy {
+     static func localFlag(present: Bool, decoded: Bool?) -> Bool? {
+         present ? (decoded ?? true) : nil
+     }
+
+     static func playableFlag(present: Bool, decoded: Bool?) -> Bool? {
+         present ? (decoded ?? false) : nil
+     }
+ }
+
 private struct SpotifyArtist: Decodable { let name: String }
 private struct SpotifyAlbum: Decodable { let name: String }
 private struct SpotifyTokenResponse: Decodable {
