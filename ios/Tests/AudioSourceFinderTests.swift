@@ -2421,6 +2421,50 @@ enum AudioSourceFinderTests {
                 in: Data(invalidFeed.utf8), matching: mixedCodecWish)?.isEmpty == true,
                 "malformed secondary audio enclosure must require review")
         }
+        // Duplicate Archive search identifiers must preserve competing edition
+        // evidence even when MusicMatching.key folds the base song title.
+        func indexRows(_ titles: [String]) -> [AudioSourceFinder.SearchItem] {
+            let docs = titles.map { title in
+                ["identifier": "same-upload", "title": title, "creator": "Exact Artist"]
+            }
+            let payload = try! JSONSerialization.data(withJSONObject: [
+                "response": ["docs": docs, "numFound": docs.count]
+            ])
+            return try! JSONDecoder().decode(
+                AudioSourceFinder.SearchResponse.self, from: payload).response.docs
+        }
+        for titles in [
+            ["Exact Song", "Exact Song (Live)"],
+            ["Exact Song (Clean)", "Exact Song (Explicit)"],
+            ["Exact Song (Remastered 2019)", "Exact Song (Remastered 2021)"],
+            ["Exact Song (Live at Wembley 2022)",
+             "Exact Song (Live at Madison Square Garden 2022)"]
+        ] {
+            let rows = indexRows(titles)
+            verify(!AudioSourceFinder.archiveIndexDuplicatesAgree(rows),
+                   "contradictory same-ID edition rows must not auto-match: \\(titles)")
+            var seen: [String: String] = [:]
+            verify(AudioSourceFinder.archiveCrossPageIdentitiesAgree(
+                Array(rows.prefix(1)), seen: &seen),
+                "first page retains original edition evidence")
+            verify(!AudioSourceFinder.archiveCrossPageIdentitiesAgree(
+                Array(rows.suffix(1)), seen: &seen),
+                "second page must reject conflicting edition evidence")
+            verify(!AudioSourceFinder.archiveIndexDuplicatesAgree(Array(rows.reversed())),
+                   "edition conflict must be independent of index order")
+        }
+        for titles in [
+            ["Exact Song", "Exact Song"],
+            ["Exact Song (Remaster)", "Exact Song (Remastered)"],
+            ["Exact Song (A Cappella)", "Exact Song (Acapella)"]
+        ] {
+            let rows = indexRows(titles)
+            verify(AudioSourceFinder.archiveIndexDuplicatesAgree(rows),
+                   "identical or equivalent edition labels remain eligible")
+            var seen: [String: String] = [:]
+            verify(AudioSourceFinder.archiveCrossPageIdentitiesAgree(rows, seen: &seen),
+                   "equivalent cross-page edition labels remain eligible")
+        }
         print("Audio source discovery validation tests passed")
     }
 }
