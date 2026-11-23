@@ -1466,20 +1466,38 @@ struct LibraryView: View {
                         browsingPlaybackControls(hasResults: !visibleTracks.isEmpty)
                         bulkPlaybackFeedback
                         if visibleTracks.isEmpty {
+                            // An empty collection is not an empty Favorites filter.
+                            // Never offer a no-op "Show all" button to a new listener.
                             VStack(alignment: .leading, spacing: 12) {
-                                EmptyShelfView(
-                                    title: "No favorites yet",
-                                    subtitle: "Tap the heart on a song to collect it here.",
-                                    symbol: "heart")
-                                Button {
-                                    favoritesOnly = false
-                                } label: {
-                                    Label("Show all music", systemImage: "music.note.list")
-                                        .frame(minHeight: 44)
+                                if library.tracks.isEmpty {
+                                    EmptyShelfView(
+                                        title: "Your library is empty",
+                                        subtitle: "Import audio saved on this iPhone to start listening offline.",
+                                        symbol: "music.note.list")
+                                    Button {
+                                        presentAudioImporter()
+                                    } label: {
+                                        Label("Import audio from Files", systemImage: "square.and.arrow.down")
+                                            .frame(minHeight: 44)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(audioImportBusy || scenePhase != .active)
+                                    .accessibilityHint("Choose local audio files. Importing does not require an internet connection.")
+                                } else if favoritesOnly {
+                                    EmptyShelfView(
+                                        title: "No favorites yet",
+                                        subtitle: "Tap the heart on a song to collect it here.",
+                                        symbol: "heart")
+                                    Button {
+                                        favoritesOnly = false
+                                    } label: {
+                                        Label("Show all music", systemImage: "music.note.list")
+                                            .frame(minHeight: 44)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(ShelfTheme.accent)
+                                    .accessibilityHint("Switch from Favorites to all saved songs")
                                 }
-                                .buttonStyle(.bordered)
-                                .tint(ShelfTheme.accent)
-                                .accessibilityHint("Switch from Favorites to all saved songs")
                             }
                         } else {
                             LazyVStack(spacing: 9) {
