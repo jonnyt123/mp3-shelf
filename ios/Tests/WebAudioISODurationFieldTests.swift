@@ -19,8 +19,8 @@ check(implementation.contains("hours.isFinite, minutes.isFinite, secondsField.is
       "production ISO parser checks finite components")
 check(implementation.contains("seconds = hours * 3600 + minutes * 60 + secondsField"),
       "production ISO parser computes duration from validated components")
-check(implementation.contains("abs($0 - seconds) <= 4"),
-      "production matching retains Spotify duration tolerance")
+check(implementation.contains("recordingDurationTolerance(expected)"),
+      "production web matcher uses short-track proportional tolerance")
 
 func isoDuration(_ text: String) -> Double? {
     let regex = try! NSRegularExpression(pattern:
@@ -45,4 +45,21 @@ for (value, expected) in [("PT3M30S", 210.0), ("PT1H2M3.5S", 3723.5),
 for value in ["PT1M90S", "PT2H75M", "PT60M", "PT60S", "PT1M60S",
               "PT999999999999999999999H", "PT", "PT-3M", "PT1MNaNS"] {
     check(isoDuration(value) == nil, "invalid duration rejected: " + value)
+}
+
+func withinRecordingTolerance(expected: Double, observed: Double) -> Bool {
+    guard expected.isFinite, expected > 0, observed.isFinite, observed > 0 else { return false }
+    return abs(expected - observed) <= min(4.0, max(0.5, expected * 0.03))
+}
+for (expected, observed, accepted) in [
+    (12.0, 15.0, false), // 12-second recording cannot match a 15-second preview
+    (12.0, 12.4, true),
+    (30.0, 32.0, false),
+    (210.0, 213.0, true),
+    (210.0, 215.0, false),
+    (Double.nan, 20.0, false),
+    (20.0, Double.infinity, false)
+] {
+    check(withinRecordingTolerance(expected: expected, observed: observed) == accepted,
+          "proportional duration acceptance expected=\\(expected) observed=\\(observed)")
 }
