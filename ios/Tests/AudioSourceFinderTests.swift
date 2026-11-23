@@ -37,7 +37,7 @@ enum AudioSourceFinderTests {
                           "The Song (Reimagined)", "The Song (Orchestral)"] {
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: alternate + ".mp3", requestedTitle: "The Song"),
-                "alternate master or arrangement cannot silently replace studio original: \\(alternate)")
+                "alternate master or arrangement cannot silently replace studio original: \(alternate)")
         }
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "The Song (Dolby Atmos).mp3",
@@ -425,16 +425,16 @@ enum AudioSourceFinderTests {
                           "Slowed", "Slowed Down", "Slow Version", "Reversed",
                           "Reverse Audio", "Vocal Removed", "Vocals Removed",
                           "Vocal Removal"] {
-            let editionTitle = "The Song (\\(alternate))"
+            let editionTitle = "The Song (\(alternate))"
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: "The Song.mp3", requestedTitle: editionTitle),
-                "requested alternate edition must not be replaced by studio master: \\(alternate)")
+                "requested alternate edition must not be replaced by studio master: \(alternate)")
             verify(!AudioSourceFinder.recordingEditionAgrees(
-                filename: "The Song (\\(alternate)).mp3", requestedTitle: "The Song"),
-                "alternate upload must not be silently substituted: \\(alternate)")
+                filename: "The Song (\(alternate)).mp3", requestedTitle: "The Song"),
+                "alternate upload must not be silently substituted: \(alternate)")
             verify(AudioSourceFinder.recordingEditionAgrees(
-                filename: "The Song (\\(alternate)).mp3", requestedTitle: editionTitle),
-                "same explicit alternate edition remains eligible: \\(alternate)")
+                filename: "The Song (\(alternate)).mp3", requestedTitle: editionTitle),
+                "same explicit alternate edition remains eligible: \(alternate)")
         }
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "The Song.mp3", requestedTitle: "The Song"),
@@ -599,13 +599,13 @@ enum AudioSourceFinderTests {
             let title = (alternate as NSString).deletingPathExtension
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: alternate, requestedTitle: "The Song"),
-                "stem or backing track cannot replace original: \\(alternate)")
+                "stem or backing track cannot replace original: \(alternate)")
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: "The Song.mp3", requestedTitle: title),
-                "original cannot replace requested stem: \\(alternate)")
+                "original cannot replace requested stem: \(alternate)")
             verify(AudioSourceFinder.recordingEditionAgrees(
                 filename: alternate, requestedTitle: title),
-                "same stem edition remains eligible: \\(alternate)")
+                "same stem edition remains eligible: \(alternate)")
         }
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "The Backing Track.mp3", requestedTitle: "The Backing Track"),
@@ -2321,7 +2321,7 @@ enum AudioSourceFinderTests {
         ] {
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: alternate, requestedTitle: "Exact Song"),
-                "alternate recording must not auto-match the original: \\(alternate)")
+                "alternate recording must not auto-match the original: \(alternate)")
         }
         verify(AudioSourceFinder.recordingEditionAgrees(
             filename: "Exact Song (Mash Up).mp3",
@@ -2350,10 +2350,10 @@ enum AudioSourceFinderTests {
             let requestedAlternate = (alternate as NSString).deletingPathExtension
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: alternate, requestedTitle: "Exact Song"),
-                "alternate capture must not replace studio master: \\(alternate)")
+                "alternate capture must not replace studio master: \(alternate)")
             verify(!AudioSourceFinder.recordingEditionAgrees(
                 filename: "Exact Song.mp3", requestedTitle: requestedAlternate),
-                "studio master must not replace requested capture: \\(alternate)")
+                "studio master must not replace requested capture: \(alternate)")
         }
         for (filename, requested) in [
             ("Exact Song (Sound Check).mp3", "Exact Song (Soundcheck)"),
