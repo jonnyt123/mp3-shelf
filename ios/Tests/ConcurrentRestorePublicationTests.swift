@@ -10,7 +10,9 @@ import Glibc
 enum PublishFailure: Error { case unsafeStage, conflict, io(Int32) }
 func publish(_ stage: URL, to destination: URL) throws {
     let attrs = try FileManager.default.attributesOfItem(atPath: stage.path)
-    guard attrs[.type] as? FileAttributeType == .typeRegular else { throw PublishFailure.unsafeStage }
+    guard attrs[.type] as? FileAttributeType == .typeRegular,
+          (attrs[.size] as? NSNumber)?.int64Value ?? 0 > 0,
+          (attrs[.referenceCount] as? NSNumber)?.intValue == 1 else { throw PublishFailure.unsafeStage }
     // link(2) creates the destination exclusively; rename(2) would overwrite.
     let result = stage.path.withCString { a in destination.path.withCString { b in link(a, b) } }
     guard result == 0 else {
@@ -85,5 +87,42 @@ do { try publish(symlink, to: linkedTarget); fatalError("accepted symlink stage"
 catch PublishFailure.unsafeStage { }
 check(!fm.fileExists(atPath: linkedTarget.path), "published symlink")
 check((try Data(contentsOf: outside)) == original, "external audio modified")
-print("PASS: 288 concurrent attempts, 48 winners, 240 retained losers, occupied destination and symlink rejection")
+
+func expectUnsafe(_ stage: URL, _ destination: URL, _ reason: String) throws {
+    do { try publish(stage, to: destination); fatalError("accepted unsafe stage: \(reason)") }
+    catch PublishFailure.unsafeStage { }
+    check(!fm.fileExists(atPath: destination.path), "unsafe stage published: \(reason)")
+    check(fm.fileExists(atPath: stage.path), "unsafe stage discarded: \(reason)")
+}
+let emptyStage = root.appendingPathComponent("empty.part")
+try Data().write(to: emptyStage)
+try expectUnsafe(emptyStage, root.appendingPathComponent("empty.mp3"), "zero-length stage")
+
+let hardlinkStage = root.appendingPathComponent("alias.part")
+let hardlinkDestination = root.appendingPathComponent("alias.mp3")
+let hardlinkResult = outside.path.withCString { source in
+    hardlinkStage.path.withCString { destination in link(source, destination) }
+}
+check(hardlinkResult == 0, "could not construct hardlink fixture")
+try expectUnsafe(hardlinkStage, hardlinkDestination, "multiply-linked user audio")
+check((try Data(contentsOf: outside)) == original, "hardlink target changed")
+
+let occupiedSymlink = root.appendingPathComponent("occupied-symlink.mp3")
+let symlinkStage = root.appendingPathComponent("symlink-target.part")
+try Data(repeating: 0xBB, count: 1024).write(to: symlinkStage)
+try fm.createSymbolicLink(at: occupiedSymlink, withDestinationURL: outside)
+do { try publish(symlinkStage, to: occupiedSymlink); fatalError("replaced occupied symlink") }
+catch PublishFailure.conflict { }
+check((try Data(contentsOf: outside)) == original, "symlink target overwritten")
+check(fm.fileExists(atPath: symlinkStage.path), "stage lost on symlink collision")
+
+let occupiedDirectory = root.appendingPathComponent("occupied-directory.mp3")
+let directoryStage = root.appendingPathComponent("directory-target.part")
+try fm.createDirectory(at: occupiedDirectory, withIntermediateDirectories: false)
+try Data(repeating: 0xCC, count: 1024).write(to: directoryStage)
+do { try publish(directoryStage, to: occupiedDirectory); fatalError("replaced occupied directory") }
+catch PublishFailure.conflict { }
+check(fm.fileExists(atPath: directoryStage.path), "stage lost on directory collision")
+check((try fm.attributesOfItem(atPath: occupiedDirectory.path))[.type] as? FileAttributeType == .typeDirectory, "directory replaced")
+print("PASS: 288 concurrent attempts, 48 winners, 240 retained losers, occupied destination, symlink, directory, empty and hardlink stage rejection")
 print("LIMITATION: model-only; production restore, macOS/Xcode and physical iPhone UNVERIFIED")
