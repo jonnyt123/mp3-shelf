@@ -52,7 +52,9 @@ export function auditNativeReconciliation({ candidateSha, proposals } = {}) {
     if (!Array.isArray(changedFiles) || changedFiles.length === 0 ||
         changedFiles.length > 500 || new Set(changedFiles).size !== changedFiles.length ||
         changedFiles.some(path => typeof path !== 'string' ||
-          !path.startsWith('ios/') || path.includes('\\') ||\n          path.split('/').some(part => !part || part === '.' || part === '..') ||\n          /[\\x00-\\x1f\\x7f]/.test(path)))
+          !path.startsWith('ios/') || path.includes('\\') ||
+          path.split('/').some(part => !part || part === '.' || part === '..') ||
+          /[\x00-\x1f\x7f]/.test(path)))
       blockers.push('PR #' + number + ' has missing or unexpected changed paths.');
     else {
       for (const path of changedFiles) {
