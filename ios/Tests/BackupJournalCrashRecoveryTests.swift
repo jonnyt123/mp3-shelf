@@ -25,7 +25,25 @@ func safeRegularFile(_ url: URL) -> Bool {
     return (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) && info.st_nlink == 1
 }
 
+func safeDirectoryChain(_ url: URL) -> Bool {
+    var current = url.deletingLastPathComponent().standardizedFileURL
+    while true {
+        var info = stat()
+        guard current.path.withCString({ lstat($0, &info) }) == 0,
+              (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else { return false }
+        let parent = current.deletingLastPathComponent()
+        if parent.path == current.path { return true }
+        current = parent
+    }
+}
+
 func recover(journal: URL, final: URL, staged: URL) throws -> Bool {
+    guard journal.deletingLastPathComponent().standardizedFileURL ==
+              final.deletingLastPathComponent().standardizedFileURL,
+          staged.deletingLastPathComponent().standardizedFileURL ==
+              final.deletingLastPathComponent().standardizedFileURL,
+          safeDirectoryChain(journal), safeDirectoryChain(final),
+          safeDirectoryChain(staged) else { throw RecoveryError.unsafePath }
     guard safeRegularFile(journal) else { throw RecoveryError.unsafePath }
     let bytes = try Data(contentsOf: journal)
     guard !bytes.isEmpty && bytes.count <= 4096,
@@ -98,3 +116,42 @@ for index in 0..<80 {
     }
 }
 print("PASS: 80 standalone backup publication crash/replay/identity/bounds/link scenarios")
+
+let externalFolder = root.appendingPathComponent("external-recovery")
+try fm.createDirectory(at: externalFolder, withIntermediateDirectories: true)
+let aliasFolder = root.appendingPathComponent("external-alias")
+try fm.createSymbolicLink(at: aliasFolder, withDestinationURL: externalFolder)
+for index in 0..<64 {
+    let folder = root.appendingPathComponent("boundary-\(index)")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    let final = folder.appendingPathComponent("library.mp3shelf")
+    let staged = folder.appendingPathComponent("library.pending")
+    let journal = folder.appendingPathComponent("library.journal")
+    let external = externalFolder.appendingPathComponent("foreign-\(index).pending")
+    let bytes = Data("USER-ARCHIVE-\(index)".utf8)
+    try bytes.write(to: staged)
+    try bytes.write(to: external)
+    let record = Journal(archive: final.lastPathComponent, generation: 1, expectedBytes: bytes.count)
+    try JSONEncoder().encode(record).write(to: journal)
+    do {
+        _ = try recover(journal: journal, final: final, staged: external)
+        fatalError("foreign directory staged archive accepted")
+    } catch RecoveryError.unsafePath { }
+    let aliasStaged = aliasFolder.appendingPathComponent("foreign-\(index).pending")
+    let aliasFinal = aliasFolder.appendingPathComponent("library.mp3shelf")
+    let aliasJournal = aliasFolder.appendingPathComponent("library.journal")
+    try JSONEncoder().encode(record).write(to: externalFolder.appendingPathComponent("library.journal"))
+    do {
+        _ = try recover(journal: aliasJournal, final: aliasFinal, staged: aliasStaged)
+        fatalError("symlink ancestor accepted")
+    } catch RecoveryError.unsafePath { }
+    try assertEqual(!fm.fileExists(atPath: final.path), "foreign staged archive published")
+    try assertEqual(try Data(contentsOf: staged) == bytes, "local staged archive changed")
+    try assertEqual(try Data(contentsOf: external) == bytes, "external staged archive changed")
+    try assertEqual(!fm.fileExists(atPath: externalFolder.appendingPathComponent("library.mp3shelf").path),
+                    "redirected archive published")
+    try assertEqual(try recover(journal: journal, final: final, staged: staged),
+                    "valid local recovery failed")
+    try assertEqual(try Data(contentsOf: final) == bytes, "valid recovery bytes changed")
+}
+print("PASS: 64 cross-directory staging and 64 redirected-ancestor rejection cases")
