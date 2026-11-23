@@ -1208,7 +1208,7 @@ final class MusicLibrary: ObservableObject {
                 } catch {
                     discoveryCheckpointUnreadable = true
                     libraryStorageError = "Saved discovery progress could not be reopened. Original checkpoint bytes are preserved; discovery is paused."
-                    print("MP3 Shelf preserved unreadable discovery checkpoint during library recovery: \\(error)")
+                    print("MP3 Shelf preserved unreadable discovery checkpoint during library recovery: \(error)")
                 }
             }
             return true
