@@ -10,10 +10,20 @@ import Glibc
 struct SafeJournal: Codable, Equatable { let id: String; let generation: Int }
 enum BoundaryError: Error { case unsafe, stale, identityMismatch }
 func hasSafeParent(_ url: URL) -> Bool {
-    var info = stat()
-    let parent = url.deletingLastPathComponent()
-    return parent.path.withCString { lstat($0, &info) == 0 &&
-        (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) }
+    // Validate every existing ancestor: checking only the immediate parent
+    // misses a symlink higher in a nested journal directory.
+    var current = url.deletingLastPathComponent().standardizedFileURL
+    while true {
+        var info = stat()
+        let safe = current.path.withCString {
+            lstat($0, &info) == 0 &&
+            (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR)
+        }
+        if !safe { return false }
+        let parent = current.deletingLastPathComponent()
+        if parent.path == current.path { return true }
+        current = parent
+    }
 }
 func isRegularNoFollow(_ url: URL) -> Bool {
     var info = stat()
@@ -128,3 +138,29 @@ for i in 0..<96 {
           "unexpected temporary publication")
 }
 print("PASS: 96 parent-directory symlink read/write rejection cases (standalone model only)")
+
+// A symlink in a grandparent directory must be rejected even when the
+// immediate parent is a real directory. Also reject dangling ancestors.
+let nestedExternal = root.appendingPathComponent("nested-external")
+let nestedReal = nestedExternal.appendingPathComponent("real")
+try fm.createDirectory(at: nestedReal, withIntermediateDirectories: true)
+let nestedAlias = root.appendingPathComponent("nested-alias")
+try fm.createSymbolicLink(at: nestedAlias, withDestinationURL: nestedExternal)
+for i in 0..<96 {
+    let external = nestedReal.appendingPathComponent("nested_\(i).json")
+    let viaAlias = nestedAlias.appendingPathComponent("real/nested_\(i).json")
+    let bytes = Data("PRESERVE-NESTED-\(i)".utf8)
+    try bytes.write(to: external)
+    do { _ = try readJournal(viaAlias); fatalError("nested ancestor symlink read accepted") }
+    catch BoundaryError.unsafe { }
+    do { try publish(SafeJournal(id: "nested_\(i)", generation: 1), to: viaAlias)
+         fatalError("nested ancestor symlink publication accepted") }
+    catch BoundaryError.unsafe { }
+    check(try Data(contentsOf: external) == bytes, "nested external bytes modified")
+}
+let missingAlias = root.appendingPathComponent("missing-alias")
+try fm.createSymbolicLink(at: missingAlias, withDestinationURL: root.appendingPathComponent("nonexistent"))
+do { _ = try readJournal(missingAlias.appendingPathComponent("nested/journal.json"))
+     fatalError("dangling ancestor accepted") }
+catch BoundaryError.unsafe { }
+print("PASS: 96 nested-ancestor symlink isolation cases and dangling ancestor rejection (standalone model only)")
