@@ -159,7 +159,9 @@ run() {
     return 1
   fi
 }
-# Native staging must execute the same source-backed safety regressions before Xcode.\n# A native-only invocation must not skip offline journey and branch-policy tests.\nif [[ "$MODE" == node-only || "$MODE" == web || "$MODE" == native || "$MODE" == all ]]; then
+# Native staging must execute the same source-backed safety regressions before Xcode. 
+# A native-only invocation must not skip offline journey and branch-policy tests. 
+if [[ "$MODE" == node-only || "$MODE" == web || "$MODE" == native || "$MODE" == all ]]; then
   run node-release-safety node --test scripts/verify-release-evidence.test.mjs scripts/verify-vercel-release.test.mjs scripts/run-local-verification.test.mjs scripts/local-evidence.test.mjs scripts/measure-agent-throughput.test.mjs scripts/verify-native-stage.test.mjs scripts/verify-playlist-acceptance.test.mjs scripts/collect-iphone-playlist-evidence.test.mjs scripts/mac-native-candidate.test.mjs scripts/native-build-diagnostics.test.mjs scripts/native-offline-journey-regression.test.mjs scripts/native-branch-reconciliation.test.mjs scripts/publish-native-compiler-handoff.test.mjs scripts/preserve-native-failure.test.mjs scripts/choose-iphone-playlist.test.mjs scripts/iphone-qa-session.test.mjs scripts/run-iphone-playlist-acceptance.test.mjs scripts/smoke-draft-release.test.mjs scripts/draft-smoke-attestation.test.mjs scripts/package-verified-native.test.mjs scripts/native-release-cycle.test.mjs scripts/native-agent-run.test.mjs scripts/review-iphone-evidence.test.mjs scripts/release-readiness.test.mjs scripts/mac-agent-health.test.mjs scripts/stage-iphone-review.test.mjs scripts/notify-release-readiness.test.mjs scripts/deliver-verified-native.test.mjs
 fi
 # Node-only checks can also mutate the checkout. Without this pre-receipt
