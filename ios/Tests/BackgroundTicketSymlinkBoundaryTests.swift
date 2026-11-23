@@ -45,7 +45,8 @@ func readJournal(_ url: URL, expectedID: String? = nil) throws -> SafeJournal? {
 func publish(_ record: SafeJournal, to destination: URL) throws {
     guard record.id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil,
           record.generation > 0 else { throw BoundaryError.unsafe }
-    guard hasSafeParent(destination) else { throw BoundaryError.unsafe }\n    guard try JSONEncoder().encode(record).count <= maximumJournalBytes else { throw BoundaryError.oversized }
+    guard hasSafeParent(destination) else { throw BoundaryError.unsafe }
+    guard try JSONEncoder().encode(record).count <= maximumJournalBytes else { throw BoundaryError.oversized }
     if let old = try readJournal(destination, expectedID: record.id), old.generation >= record.generation { throw BoundaryError.stale }
     let temporary = destination.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".tmp")
     defer { try? FileManager.default.removeItem(at: temporary) }
