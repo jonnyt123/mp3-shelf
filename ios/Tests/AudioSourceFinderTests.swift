@@ -67,6 +67,27 @@ enum AudioSourceFinderTests {
         let throttled = HTTPURLResponse(url: catalogURL, statusCode: 429,
                                         httpVersion: nil, headerFields: nil)!
         let rss = Data("<rss/>".utf8)
+        let htmlOK = HTTPURLResponse(url: catalogURL, statusCode: 200,
+                                     httpVersion: nil,
+                                     headerFields: ["Content-Type": "text/html; charset=utf-8"])!
+        let mislabeledHTML = HTTPURLResponse(url: catalogURL, statusCode: 200,
+                                             httpVersion: nil,
+                                             headerFields: ["Content-Type": "application/json"])!
+        let htmlBody = Data("<!DOCTYPE html><html><body>Sign in</body></html>".utf8)
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            htmlBody, response: htmlOK, maximumBytes: 1024)) == nil,
+            "HTTP 200 HTML login response is rejected by content type")
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            htmlBody, response: mislabeledHTML, maximumBytes: 1024)) == nil,
+            "HTML login response with misleading JSON type is rejected by body")
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            Data("<html>Unavailable</html>".utf8), response: ok,
+            maximumBytes: 1024)) == nil,
+            "HTML body without content type cannot enter catalog matching")
+        verify((try? AudioSourceFinder.validatedCatalogBody(
+            Data("{\\"query\\":{}}".utf8), response: mislabeledHTML,
+            maximumBytes: 1024)) != nil,
+            "valid JSON with JSON content type remains eligible")
         verify((try? AudioSourceFinder.validatedCatalogBody(
             rss, response: ok, maximumBytes: rss.count)) == rss,
             "RSS response at exact size limit is accepted")
