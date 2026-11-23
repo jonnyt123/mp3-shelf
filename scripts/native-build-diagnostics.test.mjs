@@ -156,9 +156,9 @@ test('root symlink must never redirect automatic DerivedData cleanup', () => {
 
 test('mixed Swift compiler failures never trigger infrastructure retry', () => {
   const cases = [
-    'build service connection interrupted\\n/path/Foo.swift:42:9: error: value of type Foo has no member bar',
-    'malformed PCM file in ModuleCache.noindex\\n/path/Foo.swift:7: error: cannot infer contextual base in reference to member foo',
-    'unable to initiate PIF transfer session\\nfatal error: unexpected compiler crash'
+    'build service connection interrupted\n/path/Foo.swift:42:9: error: value of type Foo has no member bar',
+    'malformed PCM file in ModuleCache.noindex\n/path/Foo.swift:7: error: cannot infer contextual base in reference to member foo',
+    'unable to initiate PIF transfer session\nfatal error: unexpected compiler crash'
   ];
   for (const log of cases) {
     assert.deepEqual(diagnoseNativeLog(log), {
@@ -174,7 +174,7 @@ test('mixed source failure prevents any second native invocation', async () => {
       cwd: root, output: root,
       run: async (_command, _args, _cwd, log) => {
         calls++;
-        writeFileSync(log, 'build service connection interrupted\\nFoo.swift:12: error: cannot infer type');
+        writeFileSync(log, 'build service connection interrupted\nFoo.swift:12: error: cannot infer type');
         throw Error('build failed');
       }
     }), /swift-source/);
