@@ -593,15 +593,35 @@ enum AudioSourceFinder {
     // title/creator evidence cannot be silently discarded by the later
     // inspectedIdentifiers dedupe, which would otherwise permit a false
     // unique automatic recording selection.
+    // Keep the original title alongside normalized artist evidence: the broad
+    // title key intentionally folds some edition labels. Duplicate index rows
+    // must not erase a competing live/remix/clean master before detail lookup.
+    private static func archiveIndexIdentity(_ doc: SearchItem) -> String {
+        (doc.title?.value ?? "") + "\u{0}" +
+            MusicMatching.key(doc.creator?.value ?? "")
+    }
+
+    private static func archiveIndexIdentityAgrees(_ lhs: String, _ rhs: String) -> Bool {
+        let left = lhs.components(separatedBy: "\u{0}")
+        let right = rhs.components(separatedBy: "\u{0}")
+        guard left.count == 2, right.count == 2,
+              left[1] == right[1],
+              MusicMatching.key(left[0]) == MusicMatching.key(right[0]) else {
+            return false
+        }
+        return recordingEditionAgrees(filename: left[0], requestedTitle: right[0]) &&
+            recordingEditionAgrees(filename: right[0], requestedTitle: left[0])
+    }
+
     static func archiveIndexDuplicatesAgree(_ docs: [SearchItem]) -> Bool {
         var identities: [String: String] = [:]
         for doc in docs {
-            let identity = MusicMatching.key(doc.title?.value ?? "") + "\u{0}" +
-                MusicMatching.key(doc.creator?.value ?? "")
-            if let previous = identities[doc.identifier], previous != identity {
+            let identity = archiveIndexIdentity(doc)
+            if let previous = identities[doc.identifier],
+               !archiveIndexIdentityAgrees(previous, identity) {
                 return false
             }
-            identities[doc.identifier] = identity
+            if identities[doc.identifier] == nil { identities[doc.identifier] = identity }
         }
         return true
     }
@@ -610,9 +630,9 @@ enum AudioSourceFinder {
                                                 seen: inout [String: String]) -> Bool {
         var consistent = true
         for doc in docs {
-            let identity = MusicMatching.key(doc.title?.value ?? "") + "\u{0}" +
-                MusicMatching.key(doc.creator?.value ?? "")
-            if let previous = seen[doc.identifier], previous != identity {
+            let identity = archiveIndexIdentity(doc)
+            if let previous = seen[doc.identifier],
+               !archiveIndexIdentityAgrees(previous, identity) {
                 consistent = false
             }
             // Keep the first identity, so later contradictory rows cannot
