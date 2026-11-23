@@ -821,7 +821,19 @@ private struct SpotifyPlaylistItem: Decodable {
               primary.album?.name == nil || legacy.album?.name == nil ||
                   normalized(primary.album!.name) == normalized(legacy.album!.name)
         else { return nil }
-        return primary
+        // Both envelopes describe the same recording, but one may be a
+        // partially redacted projection. Prefer the projection with more
+        // usable edition/duration evidence so matching does not silently
+        // lose the album or duration needed to distinguish recordings.
+        // Conflicting evidence was rejected above; never combine fields from
+        // different recordings or synthesize an identity.
+        let primaryEvidence = (primary.album?.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? 1 : 0)
+            + (primary.duration_ms != nil ? 1 : 0)
+            + (SpotifyTrackLinks.canonicalURL(primaryURL) != nil ? 1 : 0)
+        let legacyEvidence = (legacy.album?.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? 1 : 0)
+            + (legacy.duration_ms != nil ? 1 : 0)
+            + (SpotifyTrackLinks.canonicalURL(legacyURL) != nil ? 1 : 0)
+        return legacyEvidence > primaryEvidence ? legacy : primary
     }
 
     init(from decoder: Decoder) throws {
