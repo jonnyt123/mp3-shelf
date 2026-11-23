@@ -1764,7 +1764,9 @@ final class MusicLibrary: ObservableObject {
                                 if job.recordingCandidates == nil { job.recordingCandidates = [:] }
                                 job.recordingCandidates?[wish.id.uuidString] = found
                                 discoveryJobs[index] = job
-                                persistDiscovery()
+                                // A failed checkpoint must not allow matching or downloads
+                                // to proceed using an uncommitted candidate selection.
+                                guard persistDiscovery() else { throw CancellationError() }
                             }
                             let ranked = RecordingMatcher.rank(found, for: wish)
                             ownedDetails.append("MP3 Shelf matching: \(found.count) recordings examined")
@@ -1840,7 +1842,8 @@ final class MusicLibrary: ObservableObject {
                                 details.append("Web search: request \(job.webSearchWishIDs?.count ?? 0)/\(SourceDiscoveryJob.maxAutomaticWebSearches) reserved")
                                 job.saveLookupDetails(details, for: wish.id)
                                 discoveryJobs[index] = job
-                                persistDiscovery()
+                                // Reserve the request durably before consuming a lookup.
+                                guard persistDiscovery() else { throw CancellationError() }
                                 do {
                                     let web = try await AutomaticWebAudioFinder.find(for: wish, apiKey: key,
                                         allowsCellular: allowsCellular, excluding: failedURLs)
@@ -1932,7 +1935,8 @@ final class MusicLibrary: ObservableObject {
             }
             processedThisPass += 1
             discoveryJobs[index] = job
-            persistDiscovery()
+            // Stop this pass if its completed cursor cannot be recovered.
+            guard persistDiscovery() else { break }
             if var progress = automaticDownloadProgress {
                 progress.processed = job.nextIndex
                 progress.queued = job.queued
