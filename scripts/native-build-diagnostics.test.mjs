@@ -123,3 +123,47 @@ test('diagnostics reject symlinks and use only the bounded log tail', () => {
     assert.throws(() => readNativeLogTail(link), /unsafe/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('fatal toolchain, disk, permissions and dyld failures override transient retry hints', () => {
+  for (const fatal of [
+    'error: No space left on device',
+    'xcode-select: error: tool xcodebuild requires Xcode',
+    'error: Permission denied',
+    'dyld[123]: Library not loaded: @rpath/libswiftCore.dylib',
+    'error: code signing is required for product type Application'
+  ]) {
+    assert.deepEqual(diagnoseNativeLog('unable to initiate PIF transfer session\\n' + fatal), {
+      category: 'fatal-environment', retryable: false, repair: 'none'
+    }, fatal);
+  }
+});
+test('fatal native environment errors do not start a second build attempt', async () => {
+  const root = scratch();
+  try {
+    let calls = 0;
+    await assert.rejects(runNativeWithBoundedRecovery({
+      cwd: root, output: root,
+      run: async (_command, _args, _cwd, log) => {
+        calls++;
+        writeFileSync(log, 'build service could not create build operation\\nNo space left on device');
+        throw Error('disk exhausted');
+      }
+    }), /fatal-environment/);
+    assert.equal(calls, 1);
+    const receipt = JSON.parse(readFileSync(join(root, 'native-diagnosis.json')));
+    assert.equal(receipt.retryCount, 0);
+    assert.equal(receipt.finalStatus, 'BLOCKED');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('generated-cache cleanup refuses a symlinked worktree root', () => {
+  const root = scratch(), parent = scratch();
+  try {
+    const cache = join(root, 'ios/build/local-release/DerivedData');
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, 'valuable'), 'keep');
+    const redirected = join(parent, 'worktree');
+    symlinkSync(root, redirected);
+    assert.throws(() => clearIsolatedDerivedData(redirected), /redirected worktree root/);
+    assert.equal(readFileSync(join(cache, 'valuable'), 'utf8'), 'keep');
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(parent, { recursive: true, force: true }); }
+});
