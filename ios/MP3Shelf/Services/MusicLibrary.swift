@@ -1477,11 +1477,18 @@ final class MusicLibrary: ObservableObject {
         guard recoverDiscoveryCheckpointIfReadable(), isLibraryPersistenceSafe else { return }
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
         guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) else { return }
+        // A failed checkpoint write must not expose an uncommitted resume to
+        // foreground/background schedulers. Keep the exact previous job so a
+        // later retry preserves its cursor, error and retry identity.
+        let previousJob = discoveryJobs[index]
         discoveryJobs[index].isPaused = false
         discoveryJobs[index].lastError = nil
         discoveryJobs[index].nextRetryAt = nil
         discoveryJobs[index].transientFailureCount = nil
-        persistDiscovery()
+        guard persistDiscovery() else {
+            discoveryJobs[index] = previousJob
+            return
+        }
         resumePendingDiscovery()
     }
 
