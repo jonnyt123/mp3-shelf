@@ -1413,6 +1413,9 @@ final class MusicLibrary: ObservableObject {
 
     /// Persist each search cursor so interrupted foreground discovery resumes.
     func startAutomaticDownloads(for playlistID: UUID) {
+        // An unreadable on-disk checkpoint owns the previous retry identities.
+        // Do not manufacture a replacement job that cannot be safely committed.
+        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return }
         guard let playlist = playlists.first(where: { $0.id == playlistID }),
               !playlist.missingTracks.isEmpty else { return }
         if let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID && !$0.isComplete }) {
@@ -1440,6 +1443,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func resumeSourceDiscovery(for playlistID: UUID) {
+        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return }
         guard let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) else { return }
         discoveryJobs[index].isPaused = false
         discoveryJobs[index].lastError = nil
@@ -1461,6 +1465,9 @@ final class MusicLibrary: ObservableObject {
     /// window. Its requests are forced to Wi-Fi-only, regardless of any
     /// foreground cellular opt-in that may have been granted earlier.
     func runBackgroundDiscoveryBatch() async -> Bool {
+        // A damaged checkpoint is not an empty queue; never schedule a lookup
+        // from an in-memory replacement while its original bytes are retained.
+        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return false }
         guard !backgroundDiscoveryInProgress && automaticDownloadTask == nil else { return true }
         // Retry the same in-memory checkpoint before any new background lookup.
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return false }
@@ -1509,6 +1516,7 @@ final class MusicLibrary: ObservableObject {
     }
 
     func resumePendingDiscovery() {
+        guard !discoveryCheckpointUnreadable, isLibraryPersistenceSafe else { return }
         // A transient protected-file or low-storage failure can recover on the
         // next foreground activation without losing the selected cursor.
         if discoveryCheckpointNeedsRetry && !persistDiscovery() { return }
@@ -1734,7 +1742,8 @@ final class MusicLibrary: ObservableObject {
         while let index = discoveryJobs.firstIndex(where: { $0.playlistID == playlistID }) {
             if let maximum = maxProcessedSongs, processedThisPass >= maximum { break }
             var job = discoveryJobs[index]
-            if Task.isCancelled || discoveryCheckpointNeedsRetry || job.isPaused || job.isComplete ||
+            if Task.isCancelled || discoveryCheckpointUnreadable || !isLibraryPersistenceSafe ||
+                discoveryCheckpointNeedsRetry || job.isPaused || job.isComplete ||
                 !networkAllowsDiscovery(for: playlistID) ||
                 (backgroundWiFiOnly && !isOnWiFi) { break }
             // Keep the original playlist cursor untouched while all four
