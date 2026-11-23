@@ -108,6 +108,9 @@ struct LibraryView: View {
     @AccessibilityFocusState private var searchResultsFocused: Bool
     @State private var sortMode: LibraryTrackSort = .title
     @State private var message: String?
+    // Failed or partial imports require a fresh Files selection; never reuse
+    // potentially expired security-scoped URLs from an earlier picker result.
+    @State private var importNeedsReselection = false
     // The file picker closes before asynchronous file copying finishes.
     @State private var importInProgress = false
     @State private var renaming: MusicTrack?
@@ -416,6 +419,7 @@ struct LibraryView: View {
         // leaving a running local playback check and its retry intent intact.
         // Only the fileImporter's nonempty successful selection invalidates
         // those checks, immediately before importAudio begins.
+        importNeedsReselection = false
         showFilePicker = true
     }
 
@@ -1758,6 +1762,7 @@ struct LibraryView: View {
                                                  failureCount: outcome.errors.count)
                     }
                     importInProgress = false
+                    importNeedsReselection = outcome.skipped > 0 || !outcome.errors.isEmpty
                     message = outcome.description
                 }
             case .failure(let error):
@@ -1765,13 +1770,23 @@ struct LibraryView: View {
                 let nsError = error as NSError
                 if nsError.domain != NSCocoaErrorDomain ||
                     nsError.code != CocoaError.userCancelled.rawValue {
+                    importNeedsReselection = true
                     message = error.localizedDescription
                 }
             }
         }
         .alert("Import Result", isPresented: Binding(
             get: { message != nil }, set: { if !$0 { message = nil } })) {
-            Button("OK", role: .cancel) { message = nil }
+            Button("OK", role: .cancel) {
+                message = nil
+                importNeedsReselection = false
+            }
+            if importNeedsReselection && !audioImportBusy && scenePhase == .active {
+                Button("Choose Audio Files") {
+                    message = nil
+                    presentAudioImporter()
+                }
+            }
         } message: { Text(message ?? "") }
         .sheet(item: $renaming) { track in RenameTrackView(track: track) }
     }
