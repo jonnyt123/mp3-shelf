@@ -2440,11 +2440,29 @@ final class MusicLibrary: ObservableObject {
                 let previousJob = discoveryJobs[jobIndex]
                 hasNewLookups = discoveryJobs[jobIndex].refreshMissingWishes(
                     playlists[index].missingTracks) > 0
-                if discoveryJobs[jobIndex] != previousJob { persistDiscovery() }
+                if discoveryJobs[jobIndex] != previousJob {
+                    // A source refresh may add wishes while an older lookup is
+                    // in flight. Do not expose an unsaved cursor or dispatch
+                    // those wishes when the checkpoint cannot be committed.
+                    guard persistDiscovery() else {
+                        discoveryJobs[jobIndex] = previousJob
+                        hasNewLookups = false
+                        return PlaylistImportReport(
+                            playlistID: old.id, playlistName: playlists[index].name,
+                            matched: playlists[index].trackIDs.count,
+                            missing: playlists[index].missingTracks.count)
+                    }
+                }
             } else if !playlists[index].missingTracks.isEmpty {
                 discoveryJobs.append(SourceDiscoveryJob(
                     playlistID: old.id, wishes: playlists[index].missingTracks))
-                persistDiscovery()
+                guard persistDiscovery() else {
+                    discoveryJobs.removeLast()
+                    return PlaylistImportReport(
+                        playlistID: old.id, playlistName: playlists[index].name,
+                        matched: playlists[index].trackIDs.count,
+                        missing: playlists[index].missingTracks.count)
+                }
                 hasNewLookups = true
             }
             if listChanged {
