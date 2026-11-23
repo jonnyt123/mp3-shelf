@@ -1743,8 +1743,9 @@ struct MusicTrackRow: View {
     // File metadata is checked off the main actor. A nil snapshot means the
     // row has not been scanned, not that the recording is missing.
     nonisolated private static func isUsableRecording(at url: URL) -> Bool {
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-              url.isFileURL, values.isRegularFile == true, values.isSymbolicLink != true,
+        guard url.isFileURL,
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true,
               let size = values.fileSize else { return false }
         return size > 0
     }
