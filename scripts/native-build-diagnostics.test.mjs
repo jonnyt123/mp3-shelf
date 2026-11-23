@@ -182,3 +182,33 @@ test('mixed source failure prevents any second native invocation', async () => {
     assert.equal(JSON.parse(readFileSync(join(root, 'native-diagnosis.json'))).retryCount, 0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('machine failures with error prefixes are not misrouted to Swift repair', async () => {
+  const cases = [
+    'build service connection interrupted\\nerror: Permission denied opening DerivedData',
+    'malformed PCM file\\nerror: No space left on device',
+    'error: xcode-select: error: invalid active developer directory',
+    'error: dyld_shared_cache_extract_dylibs failed'
+  ];
+  for (const message of cases) {
+    assert.deepEqual(diagnoseNativeLog(message), {
+      category: 'machine-precondition', retryable: false, repair: 'none'
+    });
+  }
+  const root = scratch();
+  try {
+    let calls = 0;
+    await assert.rejects(runNativeWithBoundedRecovery({
+      cwd: root, output: root,
+      run: async (_command, _args, _cwd, log) => {
+        calls++;
+        writeFileSync(log, cases[0]);
+        throw Error('host precondition failed');
+      }
+    }), /machine-precondition/);
+    assert.equal(calls, 1);
+    const receipt = JSON.parse(readFileSync(join(root, 'native-diagnosis.json')));
+    assert.equal(receipt.retryCount, 0);
+    assert.equal(receipt.finalStatus, 'BLOCKED');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
