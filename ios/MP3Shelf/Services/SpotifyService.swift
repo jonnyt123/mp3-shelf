@@ -871,8 +871,20 @@ private struct SpotifyTrack: Decodable {
         type = try? container.decode(String.self, forKey: .type)
         // Local-only and explicitly unplayable entries have no dependable
         // Spotify recording identity for unattended source selection.
-        is_local = try? container.decode(Bool.self, forKey: .is_local)
-        is_playable = try? container.decode(Bool.self, forKey: .is_playable)
+        // Malformed availability flags are not equivalent to absent flags.
+        // A redacted/local-only entry must never become eligible for unattended
+        // source discovery just because the API returned a string or number
+        // where its documented boolean should be. Missing flags remain unknown.
+        if container.contains(.is_local) {
+            is_local = (try? container.decode(Bool.self, forKey: .is_local)) ?? true
+        } else {
+            is_local = nil
+        }
+        if container.contains(.is_playable) {
+            is_playable = (try? container.decode(Bool.self, forKey: .is_playable)) ?? false
+        } else {
+            is_playable = nil
+        }
         album = try? container.decode(SpotifyAlbum.self, forKey: .album)
         external_urls = try? container.decode(SpotifyURLContainer.self, forKey: .external_urls)
         // A negative or implausibly long duration is not reliable matching evidence.
