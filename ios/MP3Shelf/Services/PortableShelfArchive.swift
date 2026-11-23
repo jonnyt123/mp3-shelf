@@ -842,6 +842,25 @@ enum PortableShelfArchive {
     private static func validatePlaylistWishes(_ playlists: [Playlist]) throws {
         for playlist in playlists {
             try Task.checkCancellation()
+            // Validate every collection before importing any audio. A malformed
+            // late playlist must not leave a partially restored library.
+            guard !playlist.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  playlist.id.utf8.count <= 4_096,
+                  !playlist.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  playlist.name.utf8.count <= 4_096,
+                  (playlist.sourceURL?.utf8.count ?? 0) <= 8_192,
+                  (playlist.appleMusicLibraryID?.utf8.count ?? 0) <= 4_096 else {
+                throw ArchiveError.invalidManifest
+            }
+            // A bounded JSON manifest can still contain huge arrays of empty
+            // links. Check each ID before restore mutates persistent playlists.
+            for trackID in playlist.trackIds {
+                try Task.checkCancellation()
+                guard !trackID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      trackID.utf8.count <= 4_096 else {
+                    throw ArchiveError.invalidManifest
+                }
+            }
             guard let wishes = playlist.wishes else { continue }
             // Bound metadata work independently of the archive's JSON byte cap.
             guard wishes.count <= 20_000 else { throw ArchiveError.invalidManifest }
