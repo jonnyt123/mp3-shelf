@@ -8,7 +8,18 @@ const TRANSIENT = [
   /unable to initiate PIF transfer session/i,
   /build service could not create build operation/i,
   /database is locked.*build\.db/i,
-  /database is locked.*XCBuildData/i
+  /database is locked.*XCBuildData/i,
+  /build service connection interrupted/i,
+  /CoreSimulatorService connection became invalid/i
+];
+// Machine prerequisites must not be interpreted as recoverable generated-cache
+// faults, even when the same log also mentions a damaged module cache.
+const MACHINE_BLOCKER = [
+  /no space left on device/i,
+  /disk (?:is )?full/i,
+  /xcode-select: error:/i,
+  /dyld_shared_cache_extract_dylibs failed/i,
+  /(?:^|\n)[^\n]*(?:permission denied|operation not permitted)/i
 ];
 const GENERATED_CACHE = [
   /malformed compiled module file/i,
@@ -28,6 +39,9 @@ export function diagnoseNativeLog(log) {
   if (!value) return { category: 'unavailable', retryable: false, repair: 'none' };
   if (SOURCE_FAILURE.some(re => re.test(value))) {
     return { category: 'swift-source', retryable: false, repair: 'none' };
+  }
+  if (MACHINE_BLOCKER.some(re => re.test(value))) {
+    return { category: 'machine-precondition', retryable: false, repair: 'none' };
   }
   if (GENERATED_CACHE.some(re => re.test(value))) {
     return { category: 'generated-cache', retryable: true, repair: 'clear-isolated-derived-data' };
@@ -54,6 +68,9 @@ export function readNativeLogTail(path) {
 }
 export function clearIsolatedDerivedData(worktree) {
   const root = resolve(worktree);
+  const rootInfo = lstatSync(root);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
+    throw Error('Refusing generated-cache cleanup through a linked worktree root');
   const generated = resolve(root, 'ios/build/local-release/DerivedData');
   const rel = relative(root, generated);
   if (rel.startsWith('..' + sep) || rel === '..' || !rel)
