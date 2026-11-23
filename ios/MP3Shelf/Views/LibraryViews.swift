@@ -956,6 +956,31 @@ struct LibraryView: View {
         bulkPlaybackNotice = "\(detail) Refresh playback to recheck missing recordings; the current queue is unchanged."
     }
 
+    // The Files sheet dismisses before MusicLibrary finishes copying. Keep the
+    // import state visible in the Library even when existing tracks remain on screen.
+    @ViewBuilder private var importActivityPanel: some View {
+        if importInProgress || library.isImporting {
+            HStack(alignment: .top, spacing: 12) {
+                ProgressView()
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Adding audio to your library")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text("Keep MP3 Shelf open while selected recordings are copied. Your saved songs and current playback remain available.")
+                        .font(.subheadline)
+                        .foregroundStyle(ShelfTheme.subdued)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .premiumCard(radius: 18)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.updatesFrequently)
+        }
+    }
+
     @ViewBuilder private var importRecoveryPanel: some View {
         if let importRecoveryNotice {
             VStack(alignment: .leading, spacing: 10) {
@@ -1220,6 +1245,7 @@ struct LibraryView: View {
         let visibleTracks = displayed
         return ScrollView {
             VStack(alignment: .leading, spacing: 26) {
+                importActivityPanel
                 importRecoveryPanel
                 if isSearching {
                     VStack(alignment: .leading, spacing: 15) {
