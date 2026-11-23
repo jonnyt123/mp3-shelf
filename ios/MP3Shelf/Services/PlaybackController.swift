@@ -309,6 +309,24 @@ final class PlaybackController: NSObject, ObservableObject {
                 }
                 return LocalAudioFileIdentity(url: outgoingURL) == openedAudioFileIdentity
             }()
+            // A newly prepared recording must never overlap a decoder whose
+            // catalog entry disappeared or whose backing file was replaced.
+            // Previously the immediate-transition branch called player.play()
+            // before stopping that decoder, briefly exposing stale audio.
+            // Retire it before any incoming audible start, even when the new
+            // decoder subsequently fails to play. The existing queue remains
+            // available for retry and no recording bytes are touched.
+            if audioPlayer != nil && !outgoingIsOwned {
+                relay.invalidatePendingCompletions()
+                positionTimer?.invalidate()
+                positionTimer = nil
+                cancelFade()
+                audioPlayer?.stop()
+                audioPlayer = nil
+                openedAudioFileIdentity = nil
+                isPlaying = false
+                interruptionState.cancelResume()
+            }
             if !startPaused, transition > 0, outgoingIsOwned,
                let previous = audioPlayer, previous.isPlaying {
                 player.volume = 0
