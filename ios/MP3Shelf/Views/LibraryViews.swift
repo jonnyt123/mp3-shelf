@@ -111,6 +111,9 @@ struct LibraryView: View {
     // Failed or partial imports require a fresh Files selection; never reuse
     // potentially expired security-scoped URLs from an earlier picker result.
     @State private var importNeedsReselection = false
+    // Keep failed/partial import recovery visible after the transient result alert closes.
+    // A successful subsequent import clears this notice; cancellation does not erase it.
+    @State private var importRecoveryNotice: String?
     // The file picker closes before asynchronous file copying finishes.
     @State private var importInProgress = false
     @State private var renaming: MusicTrack?
@@ -953,6 +956,40 @@ struct LibraryView: View {
         bulkPlaybackNotice = "\(detail) Refresh playback to recheck missing recordings; the current queue is unchanged."
     }
 
+    @ViewBuilder private var importRecoveryPanel: some View {
+        if let importRecoveryNotice {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Some audio needs attention", systemImage: "exclamationmark.triangle")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(importRecoveryNotice)
+                    .font(.subheadline)
+                    .foregroundStyle(ShelfTheme.subdued)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button {
+                        presentAudioImporter()
+                    } label: {
+                        Label("Choose Audio Files", systemImage: "folder")
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(audioImportBusy || scenePhase != .active)
+                    .accessibilityHint("Select local audio files again; existing songs and playback remain unchanged")
+                    Button("Dismiss") {
+                        self.importRecoveryNotice = nil
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityHint("Hide this import warning without deleting saved audio")
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .premiumCard(radius: 18)
+            .accessibilityElement(children: .contain)
+        }
+    }
+
     // Validate the whole playback queue off the main actor. A missing local
     // recording must not be selected by Play results or Shuffle results.
     private func playDisplayed(shuffled: Bool) {
@@ -1183,6 +1220,7 @@ struct LibraryView: View {
         let visibleTracks = displayed
         return ScrollView {
             VStack(alignment: .leading, spacing: 26) {
+                importRecoveryPanel
                 if isSearching {
                     VStack(alignment: .leading, spacing: 15) {
                         Group {
@@ -1763,6 +1801,11 @@ struct LibraryView: View {
                     }
                     importInProgress = false
                     importNeedsReselection = outcome.skipped > 0 || !outcome.errors.isEmpty
+                    if importNeedsReselection {
+                        importRecoveryNotice = outcome.description
+                    } else if outcome.imported > 0 {
+                        importRecoveryNotice = nil
+                    }
                     message = outcome.description
                 }
             case .failure(let error):
@@ -1771,6 +1814,7 @@ struct LibraryView: View {
                 if nsError.domain != NSCocoaErrorDomain ||
                     nsError.code != CocoaError.userCancelled.rawValue {
                     importNeedsReselection = true
+                    importRecoveryNotice = "Files could not be selected: \(error.localizedDescription). Choose audio files again when ready."
                     message = error.localizedDescription
                 }
             }
