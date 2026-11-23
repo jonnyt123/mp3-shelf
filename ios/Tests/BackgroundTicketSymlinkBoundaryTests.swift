@@ -36,6 +36,7 @@ func readJournal(_ url: URL, expectedID: String? = nil) throws -> SafeJournal? {
     let exists = url.path.withCString { lstat($0, &info) == 0 }
     if !exists { return nil }
     guard isRegularNoFollow(url) else { throw BoundaryError.unsafe }
+    guard info.st_size > 0 && info.st_size <= off_t(maximumJournalBytes) else { throw BoundaryError.oversized }
     let record = try JSONDecoder().decode(SafeJournal.self, from: Data(contentsOf: url))
     guard record.generation > 0, record.id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else { throw BoundaryError.unsafe }
     if let expectedID, record.id != expectedID { throw BoundaryError.identityMismatch }
