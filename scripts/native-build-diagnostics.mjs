@@ -22,7 +22,7 @@ const FATAL_ENVIRONMENT = [
   /(?:no space left on device|disk (?:is )?full|ENOSPC)/i,
   /(?:permission denied|operation not permitted|EACCES|EPERM)/i,
   /(?:xcode-select: error|active developer directory.*(?:invalid|does not exist)|requires Xcode)/i,
-  /(?:dyld:.*(?:library not loaded|symbol not found)|dyld\\[[0-9]+\\]:.*(?:library not loaded|symbol not found))/i,
+  /(?:dyld:.*(?:library not loaded|symbol not found)|dyld\[[0-9]+\]:.*(?:library not loaded|symbol not found))/i,
   /(?:code signing is required|provisioning profile.*(?:missing|not found))/i
 ];
 const SOURCE_FAILURE = [
