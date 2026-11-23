@@ -1,4 +1,6 @@
 import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { strict as assert } from 'node:assert';
 import { auditNativeReconciliation } from './native-branch-reconciliation.mjs';
 
@@ -101,4 +103,13 @@ test('malformed native paths cannot pass reconciliation despite ios prefix', () 
     assert.equal(audit.status, 'BLOCKED', JSON.stringify(path));
     assert(audit.blockers.some(reason => reason.includes('unexpected changed paths')));
   }
+});
+
+// The live audit is imported by the Mac preflight; a malformed module must
+// fail in CI before a physical Mac runner attempts any native integration.
+test('native reconciliation CLI module parses as executable Node ESM', () => {
+  const script = fileURLToPath(new URL('./native-branch-reconciliation.mjs', import.meta.url));
+  assert.doesNotThrow(() => execFileSync(process.execPath, ['--check', script], {
+    encoding: 'utf8', timeout: 10000, stdio: 'pipe'
+  }));
 });
