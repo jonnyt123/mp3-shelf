@@ -9,6 +9,22 @@ import Glibc
 // Pin the inode before reading; reject substituted paths and truncated bytes.
 enum PinnedReadError: Error { case unsafe, changed, truncated }
 
+// The descriptor identity alone does not detect an in-place overwrite of the same inode.
+// Compare both modification and change timestamps, including nanoseconds.
+func unchangedMetadata(_ a: stat, _ b: stat) -> Bool {
+    #if canImport(Darwin)
+    return a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec &&
+        a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec &&
+        a.st_ctimespec.tv_sec == b.st_ctimespec.tv_sec &&
+        a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec
+    #else
+    return a.st_mtim.tv_sec == b.st_mtim.tv_sec &&
+        a.st_mtim.tv_nsec == b.st_mtim.tv_nsec &&
+        a.st_ctim.tv_sec == b.st_ctim.tv_sec &&
+        a.st_ctim.tv_nsec == b.st_ctim.tv_nsec
+    #endif
+}
+
 func readPinned(_ url: URL, hook: (() throws -> Void)? = nil) throws -> Data {
     let fd = url.path.withCString { open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) }
     guard fd >= 0 else { throw PinnedReadError.unsafe }
@@ -24,7 +40,9 @@ func readPinned(_ url: URL, hook: (() throws -> Void)? = nil) throws -> Data {
         return url.path.withCString { lstat($0, &pathStat) } == 0
             && pathStat.st_dev == first.st_dev && pathStat.st_ino == first.st_ino
     }
-    guard samePath() else { throw PinnedReadError.changed }
+    var beforeRead = stat()
+    guard samePath(), fstat(fd, &beforeRead) == 0,
+          unchangedMetadata(first, beforeRead) else { throw PinnedReadError.changed }
     var data = Data()
     var buffer = [UInt8](repeating: 0, count: 4096)
     while data.count < Int(first.st_size) {
@@ -37,7 +55,8 @@ func readPinned(_ url: URL, hook: (() throws -> Void)? = nil) throws -> Data {
     var after = stat()
     guard fstat(fd, &after) == 0,
           after.st_dev == first.st_dev, after.st_ino == first.st_ino,
-          after.st_size == first.st_size, samePath() else { throw PinnedReadError.changed }
+          after.st_size == first.st_size,
+          unchangedMetadata(first, after), samePath() else { throw PinnedReadError.changed }
     return data
 }
 
@@ -84,3 +103,28 @@ for index in 0..<128 {
     }
 }
 print("PASS: 128 descriptor-pinned archive read and substitution scenarios")
+
+// Same-inode, same-length rewrites must not produce a successful archive read.
+// This is a standalone deterministic fault injection, not production code.
+for index in 0..<32 {
+    let file = root.appendingPathComponent("in-place-\\(index)")
+    let original = Data(repeating: 0x31, count: 8192)
+    let replacement = Data(repeating: 0x32, count: 8192)
+    try original.write(to: file)
+    do {
+        _ = try readPinned(file) {
+            let descriptor = file.path.withCString { open($0, O_WRONLY | O_CLOEXEC) }
+            precondition(descriptor >= 0)
+            defer { _ = close(descriptor) }
+            let count = replacement.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
+            precondition(count == replacement.count, "in-place rewrite incomplete")
+            // Force a distinct mtime even on coarse-resolution filesystems.
+            var times = [timespec(tv_sec: 1_600_000_000 + index, tv_nsec: 0),
+                         timespec(tv_sec: 1_600_000_000 + index, tv_nsec: 0)]
+            precondition(file.path.withCString { utimensat(AT_FDCWD, $0, &times, 0) } == 0)
+        }
+        fatalError("same-inode archive rewrite accepted")
+    } catch PinnedReadError.changed { }
+    precondition(try Data(contentsOf: file) == replacement, "rewrite setup did not persist")
+}
+print("PASS: 32 same-inode same-length rewrite rejection scenarios")
