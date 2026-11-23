@@ -966,7 +966,7 @@ struct LibraryView: View {
                     .font(.subheadline)
                     .foregroundStyle(ShelfTheme.subdued)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack {
+                VStack(alignment: .leading, spacing: 8) {
                     Button {
                         presentAudioImporter()
                     } label: {
