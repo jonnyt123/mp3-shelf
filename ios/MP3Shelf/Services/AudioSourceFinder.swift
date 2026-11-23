@@ -212,6 +212,20 @@ enum AudioSourceFinder {
         guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
         guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
         guard !data.isEmpty, data.count <= maximumBytes else { throw SourceError.invalidResponse }
+        // Catalog endpoints can return a login/error HTML page with HTTP 200.
+        // Never feed such a response into recording discovery, even when the
+        // server labels it application/json or omits Content-Type entirely.
+        let prefix = String(decoding: data.prefix(512), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if prefix.hasPrefix("<!doctype html") || prefix.hasPrefix("<html") ||
+           prefix.hasPrefix("<head") || prefix.hasPrefix("<body") {
+            throw SourceError.invalidResponse
+        }
+        if let type = http.value(forHTTPHeaderField: "Content-Type")?.lowercased(),
+           (type.contains("text/html") || type.contains("application/xhtml+xml")) {
+            throw SourceError.invalidResponse
+        }
         return data
     }
 
