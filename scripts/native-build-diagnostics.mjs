@@ -43,12 +43,16 @@ export function diagnoseNativeLog(log) {
   const errorLines = value.split(/\r?\n/).filter(line => /(?:^|\s)error:|\bfatal error:/i.test(line));
   const infrastructureError = line =>
     [...GENERATED_CACHE, ...TRANSIENT].some(re => re.test(line));
+  // A disk-full, permissions or toolchain prerequisite failure must take
+  // precedence over generic "error:" lines. Otherwise an actionable host
+  // failure is incorrectly handed to the Swift source-repair lane.
+  // Both classes remain non-retryable; neither may clear user-owned caches.
+  if (MACHINE_BLOCKER.some(re => re.test(value))) {
+    return { category: 'machine-precondition', retryable: false, repair: 'none' };
+  }
   if (SOURCE_FAILURE.some(re => re.test(value)) ||
       errorLines.some(line => !infrastructureError(line))) {
     return { category: 'swift-source', retryable: false, repair: 'none' };
-  }
-  if (MACHINE_BLOCKER.some(re => re.test(value))) {
-    return { category: 'machine-precondition', retryable: false, repair: 'none' };
   }
   if (GENERATED_CACHE.some(re => re.test(value))) {
     return { category: 'generated-cache', retryable: true, repair: 'clear-isolated-derived-data' };
