@@ -1,0 +1,192 @@
+#!/usr/bin/env node
+/** Native macOS Notification Center messages only on new blockers or completed gates.
+ * Runs after the existing hourly readiness refresh. No network or scheduled task.
+ */
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { constants,lstatSync,readSync,renameSync,writeFileSync,openSync,closeSync,unlinkSync,fstatSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join,resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const SHA=/^[0-9a-f]{40}$/;
+const KEYS=['source','agent','native','playlist','playback','review','hardware','smoke','zip'];
+const STATUS=new Set(['PASS','BLOCKED','UNVERIFIED']);
+function safeRead(path,max=128*1024){
+ // Open the evidence itself, not a pathname checked earlier with lstat:
+ // an attacker or concurrent process could swap a symlink between those calls.
+ let fd;
+ try{
+  fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  const st=fstatSync(fd);
+  if(!st.isFile()||st.nlink!==1||st.size<2||st.size>max)return null;
+  // Read only the originally measured number of bytes. readFileSync(fd)
+  // reads until EOF and can allocate unbounded memory if a concurrent writer
+  // continuously appends to this advisory evidence file.
+  const bytes=Buffer.allocUnsafe(st.size);
+  let offset=0;
+  while(offset<bytes.length){
+   const count=readSync(fd,bytes,offset,bytes.length-offset,offset);
+   if(count===0)return null;
+   offset+=count;
+  }
+  // Detect appends after the bounded read, including files grown while the
+  // read was underway. Never interpret a prefix as a complete gate snapshot.
+  const extra=Buffer.allocUnsafe(1);
+  if(readSync(fd,extra,0,1,bytes.length)!==0)return null;
+  // A same-size in-place rewrite can race the read without changing length.
+  // Require the opened inode and its metadata to remain stable throughout.
+  const after=fstatSync(fd);
+  if(after.dev!==st.dev||after.ino!==st.ino||after.size!==st.size||
+     after.mtimeMs!==st.mtimeMs||after.ctimeMs!==st.ctimeMs)return null;
+  return JSON.parse(bytes.toString('utf8'));
+ }catch{return null;}
+ finally{if(fd!==undefined)closeSync(fd);}
+}
+export function normalizedGateState(model,{now=Date.now()}={}){
+ if(model?.schema!=='mp3shelf-release-readiness-v1'||
+   model.status!=='NOT_RELEASE_READY'||
+   !Array.isArray(model.blocking)||
+   !Array.isArray(model.gates)||model.gates.length!==KEYS.length||
+   !Number.isFinite(Date.parse(model.generatedAt??''))||
+   now-Date.parse(model.generatedAt)>2*3600000||Date.parse(model.generatedAt)>now+300000)
+  throw Error('Readiness evidence is missing, expired or malformed.');
+ if(!SHA.test(model.candidateSha??'')||!SHA.test(model.toolingSha??''))
+  throw Error('Readiness source or tooling SHA is missing or malformed.');
+ const keys=new Set(model.gates.map(g=>g?.key));
+ if(keys.size!==KEYS.length||KEYS.some(key=>!keys.has(key))||
+   model.gates.some(g=>!STATUS.has(g?.status))||
+   // The readiness producer explicitly says NOT_RELEASE_READY. A snapshot with
+   // every gate PASS contradicts that assertion and must never announce an
+   // all-clear from advisory data. Require a real outstanding gate.
+   model.blocking.length===0||
+   model.blocking.length!==model.gates.filter(g=>g.status!=='PASS').length||
+   new Set(model.blocking).size!==model.blocking.length||
+   model.blocking.some(key=>!KEYS.includes(key)||
+     model.gates.find(g=>g.key===key)?.status==='PASS')||
+   model.gates.some(g=>g.status!=='PASS'&&!model.blocking.includes(g.key)))
+  throw Error('Readiness gate identity or status is untrusted.');
+ return {schema:'mp3shelf-readiness-notification-state-v1',
+  candidateSha:model.candidateSha,
+  toolingSha:model.toolingSha,
+  gates:Object.fromEntries(model.gates.map(g=>[g.key,g.status])),
+  updatedAt:model.generatedAt};
+}
+export function notificationChanges(previous,current){
+ if(previous?.schema!=='mp3shelf-readiness-notification-state-v1'||
+   !current||previous.candidateSha!==current.candidateSha||
+   // A new release-tooling implementation may change the meaning of gates.
+   // Establish a silent baseline instead of comparing incompatible snapshots.
+   previous.toolingSha!==current.toolingSha||
+   !SHA.test(previous.toolingSha??'')||
+   !Number.isFinite(Date.parse(previous.updatedAt??''))||
+   Date.parse(previous.updatedAt)>Date.parse(current.updatedAt)||
+   // An agent offline for days must not replay obsolete gate transitions.
+   // Establish a quiet fresh baseline before alerting on new evidence.
+   Date.parse(current.updatedAt)-Date.parse(previous.updatedAt)>24*3600000||
+   !SHA.test(previous.candidateSha??'')||
+   !previous.gates||Object.keys(previous.gates).length!==KEYS.length||
+   KEYS.some(key=>!STATUS.has(previous.gates[key]))||
+   Object.keys(previous.gates).some(key=>!KEYS.includes(key)))
+  return {baseline:true,cleared:[],blocked:[]};
+ const cleared=[],blocked=[];
+ for(const key of KEYS){
+  const before=previous.gates[key],after=current.gates[key];
+  if(after===before)continue;
+  if(after==='PASS')cleared.push(key);
+  else if(before!==after)blocked.push(key);
+ }
+ return {baseline:false,cleared,blocked};
+}
+export function notificationMessage(diff){
+ if(diff.baseline||(!diff.cleared.length&&!diff.blocked.length))return null;
+ const names={source:'native source',agent:'Mac agent',native:'Xcode build',
+  playlist:'playlist',playback:'offline playback',review:'iPhone review',
+  hardware:'hardware approval',smoke:'draft upload',zip:'verified ZIP'};
+ // Prioritize regressions: a long list of cleared gates must never truncate
+ // the actionable blocker section out of a Notification Center message.
+ // Summarize excess names rather than cutting a gate name mid-word.
+ const summary=(keys,limit)=>keys.slice(0,limit).map(k=>names[k]).join(', ')+
+   (keys.length>limit?' +'+(keys.length-limit)+' more':'');
+ const groups=[];
+ if(diff.blocked.length)groups.push('Needs review: '+summary(diff.blocked,5));
+ if(diff.cleared.length)groups.push('Passed: '+summary(diff.cleared,4));
+ return groups.join(' | ');
+}
+function notifySystem(message) {
+ execFileSync('osascript',['-e','on run argv',
+   '-e','display notification (item 1 of argv) with title "MP3 Shelf — Release Readiness"',
+   '-e','end run','--',message],{encoding:'utf8',timeout:15000,
+     stdio:['ignore','pipe','pipe'],maxBuffer:20000});
+}
+export function deliverChangeOnlyNotification({home=homedir(),now=Date.now(),
+ send=notifySystem,platform=process.platform}={}){
+ const root=resolve(home,'Library','Logs','MP3Shelf','ReleaseReadiness');
+ // This runs under launchd; never follow redirected home log directories.
+ for(const dir of [join(home,'Library'),join(home,'Library','Logs'),
+   join(home,'Library','Logs','MP3Shelf'),root]){
+  const info=lstatSync(dir);
+  if(!info.isDirectory()||info.isSymbolicLink())
+   throw Error('Readiness notification directory was redirected.');
+ }
+ const latest=join(root,'latest.json'),previous=join(root,'notification-state.json');
+ // Serialize independent hourly/manual invocations before reading prior state.
+ // A held lock fails closed: never send duplicate or out-of-order alerts.
+ const lock=join(root,'.notification-state.lock');
+ let handle;
+ try{handle=openSync(lock,'wx',0o600);}catch(e){
+  if(e.code==='EEXIST')throw Error('Readiness notification already in progress.');
+  throw e;
+ }
+ try{return deliverLocked({latest,previous,root,now,send,platform});}
+ finally{
+  // An operator may replace the lock while Notification Center is blocked.
+  // Never delete a lock owned by another process; preserve the conflict.
+  const owner=fstatSync(handle);
+  let current;
+  try{current=lstatSync(lock);}catch(error){if(error.code!=='ENOENT')throw error;}
+  const same=current?.isFile()&&!current.isSymbolicLink()&&current.nlink===1&&
+    current.dev===owner.dev&&current.ino===owner.ino;
+  try{
+   if(!same)throw Error('NOTIFICATION_LOCK_OWNERSHIP_LOST: inspect active processes');
+   unlinkSync(lock);
+  }finally{closeSync(handle);}
+ }
+}
+function deliverLocked({latest,previous,root,now,send,platform}){
+ const model=safeRead(latest);
+ if(!model)throw Error('Missing latest local release-readiness JSON');
+ const current=normalizedGateState(model,{now});
+ const prior=safeRead(previous);
+ // A delayed or replayed readiness writer must not roll the notification
+ // watermark backwards. That would cause a later legitimate snapshot to
+ // appear as a fresh transition and generate duplicate/reversed alerts.
+ // Preserve the last known state and fail closed until the producer catches up.
+ if(prior?.schema==='mp3shelf-readiness-notification-state-v1'&&
+    Number.isFinite(Date.parse(prior.updatedAt??''))&&
+    Date.parse(prior.updatedAt)>Date.parse(current.updatedAt))
+  throw Error('STALE_READINESS_SNAPSHOT: latest evidence predates notification state');
+ const diff=notificationChanges(prior,current);
+ const message=notificationMessage(diff);
+ // Validate the write destination before delivering an irreversible UI alert.
+ // Otherwise a redirected state file can cause repeated alerts every hour.
+ const st=(()=>{try{return lstatSync(previous);}catch(e){
+  if(e.code==='ENOENT')return null;throw e;}})();
+ if(st&&(!st.isFile()||st.isSymbolicLink()||st.nlink!==1))
+  throw Error('Readiness notification state destination is redirected.');
+ // If a notification cannot be delivered, do not commit its new state;
+ // the next real hourly transition may retry. Initial baseline is silent.
+ if(message){
+  if(platform!=='darwin')return {status:'MAC_NOTIFICATION_UNAVAILABLE',diff};
+  send(message);
+ }
+ const tmp=join(root,'.notification-'+randomUUID()+'.tmp');
+ writeFileSync(tmp,JSON.stringify(current,null,2)+'\n',{flag:'wx',mode:0o600});
+ renameSync(tmp,previous);
+ return {status:diff.baseline?'BASELINE_SAVED':message?'CHANGE_NOTIFIED':'NO_CHANGE',
+  cleared:diff.cleared,blocked:diff.blocked,message};
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
+ try{const r=deliverChangeOnlyNotification();
+  console.log(JSON.stringify({status:r.status,cleared:r.cleared,blocked:r.blocked},null,2));
+ }catch(e){console.error('RELEASE_NOTIFICATION_UNVERIFIED: '+e.message);process.exitCode=1;}
+}
