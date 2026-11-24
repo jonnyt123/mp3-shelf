@@ -1312,14 +1312,14 @@ enum PortableShelfArchive {
         // The new destination must still refer to the verified inode before
         // any caller-supplied validation or catalog publication is attempted.
         // Do not delete a destination on mismatch: it may belong to a writer.
+        // Creating the hard link legitimately changes ctime. Capture the
+        // post-link identity as the baseline for subsequent validation.
         let linkedIdentity = try archiveIdentity(of: published, at: destination)
         guard linkedIdentity.device == expected.device,
               linkedIdentity.inode == expected.inode,
               linkedIdentity.size == expected.size,
               linkedIdentity.modifiedSeconds == expected.modifiedSeconds,
-              linkedIdentity.modifiedNanoseconds == expected.modifiedNanoseconds,
-              linkedIdentity.changedSeconds == expected.changedSeconds,
-              linkedIdentity.changedNanoseconds == expected.changedNanoseconds else {
+              linkedIdentity.modifiedNanoseconds == expected.modifiedNanoseconds else {
             throw ArchiveError.invalidFile
         }
         // The deferred ownership-checked cleanup also runs after successful
@@ -1353,8 +1353,8 @@ enum PortableShelfArchive {
               expected.size == checked.size,
               expected.modifiedSeconds == checked.modifiedSeconds,
               expected.modifiedNanoseconds == checked.modifiedNanoseconds,
-              expected.changedSeconds == checked.changedSeconds,
-              expected.changedNanoseconds == checked.changedNanoseconds else {
+              linkedIdentity.changedSeconds == checked.changedSeconds,
+              linkedIdentity.changedNanoseconds == checked.changedNanoseconds else {
             throw ArchiveError.invalidFile
         }
         try Task.checkCancellation()
