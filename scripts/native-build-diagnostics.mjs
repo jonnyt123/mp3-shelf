@@ -4,6 +4,8 @@ import { constants, openSync, readSync, closeSync, fstatSync, lstatSync, rmSync 
 import { resolve, join, relative, sep } from 'node:path';
 
 const MAX_READ = 1024 * 1024;
+// A partial log cannot prove that a retryable error is the sole failure.
+const TRUNCATED_LOG_MARKER = '[MP3_SHELF_NATIVE_LOG_TRUNCATED]';
 const TRANSIENT = [
   /unable to initiate PIF transfer session/i,
   /build service could not create build operation/i,
@@ -40,6 +42,9 @@ const SOURCE_FAILURE = [
 export function diagnoseNativeLog(log) {
   const value = typeof log === 'string' ? log.slice(-MAX_READ) : '';
   if (!value) return { category: 'unavailable', retryable: false, repair: 'none' };
+  if (value.startsWith(TRUNCATED_LOG_MARKER)) {
+    return { category: 'incomplete-log', retryable: false, repair: 'none' };
+  }
   if (FATAL_ENVIRONMENT.some(re => re.test(value))) {
     return { category: 'fatal-environment', retryable: false, repair: 'none' };
   }
@@ -83,7 +88,9 @@ export function readNativeLogTail(path) {
         named.mtimeMs !== opened.mtimeMs || named.ctimeMs !== opened.ctimeMs ||
         named.isSymbolicLink() || named.nlink !== 1)
       throw Error('Native build log changed during reading');
-    return buffer.toString('utf8');
+    // A retry must never be authorized from only the last megabyte: an
+    // earlier Swift/source or disk failure may have been omitted.
+    return (opened.size > MAX_READ ? TRUNCATED_LOG_MARKER + '\n' : '') + buffer.toString('utf8');
   } finally { closeSync(fd); }
 }
 export function clearIsolatedDerivedData(worktree) {
