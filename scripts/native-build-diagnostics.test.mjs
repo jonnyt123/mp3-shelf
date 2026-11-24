@@ -208,3 +208,31 @@ test('ordinary Swift file diagnostics override cache and service retry hints', a
     assert.equal(report.finalStatus, 'BLOCKED');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('truncated native logs fail closed even when their visible tail looks retryable', async () => {
+  const root = scratch();
+  try {
+    const log = join(root, 'large-native.log');
+    writeFileSync(log, 'Player.swift:8:4: error: invalid redeclaration\\n' +
+      'x'.repeat(1024 * 1024) + '\\nunable to initiate PIF transfer session');
+    const tail = readNativeLogTail(log);
+    assert.match(tail, /MP3_SHELF_NATIVE_LOG_TRUNCATED/);
+    assert.deepEqual(diagnoseNativeLog(tail), {
+      category: 'incomplete-log', retryable: false, repair: 'none'
+    });
+    let calls = 0;
+    await assert.rejects(runNativeWithBoundedRecovery({
+      cwd: root, output: root,
+      run: async (_command, _args, _cwd, outputLog) => {
+        calls++;
+        writeFileSync(outputLog, 'Player.swift:8:4: error: invalid redeclaration\\n' +
+          'x'.repeat(1024 * 1024) + '\\nunable to initiate PIF transfer session');
+        throw Error('build failed');
+      }
+    }), /incomplete-log/);
+    assert.equal(calls, 1);
+    const receipt = JSON.parse(readFileSync(join(root, 'native-diagnosis.json')));
+    assert.equal(receipt.retryCount, 0);
+    assert.equal(receipt.finalStatus, 'BLOCKED');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
