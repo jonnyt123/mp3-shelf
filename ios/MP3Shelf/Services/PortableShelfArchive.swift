@@ -746,9 +746,10 @@ enum PortableShelfArchive {
               publishedIdentity.inode == publicationIdentity.inode,
               publishedIdentity.size == publicationIdentity.size,
               publishedIdentity.modifiedSeconds == publicationIdentity.modifiedSeconds,
-              publishedIdentity.modifiedNanoseconds == publicationIdentity.modifiedNanoseconds,
-              publishedIdentity.changedSeconds == publicationIdentity.changedSeconds,
-              publishedIdentity.changedNanoseconds == publicationIdentity.changedNanoseconds else {
+              publishedIdentity.modifiedNanoseconds == publicationIdentity.modifiedNanoseconds else {
+            // link(2) changes inode ctime when it increments the link count.
+            // The pre-link snapshot remains strict; after publication compare
+            // device, inode, size and mtime, not the expected ctime transition.
             throw ArchiveError.invalidFile
         }
         // The final name is already complete. Failure to unlink staging is
