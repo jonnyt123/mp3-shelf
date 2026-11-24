@@ -40,9 +40,10 @@ const SOURCE_FAILURE = [
 
 /** This result cannot grant a build PASS. Only a fresh full runner exit=0 can. */
 export function diagnoseNativeLog(log) {
+  const incomplete = typeof log === 'string' && log.startsWith(TRUNCATED_LOG_MARKER);
   const value = typeof log === 'string' ? log.slice(-MAX_READ) : '';
   if (!value) return { category: 'unavailable', retryable: false, repair: 'none' };
-  if (value.startsWith(TRUNCATED_LOG_MARKER)) {
+  if (incomplete) {
     return { category: 'incomplete-log', retryable: false, repair: 'none' };
   }
   if (FATAL_ENVIRONMENT.some(re => re.test(value))) {
