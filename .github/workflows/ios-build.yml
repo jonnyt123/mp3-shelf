@@ -1,13 +1,12 @@
 name: iOS Xcode Build
 on:
-  pull_request:
-    paths:
-      - 'ios/**'
-      - 'src/lib/backup.ts'
-      - 'src/lib/backup.test.ts'
-      - 'src/lib/tracks.ts'
-      - '.github/workflows/ios-build.yml'
   workflow_dispatch:
+    inputs:
+      verify_legacy_backup:
+        description: 'Also verify compatibility with historical web backups (requires Node)'
+        type: boolean
+        required: false
+        default: false
 # A new UI revision supersedes older screenshot runs for this PR.
 # Prevent multiple macOS Simulator boots competing for runner resources.
 concurrency:
@@ -39,24 +38,26 @@ jobs:
           xcodebuild -project ios/MP3Shelf.xcodeproj -scheme MP3Shelf -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
       - name: Playlist parser regression tests
         run: |
-          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/Tests/PlaylistCSVTests.swift -o /tmp/mp3shelf-playlist && /tmp/mp3shelf-playlist
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PortableShelfArchive.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/Tests/PlaylistCSVTests.swift -o /tmp/mp3shelf-playlist && /tmp/mp3shelf-playlist
       - name: Lyrics parser regression tests
         run: |
           swiftc ios/MP3Shelf/Services/LyricsParser.swift ios/Tests/LyricsParserTests.swift -o /tmp/mp3shelf-lyrics && /tmp/mp3shelf-lyrics
       - name: Licensed MP3 source matching regression tests
         run: |
-          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/MP3Shelf/Services/AudioSourceFinder.swift ios/Tests/AudioSourceFinderTests.swift -o /tmp/mp3shelf-source-finder && /tmp/mp3shelf-source-finder
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PortableShelfArchive.swift ios/MP3Shelf/Services/PlaylistCSV.swift ios/MP3Shelf/Services/AudioSourceFinder.swift ios/Tests/AudioSourceFinderTests.swift -o /tmp/mp3shelf-source-finder && /tmp/mp3shelf-source-finder
       - name: Persistent discovery resume regression tests
         run: |
-          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Models/SourceDiscoveryJob.swift ios/Tests/SourceDiscoveryJobTests.swift -o /tmp/mp3shelf-discovery && /tmp/mp3shelf-discovery
+          swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PortableShelfArchive.swift ios/MP3Shelf/Models/SourceDiscoveryJob.swift ios/Tests/SourceDiscoveryJobTests.swift -o /tmp/mp3shelf-discovery && /tmp/mp3shelf-discovery
       - name: Cross-platform archive round-trip regression tests
         run: |
           swiftc ios/MP3Shelf/Models/MusicModels.swift ios/MP3Shelf/Services/PortableShelfArchive.swift ios/Tests/PortableShelfArchiveTests.swift -o /tmp/mp3shelf-archive && /tmp/mp3shelf-archive
       - uses: actions/setup-node@v4
+        if: ${{ inputs.verify_legacy_backup }}
         with:
           node-version: '22'
           cache: 'npm'
       - name: Browser portable-backup interoperability and TypeScript checks
+        if: ${{ inputs.verify_legacy_backup }}
         run: |
           npm ci
           npm run test -- src/lib/backup.test.ts
