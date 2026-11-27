@@ -39,6 +39,9 @@ enum PlaylistCSV {
         let artistColumn = column(["artistname", "artistnames", "artist", "artists", "artistss"])
         let albumColumn = column(["albumname", "album", "release"])
         let spotifyColumn = column(["trackuri", "spotifyuri", "trackurl", "spotifyurl", "url"])
+        // Only explicit units are safe: a bare Duration column is ambiguous.
+        let millisecondsColumn = column(["durationms", "trackdurationms", "durationmilliseconds"])
+        let secondsColumn = column(["durationseconds", "trackdurationseconds", "durations"])
         func cell(_ row: [String], _ index: Int?) -> String {
             guard let index, row.indices.contains(index) else { return "" }
             return row[index].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,8 +58,27 @@ enum PlaylistCSV {
             } else {
                 link = nil
             }
+            // Preserve duration evidence without guessing units or accepting
+            // malformed values. Conflicting explicit claims stay unknown.
+            func duration(_ index: Int?, divisor: Double) -> Double? {
+                guard let raw = Double(cell(row, index)), raw.isFinite, raw > 0 else { return nil }
+                let seconds = raw / divisor
+                return seconds > 0 && seconds <= 86_400 ? seconds : nil
+            }
+            let milliseconds = duration(millisecondsColumn, divisor: 1_000)
+            let seconds = duration(secondsColumn, divisor: 1)
+            let length: Double?
+            if let milliseconds, let seconds {
+                length = abs(milliseconds - seconds) <= 0.5 ? milliseconds : nil
+            } else if (!cell(row, millisecondsColumn).isEmpty && milliseconds == nil) ||
+                        (!cell(row, secondsColumn).isEmpty && seconds == nil) {
+                length = nil
+            } else {
+                length = milliseconds ?? seconds
+            }
             return PlaylistWish(title: title, artist: cell(row, artistColumn),
-                                album: cell(row, albumColumn), spotifyURL: link)
+                                album: cell(row, albumColumn), spotifyURL: link,
+                                durationSeconds: length)
         }
         if items.isEmpty { throw PlaylistCSVError.empty }
         return items

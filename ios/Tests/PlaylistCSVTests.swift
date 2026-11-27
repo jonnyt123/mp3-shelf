@@ -19,6 +19,13 @@ enum PlaylistCSVTests {
         check(wishes[1].title == "Second \"Quoted\" Song", "escaped quotes")
         check(wishes[0].spotifyURL?.contains("open.spotify.com/track/") == true, "Spotify URI conversion")
 
+        let timedCSV = "Title,Artist,Duration (ms),Duration Seconds\nFull,Artist,185500,185.5\nPreview,Artist,28000,28\nConflict,Artist,185000,28\nInvalid,Artist,NaN,-1\nHuge,Artist,999999999999,\nSeconds,Artist,,42.25\nMalformed,Artist,broken,42\n"
+        let timed = try PlaylistCSV.parse(Data(timedCSV.utf8))
+        check(timed.map(\.durationSeconds) == [185.5, 28, nil, nil, nil, 42.25, nil],
+              "CSV preserves explicit duration units and rejects conflicting or invalid evidence")
+        let ambiguousDuration = try PlaylistCSV.parse(Data("Title,Artist,Duration\nSong,Artist,180\n".utf8))
+        check(ambiguousDuration.first?.durationSeconds == nil, "CSV does not guess unspecified duration units")
+
         let namespace = UUID(uuidString: "12345678-1234-5678-9ABC-123456789ABC")!
         let appleSong = AppleMusicTrackSnapshot(id: 10, title: " First ", artist: "Band, Inc.", album: "Album", duration: 201.5)
         let appleSnapshot = AppleMusicPlaylistSnapshot(id: 42, name: "Apple playlist", items: [
