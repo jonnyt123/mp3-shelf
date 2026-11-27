@@ -166,3 +166,58 @@ func run(_ arguments: [String]) throws {
 }
 try run(["swiftc", "-parse-as-library", file.path, "-o", directory.appendingPathComponent("tests").path])
 try run([directory.appendingPathComponent("tests").path])
+
+ // Extract the actual playlist method and exercise it with deterministic transport.
+let playlistMethod = section("    func refreshPlaylists() async throws {", "    /// Resolve a pasted Spotify")
+let playlistFixture = #"""
+import Foundation
+struct SpotifyPlaylist { let id: String; let name: String }
+struct SpotifyPage<T> { let items: [T]; let next: String?; var rawItemCount: Int { items.count } }
+enum SpotifyError: Error { case notConnected; case api(String) }
+@MainActor final class PlaylistHarness {
+    var token: Int? = 1
+    var authorizationGeneration: UInt64 = 0
+    var playlistRefreshGeneration: UInt64 = 0
+    var playlists: [SpotifyPlaylist] = []
+    var pending: [CheckedContinuation<SpotifyPage<SpotifyPlaylist>, Error>] = []
+    func request(_ url: URL) async throws -> SpotifyPage<SpotifyPlaylist> {
+        try await withCheckedThrowingContinuation { pending.append($0) }
+    }
+    static func isValidPlaylistID(_ id: String) -> Bool { !id.isEmpty }
+    static func safeNext(_ next: String?, for url: URL, returnedItems: Int) throws -> URL? {
+        next.flatMap(URL.init(string:))
+    }
+__METHOD__
+}
+@main enum PlaylistTests {
+    @MainActor static func main() async throws {
+        let h = PlaylistHarness()
+        let a = Task { try await h.refreshPlaylists() }
+        while h.pending.count < 1 { await Task.yield() }
+        let b = Task { try await h.refreshPlaylists() }
+        while h.pending.count < 2 { await Task.yield() }
+        h.pending[1].resume(returning: .init(items: [.init(id: "new", name: "New")], next: nil))
+        try await b.value
+        h.pending[0].resume(returning: .init(items: [.init(id: "old", name: "Old")], next: nil))
+        try await a.value
+        precondition(h.playlists.map(\.id) == ["new"], "Stale reload overwrote current playlists")
+        print("PASS: latest playlist reload wins")
+        let c = Task { try await h.refreshPlaylists() }
+        while h.pending.count < 3 { await Task.yield() }
+        let d = Task { try await h.refreshPlaylists() }
+        while h.pending.count < 4 { await Task.yield() }
+        h.pending[3].resume(returning: .init(items: [.init(id: "latest", name: "Latest")], next: nil))
+        try await d.value
+        h.pending[2].resume(throwing: SpotifyError.api("stale failure"))
+        try await c.value
+        precondition(h.playlists.map(\.id) == ["latest"])
+        print("PASS: superseded transport error is ignored")
+    }
+}
+"""#
+let playlistFile = directory.appendingPathComponent("Playlist.swift")
+try playlistFixture.replacingOccurrences(of: "__METHOD__", with: playlistMethod)
+    .write(to: playlistFile, atomically: true, encoding: .utf8)
+let playlistBinary = directory.appendingPathComponent("playlist-tests").path
+try run(["swiftc", "-parse-as-library", playlistFile.path, "-o", playlistBinary])
+try run([playlistBinary])

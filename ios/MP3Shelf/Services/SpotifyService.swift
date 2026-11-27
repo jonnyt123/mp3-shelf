@@ -35,6 +35,8 @@ final class SpotifyService: NSObject, ObservableObject {
     // A generation identifies the authorization session even if a provider
     // rotates back to the same refresh token after disconnect/reconnect.
     private var authorizationGeneration: UInt64 = 0
+    // Only the latest playlist reload may publish metadata within a session.
+    private var playlistRefreshGeneration: UInt64 = 0
     // Spotify API bearer credentials must not follow an HTTP redirect to a
     // different origin. URLSession.shared follows redirects automatically.
     private let apiRedirectGuard = SpotifyAPIRedirectGuard()
@@ -178,6 +180,8 @@ final class SpotifyService: NSObject, ObservableObject {
     func refreshPlaylists() async throws {
         guard token != nil else { throw SpotifyError.notConnected }
         let generation = authorizationGeneration
+        playlistRefreshGeneration &+= 1
+        let refreshGeneration = playlistRefreshGeneration
         var next: URL? = URL(string: "https://api.spotify.com/v1/me/playlists?limit=50")
         var found: [SpotifyPlaylist] = []
         var seenPlaylistIDs = Set<String>()
@@ -186,7 +190,13 @@ final class SpotifyService: NSObject, ObservableObject {
             guard visitedPages.insert(url).inserted, visitedPages.count <= 250 else {
                 throw SpotifyError.api("Spotify returned repeated or excessive playlist pages.")
             }
-            let page: SpotifyPage<SpotifyPlaylist> = try await request(url)
+            let page: SpotifyPage<SpotifyPlaylist>
+            do {
+                page = try await request(url)
+            } catch {
+                if generation == authorizationGeneration, refreshGeneration != playlistRefreshGeneration { return }
+                throw error
+            }
             // Account switching can occur while a page is in flight. Reject
             // its result immediately, before fetching another page using
             // credentials from the replacement account.
@@ -194,6 +204,7 @@ final class SpotifyService: NSObject, ObservableObject {
             guard generation == authorizationGeneration, token != nil else {
                 throw SpotifyError.notConnected
             }
+            guard refreshGeneration == playlistRefreshGeneration else { return }
             // The playlist picker must never present unusable IDs or duplicate
             // entries from overlapping/replayed provider pages. Keep the first
             // valid occurrence in server order; never silently change its
@@ -211,6 +222,7 @@ final class SpotifyService: NSObject, ObservableObject {
         }
         try Task.checkCancellation()
         guard generation == authorizationGeneration, token != nil else { throw SpotifyError.notConnected }
+        guard refreshGeneration == playlistRefreshGeneration else { return }
         playlists = found
     }
 
