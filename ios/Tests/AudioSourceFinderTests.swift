@@ -2040,6 +2040,20 @@ enum AudioSourceFinderTests {
         verify(!AudioSourceFinder.consistentOpenverseDuplicate(
             originalOpenverse, conflictingPublisher),
             "same URL with conflicting publisher is not safe to auto-select")
+        let licensedOpenverse = AudioCatalogMatch(downloadURL: openverseFile,
+            itemURL: originalOpenverse.itemURL,
+            licenseURL: URL(string: "https://creativecommons.org/licenses/by/4.0/"),
+            sourceName: originalOpenverse.sourceName)
+        let otherLicense = AudioCatalogMatch(downloadURL: openverseFile,
+            itemURL: originalOpenverse.itemURL,
+            licenseURL: URL(string: "https://creativecommons.org/licenses/by-nc/4.0/"),
+            sourceName: originalOpenverse.sourceName)
+        verify(!AudioSourceFinder.consistentOpenverseDuplicate(licensedOpenverse, otherLicense) &&
+               !AudioSourceFinder.consistentOpenverseDuplicate(otherLicense, licensedOpenverse) &&
+               !AudioSourceFinder.consistentOpenverseDuplicate(originalOpenverse, licensedOpenverse),
+               "conflicting or missing duplicate license evidence requires review")
+        verify(AudioSourceFinder.consistentOpenverseDuplicate(licensedOpenverse, licensedOpenverse),
+               "identical license evidence is safe to collapse")
         verify(!AudioSourceFinder.consistentOpenverseDuplicate(
             originalOpenverse, AudioCatalogMatch(
                 downloadURL: URL(string: "https://upload.wikimedia.org/audio/other.mp3")!,

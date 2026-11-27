@@ -1113,6 +1113,7 @@ extension AudioSourceFinder {
                                              _ second: AudioCatalogMatch) -> Bool {
         first.downloadURL == second.downloadURL &&
             first.itemURL == second.itemURL &&
+            first.licenseURL == second.licenseURL &&
             first.sourceName == second.sourceName
     }
 
