@@ -32,6 +32,9 @@ struct LyricsParserTests {
         expect(badOffset.first?.time == 3, "overflowing offset is ignored")
         let repeated = LyricsParser.parse("[offset:500]\n[offset:500]\n[00:03.00]Line\nPlain lyric")
         expect(repeated.map(\.time) == [2.5, nil], "duplicate identical tags apply once and untimed lyrics stay untimed")
+        let bracketed = LyricsParser.parse("[ar:Someone]\n[00:01.00][Chorus] We sing\n[00:02.00][Spoken]\n[unknown:metadata]")
+        expect(bracketed.map(\.text) == ["[Chorus] We sing", "[Spoken]"], "timestamped bracketed lyrics are preserved without importing metadata")
+        expect(bracketed.map(\.time) == [1, 2], "bracketed lyrics retain their timing")
         print("Lyrics parsing tests passed")
     }
 }
