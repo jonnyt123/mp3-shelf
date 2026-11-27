@@ -117,7 +117,7 @@ struct LibraryView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(ShelfTheme.accent)
-            .accessibilityHint("Show your complete music library")
+            .accessibilityHint(favoritesOnly ? "Clear the search and keep the Favorites filter" : "Show your complete music library")
         }
     }
 
@@ -499,7 +499,7 @@ struct LibraryView: View {
                 }
             }
             guard !Task.isCancelled, searchText.trimmingCharacters(in: .whitespacesAndNewlines) == requestedQuery else { return }
-            settledSearchText = searchText
+            settledSearchText = requestedQuery
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
