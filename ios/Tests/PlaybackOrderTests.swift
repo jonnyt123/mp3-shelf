@@ -99,7 +99,10 @@ struct PlaybackOrderTests {
         order.reset(queue: songs, current: songs[5], shuffled: false)
         order.retainAvailable(Set(songs.dropLast()))
         assert(order.playNext(songs[1]), "Visible wrapped recovery rows can be promoted")
-        assert(order.editableUpcomingIDs().first == songs[1])
+        assert(order.editableUpcomingIDs() == [songs[1], songs[0], songs[2], songs[3], songs[4]])
+        assert(order.next(automatic: true, loop: .off) == songs[1])
+        assert(order.next(automatic: true, loop: .off) == songs[0], "Promotion must not strand remaining survivors")
+        assert(!order.queueIDs.contains(songs[5]))
         order.reset(queue: songs, current: songs[0], shuffled: true)
         let played = order.next(automatic: true, loop: .off)!
         assert(!order.removeUpcoming(songs[0]), "Stale shuffled action must preserve listening history")

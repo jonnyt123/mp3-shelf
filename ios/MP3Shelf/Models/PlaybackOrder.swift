@@ -228,6 +228,12 @@ struct PlaybackOrder {
         let recovering = unavailableAnchor == currentID && currentIndex == queueIDs.count - 1
         guard index > currentIndex || (recovering && index < currentIndex) else { return false }
         queueIDs.remove(at: index)
+        if recovering {
+            // Keep the deleted anchor last. Recovery wraps to the first
+            // survivor, then advances normally through the remaining queue.
+            queueIDs.insert(id, at: 0)
+            return true
+        }
         let target = queueIDs.firstIndex(of: currentID) ?? currentIndex
         queueIDs.insert(id, at: min(target + 1, queueIDs.count))
         return true
