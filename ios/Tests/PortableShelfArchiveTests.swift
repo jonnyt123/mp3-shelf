@@ -38,7 +38,14 @@ private final class ArchiveExportRaceResults: @unchecked Sendable {
 @main
 struct PortableShelfArchiveTests {
     static func main() throws {
-        let folder = FileManager.default.temporaryDirectory
+        // Directory enumeration on macOS returns canonical paths, even
+        // when the fixture's temporary directory was spelled /var/....
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+        guard let resolvedPath = realpath(temporaryDirectory.path, nil) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        defer { free(resolvedPath) }
+        let folder = URL(fileURLWithPath: String(cString: resolvedPath), isDirectory: true)
             .appendingPathComponent("mp3shelf-archive-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -440,11 +447,11 @@ struct PortableShelfArchiveTests {
 
         // Backup export must never follow an audio symlink or read a directory
         // if the saved catalog is damaged. Source bytes remain untouched.
-        let outsideAudio = folder.appendingPathComponent("private-source.mp3")
+        let privateAudio = folder.appendingPathComponent("private-source.mp3")
         let privateBytes = Data("not-library-audio".utf8)
-        try privateBytes.write(to: outsideAudio)
+        try privateBytes.write(to: privateAudio)
         let linkedAudio = folder.appendingPathComponent("linked-recording.mp3")
-        try FileManager.default.createSymbolicLink(at: linkedAudio, withDestinationURL: outsideAudio)
+        try FileManager.default.createSymbolicLink(at: linkedAudio, withDestinationURL: privateAudio)
         let linkedBackup = folder.appendingPathComponent("linked-audio.mp3shelf")
         do {
             try PortableShelfArchive.export([
@@ -465,7 +472,7 @@ struct PortableShelfArchiveTests {
         } catch PortableShelfArchive.ArchiveError.invalidManifest {
             // Expected.
         }
-        let privateBytesAfter = try Data(contentsOf: outsideAudio)
+        let privateBytesAfter = try Data(contentsOf: privateAudio)
         assert(privateBytesAfter == privateBytes)
         // Same-inode, same-length changes must be detected by identity
         // checks, not accepted merely because file size is unchanged.
@@ -798,8 +805,8 @@ struct PortableShelfArchiveTests {
         } catch PortableShelfArchive.ArchiveError.invalidManifest {
             // Expected.
         }
-        let internalLink = sidecarDirectory.appendingPathComponent("internal-link.lrc")
-        try FileManager.default.createSymbolicLink(at: internalLink, withDestinationURL: savedLyrics)
+        let internalLyricsLink = sidecarDirectory.appendingPathComponent("internal-link.lrc")
+        try FileManager.default.createSymbolicLink(at: internalLyricsLink, withDestinationURL: savedLyrics)
         do {
             _ = try PortableShelfArchive.readSidecar(
                 named: "internal-link.lrc", from: sidecarDirectory, maximumBytes: 500 * 1024)

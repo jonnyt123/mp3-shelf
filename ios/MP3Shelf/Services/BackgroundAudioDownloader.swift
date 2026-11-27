@@ -1081,17 +1081,24 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         return true
     }
 
-    /// A duplicate callback may reuse already staged *audio*; a directory,
-    /// empty placeholder or symlink is not a completed media transfer.
+    /// Check current staging metadata without reusing a URL's cached values.
+    /// Audio signature validation still happens during import.
     nonisolated static func stagedFileSurvivesMoveFailure(at url: URL) -> Bool {
-        guard let values = try? url.resourceValues(forKeys: [
-            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey
-        ]), values.isRegularFile == true, values.isSymbolicLink != true,
-            let bytes = values.fileSize, bytes > 0,
-            Int64(bytes) <= BackgroundTransferProgressPolicy.maxBytes else {
-            return false
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let bytes = (attributes[.size] as? NSNumber)?.int64Value else { return false }
+        return bytes > 0 && bytes <= BackgroundTransferProgressPolicy.maxBytes
+    }
+
+    private func resolveDownloadCallbackFailure(_ id: UUID, otherwise: () -> Void) async {
+        guard tickets[id]?.status == .queued else { return }
+        // A delegate can report failure before another completion stages its
+        // file. Recheck on the actor that owns the ticket before changing it.
+        if processing.contains(id) || Self.stagedFileSurvivesMoveFailure(at: Self.stagingURL(id)) {
+            await recoverStagedDownloads()
+        } else {
+            otherwise()
         }
-        return true
     }
 
     nonisolated static func safeRedirectRequest(_ redirected: URLRequest,
@@ -1139,16 +1146,23 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         }
         guard let http = downloadTask.response as? HTTPURLResponse,
               http.url.map({ Self.allowedDownloadURL($0) }) == true else {
-            Task { @MainActor in self.setFailed(id, reason: "Invalid download response or destination") }
+            Task { @MainActor in
+                await self.resolveDownloadCallbackFailure(id) {
+                    self.setFailed(id, reason: "Invalid download response or destination")
+                }
+            }
             return
         }
         guard (200...299).contains(http.statusCode) else {
-            if BackgroundTransferRetryPolicy.isTemporaryHTTP(http.statusCode) {
-                Task { @MainActor in
-                    self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.http(http.statusCode))
+            Task { @MainActor in
+                await self.resolveDownloadCallbackFailure(id) {
+                    let reason = AudioDownloadDiagnostics.http(http.statusCode)
+                    if BackgroundTransferRetryPolicy.isTemporaryHTTP(http.statusCode) {
+                        self.retryTemporaryTransfer(id, reason: reason)
+                    } else {
+                        self.setFailed(id, reason: reason)
+                    }
                 }
-            } else {
-                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.http(http.statusCode)) }
             }
             return
         }
@@ -1160,11 +1174,19 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
                 throw CocoaError(.fileReadUnknown)
             }
             guard bytes > 0 else {
-                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.emptyResponse) }
+                Task { @MainActor in
+                    await self.resolveDownloadCallbackFailure(id) {
+                        self.setFailed(id, reason: AudioDownloadDiagnostics.emptyResponse)
+                    }
+                }
                 return
             }
             guard DownloadedAudioContentType.allows(http.mimeType) else {
-                Task { @MainActor in self.setFailed(id, reason: AudioDownloadDiagnostics.contentType(http.mimeType)) }
+                Task { @MainActor in
+                    await self.resolveDownloadCallbackFailure(id) {
+                        self.setFailed(id, reason: AudioDownloadDiagnostics.contentType(http.mimeType))
+                    }
+                }
                 return
             }
             guard bytes <= BackgroundTransferProgressPolicy.maxBytes else {
@@ -1172,21 +1194,21 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
             guard DownloadedAudioRange.coversCompleteFile(status: http.statusCode,
                 contentRange: http.value(forHTTPHeaderField: "Content-Range"), downloadedBytes: bytes) else {
-                Task { @MainActor in self.setFailed(id, reason: DownloadedAudioRange.incompleteMessage) }
+                Task { @MainActor in
+                    await self.resolveDownloadCallbackFailure(id) {
+                        self.setFailed(id, reason: DownloadedAudioRange.incompleteMessage)
+                    }
+                }
                 return
             }
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
-            // A duplicate URLSession completion may arrive while the first
-            // staged copy is being decoded. Never unlink or replace that input:
-            // the conversion owns it until its completion handler finishes.
-            // Retain the first complete staged file and let recovery validate it.
-            if !FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.moveItem(at: location, to: destination)
-                #if DEBUG
-                PhysicalDeviceAudit.recordEvent("download-audio-staged", ticketID: id)
-                #endif
-            }
+            // moveItem refuses to replace an existing destination. If a
+            // duplicate won the move, the failure handler recovers its file.
+            try FileManager.default.moveItem(at: location, to: destination)
+            #if DEBUG
+            PhysicalDeviceAudit.recordEvent("download-audio-staged", ticketID: id)
+            #endif
             Task { @MainActor in
                 // History may have been cleared after cancellation while this
                 // delegate was moving the completed file. Unknown tickets must
@@ -1203,8 +1225,10 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             }
         } catch {
             Task { @MainActor in
-                self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
-                               allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
+                await self.resolveDownloadCallbackFailure(id) {
+                    self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
+                                   allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
+                }
             }
         }
     }
@@ -1219,7 +1243,9 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
             // A queued alternative can take over after the failure is recorded.
             downloadTask.cancel()
             Task { @MainActor in
-                self.setFailed(id, reason: "Source exceeds the 100 MB download limit")
+                await self.resolveDownloadCallbackFailure(id) {
+                    self.setFailed(id, reason: "Source exceeds the 100 MB download limit")
+                }
             }
             return
         }
@@ -1240,21 +1266,14 @@ final class BackgroundAudioDownloader: NSObject, ObservableObject, URLSessionDow
         let connectionLost = systemError.domain == NSURLErrorDomain &&
             BackgroundTransferRetryPolicy.isConnectivityInterruption(systemError.code)
         Task { @MainActor in
-            // A completed download is moved into staging by didFinishDownloadingTo.
-            // A later error callback from a duplicate/retired daemon task must not
-            // replace the queued ticket or discard a complete file awaiting import.
-            // Staging is created only after HTTP, size, type and range checks.
-            guard self.tickets[id]?.status == .queued else { return }
-            if self.fm.fileExists(atPath: Self.stagingURL(id).path) {
-                await self.recoverStagedDownloads()
-                return
-            }
-            if shouldRetry {
-                self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.message(for: error),
-                                            connectivityInterruption: connectionLost)
-            } else {
-                self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
-                               allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
+            await self.resolveDownloadCallbackFailure(id) {
+                if shouldRetry {
+                    self.retryTemporaryTransfer(id, reason: AudioDownloadDiagnostics.message(for: error),
+                                                connectivityInterruption: connectionLost)
+                } else {
+                    self.setFailed(id, reason: AudioDownloadDiagnostics.message(for: error),
+                                   allowAlternative: AudioDownloadDiagnostics.shouldTryAlternateSource(for: error))
+                }
             }
         }
     }

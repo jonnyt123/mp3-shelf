@@ -41,5 +41,18 @@ enum DuplicateCompletionStagingRaceTests {
         }
         try fm.removeItem(at: staged)
         assertPolicy(false, "missing file after failed move remains a real failure")
+
+        try fm.createSymbolicLink(at: staged, withDestinationURL: competing)
+        assertPolicy(false, "symlink to a nonempty file cannot mask a failed transfer")
+        try fm.removeItem(at: staged)
+        try original.write(to: staged)
+        let handle = try FileHandle(forWritingTo: staged)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: UInt64(BackgroundTransferProgressPolicy.maxBytes))
+        assertPolicy(true, "staging file at the transfer limit is accepted")
+        try handle.truncate(atOffset: UInt64(BackgroundTransferProgressPolicy.maxBytes) + 1)
+        assertPolicy(false, "file grown beyond the transfer limit is rejected")
+        try handle.truncate(atOffset: 0)
+        assertPolicy(false, "file truncated in place cannot mask a failed transfer")
     }
 }
