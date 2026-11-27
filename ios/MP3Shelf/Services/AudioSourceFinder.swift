@@ -2408,7 +2408,7 @@ enum AutomaticWebAudioFinder {
                                                        audio: audio["duration"], wish: wish),
                       let url = audio["contentUrl"] as? String else { continue }
                 if let title = audio["name"] as? String,
-                   MusicMatching.key(title) != MusicMatching.key(wish.title) { continue }
+                   !AudioSourceFinder.exactMetadataMatch(title: title, creator: wish.artist, wish: wish) { continue }
                 let credits = names(audio["byArtist"] ?? audio["creator"])
                 if !credits.isEmpty && !credits.contains(where: {
                     MusicMatching.key($0) == MusicMatching.key(wish.artist)
