@@ -177,7 +177,7 @@ struct PlaybackOrder {
         // A deleted final selection remains as a positional anchor. The
         // editable recovery queue exposes survivors before that anchor;
         // permit adjacent reordering within that wrapped segment.
-        if unavailableAnchor == currentID && index < currentIndex {
+        if unavailableAnchor == currentID && currentIndex == queueIDs.count - 1 && index < currentIndex {
             let destination = earlier ? index - 1 : index + 1
             guard destination >= 0, destination < currentIndex else { return false }
             queueIDs.swapAt(index, destination)
@@ -223,6 +223,10 @@ struct PlaybackOrder {
             remainingShuffle.insert(id, at: 0)
             return true
         }
+        // Only visible upcoming rows may be promoted. A delayed action for
+        // a previously played row must not rewrite listening history.
+        let recovering = unavailableAnchor == currentID && currentIndex == queueIDs.count - 1
+        guard index > currentIndex || (recovering && index < currentIndex) else { return false }
         queueIDs.remove(at: index)
         let target = queueIDs.firstIndex(of: currentID) ?? currentIndex
         queueIDs.insert(id, at: min(target + 1, queueIDs.count))
