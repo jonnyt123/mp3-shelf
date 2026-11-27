@@ -979,9 +979,9 @@ struct PlaybackQueueSheet: View {
         .buttonStyle(.plain)
         .disabled(!available || searching)
         .accessibilityLabel(searching
-            ? "Clear search to reorder: \(track.title)"
-            : available ? "\(earlier ? "Move earlier" : "Move later"): \(track.title)"
-                        : "\(earlier ? "Already first" : "Already last"): \(track.title)")
+            ? "Clear search to reorder: \(track.title) by \(track.artist)"
+            : available ? "\(earlier ? "Move earlier" : "Move later"): \(track.title) by \(track.artist)"
+                        : "\(earlier ? "Already first" : "Already last"): \(track.title) by \(track.artist)")
         .accessibilityHint(searching
             ? "Reordering is available when all queued songs are visible"
             : available ? (earlier
