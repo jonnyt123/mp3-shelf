@@ -1075,7 +1075,7 @@ struct PlaybackQueueSheet: View {
         .buttonStyle(.plain)
         .foregroundStyle(alreadyNext ? ShelfTheme.subdued : ShelfTheme.accent)
         .disabled(alreadyNext)
-        .accessibilityLabel(alreadyNext ? "Already next: \(track.title)" : "Play next: \(track.title)")
+        .accessibilityLabel(alreadyNext ? "Already next: \(track.title) by \(track.artist)" : "Play next: \(track.title) by \(track.artist)")
         .accessibilityHint(alreadyNext ? "This song is already first in the upcoming queue" : "Make this song the next recording to play")
     }
 
@@ -1144,7 +1144,7 @@ struct PlaybackQueueSheet: View {
                                         }
                                         .buttonStyle(.bordered)
                                         .frame(minHeight: 44)
-                                        .accessibilityLabel("Skip failed recording and play \(next.title)")
+                                        .accessibilityLabel("Skip failed recording and play \(next.title) by \(next.artist)")
                                         .accessibilityHint("Try the first upcoming recording without changing saved playlists or downloaded music")
                                     }
                                     Button("Dismiss warning") {
@@ -1310,7 +1310,7 @@ struct PlaybackQueueSheet: View {
                                             .frame(width: 44, height: 44)
                                             .contentShape(Rectangle())
                                     }
-                                    .accessibilityLabel("Queue options for \(track.title)")
+                                    .accessibilityLabel("Queue options for \(track.title) by \(track.artist)")
                                     .accessibilityHint(query.isEmpty
                                         ? "Play, reorder, or remove this song from the upcoming queue"
                                         : "Play or remove this song. Clear search to reorder the full queue")
