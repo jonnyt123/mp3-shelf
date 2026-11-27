@@ -194,7 +194,17 @@ struct PlaybackOrder {
     /// favorite flag and all persisted playlists completely unchanged.
     @discardableResult
     mutating func removeUpcoming(_ id: UUID) -> Bool {
-        guard id != currentID, let index = queueIDs.firstIndex(of: id) else { return false }
+        guard let currentID, id != currentID,
+              let currentIndex = queueIDs.firstIndex(of: currentID),
+              let index = queueIDs.firstIndex(of: id) else { return false }
+        // Delayed queue actions may refer to songs that have already played.
+        // Never remove listening history when an Up Next row has gone stale.
+        if isShuffled {
+            guard remainingShuffle.contains(id) else { return false }
+        } else {
+            let recovering = unavailableAnchor == currentID && currentIndex == queueIDs.count - 1
+            guard index > currentIndex || (recovering && index < currentIndex) else { return false }
+        }
         queueIDs.remove(at: index)
         remainingShuffle.removeAll { $0 == id }
         playHistory.removeAll { $0 == id }

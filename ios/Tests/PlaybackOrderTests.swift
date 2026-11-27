@@ -51,7 +51,9 @@ struct PlaybackOrderTests {
         assert(order.queueIDs.count == 2)
         assert(order.currentID == songs[2])
         order.retainAvailable(Set([songs[1]]))
-        assert(order.currentID == nil)
+        assert(order.currentID == songs[2], "Removed current song remains a recovery anchor")
+        assert(order.next(automatic: true, loop: .off) == songs[1])
+        assert(order.queueIDs == [songs[1]])
 
         order.reset(queue: [songs[0]], current: songs[0], shuffled: true)
         assert(order.next(automatic: true, loop: .off) == nil)
@@ -81,6 +83,20 @@ struct PlaybackOrderTests {
         assert(!order.editableUpcomingIDs().contains(shuffledPending[2]))
         assert(order.next(automatic: true, loop: .off) == shuffledPending[3])
         assert(order.queueIDs.count == songs.count - 1)
+
+        order.reset(queue: songs, current: songs[2], shuffled: false)
+        assert(!order.removeUpcoming(songs[0]), "Stale Up Next action must preserve previous songs")
+        assert(order.queueIDs == songs)
+        assert(order.removeUpcoming(songs[3]))
+        order.reset(queue: songs, current: songs[0], shuffled: true)
+        let played = order.next(automatic: true, loop: .off)!
+        assert(!order.removeUpcoming(songs[0]), "Stale shuffled action must preserve listening history")
+        assert(order.previous(loop: .off) == songs[0])
+        assert(order.next(automatic: true, loop: .off) == played)
+        order.reset(queue: songs, current: songs[5], shuffled: false)
+        order.retainAvailable(Set(songs.dropLast()))
+        assert(order.removeUpcoming(songs[1]), "Wrapped recovery queue is still editable")
+        assert(!order.queueIDs.contains(songs[1]))
 
         print("PASS PlaybackOrder: shuffle exhaustion, previews, history, repeat, manual controls, pruning, single-song")
     }
