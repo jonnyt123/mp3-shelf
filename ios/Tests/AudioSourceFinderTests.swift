@@ -49,6 +49,31 @@ enum AudioSourceFinderTests {
             with: #""@type":"AudioObject","name":"Another Song","contentUrl""#),
             pageURL: pageURL, wish: wish).isEmpty,
                "contradictory child audio metadata cannot borrow the parent song identity")
+        let liveWish = PlaylistWish(title: "The Song Live", artist: "The Artist",
+                                    album: "The Album", spotifyURL: nil, durationSeconds: 212)
+        let livePage = structuredPage.replacingOccurrences(of: #""name":"The Song""#,
+                                                            with: #""name":"The Song Live""#)
+        let matchingLiveChild = livePage.replacingOccurrences(
+            of: #""@type":"AudioObject","contentUrl""#,
+            with: #""@type":"AudioObject","name":"The Song Live","contentUrl""#)
+        let conflictingLiveChild = matchingLiveChild.replacingOccurrences(
+            of: #""name":"The Song Live","contentUrl""#,
+            with: #""name":"The Songlive","contentUrl""#)
+        verify(MusicMatching.key("The Song Live") == MusicMatching.key("The Songlive"),
+               "fixture reproduces normalized title collision")
+        verify(!AutomaticWebAudioFinder.matches(in: matchingLiveChild, pageURL: pageURL,
+                                                wish: liveWish).isEmpty,
+               "matching child edition remains eligible")
+        verify(AutomaticWebAudioFinder.matches(in: conflictingLiveChild, pageURL: pageURL,
+                                               wish: liveWish).isEmpty,
+               "child metadata cannot hide an incompatible edition behind a normalized key")
+        let duplicateURL = URL(string: "https://example.com/song.mp3")!
+        let duplicateLanding = URL(string: "https://example.com/song")!
+        let firstLicense = AudioCatalogMatch(downloadURL: duplicateURL, itemURL: duplicateLanding, licenseURL: URL(string: "https://creativecommons.org/licenses/by/4.0/"), sourceName: "Openverse: fixture")
+        let otherLicense = AudioCatalogMatch(downloadURL: duplicateURL, itemURL: duplicateLanding, licenseURL: URL(string: "https://creativecommons.org/licenses/by-nc/4.0/"), sourceName: "Openverse: fixture")
+        verify(AudioSourceFinder.consistentOpenverseDuplicate(firstLicense, firstLicense), "identical attribution can collapse")
+        verify(!AudioSourceFinder.consistentOpenverseDuplicate(firstLicense, otherLicense), "conflicting licenses cannot collapse")
+        verify(!AudioSourceFinder.openversePageConsistent(page: 2, pageCount: 3, returned: 1, expectedPageCount: 2), "changing page totals cannot authorize selection")
         let graphPage = ##"<script type="application/ld+json">{"@graph":[{"@type":"MusicRecording","name":"The Song","byArtist":{"@id":"#artist"},"audio":{"@id":"#file"}},{"@id":"#artist","@type":"MusicGroup","name":"The Artist"},{"@id":"#file","@type":"AudioObject","contentUrl":"/song.mp3"}]}</script>"##
         verify(AutomaticWebAudioFinder.matches(in: graphPage, pageURL: pageURL, wish: wish)
             .first?.downloadURL.absoluteString == "https://artist.example/song.mp3",

@@ -46,7 +46,270 @@ enum AudioSourceFinder {
         let song = MusicMatching.key(wish.title)
         let artist = MusicMatching.key(wish.artist)
         return !song.isEmpty && !artist.isEmpty &&
-            MusicMatching.key(title) == song && MusicMatching.key(creator) == artist
+            MusicMatching.key(title) == song && MusicMatching.key(creator) == artist &&
+            recordingEditionAgrees(filename: title, requestedTitle: wish.title)
+    }
+
+    static func recordingEditionAgrees(filename: String, requestedTitle: String) -> Bool {
+        // Compare recording identities, not literal spelling of an edition.
+        // "Remaster" and "Remastered" describe the same category, while
+        // remastered studio and remastered live are still different recordings.
+        func tokens(_ value: String) -> [String] {
+            value.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        }
+        func contains(_ phrase: [String], in words: [String]) -> Bool {
+            guard words.count >= phrase.count else { return false }
+            return (0...(words.count - phrase.count)).contains {
+                Array(words[$0..<($0 + phrase.count)]) == phrase
+            }
+        }
+        func editions(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            var result = Set<String>()
+            let variants: [(String, [[String]])] = [
+                ("artist-re-recording", [["taylor", "s", "version"], ["taylors", "version"]]),
+                ("re-recorded", [["re", "recorded"], ["rerecorded"], ["re", "recording"], ["rerecording"]]),
+                ("original-mix", [["original", "mix"]]),
+                ("mono-mix", [["mono"], ["mono", "mix"]]),
+                ("stereo-mix", [["stereo"], ["stereo", "mix"]]),
+                ("alternate-take", [["alternate", "take"], ["alt", "take"]]),
+                // Uploaded mashups, tribute performances and synthetic covers
+                // can reuse the original artist/title and even its duration.
+                // Require explicit edition agreement before unattended import.
+                // Alternate spatial masters and newly arranged performances are
+                // not interchangeable with the ordinary stereo studio release.
+                ("spatial-master", [["spatial", "audio"], ["dolby", "atmos"],
+                                     ["binaural", "mix"], ["360", "reality", "audio"]]),
+                ("reimagined", [["reimagined"], ["reimagining"]]),
+                ("orchestral-arrangement", [["orchestral"], ["orchestra", "version"],
+                                             ["symphonic", "version"]]),
+                ("mashup", [["mashup"], ["mash", "up"]]),
+                ("medley", [["medley"]]),
+                ("tribute", [["tribute"], ["tribute", "version"]]),
+                ("ai-cover", [["ai", "cover"], ["a", "i", "cover"], ["ai", "generated", "cover"]]),
+                ("dj-edit", [["dj", "edit"], ["dj", "version"]]),
+                ("fan-remaster", [["fan", "remaster"], ["fan", "remastered"]]),
+                ("karaoke", [["karaoke"]]),
+                ("acapella", [["acapella"], ["a", "cappella"], ["a", "capella"]]),
+                ("rehearsal", [["rehearsal"]]),
+                // Live capture provenance is part of the recording identity.
+                // A soundboard/audience tape or soundcheck is not the studio
+                // master, even if uploader credits and duration are identical.
+                ("soundboard-recording", [["soundboard"], ["sbd", "recording"], ["soundboard", "recording"]]),
+                ("audience-recording", [["audience", "recording"], ["audience", "tape"], ["aud", "recording"]]),
+                ("soundcheck", [["soundcheck"], ["sound", "check"]]),
+                ("rough-mix", [["rough", "mix"], ["roughmix"]]),
+                ("work-tape", [["work", "tape"], ["worktape"]]),
+                ("bootleg", [["bootleg"]]),
+                ("bass-boosted", [["bass", "boosted"], ["bassboosted"]]),
+                ("club-mix", [["club", "mix"]]),
+                ("dub-mix", [["dub", "mix"], ["dub", "version"]]),
+                ("vocal-version", [["vocal", "version"], ["vocal", "mix"]]),
+                ("clean-edit", [["clean"], ["clean", "edit"], ["radio", "clean"]]),
+                ("explicit-edit", [["explicit"], ["uncensored"]]),
+                ("censored-edit", [["censored"], ["censor"], ["bleeped"]]),
+                ("deluxe-edition", [["deluxe"], ["deluxe", "edition"]]),
+                ("anniversary-edition", [["anniversary"], ["anniversary", "edition"]]),
+                ("session-version", [["session"], ["session", "version"]]),
+                ("alternate-mix", [["alternate", "mix"], ["alternative", "mix"]]),
+                ("vip-mix", [["vip", "mix"], ["vip", "edit"]]),
+                ("festival-mix", [["festival", "mix"], ["festival", "edit"]]),
+                ("extended-mix", [["extended", "mix"], ["extended", "version"], ["extended", "edit"]]),
+                ("pitch-shifted", [["pitch", "shifted"], ["pitch", "shift"], ["pitched", "up"], ["pitched", "down"]]),
+                ("radio-mix", [["radio", "mix"]]),
+                // Radio edits, sped-up social edits and alternate masters can
+                // retain the same normalized title and near-identical duration.
+                // Never silently substitute one for the playlist recording.
+                ("radio-edit", [["radio", "edit"], ["single", "edit"]]),
+                ("album-edit", [["album", "edit"], ["album", "version"]]),
+                ("sped-up", [["sped", "up"], ["speed", "up"], ["speedup"]]),
+                ("slowed", [["slowed"], ["slowed", "down"], ["slow", "version"]]),
+                ("reversed", [["reversed"], ["reverse", "audio"]]),
+                ("vocal-removal", [["vocal", "removed"], ["vocals", "removed"],
+                                    ["vocal", "removal"]]),
+                ("club-edit", [["club", "edit"]]),
+                ("dubstep-remix", [["dubstep", "remix"]]),
+                ("8-bit-cover", [["8", "bit"], ["8bit"]]),
+                // Backing tracks and stem-only uploads can carry the same
+                // title, artist credit and duration as the full vocal master.
+                // Treat them as distinct recordings, not equivalent originals.
+                ("instrumental", [["instrumental"], ["instrumental", "version"]]),
+                ("backing-track", [["backing", "track"], ["backing", "instrumental"],
+                                   ["minus", "one"], ["no", "vocals"]]),
+                ("isolated-vocals", [["isolated", "vocals"], ["vocal", "stem"],
+                                     ["vocals", "only"]]),
+                ("isolated-stems", [["stems"], ["multitrack"], ["multi", "track"]]),
+                ("cover", [["cover"]]),
+                ("live", [["live"]]),
+                ("acoustic", [["acoustic"], ["unplugged"]]),
+                ("demo", [["demo"]]),
+                ("remix", [["remix"]]),
+                ("remaster", [["remaster"], ["remastered"]]),
+                ("nightcore", [["nightcore"]]),
+                ("reverb", [["reverb"], ["reverbed"]]),
+                ("8d-audio", [["8d"], ["8d", "audio"]]),
+                ("lofi", [["lofi"], ["lo", "fi"]]),
+                ("piano-version", [["piano", "version"], ["piano", "cover"]]),
+                ("stripped", [["stripped"], ["stripped", "version"]]),
+                ("slowed", [["slowed"], ["slowed", "down"]]),
+                ("sped-up", [["sped", "up"], ["speed", "up"], ["speeded", "up"], ["spedup"], ["speedup"]]),
+                ("slowed-reverb", [["slowed", "reverb"], ["slowed", "and", "reverb"], ["slowed", "reverbed"]]),
+                ("performance-edit", [["performance", "edit"], ["performance", "version"]]),
+                ("fan-edit", [["fan", "edit"], ["fanmade", "edit"], ["fan", "made", "edit"]]),
+                ("radio-edit", [["radio", "edit"], ["radio", "version"],
+                                ["single", "edit"]]),
+                ("extended-mix", [["extended", "mix"], ["extended", "version"],
+                                  ["extended", "edit"]]),
+                ("pitch-shifted", [["pitch", "shifted"], ["pitch", "shift"]]),
+                ("chopped-screwed", [["chopped", "and", "screwed"],
+                                     ["chopped", "screwed"]]),
+                ("alternate-take", [["alternate", "take"]]),
+                // Mono/stereo and re-recording already have canonical categories
+                // above. Duplicating them under narrower aliases makes equivalent
+                // labels (e.g. "Mono" vs "Mono Mix") compare as different sets.
+                ("re-recorded", [["re", "recorded"], ["rerecorded"],
+                                 ["re", "recording"], ["rerecording"]])
+            ]
+            for (category, spellings) in variants where spellings.contains(where: {
+                contains($0, in: words)
+            }) {
+                result.insert(category)
+            }
+            return result
+        }
+        let fileStem = (filename as NSString).deletingPathExtension
+        guard editions(fileStem) == editions(requestedTitle) else { return false }
+        // A remaster from a different year is a different master, even when
+        // the generic title normalizer considers both titles equivalent.
+        // When both sides explicitly name an edition year, require agreement.
+        // A year in the ordinary song title is not itself edition evidence.
+        func remasterYears(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            guard words.contains("remaster") || words.contains("remastered") else {
+                return []
+            }
+            return Set(words.filter {
+                $0.count == 4 && $0.allSatisfy(\.isNumber) &&
+                    (Int($0) ?? 0) >= 1900 && (Int($0) ?? 0) <= 2100
+            })
+        }
+        let requestedYears = remasterYears(requestedTitle)
+        let fileYears = remasterYears(fileStem)
+        guard requestedYears == fileYears else { return false }
+
+        // Anniversary editions are frequently indexed with an edition year
+        // rather than a unique recording identifier. Do not silently select
+        // a different anniversary master just because the base title and
+        // running time agree. Only years adjacent to the edition marker count;
+        // an ordinary numeric song title must not become edition evidence.
+        func anniversaryYears(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            var result = Set<String>()
+            for (index, word) in words.enumerated() where word == "anniversary" {
+                let start = max(0, index - 2)
+                let end = min(words.count, index + 3)
+                for candidate in words[start..<end] where candidate.count == 4 &&
+                    candidate.allSatisfy(\.isNumber) &&
+                    (Int(candidate) ?? 0) >= 1900 && (Int(candidate) ?? 0) <= 2100 {
+                    result.insert(candidate)
+                }
+            }
+            return result
+        }
+        guard anniversaryYears(fileStem) == anniversaryYears(requestedTitle) else { return false }
+
+        // Artist-owned re-recordings can have distinct release years despite
+        // identical artist/title and duration. Never substitute one dated
+        // "Taylor's Version" master for another or for an undated edition.
+        func artistVersionYears(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            guard contains(["taylor", "s", "version"], in: words) ||
+                  contains(["taylors", "version"], in: words) else { return [] }
+            var years = Set<String>()
+            for (index, word) in words.enumerated() where word == "version" {
+                let lower = max(0, index - 3)
+                let upper = min(words.count, index + 4)
+                for candidate in words[lower..<upper] where candidate.count == 4 &&
+                    candidate.allSatisfy(\.isNumber) &&
+                    (Int(candidate) ?? 0) >= 1900 && (Int(candidate) ?? 0) <= 2100 {
+                    years.insert(candidate)
+                }
+            }
+            return years
+        }
+        guard artistVersionYears(fileStem) == artistVersionYears(requestedTitle) else {
+            return false
+        }
+
+        // Two live performances from different years are not interchangeable.
+        // Likewise, an explicit "2021 re-recording" must not auto-match a
+        // different dated re-recording. A bare year in an ordinary title is
+        // not version evidence: only years near the recording qualifier count.
+        func recordingYears(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            let markers: Set<String> = ["live", "concert", "recorded", "rerecorded",
+                                        "rerecording", "rehearsal", "session"]
+            var years = Set<String>()
+            for (index, word) in words.enumerated() where markers.contains(word) {
+                let lower = max(0, index - 2)
+                let upper = min(words.count, index + 3)
+                for candidate in words[lower..<upper] where candidate.count == 4 &&
+                    candidate.allSatisfy(\.isNumber) &&
+                    (Int(candidate) ?? 0) >= 1900 && (Int(candidate) ?? 0) <= 2100 {
+                    years.insert(candidate)
+                }
+            }
+            return years
+        }
+        guard recordingYears(fileStem) == recordingYears(requestedTitle) else {
+            return false
+        }
+
+        // Two venue-specific live recordings are distinct performances even
+        // when artist, song, year and duration agree. The broad "live"
+        // category above cannot establish that Wembley and Madison Square
+        // Garden are the same take. Require the explicitly supplied venue
+        // phrase to agree on both sides before unattended selection.
+        func liveVenue(_ value: String) -> [String]? {
+            let words = tokens(value)
+            // Performance metadata also uses "recorded at", "live on" and
+            // "concert at". A different named venue/broadcast is not the
+            // same recording, even if the catalog title omits that detail.
+            let qualifiers: Set<String> = ["live", "concert", "recorded"]
+            guard let marker = words.indices.first(where: {
+                qualifiers.contains(words[$0]) && $0 + 2 < words.count &&
+                    ["at", "in", "from", "on"].contains(words[$0 + 1])
+            }) else { return nil }
+            let suffix = Array(words[(marker + 2)...])
+            // Stop at common edition boundaries; the venue itself is compared
+            // conservatively as a complete normalized token sequence.
+            let boundaries: Set<String> = ["remastered", "remaster", "mix",
+                                           "edit", "version", "recording"]
+            return Array(suffix.prefix(while: { !boundaries.contains($0) }))
+        }
+        guard liveVenue(fileStem) == liveVenue(requestedTitle) else { return false }
+
+        // Numbered demo, take and mix revisions can share the same artist,
+        // normalized title and duration. A generic edition category is not
+        // enough to identify which recorded performance was requested.
+        // Only digits immediately following an explicit recording qualifier
+        // count; ordinary numbered song titles remain unaffected.
+        func numberedRevisions(_ value: String) -> Set<String> {
+            let words = tokens(value)
+            let qualifiers: Set<String> = ["demo", "take", "mix", "version", "edit"]
+            var revisions = Set<String>()
+            for index in words.indices where qualifiers.contains(words[index]) {
+                let next = words.index(after: index)
+                guard next < words.endIndex else { continue }
+                let number = words[next]
+                guard number.count <= 3, !number.isEmpty,
+                      number.allSatisfy(\.isNumber) else { continue }
+                revisions.insert("\(words[index]):\(Int(number) ?? 0)")
+            }
+            return revisions
+        }
+        return numberedRevisions(fileStem) == numberedRevisions(requestedTitle)
     }
 
     static func licensedURL(_ value: String?) -> URL? {
@@ -488,6 +751,30 @@ extension AudioSourceFinder {
         return components.url!
     }
 
+    static func consistentOpenverseDuplicate(_ first: AudioCatalogMatch,
+                                             _ second: AudioCatalogMatch) -> Bool {
+        first.downloadURL == second.downloadURL &&
+            first.itemURL == second.itemURL &&
+            first.licenseURL == second.licenseURL &&
+            first.sourceName == second.sourceName
+    }
+
+    static func openversePageConsistent(
+        page: Int, pageCount: Int?, returned: Int, expectedPageCount: Int?
+    ) -> Bool {
+        guard page > 0, page <= maxOpenversePages,
+              returned >= 0, returned <= 50 else { return false }
+        // A response without page_count cannot prove that the index did not
+        // omit another version. Do not auto-select a recording from a partial
+        // catalog inventory, even if the returned page is short.
+        guard let count = pageCount, count >= page, count > 0,
+              expectedPageCount == nil || expectedPageCount == count else { return false }
+        // Empty intermediate pages and full pages with contradictory totals
+        // cannot establish an unambiguous recording inventory.
+        if page < count && returned == 0 { return false }
+        return true
+    }
+
     static func findOpenverse(for wish: PlaylistWish,
                              allowsCellular: Bool = false) async throws -> AudioCatalogMatch? {
         guard !wish.artist.isEmpty, !wish.title.isEmpty else { return nil }
@@ -497,7 +784,10 @@ extension AudioSourceFinder {
         // before authorizing an automatic download.
         var firstSearchError: Error?
         var candidates: [String: AudioCatalogMatch] = [:]
+        // A provider that changes its reported page count mid-query cannot
+        // establish a complete inventory of competing recordings.
         for fieldSearch in [true, false] {
+            var expectedPageCount: Int?
             for page in 1...maxOpenversePages {
                 try Task.checkCancellation()
                 let result: OpenverseResponse
@@ -510,13 +800,36 @@ extension AudioSourceFinder {
                     if firstSearchError == nil { firstSearchError = error }
                     break
                 }
+                // Invalid, contradictory or oversized pages must not authorize
+                // a unique unattended recording match. Retry rather than
+                // persisting an incorrect selection for the entire playlist.
+                guard openversePageConsistent(
+                    page: page, pageCount: result.page_count,
+                    returned: result.results.count,
+                    expectedPageCount: expectedPageCount
+                ) else {
+                    throw SourceError.catalogsUnavailable([
+                        "Openverse: incomplete or inconsistent pagination."
+                    ])
+                }
+                if let count = result.page_count { expectedPageCount = count }
                 for match in result.results.compactMap({
                     openverseCandidate(title: $0.title, creator: $0.creator, download: $0.url,
                                        landing: $0.foreign_landing_url, license: $0.license_url,
                                        filetype: $0.filetype, duration: $0.duration,
                                        source: $0.source, filesize: $0.filesize, wish: wish)
                 }) {
-                    candidates[match.downloadURL.absoluteString] = match
+                    let key = match.downloadURL.absoluteString
+                    // A catalog may repeat the same direct file URL with
+                    // contradictory publisher or landing-page attribution.
+                    // URL deduplication is safe only when that evidence agrees.
+                    if let previous = candidates[key],
+                       !consistentOpenverseDuplicate(previous, match) {
+                        throw SourceError.catalogsUnavailable([
+                            "Openverse: conflicting metadata for the same audio URL."
+                        ])
+                    }
+                    candidates[key] = match
                     // Different URLs may represent different recordings.
                     // Never choose one automatically once ambiguity is known.
                     if candidates.count > 1 { return nil }
@@ -1602,7 +1915,7 @@ enum AutomaticWebAudioFinder {
                       durationMatches(audio["duration"], wish: wish),
                       let url = audio["contentUrl"] as? String else { continue }
                 if let title = audio["name"] as? String,
-                   MusicMatching.key(title) != MusicMatching.key(wish.title) { continue }
+                   !AudioSourceFinder.exactMetadataMatch(title: title, creator: wish.artist, wish: wish) { continue }
                 let credits = names(audio["byArtist"] ?? audio["creator"])
                 if !credits.isEmpty && !credits.contains(where: {
                     MusicMatching.key($0) == MusicMatching.key(wish.artist)
