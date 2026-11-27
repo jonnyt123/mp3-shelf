@@ -35,8 +35,12 @@ enum LyricsParser {
             let matches = regex.matches(in: original, range: range)
             let text = regex.stringByReplacingMatches(in: original, range: range, withTemplate: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty, !text.hasPrefix("[") else { continue }
-            if matches.isEmpty { items.append((nil, text)); continue }
+            guard !text.isEmpty else { continue }
+            if matches.isEmpty {
+                guard !text.hasPrefix("[") else { continue }
+                items.append((nil, text))
+                continue
+            }
             for match in matches {
                 func value(_ capture: Int) -> String? {
                     guard let range = Range(match.range(at: capture), in: original) else { return nil }
