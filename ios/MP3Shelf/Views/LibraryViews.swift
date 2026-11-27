@@ -664,7 +664,7 @@ struct LibraryView: View {
     // results after a newer query or a clear action.
     private func submitSearch() {
         settledSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        searchResultsFocused = true
+        searchResultsFocused = isSearching
     }
 
     private func clearSearch() {
@@ -739,7 +739,7 @@ struct LibraryView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(ShelfTheme.accent)
-            .accessibilityHint("Show your complete music library")
+            .accessibilityHint(favoritesOnly ? "Clear the search and keep the Favorites filter" : "Show your complete music library")
         }
     }
 
@@ -1747,7 +1747,9 @@ struct LibraryView: View {
                 }
             }
             guard !Task.isCancelled, searchText.trimmingCharacters(in: .whitespacesAndNewlines) == requestedQuery else { return }
-            settledSearchText = searchText
+            // Use the same canonical query as explicit submission so a pending
+            // debounce cannot invalidate an otherwise unchanged playback request.
+            settledSearchText = requestedQuery
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
