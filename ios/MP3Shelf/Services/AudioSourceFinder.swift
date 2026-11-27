@@ -517,6 +517,28 @@ enum AudioSourceFinder {
         return URLSession(configuration: config, delegate: CatalogRedirectGuard(), delegateQueue: nil)
     }()
 
+    static func validatedCatalogBody(_ data: Data, response: URLResponse,
+                                     maximumBytes: Int) throws -> Data {
+        guard let http = response as? HTTPURLResponse else { throw SourceError.invalidResponse }
+        guard http.statusCode == 200 else { throw SourceError.http(http.statusCode) }
+        guard !data.isEmpty, data.count <= maximumBytes else { throw SourceError.invalidResponse }
+        // Catalog endpoints can return a login/error HTML page with HTTP 200.
+        // Never feed such a response into recording discovery, even when the
+        // server labels it application/json or omits Content-Type entirely.
+        let prefix = String(decoding: data.prefix(512), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if prefix.hasPrefix("<!doctype html") || prefix.hasPrefix("<html") ||
+           prefix.hasPrefix("<head") || prefix.hasPrefix("<body") {
+            throw SourceError.invalidResponse
+        }
+        if let type = http.value(forHTTPHeaderField: "Content-Type")?.lowercased(),
+           (type.contains("text/html") || type.contains("application/xhtml+xml")) {
+            throw SourceError.invalidResponse
+        }
+        return data
+    }
+
     private static func requestCatalogData(
         _ url: URL, allowsCellular: Bool = false, maximumBytes: Int
     ) async throws -> Data {
@@ -530,10 +552,7 @@ enum AudioSourceFinder {
                 throw SourceError.invalidResponse
             }
             if http.statusCode == 200 {
-                guard !data.isEmpty, data.count <= maximumBytes else {
-                    throw SourceError.invalidResponse
-                }
-                return data
+                return try validatedCatalogBody(data, response: http, maximumBytes: maximumBytes)
             }
             guard let delay = catalogRetryDelay(
                 status: http.statusCode,
@@ -1129,11 +1148,17 @@ extension AudioSourceFinder {
               filesize == nil || (filesize! > 0 && filesize! <= 100 * 1024 * 1024)
         else { return nil }
 
-        if let expected = wish.durationSeconds, let duration {
-            // Openverse API documents duration in milliseconds, including
-            // short tracks. Never guess units based on an arbitrary threshold.
+        // A title/artist pair is not sufficient to distinguish edits, covers,
+        // remasters or similarly named recordings. When Spotify supplies a
+        // duration, require finite catalog evidence before auto-selection.
+        if let expected = wish.durationSeconds {
+            guard expected.isFinite, expected > 0,
+                  let duration, duration.isFinite, duration > 0 else { return nil }
+            // Openverse documents duration in milliseconds, including short
+            // tracks; do not infer units from an arbitrary threshold.
             let measured = duration / 1000.0
-            guard abs(measured - expected) <= 4.0 else { return nil }
+            guard measured.isFinite, measured > 0,
+                  abs(measured - expected) <= recordingDurationTolerance(expected) else { return nil }
         }
         // Openverse supplies the creator, link and license but does not itself
         // certify that a publisher actually owns the recording.

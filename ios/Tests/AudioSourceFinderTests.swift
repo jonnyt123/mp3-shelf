@@ -431,6 +431,18 @@ enum AudioSourceFinderTests {
             filetype: "mp3", duration: 212,
             source: "wikimedia", filesize: nil, wish: wish) == nil,
             "do not mistake Openverse milliseconds for seconds")
+        let shortOpenverseWish = PlaylistWish(title: "The Song", artist: "The Artist", album: "", spotifyURL: nil, durationSeconds: 15)
+        func openverseTimed(_ duration: Double?, _ requested: PlaylistWish) -> AudioCatalogMatch? {
+            AudioSourceFinder.openverseCandidate(title: "The Song", creator: "The Artist", download: "https://upload.wikimedia.org/file.mp3", landing: "https://commons.wikimedia.org/wiki/File:test", license: "https://creativecommons.org/licenses/by/4.0/", filetype: "mp3", duration: duration, source: "wikimedia", filesize: nil, wish: requested)
+        }
+        verify(openverseTimed(nil, wish) == nil, "timed Openverse wish requires catalog runtime")
+        verify(openverseTimed(.infinity, wish) == nil, "non-finite Openverse runtime rejected")
+        verify(openverseTimed(12000, shortOpenverseWish) == nil, "short preview cannot use full-track tolerance")
+        verify(openverseTimed(15000, shortOpenverseWish) != nil, "exact short track duration accepted")
+        let catalogHTML = Data("<html>error</html>".utf8)
+        let catalogResponse = HTTPURLResponse(url: URL(string: "https://api.openverse.org/v1/audio/")!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        verify((try? AudioSourceFinder.validatedCatalogBody(catalogHTML, response: catalogResponse, maximumBytes: 1000)) == nil, "HTML masquerading as catalog JSON rejected")
+        verify((try? AudioSourceFinder.validatedCatalogBody(Data("{}".utf8), response: catalogResponse, maximumBytes: 1000)) != nil, "valid nonempty catalog payload accepted")
         let commonsUntimedWish = PlaylistWish(title: "The Song", artist: "The Artist", album: "", spotifyURL: nil, durationSeconds: nil)
         verify(AudioSourceFinder.commonsSearchComplete(Data(#"{"query":{"pages":{}}}"#.utf8)), "complete Commons inventory is eligible for evaluation")
         verify(!AudioSourceFinder.commonsSearchComplete(Data(#"{"continue":{"gsroffset":20},"query":{"pages":{}}}"#.utf8)), "uninspected Commons continuation prevents automatic selection")
