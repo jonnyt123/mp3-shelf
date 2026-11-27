@@ -855,7 +855,21 @@ extension AudioSourceFinder {
     // Wikimedia Commons' MediaWiki file API is a separate upstream catalog:
     // Commons recordings may be absent from Openverse's index. Only explicit
     // machine-readable artist metadata and actual MP3 file URLs qualify.
-    private struct CommonsResponse: Decodable { let query: CommonsQuery? }
+    private struct CommonsResponse: Decodable {
+        let query: CommonsQuery?
+        let continuation: CommonsContinuation?
+        private enum CodingKeys: String, CodingKey { case query, continuation = "continue" }
+    }
+    private struct CommonsContinuation: Decodable {
+        let offset: Int?
+        private enum CodingKeys: String, CodingKey { case offset = "gsroffset" }
+    }
+    // An uninspected MediaWiki search page may contain a competing recording.
+    static func commonsSearchComplete(_ data: Data) -> Bool {
+        guard let response = try? JSONDecoder().decode(CommonsResponse.self, from: data),
+              response.query != nil else { return false }
+        return response.continuation == nil
+    }
     private struct CommonsQuery: Decodable { let pages: [String: CommonsPage] }
     private struct CommonsPage: Decodable {
         let title: String
@@ -888,6 +902,16 @@ extension AudioSourceFinder {
               landingURL.host?.lowercased() == "commons.wikimedia.org",
               bytes == nil || (bytes! > 0 && bytes! <= 100 * 1024 * 1024)
         else { return nil }
+        // Commons imageinfo does not provide decoded audio duration. A matching
+        // filename and artist cannot distinguish a radio edit, live version,
+        // or alternate master when Spotify supplies a specific runtime. Do
+        // not silently bypass the duration gate used by the other catalogs.
+        // Keep this source eligible for wishes without duration evidence;
+        // downloaded bytes still undergo the importer's codec verification.
+        if let expected = wish.durationSeconds {
+            guard expected.isFinite, expected > 0 else { return nil }
+            return nil
+        }
         return AudioCatalogMatch(downloadURL: audioURL, itemURL: landingURL,
                                  licenseURL: licensedURL(license), sourceName: "Wikimedia Commons")
     }
@@ -908,6 +932,9 @@ extension AudioSourceFinder {
             URLQueryItem(name: "format", value: "json")
         ]
         let result: CommonsResponse = try await requestJSON(components.url!, allowsCellular: allowsCellular)
+        guard result.query != nil, result.continuation == nil else {
+            throw SourceError.unavailable
+        }
         let matches = (result.query?.pages.values ?? Dictionary<String, CommonsPage>().values)
             .flatMap { page in
                 (page.imageinfo ?? []).compactMap { info in

@@ -415,19 +415,30 @@ enum AudioSourceFinderTests {
             filetype: "mp3", duration: 212,
             source: "wikimedia", filesize: nil, wish: wish) == nil,
             "do not mistake Openverse milliseconds for seconds")
+        let commonsUntimedWish = PlaylistWish(title: "The Song", artist: "The Artist", album: "", spotifyURL: nil, durationSeconds: nil)
+        verify(AudioSourceFinder.commonsSearchComplete(Data(#"{"query":{"pages":{}}}"#.utf8)), "complete Commons inventory is eligible for evaluation")
+        verify(!AudioSourceFinder.commonsSearchComplete(Data(#"{"continue":{"gsroffset":20},"query":{"pages":{}}}"#.utf8)), "uninspected Commons continuation prevents automatic selection")
+        verify(!AudioSourceFinder.commonsSearchComplete(Data(#"{"continue":{"gsroffset":20}}"#.utf8)), "missing Commons query cannot authorize a recording")
+        verify(AudioSourceFinder.commonsCandidate(
+            fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
+            download: "https://upload.wikimedia.org/file.mp3",
+            landing: "https://commons.wikimedia.org/wiki/File:test",
+            license: "https://creativecommons.org/licenses/by/4.0/",
+            bytes: 4_000_000, wish: wish) == nil,
+            "timed wishes cannot match Commons without duration evidence")
         let commons = AudioSourceFinder.commonsCandidate(
             fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
             download: "https://upload.wikimedia.org/wikipedia/commons/1/12/The_Song.mp3",
             landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
             license: "https://creativecommons.org/licenses/by/4.0/",
-            bytes: 4_000_000, wish: wish)
+            bytes: 4_000_000, wish: commonsUntimedWish)
         verify(commons?.sourceName == "Wikimedia Commons",
                "direct Commons file with exact credit and license accepted")
         let commonsWithoutLicense = AudioSourceFinder.commonsCandidate(
             fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
             download: "https://upload.wikimedia.org/file.mp3",
             landing: "https://commons.wikimedia.org/wiki/File:test",
-            license: nil, bytes: 8_000_000, wish: wish)
+            license: nil, bytes: 8_000_000, wish: commonsUntimedWish)
         verify(commonsWithoutLicense != nil && commonsWithoutLicense?.licenseURL == nil,
                "Commons identity and direct-file checks do not require license metadata")
         verify(AudioSourceFinder.commonsCandidate(
@@ -435,21 +446,21 @@ enum AudioSourceFinderTests {
             download: "https://upload.wikimedia.org/wikipedia/commons/1/12/The_Song.mp3",
             landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
             license: "https://creativecommons.org/licenses/by/4.0/",
-            bytes: nil, wish: wish) == nil,
+            bytes: nil, wish: commonsUntimedWish) == nil,
             "Wikimedia version with different artist rejected")
         verify(AudioSourceFinder.commonsCandidate(
             fileTitle: "File:The Song.mp3", artistCredit: "The Artist",
             download: "https://malicious.invalid/wikipedia/commons/1/12/The_Song.mp3",
             landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
             license: "https://creativecommons.org/licenses/by/4.0/",
-            bytes: nil, wish: wish) == nil,
+            bytes: nil, wish: commonsUntimedWish) == nil,
             "Commons download cannot redirect to untrusted upload hosts")
         verify(AudioSourceFinder.commonsCandidate(
             fileTitle: "File:The Song.mp3", artistCredit: "<a>Unverified Artist</a>",
             download: "https://upload.wikimedia.org/file.mp3",
             landing: "https://commons.wikimedia.org/wiki/File:The_Song.mp3",
             license: "https://creativecommons.org/licenses/by/4.0/",
-            bytes: nil, wish: wish) == nil,
+            bytes: nil, wish: commonsUntimedWish) == nil,
             "HTML author credits are not mistaken for verified artists")
         // Web-wide search lists possible source pages; unlike catalog matches
         // these are never automatically treated as licensed MP3 recordings.
