@@ -13,16 +13,53 @@ enum AudioSourceFinder {
         init(from decoder: Decoder) throws {
             let item = try decoder.singleValueContainer()
             if let string = try? item.decode(String.self) { value = string }
-            else if let strings = try? item.decode([String].self) { value = strings.first ?? "" }
+            else if let strings = try? item.decode([String].self) {
+                // Multi-valued catalog metadata is not an authoritative
+                // recording identity when the values disagree. Never pick a
+                // convenient first title/artist and silently auto-match it.
+                let nonempty = strings.map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { !$0.isEmpty }
+                // Normalization may erase edition qualifiers. A catalog
+                // array containing both a studio and alternate recording is
+                // ambiguous even if their normalized base titles agree.
+                let first = nonempty.first ?? ""
+                let identities = Set(nonempty.map(MusicMatching.key))
+                let editionsAgree = nonempty.allSatisfy {
+                    AudioSourceFinder.recordingEditionAgrees(
+                        filename: $0, requestedTitle: first)
+                }
+                value = identities.count == 1 && editionsAgree ? first : ""
+            }
             else { value = "" }
         }
     }
-    private struct SearchResponse: Decodable { let response: SearchBody }
-    private struct SearchBody: Decodable {
+    struct SearchResponse: Decodable { let response: SearchBody }
+    // Archive indexes occasionally include null or malformed records. Preserve
+    // valid siblings, but retain the raw page count for pagination and budget
+    // accounting: silently shrinking the page could authorize a false unique
+    // automatic match when an uninspected recording was present.
+    struct SearchBody: Decodable {
         let docs: [SearchItem]
         let numFound: Int?
+        let rawItemCount: Int
+
+        private enum CodingKeys: String, CodingKey { case docs, numFound }
+        private struct LossyItem: Decodable {
+            let value: SearchItem?
+            init(from decoder: Decoder) throws {
+                value = try? SearchItem(from: decoder)
+            }
+        }
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            let entries = try fields.decode([LossyItem].self, forKey: .docs)
+            rawItemCount = entries.count
+            docs = entries.compactMap(\.value)
+            numFound = try? fields.decode(Int.self, forKey: .numFound)
+        }
     }
-    private struct SearchItem: Decodable {
+    struct SearchItem: Decodable {
         let identifier: String
         let title: FlexibleText?
         let creator: FlexibleText?
@@ -30,6 +67,31 @@ enum AudioSourceFinder {
     struct ArchiveItem: Decodable {
         let metadata: ItemMetadata?
         let files: [ArchiveFile]?
+        let hasMalformedFileRows: Bool
+
+        private enum CodingKeys: String, CodingKey { case metadata, files }
+
+        // One corrupt file entry must not hide a valid recording in the same
+        // Archive item. Each surviving file still passes exact-match and
+        // downloaded-byte validation before it can enter the library.
+        private struct LossyFile: Decodable {
+            let value: ArchiveFile?
+            init(from decoder: Decoder) throws {
+                value = try? ArchiveFile(from: decoder)
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            metadata = try? fields.decode(ItemMetadata.self, forKey: .metadata)
+            if let rows = try? fields.decode([LossyFile].self, forKey: .files) {
+                hasMalformedFileRows = rows.contains { $0.value == nil }
+                files = rows.compactMap(\.value)
+            } else {
+                hasMalformedFileRows = true
+                files = nil
+            }
+        }
     }
     struct ItemMetadata: Decodable {
         let title: FlexibleText?
@@ -40,6 +102,43 @@ enum AudioSourceFinder {
         let name: String
         let source: String?
         let size: String?
+        // Archive's per-file values may be JSON strings or numbers.
+        // Invalid optional evidence must not discard an otherwise readable
+        // catalog item; candidate validation still rejects bad durations.
+        let length: String?
+        // A present but unreadable size must not silently become absent evidence.
+        let hasInvalidSize: Bool
+        let hasInvalidLength: Bool
+        let hasInvalidSource: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case name, source, size, length
+        }
+
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            name = try fields.decode(String.self, forKey: .name)
+            source = try? fields.decode(String.self, forKey: .source)
+            hasInvalidSource = fields.contains(.source) && source == nil
+            size = Self.optionalNumberText(fields, key: .size)
+            hasInvalidSize = fields.contains(.size) && size == nil
+            length = Self.optionalNumberText(fields, key: .length)
+            hasInvalidLength = fields.contains(.length) && length == nil
+        }
+
+        private static func optionalNumberText(
+            _ fields: KeyedDecodingContainer<CodingKeys>, key: CodingKeys
+        ) -> String? {
+            if let value = try? fields.decode(String.self, forKey: key) { return value }
+            if let value = try? fields.decode(Int64.self, forKey: key) {
+                return String(value)
+            }
+            if let value = try? fields.decode(Double.self, forKey: key),
+               value.isFinite {
+                return String(value)
+            }
+            return nil
+        }
     }
 
     static func recordingDurationTolerance(_ expected: Double) -> Double {
@@ -488,10 +587,43 @@ enum AudioSourceFinder {
             guard let bytes = Int64(sizeBytes), bytes > 0,
                   bytes <= 100 * 1024 * 1024 else { return false }
         }
+        // A lone generated derivative is not the original recording. Archive
+        // metadata can contain only a transcode after the source was removed.
+        // Missing source is tolerated for legacy uploads, but an explicit
+        // non-original classification must never be auto-imported.
+        guard source == nil || source == "original" else { return false }
         if audioFileCount == 1 {
+            // A single file is not proof that its edition matches Spotify.
+            // Archive item-level titles often omit qualifiers present only in
+            // filenames (e.g. "Song (Karaoke)" inside an item titled "Song").
+            // Keep such recordings for review rather than auto-importing them.
+            guard recordingEditionAgrees(filename: name, requestedTitle: wish.title) else {
+                return false
+            }
+            // A single audio file in an item with correct title/creator is not
+            // necessarily that recording. Uploads can contain an unrelated
+            // file (or a renamed alternate take) under accurate item metadata.
+            // Require the physical filename to identify the requested track;
+            // ambiguous generic names remain review-only.
+            let stem = (name as NSString).deletingPathExtension
+                .replacingOccurrences(of: "_", with: " ")
+            let withoutTrackNumber = stem.replacingOccurrences(
+                of: #"^\s*[0-9]{1,3}\s*[._-]\s*"#,
+                with: "", options: .regularExpression)
+            let expectedTitle = MusicMatching.key(wish.title)
+            let expectedArtistTitle = MusicMatching.key("\(wish.artist) - \(wish.title)")
+            let fileIdentities = [stem, withoutTrackNumber].map(MusicMatching.key)
+            guard fileIdentities.contains(expectedTitle) ||
+                  fileIdentities.contains(expectedArtistTitle) else { return false }
             return exactMetadataMatch(title: itemTitle, creator: itemCreator, wish: wish)
         }
-        guard source == "original" else { return false }
+        // Multi-track Archive items need the same bidirectional edition gate as
+        // single-file uploads. A matching base title alone cannot authorize a
+        // live, remastered, karaoke or speed-altered recording.
+        guard source == "original",
+              recordingEditionAgrees(filename: name, requestedTitle: wish.title) else {
+            return false
+        }
         let title = MusicMatching.key(wish.title)
         let stem = (name as NSString).deletingPathExtension.replacingOccurrences(of: "_", with: " ")
         // Preserve exact numeric titles first; only strip explicit track-number
@@ -523,6 +655,118 @@ enum AudioSourceFinder {
         }
     }
 
+    static func archiveSearchRowsComplete(_ body: SearchBody) -> Bool {
+        // A syntactically decoded row with an unsafe identifier is still an
+        // uninspected recording. Skipping it must not make another file appear
+        // uniquely identified for unattended download.
+        // Inconsistent totals can conceal omitted recordings. A catalog page
+        // claiming fewer total hits than returned rows is not a trustworthy
+        // uniqueness proof, even if every returned identifier is valid.
+        body.docs.count == body.rawItemCount &&
+            // Without an authoritative total, a short page could be a
+            // truncated response hiding another version of this recording.
+            // Fail closed for unattended matching; keep the search retryable.
+            body.numFound.map { $0 >= body.rawItemCount && $0 >= 0 } == true &&
+            body.docs.allSatisfy { safeIdentifier($0.identifier) } &&
+            archiveIndexDuplicatesAgree(body.docs)
+    }
+
+    // An identifier may appear repeatedly in the index. Contradictory
+    // title/creator evidence cannot be silently discarded by the later
+    // inspectedIdentifiers dedupe, which would otherwise permit a false
+    // unique automatic recording selection.
+    // Keep the original title alongside normalized artist evidence: the broad
+    // title key intentionally folds some edition labels. Duplicate index rows
+    // must not erase a competing live/remix/clean master before detail lookup.
+    private static func archiveIndexIdentity(_ doc: SearchItem) -> String {
+        (doc.title?.value ?? "") + "\u{0}" +
+            MusicMatching.key(doc.creator?.value ?? "")
+    }
+
+    private static func archiveIndexIdentityAgrees(_ lhs: String, _ rhs: String) -> Bool {
+        let left = lhs.components(separatedBy: "\u{0}")
+        let right = rhs.components(separatedBy: "\u{0}")
+        guard left.count == 2, right.count == 2,
+              left[1] == right[1],
+              MusicMatching.key(left[0]) == MusicMatching.key(right[0]) else {
+            return false
+        }
+        // Normalized titles and broad edition categories can agree while
+        // the same Archive identifier advertises two different dated masters.
+        // Do not let a later dedupe silently discard the competing release.
+        guard recordingEditionAgrees(filename: left[0], requestedTitle: right[0]),
+              recordingEditionAgrees(filename: right[0], requestedTitle: left[0]) else {
+            return false
+        }
+        return datedMasterYears(in: left[0]) == datedMasterYears(in: right[0])
+    }
+
+    private static func datedMasterYears(in title: String) -> Set<String> {
+        // Only years attached to a mastering/reissue qualifier are evidence.
+        // A year in the actual song title is not itself a release edition.
+        let words = title.lowercased().components(
+            separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        let markers: Set<String> = ["remaster", "remastered", "remastering",
+                                    "anniversary", "reissue", "reissued"]
+        var years = Set<String>()
+        for (index, word) in words.enumerated() where markers.contains(word) {
+            let lower = max(0, index - 2)
+            let upper = min(words.count, index + 3)
+            for candidate in words[lower..<upper] {
+                if candidate.count == 4, let year = Int(candidate),
+                   (1900...2099).contains(year) {
+                    years.insert(candidate)
+                }
+            }
+        }
+        return years
+    }
+
+    static func archiveIndexDuplicatesAgree(_ docs: [SearchItem]) -> Bool {
+        var identities: [String: String] = [:]
+        for doc in docs {
+            let identity = archiveIndexIdentity(doc)
+            if let previous = identities[doc.identifier],
+               !archiveIndexIdentityAgrees(previous, identity) {
+                return false
+            }
+            if identities[doc.identifier] == nil { identities[doc.identifier] = identity }
+        }
+        return true
+    }
+
+    static func archiveCrossPageIdentitiesAgree(_ docs: [SearchItem],
+                                                seen: inout [String: String]) -> Bool {
+        var consistent = true
+        for doc in docs {
+            let identity = archiveIndexIdentity(doc)
+            if let previous = seen[doc.identifier],
+               !archiveIndexIdentityAgrees(previous, identity) {
+                consistent = false
+            }
+            // Keep the first identity, so later contradictory rows cannot
+            // erase evidence or restore an apparently consistent result.
+            if seen[doc.identifier] == nil { seen[doc.identifier] = identity }
+        }
+        return consistent
+    }
+
+    // A short page before the reported total is exhausted may indicate a
+    // truncated index response. Treat it as incomplete, not a final page.
+    static func archivePageComplete(page: Int, rows: Int, reportedTotal: Int?) -> Bool {
+        // An index with no authoritative total cannot establish that the
+        // returned rows exhaust all recording versions. Never treat a short
+        // uncounted page as proof of a unique automatic download.
+        guard page > 0, page <= maxArchiveSearchPages,
+              rows >= 0, rows <= 20,
+              let reportedTotal, reportedTotal >= 0 else { return false }
+        let preceding = (page - 1) * 20
+        guard reportedTotal >= preceding + rows else { return false }
+        // A short nonfinal page may hide a competing live/remix/remaster.
+        // The index must return exactly the number of rows it claims.
+        return rows == min(20, max(0, reportedTotal - preceding))
+    }
+
     static let maxArchiveSearchPages = 2
 
     static func archiveIndexRelevance(title: String, creator: String,
@@ -533,9 +777,19 @@ enum AudioSourceFinder {
     }
 
     static func archiveSearchURL(for wish: PlaylistWish, page: Int) -> URL {
+        // Archive advanced-search treats punctuation as query syntax even inside
+        // quoted values. Keep human-readable recording terms, but never allow
+        // playlist metadata to inject fields, boolean operators or wildcards.
         func escaped(_ value: String) -> String {
-            value.replacingOccurrences(of: "\"", with: " ")
-                 .replacingOccurrences(of: "\n", with: " ")
+            let words = value.unicodeScalars.map { scalar -> String in
+                if CharacterSet.alphanumerics.contains(scalar) ||
+                   scalar == " " || scalar == "-" || scalar == "'" {
+                    return String(scalar)
+                }
+                return " "
+            }.joined()
+            return words.split(whereSeparator: { $0.isWhitespace })
+                .joined(separator: " ")
         }
         var query = URLComponents(string: "https://archive.org/advancedsearch.php")!
         query.queryItems = [
@@ -563,6 +817,14 @@ enum AudioSourceFinder {
         // different recording hidden in the uninspected results.
         var searchIncomplete = false
         var uniqueCandidates: [URL: AudioCatalogMatch] = [:]
+        // Archive can repeat an identifier within and across search pages.
+        // A duplicate is not another recording and must not consume a scarce
+        // metadata request or conceal a distinct result behind the budget.
+        var inspectedIdentifiers: Set<String> = []
+        // Index pages are not a snapshot: a repeated identifier with different
+        // recording credits must invalidate uniqueness even across pages.
+        var indexIdentities: [String: String] = [:]
+        var expectedIndexTotal: Int?
         for page in 1...maxArchiveSearchPages {
             try Task.checkCancellation()
             guard ArchiveLookupBudget.stillWithinWindow(
@@ -573,7 +835,30 @@ enum AudioSourceFinder {
             let search: SearchResponse = try await requestJSON(
                 archiveSearchURL(for: wish, page: page),
                 allowsCellular: allowsCellular)
-            let ranked = search.response.docs.prefix(20).enumerated().sorted { left, right in
+            // A malformed search row can conceal another exact recording. Do not
+            // turn a lossy page into a falsely unique automatic selection.
+            // Preserve a retryable incomplete-search result even when a valid
+            // candidate appears in the remaining rows.
+            if !archiveSearchRowsComplete(search.response) {
+                searchIncomplete = true
+            }
+            if !archivePageComplete(page: page, rows: search.response.rawItemCount,
+                                    reportedTotal: search.response.numFound) {
+                searchIncomplete = true
+            }
+            // A changing total between pages means the index snapshot was not
+            // stable. Do not infer a unique recording from inconsistent pages.
+            if let reported = search.response.numFound {
+                if let previous = expectedIndexTotal, previous != reported {
+                    searchIncomplete = true
+                }
+                expectedIndexTotal = reported
+            }
+            if !archiveCrossPageIdentitiesAgree(search.response.docs,
+                                                 seen: &indexIdentities) {
+                searchIncomplete = true
+            }
+            let ranked = search.response.docs.enumerated().sorted { left, right in
                 let l = archiveIndexRelevance(
                     title: left.element.title?.value ?? "",
                     creator: left.element.creator?.value ?? "", for: wish)
@@ -585,19 +870,18 @@ enum AudioSourceFinder {
             var detailRequests = 0
             for entry in ranked {
                 try Task.checkCancellation()
+                let result = entry.element
+                guard safeIdentifier(result.identifier),
+                      !inspectedIdentifiers.contains(result.identifier) else { continue }
                 guard ArchiveLookupBudget.canRequestDetails(
                     completed: detailRequests, startedAt: lookupStartedAt,
                     now: Date()) else {
-                    // Only count truncation if there are valid, uninspected
-                    // entries; malformed identifiers cannot hide a match.
-                    if ranked.drop(while: { $0.offset != entry.offset })
-                        .contains(where: { safeIdentifier($0.element.identifier) }) {
-                        searchIncomplete = true
-                    }
+                    // A valid, previously unseen identifier remains uninspected.
+                    // Duplicates and malformed rows cannot invalidate coverage.
+                    searchIncomplete = true
                     break
                 }
-                let result = entry.element
-                guard safeIdentifier(result.identifier) else { continue }
+                inspectedIdentifiers.insert(result.identifier)
                 detailRequests += 1
                 let metadataURL = URL(string: "https://archive.org/metadata/")!
                     .appendingPathComponent(result.identifier)
@@ -629,7 +913,7 @@ enum AudioSourceFinder {
             // a full page rather than silently authorizing a false match.
             let inspectedThrough = page * 20
             let hasMorePages = search.response.numFound.map { inspectedThrough < $0 }
-                ?? (search.response.docs.count >= 20)
+                ?? (search.response.rawItemCount >= 20)
             if !hasMorePages { break }
             if page == maxArchiveSearchPages {
                 searchIncomplete = true
@@ -641,19 +925,147 @@ enum AudioSourceFinder {
         return uniqueCandidates.count == 1 ? uniqueCandidates.values.first : nil
     }
 
+    /// Archive metadata may encode duration as seconds or a clock timestamp.
+    /// Parse the entire value; malformed or overflowing fields cannot authorize
+    /// an unattended recording match.
+    // A fixed four-second tolerance is too permissive for short recordings:
+    // a 12-second preview could otherwise pass as a 15-second song. Retain
+    // the historical four-second allowance for full-length songs, while
+    // requiring proportionally tighter evidence for short clips.
+    static func archiveDurationSeconds(_ raw: String?) -> Double? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+        if !raw.contains(":") {
+            guard let seconds = Double(raw), seconds.isFinite, seconds > 0 else { return nil }
+            return seconds
+        }
+        let fields = raw.split(separator: ":", omittingEmptySubsequences: false)
+        guard fields.count == 2 || fields.count == 3 else { return nil }
+        var total = 0.0
+        for (index, field) in fields.enumerated() {
+            guard !field.isEmpty, field.count <= 8,
+                  field.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+                  let value = Double(field), value.isFinite, value >= 0 else { return nil }
+            // Only the final (seconds) component may contain fractions.
+            if index < fields.count - 1 && value.rounded(.towardZero) != value { return nil }
+            if index > 0 && value >= 60 { return nil }
+            total = total * 60 + value
+        }
+        return total.isFinite && total > 0 ? total : nil
+    }
+
     static func archiveCandidate(_ item: ArchiveItem, identifier: String,
                                  for wish: PlaylistWish) -> AudioCatalogMatch? {
-        guard safeIdentifier(identifier), let metadata = item.metadata else { return nil }
-        let audioFiles = (item.files ?? []).filter { safeMP3File($0.name) }
+        // An unreadable sibling may be another original recording.
+        // Never treat the remaining file as uniquely identified.
+        guard safeIdentifier(identifier), let metadata = item.metadata,
+              !item.hasMalformedFileRows else { return nil }
+        // Competing originals in other formats invalidate uniqueness. A lone
+        // MP3 is not proof of a single recording when M4A/FLAC/WAV siblings exist.
+        let audioExtensions: Set<String> = ["mp3", "m4a", "m4b", "mp4", "aac", "flac", "wav", "wave", "ogg", "oga", "opus", "aiff", "aif", "caf", "alac", "ape", "webm", "wma"]
+        let audioFiles = (item.files ?? []).filter { file in
+            audioExtensions.contains((file.name as NSString).pathExtension.lowercased())
+        }
+        // A malformed explicit source classification is not a legacy missing value.
+        // It cannot prove whether a file is an original or a derivative.
+        guard audioFiles.allSatisfy({ !$0.hasInvalidSource }) else { return nil }
+        // A derivative and an original claiming the same physical path are
+        // contradictory catalog evidence, even if filtering derivatives would
+        // otherwise leave a single eligible MP3. Never let row ordering or
+        // source classification silently authorize the ambiguous download.
+        let allByPath = Dictionary(grouping: audioFiles, by: {
+            $0.name.precomposedStringWithCanonicalMapping.lowercased()
+        })
+        guard allByPath.values.allSatisfy({ rows in
+            guard let first = rows.first else { return false }
+            return rows.allSatisfy {
+                $0.name == first.name && $0.source == first.source &&
+                $0.size == first.size && $0.length == first.length &&
+                !$0.hasInvalidSize && !$0.hasInvalidLength
+            }
+        }) else { return nil }
         let originals = audioFiles.filter { $0.source == "original" }
-        let eligible = originals.isEmpty ? audioFiles : originals
+        // An unclassified file may be an independently uploaded original. When
+        // classified originals exist, do not discard unclassified siblings:
+        // doing so can turn two possible recordings into a false unique match.
+        // Explicit derivatives are excluded only when an original is present.
+        let rawEligible = originals.isEmpty ? audioFiles :
+            audioFiles.filter { $0.source == "original" || $0.source == nil }
+        // Duplicate catalog rows do not create additional recordings. Count
+        // distinct physical filenames before applying single-track metadata
+        // rules, but reject conflicting evidence rather than trusting row order.
+        // Case/Unicode-equivalent paths can refer to distinct Archive objects but
+        // collapse to the same local filename on common iPhone file systems.
+        // Never pick a winner by index order when their byte-level names differ.
+        let grouped = Dictionary(grouping: rawEligible, by: {
+            $0.name.precomposedStringWithCanonicalMapping.lowercased()
+        })
+        guard grouped.values.allSatisfy({ rows in
+            guard let first = rows.first else { return false }
+            return rows.allSatisfy {
+                $0.name == first.name &&
+                !$0.hasInvalidSize && !first.hasInvalidSize &&
+                !$0.hasInvalidLength && !first.hasInvalidLength &&
+                $0.source == first.source && $0.size == first.size &&
+                $0.length == first.length
+            }
+        }) else { return nil }
+        let eligible = grouped.keys.sorted().compactMap { grouped[$0]?.first }
+        // A second unclassified audio file is a possible competing original,
+        // even when only the classified file matches the requested title.
+        // Do not promote a single matching filename into uniqueness evidence.
+        guard originals.isEmpty ||
+              !eligible.contains(where: { $0.source == nil }) else { return nil }
+        // This importer supports MP3 only; another original audio format is
+        // competing evidence, not an alternative automatic download.
+        guard eligible.allSatisfy({ safeMP3File($0.name) }) else { return nil }
+        // A second original whose filename identifies the same requested song
+        // but advertises a different edition (live/remix/remaster/etc.) makes
+        // the catalog item ambiguous. A matching studio file alongside a live
+        // take must not be auto-selected solely because the live take fails
+        // the edition gate. Unrelated album tracks remain eligible siblings.
+        let requestedBase = MusicMatching.key(wish.title)
+        let competingEdition = eligible.contains { file in
+            let stem = (file.name as NSString).deletingPathExtension
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: #"^\s*[0-9]{1,3}\s*[._-]\s*"#,
+                                      with: "", options: .regularExpression)
+            let normalized = MusicMatching.key(stem)
+            let artistPrefix = MusicMatching.key(wish.artist) + " "
+            let titleStem = normalized.hasPrefix(artistPrefix)
+                ? String(normalized.dropFirst(artistPrefix.count)) : normalized
+            return !requestedBase.isEmpty &&
+                (titleStem == requestedBase ||
+                 titleStem.hasPrefix(requestedBase + " ")) &&
+                !recordingEditionAgrees(filename: file.name, requestedTitle: wish.title)
+        }
+        guard !competingEdition else { return nil }
         let matches = eligible.filter { file in
-            archiveFileCandidate(name: file.name, source: file.source, sizeBytes: file.size,
+            !file.hasInvalidSize && !file.hasInvalidLength && archiveFileCandidate(name: file.name, source: file.source, sizeBytes: file.size,
                                  itemTitle: metadata.title?.value ?? "",
                                  itemCreator: metadata.creator?.value ?? "",
                                  audioFileCount: eligible.count, wish: wish)
         }
-        guard matches.count == 1, let file = matches.first else { return nil }
+        // Catalog metadata can repeat the same physical file row. Repeated
+        // identical rows are one recording, not two competing versions.
+        // Conflicting metadata for the same filename is untrustworthy: never
+        // let ordering decide which duration/size/source is authoritative.
+        let byName = Dictionary(grouping: matches, by: { $0.name })
+        guard byName.count == 1, let rows = byName.values.first,
+              let file = rows.first,
+              rows.allSatisfy({ $0.source == file.source &&
+                                $0.size == file.size && $0.length == file.length })
+        else { return nil }
+        // An exact title/creator can still describe a preview, radio edit or
+        // alternate master. When Spotify provides runtime evidence, Archive
+        // must independently identify the chosen file's duration before it
+        // becomes eligible for unattended download. Missing/invalid lengths
+        // remain available for manual review, not automatic selection.
+        if let expected = wish.durationSeconds {
+            guard expected.isFinite, expected > 0,
+                  let measured = archiveDurationSeconds(file.length),
+                  abs(measured - expected) <= recordingDurationTolerance(expected) else { return nil }
+        }
         return AudioCatalogMatch(
             downloadURL: URL(string: "https://archive.org/download/")!
                 .appendingPathComponent(identifier).appendingPathComponent(file.name),

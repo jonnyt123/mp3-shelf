@@ -192,14 +192,24 @@ enum AudioSourceFinderTests {
                    error.localizedDescription.contains("503"),
                    "total outage reports the providers and specific failures")
         }
-        let archiveJSON = #"{"metadata":{"title":"The Song","creator":"The Artist"},"files":[{"name":"song.mp3","source":"original","length":"212.43","size":"8419768"}]}"#
+        let archiveJSON = #"{"metadata":{"title":"The Song","creator":"The Artist"},"files":[{"name":"The Song.mp3","source":"original","length":"212.43","size":"8419768"}]}"#
         let archiveItem = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
                                                    from: Data(archiveJSON.utf8))
         let publicMatch = AudioSourceFinder.archiveCandidate(archiveItem,
             identifier: "public-recording", for: wish)
-        verify(publicMatch?.downloadURL.lastPathComponent == "song.mp3" &&
+        verify(publicMatch?.downloadURL.lastPathComponent == "The Song.mp3" &&
                publicMatch?.licenseURL == nil,
                "real Archive decimal duration and absent license do not reject matching MP3")
+        verify(AudioSourceFinder.archiveDurationSeconds("3:32") == 212, "Archive clock duration parses")
+        verify(AudioSourceFinder.archiveDurationSeconds("2:92") == nil, "invalid Archive clock duration is rejected")
+        verify(AudioSourceFinder.archivePageComplete(page: 2, rows: 15, reportedTotal: 35), "complete final Archive page")
+        verify(!AudioSourceFinder.archivePageComplete(page: 1, rows: 1, reportedTotal: 35), "truncated Archive page cannot prove uniqueness")
+        let incompleteArchive = try JSONDecoder().decode(AudioSourceFinder.SearchResponse.self, from: Data(#"{"response":{"numFound":2,"docs":[{"identifier":"valid"},null]}}"#.utf8))
+        verify(!AudioSourceFinder.archiveSearchRowsComplete(incompleteArchive.response), "malformed search rows prevent uniqueness proof")
+        let missingLength = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self, from: Data(archiveJSON.replacingOccurrences(of: #""length":"212.43","#, with: "").utf8))
+        verify(AudioSourceFinder.archiveCandidate(missingLength, identifier: "public-recording", for: wish) == nil, "timed Archive wish requires independent runtime")
+        let ambiguousArchive = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self, from: Data(archiveJSON.replacingOccurrences(of: "}]} ", with: "}]}").replacingOccurrences(of: #""size":"8419768"}]"#, with: #""size":"8419768"},{"name":"The Song.flac","source":"original"}]"#).utf8))
+        verify(AudioSourceFinder.archiveCandidate(ambiguousArchive, identifier: "public-recording", for: wish) == nil, "competing original format prevents MP3 auto-selection")
         let oversizedJSON = archiveJSON.replacingOccurrences(of: "8419768", with: "104857601")
         let oversizedItem = try JSONDecoder().decode(AudioSourceFinder.ArchiveItem.self,
                                                      from: Data(oversizedJSON.utf8))
@@ -390,11 +400,11 @@ enum AudioSourceFinderTests {
             itemTitle: "The Album", itemCreator: "The Artist",
             audioFileCount: 8, wish: wish),
             "generated derivatives never qualify in multiple-audio archives")
-        verify(AudioSourceFinder.archiveFileCandidate(
+        verify(!AudioSourceFinder.archiveFileCandidate(
             name: "unrelated-file.mp3", source: "original", sizeBytes: "5421879",
             itemTitle: "The Song", itemCreator: "The Artist",
             audioFileCount: 1, wish: wish),
-            "single-song item uses its exact title and creator metadata")
+            "single-song item cannot authorize an unrelated physical filename")
         verify(!AudioSourceFinder.archiveFileCandidate(
             name: "The Song.mp3", source: "original", sizeBytes: "105000000",
             itemTitle: "The Song", itemCreator: "The Artist",
