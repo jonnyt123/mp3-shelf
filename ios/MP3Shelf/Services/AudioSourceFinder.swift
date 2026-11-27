@@ -42,6 +42,11 @@ enum AudioSourceFinder {
         let size: String?
     }
 
+    static func recordingDurationTolerance(_ expected: Double) -> Double {
+        guard expected.isFinite, expected > 0 else { return 0 }
+        return min(4.0, max(0.5, expected * 0.03))
+    }
+
     static func exactMetadataMatch(title: String, creator: String, wish: PlaylistWish) -> Bool {
         let song = MusicMatching.key(wish.title)
         let artist = MusicMatching.key(wish.artist)
@@ -1854,19 +1859,56 @@ enum AutomaticWebAudioFinder {
         let seconds: Double
         if let number = value as? Double { seconds = number }
         else if let raw = value as? String {
-            let pattern = #"^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$"#
-            guard let regex = try? NSRegularExpression(pattern: pattern),
-                  let match = regex.firstMatch(in: raw.uppercased(),
-                    range: NSRange(location: 0, length: (raw as NSString).length)) else { return false }
-            let string = raw as NSString
-            func number(_ index: Int) -> Double {
-                let range = match.range(at: index)
-                return range.location == NSNotFound ? 0 : Double(string.substring(with: range)) ?? 0
+            // Publishers emit either ISO-8601 durations or numeric seconds.
+            // Reject partial matches, whitespace, signs and non-finite values:
+            // an incorrect duration must never authorize automatic selection.
+            if raw.range(of: #"^[0-9]+(?:\.[0-9]+)?$"#,
+                         options: .regularExpression) != nil {
+                guard let parsed = Double(raw) else { return false }
+                seconds = parsed
+            } else {
+                let pattern = #"^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$"#
+                let normalized = raw.uppercased()
+                guard let regex = try? NSRegularExpression(pattern: pattern),
+                      let match = regex.firstMatch(in: normalized,
+                        range: NSRange(location: 0, length: (normalized as NSString).length))
+                else { return false }
+                let string = normalized as NSString
+                func number(_ index: Int) -> Double {
+                    let range = match.range(at: index)
+                    return range.location == NSNotFound ? 0 : Double(string.substring(with: range)) ?? 0
+                }
+                // ISO-8601 clock fields must be well-formed. A value such as
+                // PT1M90S or PT2H75M must not be normalized into a plausible
+                // Spotify runtime and silently authorize the wrong recording.
+                let hours = number(1)
+                let minutes = number(2)
+                let secondsField = number(3)
+                guard hours.isFinite, minutes.isFinite, secondsField.isFinite,
+                      hours >= 0, minutes >= 0, secondsField >= 0,
+                      minutes < 60, secondsField < 60,
+                      // Reject a duration claim that cannot represent a sane track.
+                      // Otherwise a huge numeric ISO field can overflow the
+                      // summed duration and silently contaminate matching.
+                      hours <= 24, hours * 3600 + minutes * 60 + secondsField <= 86_400 else { return false }
+                seconds = hours * 3600 + minutes * 60 + secondsField
             }
-            seconds = number(1) * 3600 + number(2) * 60 + number(3)
         } else { return false }
         guard seconds.isFinite, seconds > 0 else { return false }
-        return wish.durationSeconds.map { abs($0 - seconds) <= 4 } ?? true
+        return wish.durationSeconds.map { expected in
+            expected.isFinite && expected > 0 &&
+                abs(expected - seconds) <= AudioSourceFinder.recordingDurationTolerance(expected)
+        } ?? true
+    }
+
+    // A matching title/artist is not sufficient to identify the exact recording.
+    // Require at least one duration claim when Spotify supplies a duration, and
+    // reject conflicting claims even if another claim happens to match.
+    static func recordingDurationEvidenceMatches(
+        recording: Any?, audio: Any?, wish: PlaylistWish
+    ) -> Bool {
+        guard recording != nil || audio != nil || wish.durationSeconds == nil else { return false }
+        return durationMatches(recording, wish: wish) && durationMatches(audio, wish: wish)
     }
 
     static func matches(in html: String, pageURL: URL,
@@ -1929,7 +1971,7 @@ enum AutomaticWebAudioFinder {
                   let title = node["name"] as? String,
                   names(node["byArtist"] ?? node["creator"]).contains(where: {
                     AudioSourceFinder.exactMetadataMatch(title: title, creator: $0, wish: wish)
-                  }), durationMatches(node["duration"], wish: wish) else { continue }
+                  }) else { continue }
             var media: [Any] = kind.contains("audioobject") ? [node] : []
             for key in ["audio", "associatedMedia", "encoding"] {
                 if let array = node[key] as? [Any] { media.append(contentsOf: array) }
@@ -1939,7 +1981,8 @@ enum AutomaticWebAudioFinder {
                 guard let rawAudio = value as? [String: Any] else { continue }
                 let audio = resolved(rawAudio)
                 guard !types(audio).contains("videoobject"),
-                      durationMatches(audio["duration"], wish: wish),
+                      recordingDurationEvidenceMatches(recording: node["duration"],
+                                                       audio: audio["duration"], wish: wish),
                       let url = audio["contentUrl"] as? String else { continue }
                 if let title = audio["name"] as? String,
                    !AudioSourceFinder.exactMetadataMatch(title: title, creator: wish.artist, wish: wish) { continue }

@@ -74,7 +74,13 @@ enum AudioSourceFinderTests {
         verify(AudioSourceFinder.consistentOpenverseDuplicate(firstLicense, firstLicense), "identical attribution can collapse")
         verify(!AudioSourceFinder.consistentOpenverseDuplicate(firstLicense, otherLicense), "conflicting licenses cannot collapse")
         verify(!AudioSourceFinder.openversePageConsistent(page: 2, pageCount: 3, returned: 1, expectedPageCount: 2), "changing page totals cannot authorize selection")
-        let graphPage = ##"<script type="application/ld+json">{"@graph":[{"@type":"MusicRecording","name":"The Song","byArtist":{"@id":"#artist"},"audio":{"@id":"#file"}},{"@id":"#artist","@type":"MusicGroup","name":"The Artist"},{"@id":"#file","@type":"AudioObject","contentUrl":"/song.mp3"}]}</script>"##
+        verify(AutomaticWebAudioFinder.recordingDurationEvidenceMatches(recording: "212", audio: "PT3M32S", wish: wish), "consistent numeric and ISO duration evidence matches")
+        verify(AutomaticWebAudioFinder.recordingDurationEvidenceMatches(recording: nil, audio: 212.0, wish: wish), "child duration alone can establish runtime")
+        verify(!AutomaticWebAudioFinder.recordingDurationEvidenceMatches(recording: nil, audio: nil, wish: wish), "timed request requires duration evidence")
+        verify(!AutomaticWebAudioFinder.recordingDurationEvidenceMatches(recording: "PT3M32S", audio: "PT30S", wish: wish), "contradictory child runtime fails closed")
+        verify(!AutomaticWebAudioFinder.recordingDurationEvidenceMatches(recording: "PT2M92S", audio: nil, wish: wish), "invalid ISO clock fields cannot normalize into matching duration")
+        verify(AutomaticWebAudioFinder.matches(in: structuredPage.replacingOccurrences(of: #""duration":"PT3M32S","#, with: ""), pageURL: pageURL, wish: wish).isEmpty, "structured audio without runtime cannot match a timed request")
+        let graphPage = ##"<script type="application/ld+json">{"@graph":[{"@type":"MusicRecording","name":"The Song","byArtist":{"@id":"#artist"},"duration":"PT3M32S","audio":{"@id":"#file"}},{"@id":"#artist","@type":"MusicGroup","name":"The Artist"},{"@id":"#file","@type":"AudioObject","contentUrl":"/song.mp3"}]}</script>"##
         verify(AutomaticWebAudioFinder.matches(in: graphPage, pageURL: pageURL, wish: wish)
             .first?.downloadURL.absoluteString == "https://artist.example/song.mp3",
                "structured artist and audio references resolve within the same page graph")
