@@ -251,7 +251,7 @@ struct PlaybackOrder {
         guard let index = queueIDs.firstIndex(of: currentID) else { return false }
         return queueIDs.dropFirst(index + 1).contains { $0 != unavailableAnchor }
             || (unavailableAnchor == currentID && !playableIDs.isEmpty)
-            || (loop == .all && !playableIDs.isEmpty)
+            || (loop == .all && playableIDs.contains { $0 != currentID })
     }
 
     func upcomingIDs(limit: Int, loop: PlaybackLoopMode) -> [UUID] {

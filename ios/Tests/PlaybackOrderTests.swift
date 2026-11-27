@@ -59,6 +59,16 @@ struct PlaybackOrderTests {
         assert(order.next(automatic: true, loop: .off) == nil)
         assert(order.next(automatic: true, loop: .all) == songs[0])
         assert(order.upcomingIDs(limit: 3, loop: .all).isEmpty)
+        // Crossfade requires a different recording; natural repeat still works.
+        order.reset(queue: [songs[0]], current: songs[0], shuffled: false)
+        assert(!order.canAdvanceAutomatically(loop: .all))
+        assert(order.next(automatic: true, loop: .all) == songs[0])
+        order.reset(queue: [songs[0], songs[1]], current: songs[1], shuffled: false)
+        assert(order.canAdvanceAutomatically(loop: .all))
+        assert(!order.canAdvanceAutomatically(loop: .off))
+        assert(order.next(automatic: true, loop: .all) == songs[0])
+        order.retainAvailable(Set([songs[1]]))
+        assert(order.canAdvanceAutomatically(loop: .off), "Deleted current must still recover")
         // Editing Up Next is playback-only state. Saved source order remains intact.
         order.reset(queue: songs, current: songs[0], shuffled: false)
         assert(order.editableUpcomingIDs() == Array(songs.dropFirst()))
