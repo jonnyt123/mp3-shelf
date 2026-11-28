@@ -1,0 +1,13 @@
+{
+  "kind": "edit",
+  "lane": "downloads",
+  "parent": "bda3be818b277814e6fef24a84e47980efbe0995",
+  "message": "Preserve dotted catalog titles during recording edition matching",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Services/AudioSourceFinder.swift",
+      "before": "        let fileStem = (filename as NSString).deletingPathExtension",
+      "after": "        let audioExtensions: Set<String> = [\"mp3\", \"m4a\", \"aac\", \"wav\", \"flac\", \"ogg\", \"opus\", \"aiff\", \"aif\", \"caf\", \"alac\", \"wma\", \"m4b\", \"oga\"]\n        let fileExtension = (filename as NSString).pathExtension.lowercased()\n        let fileStem = audioExtensions.contains(fileExtension)\n            ? (filename as NSString).deletingPathExtension\n            : filename"
+    }
+  ]
+}
