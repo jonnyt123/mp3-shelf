@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "playback",
+  "parent": "4532a8d50faab8d567369b8c45068949004426a9",
+  "message": "Keep sequential Repeat All previews distinct and exclude Now Playing",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Models/PlaybackOrder.swift",
+      "before": "        if result.count < limit && loop == .all && playableIDs.count > 1 {\n            result += Array(playableIDs.prefix(limit - result.count))\n        }",
+      "after": "        if result.count < limit && loop == .all && playableIDs.count > 1 {\n            // Show each distinct upcoming recording once, excluding the current selection.\n            let shown = Set(result)\n            let wrapped = playableIDs.filter { $0 != currentID && !shown.contains($0) }\n            result += Array(wrapped.prefix(limit - result.count))\n        }"
+    },
+    {
+      "path": "ios/Tests/PlaybackOrderTests.swift",
+      "before": "        // At a Repeat All shuffle boundary, expose eligible next-cycle candidates.",
+      "after": "        // Sequential Repeat All previews must not duplicate rows or include Now Playing.\n        order.reset(queue: Array(songs.prefix(3)), current: songs[1], shuffled: false)\n        assert(order.upcomingIDs(limit: 10, loop: .all) == [songs[2], songs[0]])\n        assert(order.upcomingIDs(limit: 1, loop: .all) == [songs[2]])\n        assert(order.next(automatic: true, loop: .all) == songs[2])\n        assert(order.next(automatic: true, loop: .all) == songs[0])\n        assert(order.upcomingIDs(limit: 10, loop: .all) == [songs[1], songs[2]])\n\n        // At a Repeat All shuffle boundary, expose eligible next-cycle candidates."
+    }
+  ]
+}
