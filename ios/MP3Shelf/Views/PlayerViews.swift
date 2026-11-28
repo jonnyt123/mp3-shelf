@@ -998,7 +998,7 @@ struct PlaybackQueueSheet: View {
                                         }
                                     }
                                 }
-                                .accessibilityAction(named: "Remove from queue") {
+                                .accessibilityAction(named: Text("Remove \(track.title) by \(track.artist) from queue")) {
                                     removeFromQueue(track.id)
                                 }
                             }
