@@ -1,0 +1,7 @@
+{
+  "kind": "compose",
+  "lane": "integration",
+  "sourceLane": "playback",
+  "source": "d09461e59b5b39f626a7232c70508e9dc7bd7675",
+  "message": "Compose single-track repeat upcoming preview correction and regression"
+}
