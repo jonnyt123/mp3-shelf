@@ -1735,7 +1735,7 @@ struct LibraryView: View {
             recentLibrarySelectionDidChange()
         }
         .onSubmit(of: .search) { submitSearch() }
-        .task(id: searchText) {
+        .task(id: searchText.trimmingCharacters(in: .whitespacesAndNewlines)) {
             // Clearing or whitespace-only input restores the full library
             // immediately; nonempty queries debounce until typing settles.
             let requestedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
