@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "playback",
+  "parent": "75f745af8d2ef0fe3e39b5e6f48fe4bca5f26769",
+  "message": "Keep single-track repeat out of the upcoming recording preview",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Models/PlaybackOrder.swift",
+      "before": "        if result.count < limit && loop == .all {\n            result += Array(playableIDs.prefix(limit - result.count))\n        }",
+      "after": "        if result.count < limit && loop == .all && playableIDs.count > 1 {\n            result += Array(playableIDs.prefix(limit - result.count))\n        }"
+    },
+    {
+      "path": "ios/Tests/PlaybackOrderTests.swift",
+      "before": "        assert(!order.canAdvanceAutomatically(loop: .all))\n        assert(order.next(automatic: true, loop: .all) == songs[0])",
+      "after": "        assert(!order.canAdvanceAutomatically(loop: .all))\n        assert(order.upcomingIDs(limit: 3, loop: .all).isEmpty,\n               \"Single-track repeat must not advertise a separate upcoming recording\")\n        assert(order.next(automatic: true, loop: .all) == songs[0])"
+    }
+  ]
+}
