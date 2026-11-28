@@ -156,6 +156,14 @@ struct PlaybackOrderTests {
         assert(order.next(automatic: true, loop: .off) == recovery[0])
         assert(order.next(automatic: true, loop: .off) == nil)
 
+        // Back without history during deleted-anchor recovery follows the pending queue.
+        order.reset(queue: Array(songs.prefix(3)), current: songs[0], shuffled: true)
+        order.retainAvailable(Set([songs[1], songs[2]]))
+        assert(order.playNext(songs[2]))
+        assert(order.previous(loop: .off) == songs[2])
+        assert(order.next(automatic: true, loop: .off) == songs[1])
+        assert(!order.queueIDs.contains(songs[0]))
+
         // Sequential Repeat All previews must not duplicate rows or include Now Playing.
         order.reset(queue: Array(songs.prefix(3)), current: songs[1], shuffled: false)
         assert(order.upcomingIDs(limit: 10, loop: .all) == [songs[2], songs[0]])

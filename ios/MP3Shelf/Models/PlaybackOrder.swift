@@ -128,7 +128,8 @@ struct PlaybackOrder {
         guard let currentID, !queueIDs.isEmpty else { return nil }
         if isShuffled {
             guard let previousID = playHistory.popLast() else {
-                guard unavailableAnchor == currentID, let survivor = playableIDs.first else { return currentID }
+                guard unavailableAnchor == currentID else { return currentID }
+                guard let survivor = remainingShuffle.first ?? playableIDs.first else { return nil }
                 finishSelection(survivor)
                 remainingShuffle.removeAll { $0 == survivor }
                 return survivor
