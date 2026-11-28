@@ -1,0 +1,13 @@
+{
+  "kind": "edit",
+  "lane": "ux",
+  "parent": "c0013cf6d68bc192378bba2c732f465ef669e881",
+  "message": "Release library results accessibility focus when system search clears",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Views/LibraryViews.swift",
+      "before": "        .onChange(of: searchText.trimmingCharacters(in: .whitespacesAndNewlines)) { _, _ in\n            browsingScopeRevision &+= 1\n            browsingScopeDidChange()\n        }",
+      "after": "        .onChange(of: searchText.trimmingCharacters(in: .whitespacesAndNewlines)) { _, query in\n            // The system search field can clear the query without calling\n            // clearSearch(). Release focus when its results heading disappears.\n            if query.isEmpty {\n                searchResultsFocused = false\n            }\n            browsingScopeRevision &+= 1\n            browsingScopeDidChange()\n        }"
+    }
+  ]
+}
