@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "downloads",
+  "parent": "b7d7c02f888350e9eb4735b4993d3acd3b9cc487",
+  "message": "Reject unsupported explicit structured child recording titles",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Services/AudioSourceFinder.swift",
+      "before": "                if let title = audio[\"name\"] as? String,\n                   !AudioSourceFinder.exactMetadataMatch(title: title, creator: wish.artist, wish: wish) { continue }",
+      "after": "                // Explicit child titles must establish identity, not silently\n                // disappear when supplied in an unsupported structured shape.\n                if let rawTitle = audio[\"name\"] {\n                    guard let title = rawTitle as? String,\n                          AudioSourceFinder.exactMetadataMatch(title: title, creator: wish.artist, wish: wish)\n                    else { continue }\n                }"
+    },
+    {
+      "path": "ios/Tests/AudioSourceFinderTests.swift",
+      "before": "               \"contradictory child audio metadata cannot borrow the parent song identity\")",
+      "after": "               \"contradictory child audio metadata cannot borrow the parent song identity\")\n        for childTitle in [#\"[\"The Song\",\"The Song (Live)\"]\"#,\n                           #\"{\"@value\":\"The Song (Live)\"}\"#, \"null\"] {\n            let malformedChild = structuredPage.replacingOccurrences(\n                of: #\"\"@type\":\"AudioObject\",\"contentUrl\"\"#,\n                with: #\"\"@type\":\"AudioObject\",\"name\":\"# + childTitle + #\",\"contentUrl\"\"#)\n            verify(AutomaticWebAudioFinder.matches(in: malformedChild,\n                pageURL: pageURL, wish: wish).isEmpty,\n                \"explicit unsupported child title cannot inherit parent identity\")\n        }"
+    }
+  ]
+}
