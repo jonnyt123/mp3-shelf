@@ -1712,7 +1712,12 @@ struct LibraryView: View {
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
-        .onChange(of: searchText.trimmingCharacters(in: .whitespacesAndNewlines)) { _, _ in
+        .onChange(of: searchText.trimmingCharacters(in: .whitespacesAndNewlines)) { _, query in
+            // The system search field can clear the query without calling
+            // clearSearch(). Release focus when its results heading disappears.
+            if query.isEmpty {
+                searchResultsFocused = false
+            }
             browsingScopeRevision &+= 1
             browsingScopeDidChange()
         }
