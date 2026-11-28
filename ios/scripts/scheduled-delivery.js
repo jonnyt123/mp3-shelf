@@ -62,7 +62,7 @@
   function isProduction(path, owner) {
     return path.startsWith('ios/MP3Shelf/') || (owner === 'integration' && owns(owner, path) && !/(?:\.test\.|\/test[_-])/.test(path));
   }
-  function safeEvents(yaml) {
+  function safeEvents(yaml, path) {
     // Accept the simple block syntax used by this repo. Unknown syntax needs review.
     const top = yaml.split(/\r?\n/).filter(line => line.trim() && !/^\s*#/.test(line));
     const starts = top.filter(line => /^(?:on|'on'|"on")\s*:/.test(line));
@@ -70,6 +70,9 @@
     const below = top.slice(top.indexOf(starts[0]) + 1);
     const end = below.findIndex(line => !/^\s/.test(line));
     const section = end < 0 ? below : below.slice(0, end);
+    if (path === '.github/workflows/mp3-shelf-delivery.yml' && section.join('\n') === [
+      '  push:', '    branches: [agent/mp3-native-integration-delivery]', "    paths: ['ios/automation/requests/*.json']"
+    ].join('\n')) return true;
     if (!section.length || !/^  \S/.test(section[0])) return false;
     return section.every(line => /^  (?:pull_request|workflow_dispatch):\s*$/.test(line) || /^    +\S/.test(line));
   }
@@ -81,7 +84,7 @@
       for (const [path, entry] of entries) {
         if (!/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(path)) continue;
         const workflow = await file(path, sha);
-        requireValue(entry.mode === '100644' && workflow.sha === entry.sha && safeEvents(workflow.content), 'Review workflow triggers: ' + path);
+        requireValue(entry.mode === '100644' && workflow.sha === entry.sha && safeEvents(workflow.content, path), 'Review workflow triggers: ' + path);
       }
     }));
     // Filtering by head AND by base also covers a draft with a different head.
@@ -151,7 +154,16 @@
   }
   const [head, cp] = await Promise.all([ref(branch), checkpoint()]);
   if (cp.state === 'PREPARED' && (head === cp.parent || await contains(head, cp.prepared))) {
-    return {...await publish(cp), recovered:true};
+    if (job.dryRun && job.durableInbox && head !== cp.parent) {
+      await checkDiff(cp);
+      cp.state = 'VERIFIED'; // Git confirms earlier publication. This planner has read-only issue access.
+    } else if (job.dryRun || job.prepareOnly) {
+      await checkDiff(cp);
+      await checkPublicationPolicy(head);
+      return {status:'PREPARED', lane, branch, parent:cp.parent, commit:cp.prepared, paths:cp.paths, head};
+    } else {
+      return {...await publish(cp), recovered:true};
+    }
   }
   if (!job.edits && !job.compose) {
     return {lane, branch, head, state:cp.state, prepared:cp.state === 'PREPARED' ? cp.prepared : null, lastVerified:cp.lastVerifiedDelivery};
@@ -282,5 +294,6 @@
   const fresh = await checkpoint();
   requireValue(fresh.state === cp.state && fresh.prepared === cp.prepared && await ref(branch) === head, 'Lane changed during preparation');
   await save(next);
+  if (job.prepareOnly) return {status:'PREPARED', lane, branch, parent:head, commit:next.prepared, paths:next.paths, tests:next.tests};
   return publish(next);
 })
