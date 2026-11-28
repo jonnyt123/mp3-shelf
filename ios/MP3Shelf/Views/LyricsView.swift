@@ -30,9 +30,9 @@ struct LyricsView: View {
                             }
                             .padding(24)
                         }
-                        .onChange(of: playback.currentTime) { _, _ in
-                            if let line = lines.last(where: { $0.time != nil && ($0.time ?? 0) <= playback.currentTime }) {
-                                withAnimation(.easeInOut(duration: 0.3)) { reader.scrollTo(line.id, anchor: .center) }
+                        .onChange(of: lines.last(where: { $0.time != nil && ($0.time ?? 0) <= playback.currentTime })?.id) { _, activeID in
+                            if let activeID {
+                                withAnimation(.easeInOut(duration: 0.3)) { reader.scrollTo(activeID, anchor: .center) }
                             }
                         }
                     }
