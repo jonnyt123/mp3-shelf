@@ -1,0 +1,7 @@
+{
+  "kind": "compose",
+  "lane": "integration",
+  "sourceLane": "downloads",
+  "source": "bda3be818b277814e6fef24a84e47980efbe0995",
+  "message": "Compose latest-request-wins Spotify playlist refresh and regression"
+}
