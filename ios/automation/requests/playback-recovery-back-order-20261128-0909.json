@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "playback",
+  "parent": "182e71f7ec66c0067d4c4b5c81061ec0ed307695",
+  "message": "Respect promoted shuffle recovery order when Back has no history",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Models/PlaybackOrder.swift",
+      "before": "                guard unavailableAnchor == currentID, let survivor = playableIDs.first else { return currentID }",
+      "after": "                guard unavailableAnchor == currentID else { return currentID }\n                guard let survivor = remainingShuffle.first ?? playableIDs.first else { return nil }"
+    },
+    {
+      "path": "ios/Tests/PlaybackOrderTests.swift",
+      "before": "        // Sequential Repeat All previews must not duplicate rows or include Now Playing.",
+      "after": "        // Back without history during deleted-anchor recovery follows the pending queue.\n        order.reset(queue: Array(songs.prefix(3)), current: songs[0], shuffled: true)\n        order.retainAvailable(Set([songs[1], songs[2]]))\n        assert(order.playNext(songs[2]))\n        assert(order.previous(loop: .off) == songs[2])\n        assert(order.next(automatic: true, loop: .off) == songs[1])\n        assert(!order.queueIDs.contains(songs[0]))\n\n        // Sequential Repeat All previews must not duplicate rows or include Now Playing."
+    }
+  ]
+}
