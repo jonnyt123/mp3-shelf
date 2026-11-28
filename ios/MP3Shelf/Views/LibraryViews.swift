@@ -1796,14 +1796,14 @@ struct LibraryView: View {
                 // strand a new listener behind a pre-import search/Favorites filter.
                 // Capture the scope so edits made while Files copies audio win.
                 let wasEmptyBeforeImport = library.tracks.isEmpty
-                let searchAtImportStart = searchText
+                let searchAtImportStart = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
                 let favoritesAtImportStart = favoritesOnly
                 let scopeRevisionAtImportStart = browsingScopeRevision
                 importInProgress = true
                 Task { @MainActor in
                     let outcome = await library.importAudio(urls: urls)
                     if wasEmptyBeforeImport && outcome.imported > 0 &&
-                       searchText == searchAtImportStart &&
+                       searchText.trimmingCharacters(in: .whitespacesAndNewlines) == searchAtImportStart &&
                        favoritesOnly == favoritesAtImportStart &&
                        browsingScopeRevision == scopeRevisionAtImportStart {
                         clearSearch()
