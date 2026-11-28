@@ -1,0 +1,13 @@
+{
+  "kind": "edit",
+  "lane": "ux",
+  "parent": "e6628516d7e3e2f3f03d79535822b9510222c9bc",
+  "message": "Avoid restarting library search debounce for equivalent queries",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Views/LibraryViews.swift",
+      "before": "        .task(id: searchText) {\n            // Clearing or whitespace-only input restores the full library",
+      "after": "        .task(id: searchText.trimmingCharacters(in: .whitespacesAndNewlines)) {\n            // Clearing or whitespace-only input restores the full library"
+    }
+  ]
+}
