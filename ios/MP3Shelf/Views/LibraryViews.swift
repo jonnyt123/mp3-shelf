@@ -1712,7 +1712,7 @@ struct LibraryView: View {
         .navigationTitle("MP3 Shelf")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search songs, artists or albums")
-        .onChange(of: searchText) { _, _ in
+        .onChange(of: searchText.trimmingCharacters(in: .whitespacesAndNewlines)) { _, _ in
             browsingScopeRevision &+= 1
             browsingScopeDidChange()
         }
