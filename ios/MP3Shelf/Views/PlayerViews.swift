@@ -1552,6 +1552,9 @@ struct PlaybackQueueSheet: View {
                 pendingQueueFocusID = nil
                 pendingEmptyQueueFocus = false
                 let query = newSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+                if query.isEmpty {
+                    settledQueueSearchText = ""
+                }
                 if let focused = focusedQueueTrackID,
                    !playback.queuedTracks.contains(where: {
                        $0.id == focused && matchesSearch($0, query: query)
