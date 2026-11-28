@@ -278,7 +278,7 @@ struct PlaybackOrder {
         if result.isEmpty && unavailableAnchor == currentID {
             return Array(playableIDs.prefix(limit))
         }
-        if result.count < limit && loop == .all {
+        if result.count < limit && loop == .all && playableIDs.count > 1 {
             result += Array(playableIDs.prefix(limit - result.count))
         }
         return result

@@ -62,6 +62,8 @@ struct PlaybackOrderTests {
         // Crossfade requires a different recording; natural repeat still works.
         order.reset(queue: [songs[0]], current: songs[0], shuffled: false)
         assert(!order.canAdvanceAutomatically(loop: .all))
+        assert(order.upcomingIDs(limit: 3, loop: .all).isEmpty,
+               "Single-track repeat must not advertise a separate upcoming recording")
         assert(order.next(automatic: true, loop: .all) == songs[0])
         order.reset(queue: [songs[0], songs[1]], current: songs[1], shuffled: false)
         assert(order.canAdvanceAutomatically(loop: .all))
