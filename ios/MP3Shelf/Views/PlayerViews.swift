@@ -1544,7 +1544,7 @@ struct PlaybackQueueSheet: View {
                     playbackFailureFocused = false
                 }
             }
-            .onChange(of: queueSearchText) { _, newSearch in
+            .onChange(of: queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)) { _, newSearch in
                 // A changed filter can hide the focused options button without
                 // changing the underlying queue IDs. Clear stale row focus and
                 // pending mutation targets; do not steal keyboard focus while
@@ -1561,7 +1561,7 @@ struct PlaybackQueueSheet: View {
                 noMatchesFocused = false
                 emptyQueueFocused = false
             }
-            .task(id: queueSearchText) {
+            .task(id: queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)) {
                 let requested = queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !requested.isEmpty {
                     do { try await Task.sleep(for: .milliseconds(220)) }
