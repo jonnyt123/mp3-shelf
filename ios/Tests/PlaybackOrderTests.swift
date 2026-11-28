@@ -140,6 +140,22 @@ struct PlaybackOrderTests {
                    "A currently available recording must keep playing")
         }
 
+        // Exhaust the pending recovery cycle while previously played survivors remain.
+        order.reset(queue: Array(songs.prefix(4)), current: songs[0], shuffled: true)
+        let firstSurvivor = order.next(automatic: true, loop: .off)!
+        let deleted = order.next(automatic: true, loop: .off)!
+        let pending = order.editableUpcomingIDs().first!
+        order.retainAvailable(Set([songs[0], firstSurvivor, pending]))
+        assert(order.currentID == deleted)
+        assert(order.removeUpcoming(pending))
+        let recovery = order.editableUpcomingIDs()
+        assert(Set(recovery) == Set([songs[0], firstSurvivor]))
+        assert(order.upcomingIDs(limit: 10, loop: .off) == recovery)
+        assert(order.playNext(recovery[1]))
+        assert(order.next(automatic: true, loop: .off) == recovery[1])
+        assert(order.next(automatic: true, loop: .off) == recovery[0])
+        assert(order.next(automatic: true, loop: .off) == nil)
+
         print("PASS PlaybackOrder: shuffle exhaustion, previews, history, repeat, manual controls, pruning, single-song")
     }
 }

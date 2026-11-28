@@ -212,6 +212,10 @@ struct PlaybackOrder {
             queueIDs.removeAll()
             unavailableAnchor = nil
             self.currentID = nil
+        } else if isShuffled && unavailableAnchor == currentID && remainingShuffle.isEmpty {
+            // Materialize the recovery cycle once so preview, editing and Next
+            // agree on the same surviving recordings and their order.
+            remainingShuffle = playableIDs.shuffled()
         }
         return true
     }
