@@ -1716,6 +1716,7 @@ struct LibraryView: View {
             // The system search field can clear the query without calling
             // clearSearch(). Release focus when its results heading disappears.
             if query.isEmpty {
+                settledSearchText = ""
                 searchResultsFocused = false
             }
             browsingScopeRevision &+= 1
