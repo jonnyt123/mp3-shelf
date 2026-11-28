@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "ux",
+  "parent": "c35e98dc160848a32257d3e196a4b450a6c431e1",
+  "message": "Preserve first-import recovery across equivalent search edits",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Views/LibraryViews.swift",
+      "before": "let searchAtImportStart = searchText",
+      "after": "let searchAtImportStart = searchText.trimmingCharacters(in: .whitespacesAndNewlines)"
+    },
+    {
+      "path": "ios/MP3Shelf/Views/LibraryViews.swift",
+      "before": "searchText == searchAtImportStart &&",
+      "after": "searchText.trimmingCharacters(in: .whitespacesAndNewlines) == searchAtImportStart &&"
+    }
+  ]
+}
