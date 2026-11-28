@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "playback",
+  "parent": "863f8831d2856e70e848fccd6f23ed36455b6ef2",
+  "message": "Expose eligible shuffle repeat-cycle preview candidates",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Models/PlaybackOrder.swift",
+      "before": "        if isShuffled {\n            if remainingShuffle.isEmpty && unavailableAnchor == currentID {",
+      "after": "        if isShuffled {\n            if remainingShuffle.isEmpty && (unavailableAnchor == currentID || loop == .all) {"
+    },
+    {
+      "path": "ios/Tests/PlaybackOrderTests.swift",
+      "before": "        print(\"PASS PlaybackOrder:",
+      "after": "        // At a Repeat All shuffle boundary, expose eligible next-cycle candidates.\n        order.reset(queue: [songs[0], songs[1]], current: songs[0], shuffled: true)\n        assert(order.next(automatic: true, loop: .off) == songs[1])\n        assert(order.upcomingIDs(limit: 1, loop: .off).isEmpty)\n        assert(order.upcomingIDs(limit: 1, loop: .all) == [songs[0]])\n        assert(order.next(automatic: true, loop: .all) == songs[0])\n\n        print(\"PASS PlaybackOrder:"
+    }
+  ]
+}
