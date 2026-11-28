@@ -1,0 +1,52 @@
+name: MP3 Shelf draft delivery
+on:
+  push:
+    branches: [agent/mp3-native-integration-delivery]
+    paths: ['ios/automation/requests/*.json']
+permissions: {}
+jobs:
+  verify:
+    if: github.repository == 'jonnyt123/mp3-shelf' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      status: ${{ steps.plan.outputs.status }}
+      parent: ${{ steps.plan.outputs.parent }}
+      digest: ${{ steps.plan.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 6296eecf3cbefb1d640b47bad265dfacb2f7f0fe
+          persist-credentials: false
+      - name: Check the delivery implementation
+        run: node --test ios/scripts/scheduled-delivery.test.mjs ios/scripts/delivery-inbox.test.mjs
+      - name: Validate the request and prepare the exact candidate
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node ios/scripts/delivery-inbox.mjs plan
+      - name: Run available Swift checks in the candidate checkout
+        if: steps.plan.outputs.status == 'READY'
+        run: node ios/scripts/check-delivery-candidate.mjs
+  publish:
+    needs: verify
+    if: needs.verify.outputs.status == 'READY' && github.repository == 'jonnyt123/mp3-shelf' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: write
+      issues: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 6296eecf3cbefb1d640b47bad265dfacb2f7f0fe
+          persist-credentials: false
+      - name: Publish the tested bytes to their delivery branch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_PARENT: ${{ needs.verify.outputs.parent }}
+          EXPECTED_DIGEST: ${{ needs.verify.outputs.digest }}
+        run: node ios/scripts/delivery-inbox.mjs publish
