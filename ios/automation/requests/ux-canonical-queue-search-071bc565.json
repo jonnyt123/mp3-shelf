@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "ux",
+  "parent": "071bc5659a5e196232dbacf670d56129720b2338",
+  "message": "Preserve queue search focus and debounce for equivalent queries",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Views/PlayerViews.swift",
+      "before": ".onChange(of: queueSearchText) { _, newSearch in",
+      "after": ".onChange(of: queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)) { _, newSearch in"
+    },
+    {
+      "path": "ios/MP3Shelf/Views/PlayerViews.swift",
+      "before": ".task(id: queueSearchText) {",
+      "after": ".task(id: queueSearchText.trimmingCharacters(in: .whitespacesAndNewlines)) {"
+    }
+  ]
+}
