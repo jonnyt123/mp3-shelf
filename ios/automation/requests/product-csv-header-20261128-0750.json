@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "product",
+  "parent": "8942d8e4e2d041a66791d9e5f36d0f66d205f6d7",
+  "message": "Fix playlist delimiter detection for quoted headers and leading blank rows",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Services/PlaylistCSV.swift",
+      "before": "        let firstLine = text.components(separatedBy: .newlines).first ?? \"\"\n        let delimiter: Character = firstLine.filter { $0 == \"\\t\" }.count > firstLine.filter { $0 == \",\" }.count ? \"\\t\" : \",\"",
+      "after": "        // Count parsed header fields, not separators inside quoted labels.\n        let commaHeader = parseRows(text, delimiter: \",\").first { row in\n            row.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }\n        } ?? []\n        let tabHeader = parseRows(text, delimiter: \"\\t\").first { row in\n            row.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }\n        } ?? []\n        let delimiter: Character = tabHeader.count > commaHeader.count ? \"\\t\" : \",\""
+    },
+    {
+      "path": "ios/Tests/PlaylistCSVTests.swift",
+      "before": "        check(tabRows.first?.artist == \"A Singer\", \"TSV support\")",
+      "after": "        check(tabRows.first?.artist == \"A Singer\", \"TSV support\")\n        let quotedTabHeader = \"\\nTitle\\tArtist\\t\\\"Notes, extra, more, details\\\"\\nFirst\\tBand\\tignored\\nFirst\\tBand\\tignored\\n\"\n        let quotedTabRows = try PlaylistCSV.parse(Data(quotedTabHeader.utf8))\n        check(quotedTabRows.map(\\.title) == [\"First\", \"First\"] && quotedTabRows.allSatisfy { $0.artist == \"Band\" },\n              \"TSV delimiter ignores quoted commas and leading blank rows; duplicate order retained\")"
+    }
+  ]
+}
