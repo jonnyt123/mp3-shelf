@@ -156,6 +156,14 @@ struct PlaybackOrderTests {
         assert(order.next(automatic: true, loop: .off) == recovery[0])
         assert(order.next(automatic: true, loop: .off) == nil)
 
+        // Sequential Repeat All previews must not duplicate rows or include Now Playing.
+        order.reset(queue: Array(songs.prefix(3)), current: songs[1], shuffled: false)
+        assert(order.upcomingIDs(limit: 10, loop: .all) == [songs[2], songs[0]])
+        assert(order.upcomingIDs(limit: 1, loop: .all) == [songs[2]])
+        assert(order.next(automatic: true, loop: .all) == songs[2])
+        assert(order.next(automatic: true, loop: .all) == songs[0])
+        assert(order.upcomingIDs(limit: 10, loop: .all) == [songs[1], songs[2]])
+
         // At a Repeat All shuffle boundary, expose eligible next-cycle candidates.
         order.reset(queue: [songs[0], songs[1]], current: songs[0], shuffled: true)
         assert(order.next(automatic: true, loop: .off) == songs[1])

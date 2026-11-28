@@ -283,7 +283,10 @@ struct PlaybackOrder {
             return Array(playableIDs.prefix(limit))
         }
         if result.count < limit && loop == .all && playableIDs.count > 1 {
-            result += Array(playableIDs.prefix(limit - result.count))
+            // Show each distinct upcoming recording once, excluding the current selection.
+            let shown = Set(result)
+            let wrapped = playableIDs.filter { $0 != currentID && !shown.contains($0) }
+            result += Array(wrapped.prefix(limit - result.count))
         }
         return result
     }
