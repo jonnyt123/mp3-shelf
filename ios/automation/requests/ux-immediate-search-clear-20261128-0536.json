@@ -1,0 +1,13 @@
+{
+  "kind": "edit",
+  "lane": "ux",
+  "parent": "1ba81932a253498ce9ac40213806398145327509",
+  "message": "Restore unfiltered library immediately when native search clears",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Views/LibraryViews.swift",
+      "before": "            if query.isEmpty {\n                searchResultsFocused = false\n            }\n            browsingScopeRevision &+= 1",
+      "after": "            if query.isEmpty {\n                settledSearchText = \"\"\n                searchResultsFocused = false\n            }\n            browsingScopeRevision &+= 1"
+    }
+  ]
+}
