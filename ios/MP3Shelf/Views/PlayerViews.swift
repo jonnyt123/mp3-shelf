@@ -1338,7 +1338,7 @@ struct PlaybackQueueSheet: View {
                                 .premiumCard(radius: 17)
                                 .accessibilityElement(children: .contain)
                                 .accessibilityValue("Position \(index + 1) of \(upcoming.count) in queue")
-                                .accessibilityAction(named: "Play now") {
+                                .accessibilityAction(named: Text("Play \(track.title) by \(track.artist) now")) {
                                     playNow(track.id)
                                 }
                                 // Only advertise reorder actions that can actually
@@ -1346,15 +1346,15 @@ struct PlaybackQueueSheet: View {
                                 // bounds if playback changes before activation.
                                 .accessibilityActions {
                                     if index > 0 {
-                                        Button("Play next") { playNext(track.id) }
+                                        Button("Play \(track.title) by \(track.artist) next") { playNext(track.id) }
                                     }
                                     if query.isEmpty && canMove(index: index, count: upcoming.count, earlier: true) {
-                                        Button("Move earlier") {
+                                        Button("Move \(track.title) by \(track.artist) earlier") {
                                             reorder(track.id, earlier: true)
                                         }
                                     }
                                     if query.isEmpty && canMove(index: index, count: upcoming.count, earlier: false) {
-                                        Button("Move later") {
+                                        Button("Move \(track.title) by \(track.artist) later") {
                                             reorder(track.id, earlier: false)
                                         }
                                     }
