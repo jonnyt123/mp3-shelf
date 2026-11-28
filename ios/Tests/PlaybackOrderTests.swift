@@ -156,6 +156,13 @@ struct PlaybackOrderTests {
         assert(order.next(automatic: true, loop: .off) == recovery[0])
         assert(order.next(automatic: true, loop: .off) == nil)
 
+        // At a Repeat All shuffle boundary, expose eligible next-cycle candidates.
+        order.reset(queue: [songs[0], songs[1]], current: songs[0], shuffled: true)
+        assert(order.next(automatic: true, loop: .off) == songs[1])
+        assert(order.upcomingIDs(limit: 1, loop: .off).isEmpty)
+        assert(order.upcomingIDs(limit: 1, loop: .all) == [songs[0]])
+        assert(order.next(automatic: true, loop: .all) == songs[0])
+
         print("PASS PlaybackOrder: shuffle exhaustion, previews, history, repeat, manual controls, pruning, single-song")
     }
 }

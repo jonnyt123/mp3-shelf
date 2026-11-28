@@ -267,7 +267,7 @@ struct PlaybackOrder {
         guard limit > 0, let currentID, !queueIDs.isEmpty else { return [] }
         if loop == .one && unavailableAnchor != currentID { return [] }
         if isShuffled {
-            if remainingShuffle.isEmpty && unavailableAnchor == currentID {
+            if remainingShuffle.isEmpty && (unavailableAnchor == currentID || loop == .all) {
                 // The exact order is selected when advancement occurs; expose
                 // surviving candidates instead of an incorrectly empty queue.
                 return Array(playableIDs.filter { $0 != currentID }.prefix(limit))
