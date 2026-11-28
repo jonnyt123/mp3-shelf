@@ -123,6 +123,21 @@ struct PlaybackOrderTests {
         assert(order.removeUpcoming(songs[1]), "Wrapped recovery queue is still editable")
         assert(!order.queueIDs.contains(songs[1]))
 
+        for shuffled in [false, true] {
+            order.reset(queue: [songs[0], songs[1]], current: songs[1], shuffled: shuffled)
+            order.retainAvailable(Set([songs[0]]))
+            assert(order.removeUpcoming(songs[0]))
+            assert(order.queueIDs.isEmpty && order.currentID == nil,
+                   "Removing the final survivor must discard the deleted recovery anchor")
+            assert(order.previous(loop: .off) == nil)
+            assert(order.next(automatic: true, loop: .one) == nil)
+
+            order.reset(queue: [songs[0], songs[1]], current: songs[0], shuffled: shuffled)
+            assert(order.removeUpcoming(songs[1]))
+            assert(order.queueIDs == [songs[0]] && order.currentID == songs[0],
+                   "A currently available recording must keep playing")
+        }
+
         print("PASS PlaybackOrder: shuffle exhaustion, previews, history, repeat, manual controls, pruning, single-song")
     }
 }

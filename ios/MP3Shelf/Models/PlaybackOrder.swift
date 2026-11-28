@@ -208,6 +208,11 @@ struct PlaybackOrder {
         queueIDs.remove(at: index)
         remainingShuffle.removeAll { $0 == id }
         playHistory.removeAll { $0 == id }
+        if unavailableAnchor == currentID && queueIDs.count == 1 {
+            queueIDs.removeAll()
+            unavailableAnchor = nil
+            self.currentID = nil
+        }
         return true
     }
 
