@@ -1,0 +1,13 @@
+{
+  "kind": "edit",
+  "lane": "product",
+  "parent": "efbbc3f205d6321dec67d72a7884672a0dde6ecc",
+  "message": "Scroll synchronized lyrics only when active identity changes",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Views/LyricsView.swift",
+      "before": "                        .onChange(of: playback.currentTime) { _, _ in\n                            if let line = lines.last(where: { $0.time != nil && ($0.time ?? 0) <= playback.currentTime }) {\n                                withAnimation(.easeInOut(duration: 0.3)) { reader.scrollTo(line.id, anchor: .center) }\n                            }\n                        }",
+      "after": "                        .onChange(of: lines.last(where: { $0.time != nil && ($0.time ?? 0) <= playback.currentTime })?.id) { _, activeID in\n                            if let activeID {\n                                withAnimation(.easeInOut(duration: 0.3)) { reader.scrollTo(activeID, anchor: .center) }\n                            }\n                        }"
+    }
+  ]
+}
