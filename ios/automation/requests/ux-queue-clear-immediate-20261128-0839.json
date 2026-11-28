@@ -1,0 +1,13 @@
+{
+  "kind": "edit",
+  "lane": "ux",
+  "parent": "8d040df1e54cc0d1dc1cfefb90ed4e63e1377952",
+  "message": "Restore unfiltered queue immediately when canonical search clears",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Views/PlayerViews.swift",
+      "before": "                let query = newSearch.trimmingCharacters(in: .whitespacesAndNewlines)\n                if let focused = focusedQueueTrackID,",
+      "after": "                let query = newSearch.trimmingCharacters(in: .whitespacesAndNewlines)\n                if query.isEmpty {\n                    settledQueueSearchText = \"\"\n                }\n                if let focused = focusedQueueTrackID,"
+    }
+  ]
+}
