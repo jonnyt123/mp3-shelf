@@ -21,8 +21,14 @@ enum PlaylistCSV {
             throw PlaylistCSVError.unreadable
         }
         let text = raw.replacingOccurrences(of: "\u{FEFF}", with: "")
-        let firstLine = text.components(separatedBy: .newlines).first ?? ""
-        let delimiter: Character = firstLine.filter { $0 == "\t" }.count > firstLine.filter { $0 == "," }.count ? "\t" : ","
+        // Count parsed header fields, not separators inside quoted labels.
+        let commaHeader = parseRows(text, delimiter: ",").first { row in
+            row.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        } ?? []
+        let tabHeader = parseRows(text, delimiter: "\t").first { row in
+            row.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        } ?? []
+        let delimiter: Character = tabHeader.count > commaHeader.count ? "\t" : ","
         let rows = parseRows(text, delimiter: delimiter).filter { $0.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) }
         guard let header = rows.first else { throw PlaylistCSVError.empty }
 

@@ -89,6 +89,10 @@ enum PlaylistCSVTests {
         let tab = "Track Name\tArtist Name\nHello\tA Singer\n"
         let tabRows = try PlaylistCSV.parse(Data(tab.utf8))
         check(tabRows.first?.artist == "A Singer", "TSV support")
+        let quotedTabHeader = "\nTitle\tArtist\t\"Notes, extra, more, details\"\nFirst\tBand\tignored\nFirst\tBand\tignored\n"
+        let quotedTabRows = try PlaylistCSV.parse(Data(quotedTabHeader.utf8))
+        check(quotedTabRows.map(\.title) == ["First", "First"] && quotedTabRows.allSatisfy { $0.artist == "Band" },
+              "TSV delimiter ignores quoted commas and leading blank rows; duplicate order retained")
         let owned = MusicTrack(title: "A Song, In Two Parts", artist: "Singer", album: "First", fileName: "1.mp3", originalFileName: "1.mp3", duration: 12)
         let savedWish = PlaylistWish(title: owned.title, artist: owned.artist,
                                      album: owned.album, spotifyURL: nil, durationSeconds: 12)
