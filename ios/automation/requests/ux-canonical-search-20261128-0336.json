@@ -1,0 +1,13 @@
+{
+  "kind": "edit",
+  "lane": "ux",
+  "parent": "c10a48e2ba3ccec47e922e7dbace92517de8352f",
+  "message": "Preserve pending library playback across whitespace-only search edits",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Views/LibraryViews.swift",
+      "before": "        .onChange(of: searchText) { _, _ in\n            browsingScopeRevision &+= 1\n            browsingScopeDidChange()\n        }",
+      "after": "        .onChange(of: searchText.trimmingCharacters(in: .whitespacesAndNewlines)) { _, _ in\n            browsingScopeRevision &+= 1\n            browsingScopeDidChange()\n        }"
+    }
+  ]
+}
