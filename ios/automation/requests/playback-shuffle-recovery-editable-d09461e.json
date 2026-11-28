@@ -1,0 +1,18 @@
+{
+  "kind": "edit",
+  "lane": "playback",
+  "parent": "d09461e59b5b39f626a7232c70508e9dc7bd7675",
+  "message": "Keep shuffled recovery queue editable after pending removal",
+  "edits": [
+    {
+      "path": "ios/MP3Shelf/Models/PlaybackOrder.swift",
+      "before": "        if unavailableAnchor == currentID && queueIDs.count == 1 {\n            queueIDs.removeAll()\n            unavailableAnchor = nil\n            self.currentID = nil\n        }\n        return true",
+      "after": "        if unavailableAnchor == currentID && queueIDs.count == 1 {\n            queueIDs.removeAll()\n            unavailableAnchor = nil\n            self.currentID = nil\n        } else if isShuffled && unavailableAnchor == currentID && remainingShuffle.isEmpty {\n            // Materialize the recovery cycle once so preview, editing and Next\n            // agree on the same surviving recordings and their order.\n            remainingShuffle = playableIDs.shuffled()\n        }\n        return true"
+    },
+    {
+      "path": "ios/Tests/PlaybackOrderTests.swift",
+      "before": "        print(\"PASS PlaybackOrder: shuffle exhaustion, previews, history, repeat, manual controls, pruning, single-song\")",
+      "after": "        // Exhaust the pending recovery cycle while previously played survivors remain.\n        order.reset(queue: Array(songs.prefix(4)), current: songs[0], shuffled: true)\n        let firstSurvivor = order.next(automatic: true, loop: .off)!\n        let deleted = order.next(automatic: true, loop: .off)!\n        let pending = order.editableUpcomingIDs().first!\n        order.retainAvailable(Set([songs[0], firstSurvivor, pending]))\n        assert(order.currentID == deleted)\n        assert(order.removeUpcoming(pending))\n        let recovery = order.editableUpcomingIDs()\n        assert(Set(recovery) == Set([songs[0], firstSurvivor]))\n        assert(order.upcomingIDs(limit: 10, loop: .off) == recovery)\n        assert(order.playNext(recovery[1]))\n        assert(order.next(automatic: true, loop: .off) == recovery[1])\n        assert(order.next(automatic: true, loop: .off) == recovery[0])\n        assert(order.next(automatic: true, loop: .off) == nil)\n\n        print(\"PASS PlaybackOrder: shuffle exhaustion, previews, history, repeat, manual controls, pruning, single-song\")"
+    }
+  ]
+}
