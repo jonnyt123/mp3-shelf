@@ -460,7 +460,11 @@ enum AudioSourceFinder {
             }
             return result
         }
-        let fileStem = (filename as NSString).deletingPathExtension
+        let audioExtensions: Set<String> = ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "aiff", "aif", "caf", "alac", "wma", "m4b", "oga"]
+        let fileExtension = (filename as NSString).pathExtension.lowercased()
+        let fileStem = audioExtensions.contains(fileExtension)
+            ? (filename as NSString).deletingPathExtension
+            : filename
         guard editions(fileStem) == editions(requestedTitle) else { return false }
         // A remaster from a different year is a different master, even when
         // the generic title normalizer considers both titles equivalent.
